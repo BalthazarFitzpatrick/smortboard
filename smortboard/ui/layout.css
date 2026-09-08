@@ -13,17 +13,34 @@ body {
 
 .board-bar {
   display: flex;
-  gap: 4px;
-  padding: 0 var(--inset-x, 15px);
+  gap: 8px;
+  padding: 8px var(--inset-x, 15px);
   border-bottom: 2px solid var(--grey-border);
   flex: 0 0 auto;
+}
+
+/* the boards read as buttons, not as underlined tabs. base.css gives .nav-tab a transparent
+   background and no border and it is declared after .toggle, so restating them here is what makes
+   a tab adopt the button shape - shell.js still owns the behaviour through the .nav-tab class */
+.board-bar .nav-tab {
+  font-size: calc(var(--font-size, 13px) * 1.35);
+  padding: 0 22px;
+  height: calc(var(--row-height, 30px) * 1.4);
+  background: var(--panel-row);
+  border: 2px solid var(--grey-border);
+  border-bottom: 2px solid var(--grey-border);
+}
+.board-bar .nav-tab.active {
+  background: var(--accent-on);
+  color: var(--accent-on-text);
+  border-color: var(--cream);
 }
 
 .bucket-row {
   flex: 1 1 auto;
   display: flex;
-  gap: 15px;
-  padding: 15px;
+  gap: 34px;
+  padding: 20px 24px;
   overflow: auto;
   align-items: flex-start;
 }
@@ -45,16 +62,18 @@ body {
 .bucket-rows {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 18px;
 }
 
-/* collapsed card: a wide flat strip, roughly 3:1, per the brief - makeExpander reads its own
-   rect as the animation's starting box, so this is the only place that ratio lives */
+/* collapsed card: a wide flat strip - makeExpander reads its own rect as the animation's starting
+   box, so this is the only place that ratio lives */
 .card-strip {
-  aspect-ratio: 3 / 1;
-  border: 2px solid var(--grey-border);
+  aspect-ratio: 4.4 / 1;
+  /* every card carries the cream border; state changes its colour rather than adding a ring, so a
+     working or blocked card is exactly the same shape as a quiet one */
+  border: 2px solid var(--cream);
   background: var(--panel-row);
-  padding: 8px 10px;
+  padding: 8px 12px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -64,11 +83,17 @@ body {
 .card-strip .card-title { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-strip .card-workstream { color: var(--text-dim); }
 
-/* driven by status, ready for phase 2 to switch on */
-/* --attention is ui_base's designated pointer for exactly this, and repalettes by moving the
-   pointer. cream was indistinguishable from --status-good at 2px: both are pale yellows */
-.card-strip.card-attention { outline: 2px solid var(--attention); }
-.card-strip.card-working { outline: 2px solid var(--status-good); }
+/* driven by status. RECOLOURING THE BORDER, not adding a ring around it: a ring sits outside the
+   border and makes a stateful card visibly fatter than a quiet one */
+.card-strip.card-attention { border-color: var(--attention); }
+.card-strip.card-working { border-color: var(--status-good); }
+
+/* focus has to beat a cream border, and cream on cream cannot. the offset ring reads as a halo
+   around the card rather than as part of it, which keeps focus findable on a quiet card */
+.card-strip:focus-visible {
+  outline: 2px solid var(--cream);
+  outline-offset: 3px;
+}
 
 .expand-panel .card-panel {
   padding: 14px;
@@ -87,4 +112,5 @@ body {
 .card-panel ul { margin: 4px 0; padding-left: 18px; }
 .card-panel .comment-input { width: 100%; box-sizing: border-box; margin-top: 4px; }
 
-.hazard-placeholder { width: 320px; height: 160px; }
+/* fills whatever holds it - a drawer body, not a fixed box */
+.hazard-placeholder { width: 100%; height: 100%; min-height: 160px; }
