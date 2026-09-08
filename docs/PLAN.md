@@ -137,8 +137,12 @@ and re-plans Phase 2 entirely.
 subscription seat while it is in use. *Confirms:* they queue or fail cleanly with a detectable
 signal we can map to `USAGE_LIMIT`. *Falsifies:* they degrade silently or corrupt the interactive
 session — which makes parallelism (Phase 5) dependent on separate credentials, not just leases.
-Also establishes what subscription quota is actually readable; per operator's own playbook the status
-line is the only surface that exposes it, so §4.6's quota display may reduce to token counts only.
+**Outcome:** both sessions completed cleanly with no interference, so parallelism is a scheduling
+problem rather than a credentials one. Quota turned out to be readable directly from each card's
+`rate_limit_event` — five-hour and seven-day utilisation with reset times — so §4.6 is fully
+buildable and the earlier assumption that only the status line exposes it was wrong. Caveat:
+utilisation stayed at 0.11, so this proves concurrency and a readable signal, not behaviour at the
+limit.
 
 **S3 — lease enforcement.** Determine how a write outside a card's declared paths is detected.
 *Confirms:* a viable mechanism exists (hook on the agent's writes, or `git status` diffing against
@@ -281,8 +285,8 @@ Depends on S2.
   summary — with the live stream a deliberate second press. This inverts §4.4's stated default on
   purpose: §1 says watching is a failure mode, and the panel as briefed rewards it.
 - Telemetry section per card, `i`: model per task, input/thinking/output tokens.
-- `u` usage dropdown, built from ui_base `Menu` with columns and dividers, scoped to whatever S2
-  proved is actually readable.
+- `u` usage dropdown, built from ui_base `Menu` with columns and dividers, projecting
+  `rate_limit_event.unifiedWindows` — five-hour and seven-day utilisation and reset times.
 
 **Ships when:** token counts reconcile against the event log for a completed card.
 
