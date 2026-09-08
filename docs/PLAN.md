@@ -53,8 +53,8 @@ below.
 - **§5 focus model** — a panel sliding in leaves focus on the board. `/` enters its input. `Esc` is
   always exactly one level back: input → panel → closed.
 - **§5 card-open arrows** — arrows move between the open card's sections, not between columns.
-- **§5 globals** — `u` (usage dropdown) and `s` (shortcut overlay) work everywhere; neither takes
-  text input.
+- **§5 globals** — `u` (usage dropdown), `a` (agent roster) and `s` (shortcut overlay) work
+  everywhere; none takes text input.
 - **§4.1 boards** — `←`/`→` on the top bar, and `1`–`9` jump directly (a jump animates as if the
   target were adjacent, rather than scrolling through the boards between).
 - **§4.4 empty workforce panel** — hazard stripes with "no card selected".
@@ -280,8 +280,34 @@ Depends on S2.
 - Resume briefing: a card resuming after a break is handed its event log's summary — what changed,
   what is next, which file to open — instead of re-ingesting the worktree. Toggleable per operator's
   §2 request.
+- **Agent roster** — a named button in the top bar, key `a`, opening a popup listing every agent
+  currently holding a card.
 
-**Ships when:** three cards across two repos run concurrently and all three merge cleanly.
+```
+unit:     agent roster
+expects:  the set of cards currently held by an agent, and each one's event log
+does:     renders one row per agent - card title as the label, a one-line current activity as the
+          row's `stats`, `on` while working and `disabled` while blocked - and jumps to a card when
+          its row is picked, exactly as the attention list does
+outputs:  a `Menu` `list` section; a card-selected event
+verifies: three cards running and one blocked renders four rows, the blocked one disabled and
+          carrying its reason code. Picking a row opens that card in the main view. With no agent
+          holding a card the popup says so rather than opening empty.
+```
+
+The one-line activity is **derived from the event stream, not asked for.** The most recent tool use
+already reads as a summary — "editing exec/runner.py", "running the test suite" — so it costs no
+tokens and no latency. Asking each agent to describe itself would spend money to learn something
+the stream already says.
+
+This needs no new ui_base component: a `Menu` `list` row already carries `label`, `stats`, `on`,
+`disabled` and an `action`, which is exactly the shape of a roster row.
+
+It belongs in Phase 5 because that is when it earns its place — with one card running at a time the
+board itself already tells you everything the roster would.
+
+**Ships when:** three cards across two repos run concurrently, all three merge cleanly, and the
+roster shows all three with an accurate one-line activity for each.
 
 ### Phase 6 — telemetry and workforce
 
