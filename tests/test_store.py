@@ -44,32 +44,41 @@ def test_create_and_read_back_card(store):
 def test_card_moves_through_every_status(store):
     _, card = _make_board_and_card(store)
     for status in STATUSES:
-        if status == "blocked":
-            updated = store.update_card(card["id"], status="blocked", blocked_reason_code="CRASH")
-            assert updated["blocked_reason_code"] == "CRASH"
-            # move back off blocked clears the reason code requirement
-            updated = store.update_card(card["id"], status="todo", blocked_reason_code=None)
-        else:
-            updated = store.update_card(card["id"], status=status)
-        assert updated["status"] in (status, "todo")
+        updated = store.update_card(card["id"], status=status)
+        assert updated["status"] == status
 
 
-def test_blocked_without_reason_code_is_refused(store):
+def test_a_blocked_card_keeps_the_status_it_was_in(store):
+    """blocked is an overlay, not a column. a card blocked while working is still 'doing', which is
+    what lets it render in place with the gold outline and what the resume briefing reads back."""
+    _, card = _make_board_and_card(store)
+    store.update_card(card["id"], status="doing")
+    blocked = store.update_card(card["id"], blocked_reason_code="USAGE_LIMIT")
+    assert blocked["status"] == "doing"
+    assert blocked["blocked_reason_code"] == "USAGE_LIMIT"
+    cleared = store.update_card(card["id"], blocked_reason_code=None)
+    assert cleared["status"] == "doing"
+    assert cleared["blocked_reason_code"] is None
+
+
+def test_a_queued_card_can_carry_a_reason_code(store):
+    """a card can block before it ever runs - a rejected dependency blocks a card still in todo"""
+    _, card = _make_board_and_card(store)
+    blocked = store.update_card(card["id"], blocked_reason_code="DEPENDENCY_REJECTED")
+    assert blocked["status"] == "todo"
+    assert blocked["blocked_reason_code"] == "DEPENDENCY_REJECTED"
+
+
+def test_unknown_status_is_refused(store):
     _, card = _make_board_and_card(store)
     with pytest.raises(BlockedReasonInvalidError):
         store.update_card(card["id"], status="blocked")
 
 
-def test_reason_code_on_non_blocked_status_is_refused(store):
+def test_unknown_reason_code_is_refused(store):
     _, card = _make_board_and_card(store)
     with pytest.raises(BlockedReasonInvalidError):
-        store.update_card(card["id"], blocked_reason_code="CRASH")
-
-
-def test_create_card_blocked_without_reason_code_is_refused(store):
-    board = store.create_board("Phase 1")
-    with pytest.raises(BlockedReasonInvalidError):
-        store.create_card(board["id"], None, "bad card", status="blocked")
+        store.update_card(card["id"], blocked_reason_code="NOT_A_REAL_CODE")
 
 
 def test_card_deps_both_directions(store):

@@ -104,12 +104,8 @@ class Store:
             raise BlockedReasonInvalidError(f"unknown status {status!r}")
         if blocked_reason_code is not None and blocked_reason_code not in BLOCKED_REASON_CODES:
             raise BlockedReasonInvalidError(f"unknown blocked_reason_code {blocked_reason_code!r}")
-        if status == "blocked" and blocked_reason_code is None:
-            raise BlockedReasonInvalidError("status='blocked' requires a blocked_reason_code")
-        if status != "blocked" and blocked_reason_code is not None:
-            raise BlockedReasonInvalidError(
-                f"blocked_reason_code is only valid with status='blocked', got {status!r}"
-            )
+        # a reason code rides alongside ANY status - a queued card can block on
+        # DEPENDENCY_REJECTED just as a working one can block on USAGE_LIMIT
 
     def create_card(
         self,
