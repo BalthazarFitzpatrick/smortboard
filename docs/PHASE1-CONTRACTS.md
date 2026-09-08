@@ -14,10 +14,18 @@ File ownership is strict, so the three can run at once:
 
 ## Vocabulary
 
-`status` is one of `todo`, `doing`, `checking`, `accepted`, `rejected`, `blocked`.
+`status` is one of `todo`, `doing`, `checking`, `accepted`, `rejected` — the five kanban columns
+and nothing else.
 
-`blocked_reason_code` is set only when status is `blocked`, and is one of `CRASH`, `USAGE_LIMIT`,
-`LEASE_CONFLICT`, `AGENT_QUESTION`, `TESTS_FAILED`, `REVIEW_REJECTED`, `DEPENDENCY_REJECTED`.
+**`blocked` is not a status.** A blocked card keeps the status it was in and raises a nullable
+`blocked_reason_code`, one of `CRASH`, `USAGE_LIMIT`, `LEASE_CONFLICT`, `AGENT_QUESTION`,
+`TESTS_FAILED`, `REVIEW_REJECTED`, `DEPENDENCY_REJECTED`. That code draws the gold outline and feeds
+the attention count, exactly as the brief's §4.3 describes.
+
+A sixth status was the original plan and it was wrong: it gives a blocked card no column to live in,
+and it throws away what the card was doing, which the Phase 5 resume briefing needs. A reason code
+rides alongside any status — a queued card blocks on `DEPENDENCY_REJECTED` just as a working one
+blocks on `USAGE_LIMIT`.
 
 ## Unit A — store
 

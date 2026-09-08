@@ -31,7 +31,7 @@ below.
 | Store | SQLite, gitignored. `smortboard export` produces a portable bundle on demand. |
 | History | Retained. Append-only event log per card. |
 | Truth | Cards are ground truth. The orchestrator keeps its own plan ledger, derived from and reconciled against them. |
-| Statuses | To do / Doing / Checking / Accepted / Rejected, plus **Blocked** with a reason code. |
+| Statuses | To do / Doing / Checking / Accepted / Rejected. **Blocked is not a sixth status** — a card keeps its status and raises a nullable reason code, which draws the gold outline. |
 | Gate to Checking | Unit tests pass **and** reviewer approves. |
 | Merge | Board pushes and links the GitHub PR. Board never merges. |
 | Rejection | Fresh worktree from base, plus a read-only diff of the failed attempt. |
@@ -101,6 +101,11 @@ flowchart TD
 `CRASH`, `USAGE_LIMIT`, `LEASE_CONFLICT`, `AGENT_QUESTION`, `TESTS_FAILED`, `REVIEW_REJECTED`,
 `DEPENDENCY_REJECTED`. The code drives what the attention entry says and whether a retry is
 automatic. Mirrors the `blocked_reason_code` convention already in `TASKS.jsonl`.
+
+It is a **flag, not a column**. Corrected during Phase 1: this plan originally made `blocked` a
+sixth status, which left a blocked card with no bucket to render in and discarded the status it
+blocked from. The brief said so all along — §4.2 lists five columns, §4.3 makes attention an
+outline.
 
 ### Repo layout
 

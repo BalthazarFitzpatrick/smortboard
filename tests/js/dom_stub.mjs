@@ -1,0 +1,111 @@
+// a small dom stub shared by the smortboard interface tests, in the same spirit as ui_base's own
+// per-file stubs (menu_sections.mjs, buckets_navigation.mjs, expander.mjs) but with just enough
+// selector support (tag, .class, [attr="val"], #id, single descendant combinator) for board.js's
+// own querySelector calls plus what shell.js / buckets.js / expand.js need internally.
+
+export class Element {}
+
+function compoundMatch(el, compound) {
+  if (compound.startsWith('#')) return el.id === compound.slice(1);
+  const attrRe = /\[([\w-]+)="([^"]*)"\]/g;
+  const attrs = [];
+  let m;
+  while ((m = attrRe.exec(compound))) attrs.push([m[1], m[2]]);
+  const rest = compound.replace(attrRe, '');
+  const classes = (rest.match(/\.[\w-]+/g) || []).map(c => c.slice(1));
+  const tag = rest.replace(/\.[\w-]+/g, '') || null;
+  if (tag && el.tag !== tag) return false;
+  for (const c of classes) if (!(el.className || '').split(' ').includes(c)) return false;
+  for (const [k, v] of attrs) {
+    const key = k.startsWith('data-')
+      ? k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+      : k;
+    if (String((el.dataset || {})[key] ?? '') !== v) return false;
+  }
+  return true;
+}
+
+function walkDesc(el, cb) {
+  (el.children || []).forEach(c => { cb(c); walkDesc(c, cb); });
+}
+
+export function queryAll(root, sel) {
+  const parts = sel.trim().split(/\s+/);
+  let scopes = [root];
+  for (const part of parts) {
+    const found = [];
+    scopes.forEach(scope => walkDesc(scope, el => { if (compoundMatch(el, part)) found.push(el); }));
+    scopes = found;
+  }
+  return scopes;
+}
+
+export function element(tag, className = '') {
+  const el = Object.assign(new Element(), {
+    tag, className, id: '', dataset: {}, style: {}, tabIndex: -1, children: [], parentNode: null,
+    innerHTML: '', textContent: '', value: '', placeholder: '', title: '', onclick: null, onkeydown: null,
+    _listeners: {},
+    addEventListener(type, fn) { (el._listeners[type] ||= []).push(fn); },
+    removeEventListener(type, fn) { el._listeners[type] = (el._listeners[type] || []).filter(f => f !== fn); },
+    appendChild(child) { child.parentNode = el; el.children.push(child); return child; },
+    append(...kids) { kids.forEach(k => el.appendChild(k)); },
+    remove() {
+      if (el.parentNode) el.parentNode.children = el.parentNode.children.filter(c => c !== el);
+      el.parentNode = null; el.removed = true;
+    },
+    focus() { el.focused = true; globalThis.document.activeElement = el; },
+    blur() { el.focused = false; },
+    matches(sel) { return sel.split(',').some(s => compoundMatch(el, s.trim())); },
+    closest(sel) { let cur = el; while (cur) { if (cur.matches && cur.matches(sel)) return cur; cur = cur.parentNode; } return null; },
+    contains(other) { let cur = other; while (cur) { if (cur === el) return true; cur = cur.parentNode; } return false; },
+    querySelector(sel) { return queryAll(el, sel)[0] || null; },
+    querySelectorAll(sel) { return queryAll(el, sel); },
+    getBoundingClientRect: () => ({left: 0, top: 0, right: 0, bottom: 0, width: 100, height: 30}),
+    setAttribute(name, v) { el[name] = v; },
+    removeAttribute(name) { delete el[name]; },
+    classList: {
+      contains: name => (el.className || '').split(' ').filter(Boolean).includes(name),
+      add(name) { if (!this.contains(name)) el.className = `${el.className} ${name}`.trim(); },
+      remove(name) { el.className = el.className.split(' ').filter(c => c && c !== name).join(' '); },
+      toggle(name, force) {
+        const has = this.contains(name);
+        const on = force === undefined ? !has : force;
+        if (on) this.add(name); else this.remove(name);
+        return on;
+      },
+    },
+  });
+  return el;
+}
+
+export function installStubDom({fetchImpl} = {}) {
+  const docListeners = {};
+  const store = {};
+  const root = element('document-root');
+
+  globalThis.Element = Element;
+  globalThis.document = Object.assign(root, {
+    body: element('body'),
+    activeElement: null,
+    createElement: element,
+    getElementById(id) { return queryAll(root, `#${id}`)[0] || null; },
+    addEventListener(type, fn) { (docListeners[type] ||= []).push(fn); },
+    removeEventListener(type, fn) { docListeners[type] = (docListeners[type] || []).filter(f => f !== fn); },
+  });
+  document.appendChild(document.body);
+  document._dispatch = (type, evt) => (docListeners[type] || []).forEach(fn => fn(evt));
+
+  globalThis.window = {
+    innerWidth: 1200, innerHeight: 800,
+    addEventListener() {}, removeEventListener() {},
+  };
+  globalThis.requestAnimationFrame = fn => fn();
+  globalThis.localStorage = {
+    getItem: k => (k in store ? store[k] : null),
+    setItem: (k, v) => { store[k] = v; },
+    removeItem: k => { delete store[k]; },
+  };
+  globalThis.fetch = fetchImpl || (() => new Promise(() => {})); // never resolves unless overridden
+
+  return {document: globalThis.document, dispatchDoc: document._dispatch};
+}
