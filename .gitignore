@@ -30,6 +30,11 @@ outputs/
 # version controlled
 resume_session.md
 
+# python
+__pycache__/
+*.pyc
+.venv/
+
 # editors
 .vscode/
 .idea/

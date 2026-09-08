@@ -1,0 +1,12 @@
+services:
+  smortboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - smortboard-data:/data
+
+volumes:
+  smortboard-data:
