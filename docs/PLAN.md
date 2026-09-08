@@ -127,13 +127,13 @@ the brief's hard constraint and it is load-bearing for the whole plan.
 Each names what would confirm the assumption and what would falsify it. The plan is provisional
 until all three have run.
 
-**S1 — headless Claude Code as a card runner.** Run one real card end to end in a scratch worktree.
+**S1 — CONFIRMED 2026-09-08, see `docs/spikes/S1-S2-findings.md`.** Run one real card end to end in a scratch worktree.
 *Confirms:* `claude -p` accepts a prompt, runs to completion non-interactively, emits parseable
 events, reports token counts, and commits. *Falsifies:* it needs a TTY, cannot report tokens, or
 gives no completion signal distinguishable from a crash — any of which forces the Agent SDK instead,
 and re-plans Phase 2 entirely.
 
-**S2 — seat contention and quota visibility.** Run two headless sessions against the one interactive
+**S2 — CONFIRMED 2026-09-08, see `docs/spikes/S1-S2-findings.md`.** Run two headless sessions against the one interactive
 subscription seat while it is in use. *Confirms:* they queue or fail cleanly with a detectable
 signal we can map to `USAGE_LIMIT`. *Falsifies:* they degrade silently or corrupt the interactive
 session — which makes parallelism (Phase 5) dependent on separate credentials, not just leases.

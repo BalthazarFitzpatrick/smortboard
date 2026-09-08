@@ -44,9 +44,13 @@ See `docs/PLAN.md` for the full flowchart.
 
 ## Active Context
 
-Plan approved 2026-09-08, no application code written yet. Next action is spike S1 - proving
-headless `claude -p` can be driven as a card runner. Nothing in phase 2 gets built until it has
-run, because a falsified S1 forces the Agent SDK and re-plans that phase entirely.
+Plan approved 2026-09-08. Spikes S1 and S2 are done and confirmed - see
+`docs/spikes/S1-S2-findings.md`. Phases 2 and 6 both shrank as a result: session lifecycle,
+worktree creation, commit detection, telemetry and quota all come from the CLI and its event
+stream rather than from code we write.
+
+Next action is S3 - proving a `PreToolUse` hook can refuse an out-of-lease write. No application
+code written yet.
 
 Branches: `feature/setup` here, `chore/smortboard-ledger` in private-ledgers.
 
