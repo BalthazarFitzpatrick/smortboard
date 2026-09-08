@@ -4,29 +4,66 @@
 
 ## Project Mission
 
-<!-- fill in: what this project does, who uses it, what success looks like. the brief exists as a
-     transcribed set of ramblings from Fabian and has not been written up here yet - do that before
-     any code lands. -->
+A convenience wrapper around coding agents. Cards are defined in detail up front, handed to
+headless Claude Code sessions running in isolated git worktrees, and surfaced back only when they
+need a decision. Single user, local-first, browser-based, distributed via Docker.
+
+**It is not a harness.** It does not reimplement the agent loop - it schedules and observes one.
+
+The design test for every feature: does it help Fabian define work and then walk away? Anything
+that rewards hovering is wrong, and should be argued against rather than built.
 
 mode: outcome-defined - the target is a stated vision to be checked and then implemented, not an
 open-ended investigation. lock the output and prove unknown mechanics small before building.
 
+Brief: `docs/dev-board-brief.md`. Approved plan: `docs/PLAN.md` - phases, spikes, unit contracts,
+the whole-system test case and the flowchart all live there.
+
 ## Architecture
 
-<!-- fill in: key components, data flows, external systems, rough diagram if useful -->
+```
+smortboard/
+  store/        sqlite schema, migrations, export
+  exec/         worktree manager, lease store, claude runner, event log
+  review/       test runner, reviewer agent, merge request builder
+  orchestrate/  mission control session, role prompts, orchestrator ledger
+  server/       http api, asset serving (own files first, ui_base fallback)
+  ui/           configuration of ui_base components only - no new UI primitives
+```
+
+**The hard constraint: `ui/` holds wiring, not widgets.** Any visual primitive that does not exist
+yet gets built in `ui_base`, never here, and must be named in domain-free vocabulary - no card,
+board, kanban or agent in class names, ids, storage keys or comments.
+
+Card lifecycle: To do -> Doing -> Checking -> Accepted / Rejected, plus **Blocked** with a reason
+code (`CRASH`, `USAGE_LIMIT`, `LEASE_CONFLICT`, `AGENT_QUESTION`, `TESTS_FAILED`,
+`REVIEW_REJECTED`, `DEPENDENCY_REJECTED`). Reaching Checking requires unit tests passing AND the
+reviewer approving. The board pushes and links a PR; it never merges.
+
+See `docs/PLAN.md` for the full flowchart.
 
 ## Active Context
 
-<!-- current focus, open branches, known issues, next steps — update at end of session -->
+Plan approved 2026-09-08, no application code written yet. Next action is spike S1 - proving
+headless `claude -p` can be driven as a card runner. Nothing in phase 2 gets built until it has
+run, because a falsified S1 forces the Agent SDK and re-plans that phase entirely.
+
+Branches: `feature/setup` here, `chore/smortboard-ledger` in dev_ledgers.
 
 ## Tech Stack
 
 python (uv, ruff, pytest) - `uv run ruff check . --fix && uv run ruff format .` before every commit.
 
-not yet decided, to be settled during planning:
-- browser frontend. `ui_base` (the sibling repo) supplies css and plain scripts with no build step
-  and no npm, so a js toolchain may not be needed at all - decide before adding one
-- docker for the backend
+frontend: plain css and script globals from `ui_base` - no build step, no npm, no framework. a js
+toolchain is deliberately not being added; ui_base is designed to avoid one. all keyboard bindings
+resolve on `event.code`, never `event.key`, so layout cannot move them.
+
+backend: python http server, sqlite (gitignored, with an on-demand `smortboard export`), docker for
+distribution.
+
+ui_base is consumed as a pinned git dependency - a sha while co-developing a component in lockstep,
+a tag once it lands. PyPI whenever the pinning starts to chafe; it is a one-line change per
+consumer, so there is no need to pay for it up front.
 
 ## Related repos
 
