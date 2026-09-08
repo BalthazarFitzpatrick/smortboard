@@ -65,7 +65,9 @@ body {
 .card-strip .card-workstream { color: var(--text-dim); }
 
 /* driven by status, ready for phase 2 to switch on */
-.card-strip.card-attention { outline: 2px solid var(--cream); }
+/* --attention is ui_base's designated pointer for exactly this, and repalettes by moving the
+   pointer. cream was indistinguishable from --status-good at 2px: both are pale yellows */
+.card-strip.card-attention { outline: 2px solid var(--attention); }
 .card-strip.card-working { outline: 2px solid var(--status-good); }
 
 .expand-panel .card-panel {

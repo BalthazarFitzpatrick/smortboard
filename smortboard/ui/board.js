@@ -67,8 +67,10 @@ async function onBoardEnter(boardId) {
 
 function cardClasses(card) {
   const classes = ['row', 'card-strip'];
-  if (card.status === 'doing') classes.push('card-working');
+  // blocked wins over working: a card waiting on you is not a card making progress, and showing
+  // both reads as progress
   if (card.blocked_reason_code) classes.push('card-attention');
+  else if (card.status === 'doing') classes.push('card-working');
   return classes.join(' ');
 }
 
@@ -218,4 +220,6 @@ document.addEventListener('keydown', evt => {
   }
 });
 
-loadBoards();
+// FOCUS STARTS ON THE BOARD BAR, per the brief. returnToBoardBar was wired only to onExitTop, so
+// nothing ever focused on load and every key was dead until the user clicked - which no test saw
+loadBoards().then(returnToBoardBar);
