@@ -68,7 +68,7 @@ async function onBoardEnter(boardId) {
 function cardClasses(card) {
   const classes = ['row', 'card-strip'];
   if (card.status === 'doing') classes.push('card-working');
-  if (card.status === 'blocked' || card.review_flag) classes.push('card-attention');
+  if (card.blocked_reason_code) classes.push('card-attention');
   return classes.join(' ');
 }
 
@@ -77,8 +77,8 @@ function renderBuckets(cards) {
   STATUSES.forEach(status => {
     const bucket = row.querySelector(`.bucket[data-status="${status}"] .bucket-rows`);
     bucket.innerHTML = '';
-    // blocked is a status, not one of the five buckets - the contract does not say which bucket a
-    // blocked card shows in, so it keeps its card-attention outline wherever it last sat. see report.
+    // a blocked card still belongs to a column: it keeps the status it was in and carries the
+    // reason code, so it renders in place with the gold outline rather than vanishing
     cards.filter(c => c.status === status)
       .forEach(card => bucket.appendChild(renderCardStrip(card)));
   });

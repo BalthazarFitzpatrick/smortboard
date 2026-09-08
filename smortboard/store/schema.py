@@ -2,7 +2,10 @@
 
 import sqlite3
 
-STATUSES = ("todo", "doing", "checking", "accepted", "rejected", "blocked")
+# THE FIVE KANBAN COLUMNS, AND NOTHING ELSE. blocked is not among them: a blocked card keeps the
+# status it was in and raises blocked_reason_code, which is what draws the gold outline. a sixth
+# status would throw away what the card was doing, which the resume briefing needs
+STATUSES = ("todo", "doing", "checking", "accepted", "rejected")
 BLOCKED_REASON_CODES = (
     "CRASH",
     "USAGE_LIMIT",
@@ -38,7 +41,7 @@ _MIGRATIONS: list[str] = [
         title TEXT NOT NULL,
         workstream TEXT,
         status TEXT NOT NULL CHECK (status IN
-            ('todo', 'doing', 'checking', 'accepted', 'rejected', 'blocked')),
+            ('todo', 'doing', 'checking', 'accepted', 'rejected')),
         blocked_reason_code TEXT CHECK (blocked_reason_code IN
             ('CRASH', 'USAGE_LIMIT', 'LEASE_CONFLICT', 'AGENT_QUESTION',
              'TESTS_FAILED', 'REVIEW_REJECTED', 'DEPENDENCY_REJECTED')),
@@ -46,11 +49,7 @@ _MIGRATIONS: list[str] = [
         position INTEGER NOT NULL,
         review_flag INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        CHECK (
-            (status = 'blocked' AND blocked_reason_code IS NOT NULL)
-            OR (status != 'blocked' AND blocked_reason_code IS NULL)
-        )
+        updated_at TEXT NOT NULL
     );
 
     CREATE TABLE card_tasks (
