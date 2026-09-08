@@ -173,6 +173,27 @@ function escapeHtml(str) {
 
 // ---- placeholders (,  .  u  a) ------------------------------------------------------
 
+// the two side drawers, parked off-screen with a sliver showing. built once and reused: a drawer
+// rebuilt per keypress loses its open state and re-animates from parked every time
+const drawers = {};
+
+function drawerFor(edge, label) {
+  if (drawers[edge]) return drawers[edge];
+  const bar = document.querySelector('.board-bar');
+  const drawer = makeDrawer({
+    edge,
+    sliverRatio: 0.125,
+    heightRatio: 0.625,
+    top: bar ? Math.round(bar.getBoundingClientRect().bottom) : 0,
+  });
+  const box = document.createElement('div');
+  box.className = 'hazard-stripes hazard-placeholder';
+  box.innerHTML = `<span class="hazard-label">${escapeHtml(label)}</span>`;
+  drawer.body.appendChild(box);
+  drawers[edge] = drawer;
+  return drawer;
+}
+
 function openPlaceholder(label) {
   const box = document.createElement('div');
   box.className = 'hazard-stripes hazard-placeholder';
@@ -210,8 +231,8 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyU') { openPlaceholder('usage'); return; }
   if (evt.code === 'KeyA') { openPlaceholder('agent roster'); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
-  if (evt.code === 'Comma') { openPlaceholder('workforce'); return; }
-  if (evt.code === 'Period') { openPlaceholder('mission control'); return; }
+  if (evt.code === 'Comma') { drawerFor('left', 'workforce').toggle(); return; }
+  if (evt.code === 'Period') { drawerFor('right', 'mission control').toggle(); return; }
   if (evt.code === 'Slash' && openCard) { evt.preventDefault(); openCard.input.focus(); return; }
   if (binding.code.startsWith('Digit')) {
     const index = Number(binding.label) - 1;
