@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>smortboard</title>
+  <link rel="stylesheet" href="/ui/base.css">
+  <link rel="stylesheet" href="/ui/layout.css">
+</head>
+<body>
+  <!-- board bar: one nav-tab per board, shell.js drives selection and memory -->
+  <div class="board-bar" id="board-bar" role="tablist"></div>
+
+  <!-- five status buckets, each an ordered list of card-strip rows - makeBuckets drives focus -->
+  <div class="bucket-row" id="bucket-row">
+    <div class="bucket" data-status="todo"><div class="bucket-label">to do</div><div class="bucket-rows"></div></div>
+    <div class="bucket" data-status="doing"><div class="bucket-label">doing</div><div class="bucket-rows"></div></div>
+    <div class="bucket" data-status="checking"><div class="bucket-label">checking</div><div class="bucket-rows"></div></div>
+    <div class="bucket" data-status="accepted"><div class="bucket-label">accepted</div><div class="bucket-rows"></div></div>
+    <div class="bucket" data-status="rejected"><div class="bucket-label">rejected</div><div class="bucket-rows"></div></div>
+  </div>
+
+  <script src="/ui/buckets.js"></script>
+  <script src="/ui/expand.js"></script>
+  <script src="/ui/indicate.js"></script>
+  <script src="/ui/menu.js"></script>
+  <script src="/ui/shell.js"></script>
+  <script src="/ui/board.js"></script>
+</body>
+</html>
