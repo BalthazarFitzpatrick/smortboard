@@ -3,7 +3,10 @@ name = "smortboard"
 version = "0.1.0"
 description = "a browser-based board built on ui_base, python-served, docker in the backend"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    # pinned to a sha, not a tag: ui_base and smortboard are co-developed in lockstep
+    "ui_base @ git+https://github.com/BalthazarFitzpatrick/ui_base.git@f6541174147980002bed95a11c681567dee009b1",
+]
 
 # dependency-groups is the current form; [tool.uv] dev-dependencies is deprecated
 [dependency-groups]

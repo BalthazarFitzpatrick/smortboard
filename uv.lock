@@ -229,6 +229,9 @@ wheels = [
 name = "smortboard"
 version = "0.1.0"
 source = { virtual = "." }
+dependencies = [
+    { name = "ui-base" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -238,6 +241,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=f6541174147980002bed95a11c681567dee009b1" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -245,6 +249,11 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.11.0" },
 ]
+
+[[package]]
+name = "ui-base"
+version = "0.1.0"
+source = { git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=f6541174147980002bed95a11c681567dee009b1#f6541174147980002bed95a11c681567dee009b1" }
 
 [[package]]
 name = "virtualenv"
