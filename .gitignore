@@ -1,0 +1,44 @@
+# secrets — never commit these
+*.env
+.env
+.env.*
+.env.local
+credentials*.yaml
+credentials*.json
+*.key
+*.pem
+secrets.*
+*_token*
+*_secret*
+*_password*
+
+# macos
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# outputs and logs
+output/
+outputs/
+*.log
+*.tmp
+*.bak
+
+# usage-watcher's transient live-resume pointer — overwritten per attempt, never meant to be
+# version controlled
+resume_session.md
+
+# editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# claude code — settings.local.json is machine-local permission grants, never shared
+.claude/settings.local.json
+
+# ledgers live in the private private-ledgers repo, symlinked in
+TASKS.jsonl
+WORKLOG.md

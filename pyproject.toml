@@ -1,0 +1,44 @@
+[project]
+name = "smortboard"
+version = "0.1.0"
+description = "a browser-based board built on ui_base, python-served, docker in the backend"
+requires-python = ">=3.11"
+dependencies = []
+
+# dependency-groups is the current form; [tool.uv] dev-dependencies is deprecated
+[dependency-groups]
+dev = [
+    "ruff>=0.11.0",
+    "pytest>=8.0",
+    "pre-commit>=3.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (undefined names, unused imports)
+    "I",    # isort (import ordering)
+    "UP",   # pyupgrade (modernise syntax)
+    "B",    # flake8-bugbear (common bug patterns)
+    "C4",   # flake8-comprehensions (simplify list/dict/set comprehensions)
+    "SIM",  # flake8-simplify (simplify boolean logic)
+]
+ignore = [
+    "E501",   # line too long — handled by formatter, not linter
+    "B008",   # function calls in default args — common in etl/bi (e.g. datetime.now())
+    "SIM108", # ternary — bi pipeline logic is often clearer as full if/else
+    "UP007",  # x | y union syntax — keep optional[] for readability
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["smortboard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
