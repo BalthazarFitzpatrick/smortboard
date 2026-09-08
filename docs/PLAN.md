@@ -144,10 +144,12 @@ buildable and the earlier assumption that only the status line exposes it was wr
 utilisation stayed at 0.11, so this proves concurrency and a readable signal, not behaviour at the
 limit.
 
-**S3 — lease enforcement.** Determine how a write outside a card's declared paths is detected.
-*Confirms:* a viable mechanism exists (hook on the agent's writes, or `git status` diffing against
-the lease at commit time). *Falsifies:* detection is only possible after the fact — which makes
-leases advisory and moves conflict handling to merge time.
+**S3 — CONFIRMED 2026-09-08, see `docs/spikes/S3-findings.md`.** A `PreToolUse` hook matched on
+`Edit|Write` sees `file_path` before the write lands and blocks it with exit 2. Verified: the
+in-lease edit was written, the out-of-lease edit was refused and the file left unchanged. The
+refusal is distinguishable three ways — `hook_response` with `exit_code: 2` and our own
+`LEASE_CONFLICT:` message on stderr, `result.permission_denials` carrying the exact path, and the
+agent's own report. Leases are enforceable at write time, not advisory.
 
 ---
 
@@ -231,7 +233,10 @@ a container restart, and `export` round-trips.
 
 Depends on S1 and S3.
 
-- Worktree manager: cut, track and destroy a worktree + branch per card, in the card's repo.
+- Worktree manager: cut, track and destroy a worktree + branch per card, in the card's repo. The
+  agent is handed a checkout **already on its branch** — S1 and S3 both showed a card left on main
+  will either name its own branch or deadlock asking permission to make one.
+- Decide what a card run inherits from the operator's configuration, and scope it deliberately.
 - Lease store: paths claimed at card definition, enforced by the mechanism S3 establishes.
 - Claude runner: headless `claude -p` in the worktree, streaming events into the event log.
 - Blocked state with reason codes; gold outline; attention counter.
@@ -339,7 +344,11 @@ claimed but never released, a reviewer that approves before tests finish.
   re-plans Phase 2. Highest-impact unknown; spike first.
 - **One seat, parallel cards** — S2 decides whether Phase 5 is a scheduling problem or a credentials
   problem.
-- **Lease detection after the fact** — makes conflict handling a merge-time concern rather than a
-  write-time one, weakening the "come back to clean branches" promise.
+- ~~Lease detection after the fact~~ — **closed by S3.** Enforcement happens at write time via a
+  `PreToolUse` hook.
+- **Ambient configuration inheritance** — a card run inherits the operator's global CLAUDE.md, hooks
+  and permissions, and `--settings` adds to them rather than replacing them. In S3 this made a card
+  stop and ask permission to create a branch instead of working. Phase 2 must decide explicitly what
+  a card inherits (`--setting-sources`, `--system-prompt`) rather than letting it be ambient.
 - **ui_base gating** — every phase's UI depends on ui_base landing first. Additive components mean
   consumer-app needs no pin bump, but a signature change would break it.

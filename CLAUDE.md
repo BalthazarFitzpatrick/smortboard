@@ -44,13 +44,17 @@ See `docs/PLAN.md` for the full flowchart.
 
 ## Active Context
 
-Plan approved 2026-09-08. Spikes S1 and S2 are done and confirmed - see
-`docs/spikes/S1-S2-findings.md`. Phases 2 and 6 both shrank as a result: session lifecycle,
-worktree creation, commit detection, telemetry and quota all come from the CLI and its event
-stream rather than from code we write.
+Plan approved 2026-09-08. **All three spikes are done and confirmed** - see `docs/spikes/`. The
+plan is no longer provisional; phase 2 can be built.
 
-Next action is S3 - proving a `PreToolUse` hook can refuse an out-of-lease write. No application
-code written yet.
+Phases 2 and 6 shrank: session lifecycle, worktree creation, commit detection, telemetry and quota
+all come from the CLI and its event stream rather than from code we write. Two requirements were
+added instead. The board must hand each agent a worktree **already on its branch** - a card left on
+main either names its own branch or deadlocks asking permission to make one. And phase 2 must decide
+explicitly what a card run inherits from the operator's global config, because `--settings` adds to
+it rather than replacing it.
+
+Next action is phase 0 - the ui_base components. No application code written yet.
 
 Branches: `feature/setup` here, `chore/smortboard-ledger` in private-ledgers.
 
