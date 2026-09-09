@@ -5,7 +5,7 @@ description = "a browser-based board built on ui_base, python-served, docker in 
 requires-python = ">=3.11"
 dependencies = [
     # pinned to a sha, not a tag: ui_base and smortboard are co-developed in lockstep
-    "ui_base @ git+https://github.com/BalthazarFitzpatrick/ui_base.git@090c8b16e0bea46a6b6c0ee429470956f08fdaac",
+    "ui_base @ git+https://github.com/BalthazarFitzpatrick/ui_base.git@7a6619bf4f236e3e316010f2b6f033cd1cc6f533",
 ]
 
 # dependency-groups is the current form; [tool.uv] dev-dependencies is deprecated

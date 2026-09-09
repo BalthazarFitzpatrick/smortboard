@@ -157,7 +157,13 @@ async function openCardPanel(panel, cardId) {
   // stop Escape here so the panel's own Escape (added by makeExpander) sees a still-open card and
   // only takes the input->panel step - the panel->closed step is makeExpander's own job
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); input.blur(); }
+    if (evt.code === 'Escape') {
+      evt.stopPropagation();
+      // NOT input.blur(). blur drops focus on <body>, and from there every arrow key is dead - the
+      // panel has to take it back so escape steps out of the input rather than out of the app
+      const section = panel.querySelector('.card-section');
+      if (section) section.focus(); else input.blur();
+    }
     if (evt.code === 'Enter') {
       evt.preventDefault();
       const body = input.value.trim();
@@ -292,11 +298,24 @@ function openShortcutOverlay() {
 
 // ---- global keyboard model, entirely on event.code ----------------------------------
 
+// FOCUS ON <body> MEANS THE KEYBOARD IS DEAD, whatever dropped it there. rather than hunt every
+// path that can lose focus, any bound key with nothing focused re-enters the board first and then
+// does what it was going to do
+function reenterIfFocusLost() {
+  if (document.activeElement && document.activeElement !== document.body) return false;
+  const card = document.querySelector('.bucket .row');
+  if (card) { card.focus(); indicateFocus(card); return true; }
+  returnToBoardBar();
+  return true;
+}
+
 document.addEventListener('keydown', evt => {
+  const recovered = reenterIfFocusLost();
   const typing = evt.target.matches?.('input, textarea');
   const binding = BINDINGS.find(b => b.code === evt.code);
   if (!binding) return;
 
+  if (recovered && evt.code.startsWith('Arrow')) { evt.preventDefault(); return; }
   if (evt.code === 'ArrowDown' && evt.target.closest?.('.board-bar')) {
     evt.preventDefault();
     document.querySelector('.bucket .row')?.focus();
