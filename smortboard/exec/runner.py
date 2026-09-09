@@ -170,6 +170,7 @@ def run_process(
     cmd: list[str],
     cwd: str | Path | None = None,
     env: dict[str, str] | None = None,
+    stdin_text: str | None = None,
 ) -> RunResult:
     """launches `cmd`, recording every stream-json line into the store as it arrives
 
@@ -186,11 +187,18 @@ def run_process(
         cmd,
         cwd=str(cwd) if cwd is not None else None,
         env=env,
-        stdin=subprocess.DEVNULL,
+        # stdin carries the card credential when there is one, and is closed immediately after -
+        # the container's shell reads exactly one line. DEVNULL otherwise, because `claude -p`
+        # waits three seconds for input it will never get (S1)
+        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+
+    if stdin_text is not None and process.stdin is not None:
+        process.stdin.write(stdin_text)
+        process.stdin.close()
 
     result_event: dict[str, Any] | None = None
     blocked_reason_code: str | None = None
