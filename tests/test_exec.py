@@ -7,9 +7,13 @@ from smortboard.exec.bash_guard import BASH_ESCAPE_PREFIX
 from smortboard.exec.leases import LEASE_CONFLICT_PREFIX, write_lease_settings
 from smortboard.exec.runner import (
     DEFAULT_ALLOWED_TOOLS,
+    DEFAULT_CARD_BUDGET_USD,
+    SYSTEM_PROMPT,
     allowed_tools_for_repo,
+    build_command,
     classify_rate_limit,
     classify_result,
+    lease_preamble,
     parse_line,
     result_to_run_result,
 )
@@ -289,3 +293,43 @@ def test_bash_guard_allows_a_plain_command_with_no_paths(tmp_path):
     worktree.mkdir()
     result = _run_bash_guard(worktree, "git status")
     assert result.returncode == 0
+
+
+def test_a_card_run_carries_a_budget_ceiling():
+    """a card that loops burns real money quietly. measured, one 13-turn card re-read 209k cached
+    tokens, so a thrashing card multiplies that - the budget refuses at the limit instead."""
+    cmd = build_command("do the thing", "/tmp/s.json")
+    assert "--max-budget-usd" in cmd
+    assert cmd[cmd.index("--max-budget-usd") + 1] == str(DEFAULT_CARD_BUDGET_USD)
+
+
+def test_the_budget_can_be_lifted_deliberately():
+    cmd = build_command("do the thing", "/tmp/s.json", budget_usd=None)
+    assert "--max-budget-usd" not in cmd
+
+
+def test_the_lease_is_told_to_the_agent_not_only_enforced():
+    """the lease says exactly which files the work touches. an agent that knows them does not go
+    looking, and exploration is what multiplies turns."""
+    preamble = lease_preamble(["smortboard/exec/runner.py", "tests/test_exec.py"])
+    assert "smortboard/exec/runner.py" in preamble
+    assert "tests/test_exec.py" in preamble
+    assert preamble.endswith("\n\n")  # it prefixes a brief, so it has to separate from it
+
+
+def test_a_card_with_no_lease_gets_no_preamble():
+    assert lease_preamble([]) == ""
+    assert lease_preamble(None) == ""
+
+
+def test_the_default_tools_include_search():
+    """without Grep and Glob an agent reaches for `Bash grep` and is refused. one measured card
+    spent ten of its thirty-two turns being denied reworded shell commands."""
+    assert "Grep" in DEFAULT_ALLOWED_TOOLS
+    assert "Glob" in DEFAULT_ALLOWED_TOOLS
+
+
+def test_the_prompt_says_a_denial_is_final():
+    """the prompt told the agent not to retry a refused WRITE, and said nothing about a refused
+    command - so it tried four spellings of the same denied shell call."""
+    assert "REFUSED COMMAND WILL NOT SUCCEED REWORDED" in SYSTEM_PROMPT

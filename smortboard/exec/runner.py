@@ -28,15 +28,36 @@ SYSTEM_PROMPT = (
     "You are a headless worker executing one card in its own git worktree, already checked out on "
     "its branch. Do not create or switch branches, and do not ask for permission to commit — "
     "committing to this branch is expected. Writes outside your declared path lease are blocked by "
-    "a hook; if one is refused, do not retry it, note it and continue with the rest of the task.\n\n"
+    "a hook; if one is refused, do not retry it, note it and continue with the rest of the task.\n"
+    "A REFUSED COMMAND WILL NOT SUCCEED REWORDED. Your available tools are fixed for this run: if a "
+    "shell command is denied, no variant of it will be permitted, so record what you could not do "
+    "and move on rather than trying another spelling. Use Grep and Glob to search rather than "
+    "shelling out.\n\n"
     "House conventions:\n"
     "- commit messages: lowercase, past tense, no trailing period\n"
     "- no emojis anywhere\n"
-    "- code comments: lowercase, one to three lines\n"
-    "- run python via `uv run`, never `python`/`python3` directly"
+    "- comments lowercase, one to three lines, explaining intent rather than mechanics\n"
+    "- run python through `uv run`, never bare python\n"
 )
 
-DEFAULT_ALLOWED_TOOLS = ("Bash(git *)", "Edit", "Read", "Write")
+
+def lease_preamble(leases: list[str] | None) -> str:
+    """the card's path lease, told to the agent rather than only enforced against it.
+
+    THIS IS NAVIGATION, NOT A WARNING. the lease says exactly which files the work touches, and an
+    agent that knows them does not go looking. exploration is what multiplies turns, and turns are
+    what a run costs: a measured card re-read 209k cached tokens across 13 turns against 22 tokens
+    of genuinely new input. telling it what it may write is the cheapest saving available, and the
+    guard refuses the same paths either way.
+    """
+    if not leases:
+        return ""
+    listed = "\n".join(f"- {glob}" for glob in leases)
+    return (
+        "The files this card may write, and the only ones a hook will permit:\n"
+        f"{listed}\n"
+        "Start there. Read what you need elsewhere, but the work belongs in those paths.\n\n"
+    )
 
 
 def allowed_tools_for_repo(repo: dict[str, Any] | None) -> tuple[str, ...]:
@@ -61,11 +82,21 @@ def allowed_tools_for_repo(repo: dict[str, Any] | None) -> tuple[str, ...]:
     )
 
 
+# GLOB AND GREP ARE FREE AND THEIR ABSENCE IS EXPENSIVE. without a search tool an agent reaches for
+# `Bash grep`, which the allowlist refuses - measured, one card spent ten of its thirty-two turns
+# being denied reworded shell commands it was never going to be allowed. both are read-only
+DEFAULT_ALLOWED_TOOLS = ("Bash(git *)", "Edit", "Read", "Write", "Glob", "Grep")
+
+# a ceiling per card, not a target - see build_command
+DEFAULT_CARD_BUDGET_USD = 5.0
+
+
 def build_command(
     prompt: str,
     settings_path: str | Path,
     model: str = "sonnet",
     allowed_tools: tuple[str, ...] = DEFAULT_ALLOWED_TOOLS,
+    budget_usd: float | None = DEFAULT_CARD_BUDGET_USD,
 ) -> list[str]:
     """the proven S1 invocation shape, with our lease settings and scoping decision wired in"""
     cmd = [
@@ -86,6 +117,11 @@ def build_command(
         "--model",
         model,
     ]
+    # A CEILING, NOT A TARGET. a card that loops burns real money quietly - measured, a single
+    # 13-turn card re-read 209k cached tokens, so a card that thrashes multiplies that. with a
+    # budget the run is refused at the limit rather than found afterwards on the bill
+    if budget_usd is not None:
+        cmd += ["--max-budget-usd", str(budget_usd)]
     for tool in allowed_tools:
         cmd += ["--allowedTools", tool]
     return cmd
