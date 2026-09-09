@@ -73,7 +73,12 @@ function cardClasses(card) {
   else if (card.status === 'doing') classes.push('card-working');
   else if (card.status === 'rejected') classes.push('card-rejected');
   // PREVIEW ONLY - the fan, still being judged
-  if (card.workstream === 'overlap') classes.push('card-overlap');
+  // PREVIEW - the fan, plus one treatment per column for telling a collapsed stack apart
+  if (card.workstream && card.workstream.startsWith('overlap:')) {
+    classes.push('card-overlap', 'card-fan-' + card.workstream.slice(8));
+  } else if (card.workstream === 'overlap') {
+    classes.push('card-overlap');
+  }
   return classes.join(' ');
 }
 
