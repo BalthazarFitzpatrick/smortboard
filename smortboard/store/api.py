@@ -97,6 +97,19 @@ class Store:
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    def delete_board(self, board_id: str) -> None:
+        """removes a board, its repos, and every card on it.
+
+        there was no way to delete a board at all, so a board created by mistake stayed on the bar
+        for good. cards go through delete_card so their children go with them.
+        """
+        self.get_board(board_id)  # raises NotFoundError, so deleting twice is honest
+        for card in self.list_cards(board_id):
+            self.delete_card(card["id"])
+        self._conn.execute("DELETE FROM repos WHERE board_id = ?", (board_id,))
+        self._conn.execute("DELETE FROM boards WHERE id = ?", (board_id,))
+        self._conn.commit()
+
     # -- cards -----------------------------------------------------------------
 
     def _check_blocked_invariant(self, status: str, blocked_reason_code: str | None) -> None:
@@ -220,8 +233,33 @@ class Store:
         self._conn.commit()
         return self.get_card(card_id)
 
+    # every table that points at a card, so deleting one takes its children with it. named
+    # explicitly rather than relying on ON DELETE CASCADE, which the schema does not declare and
+    # which sqlite only honours when foreign_keys is on - a silent orphan is worse than a loud list
+    _CARD_CHILDREN = (
+        "card_tasks",
+        "card_criteria",
+        "card_leases",
+        "attachments",
+        "comments",
+        "events",
+    )
+
     def delete_card(self, card_id: str) -> None:
+        """removes a card and everything hanging off it, in one transaction.
+
+        this used to be a single DELETE against cards, which raised FOREIGN KEY constraint failed
+        for any card that had ever been commented on, given a task, or run - so it worked in a test
+        that deleted a bare card and failed on every real one.
+        """
         self._card_row(card_id)
+        for table in self._CARD_CHILDREN:
+            self._conn.execute(f"DELETE FROM {table} WHERE card_id = ?", (card_id,))
+        # a dependency edge names a card at either end, so both directions have to go
+        self._conn.execute(
+            "DELETE FROM card_deps WHERE card_id = ? OR depends_on_card_id = ?",
+            (card_id, card_id),
+        )
         self._conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
         self._conn.commit()
 
