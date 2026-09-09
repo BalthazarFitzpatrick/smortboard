@@ -304,7 +304,7 @@ def test_container_backend_real_docker_smoke(tmp_path):
 def test_the_default_token_path_is_honoured(tmp_path, monkeypatch):
     """exercises card_token_path()'s default branch, which nothing reached before - ruff caught an
     undefined constant on that line that the whole suite had walked straight past."""
-    monkeypatch.setattr("smortboard.exec.backends._keychain_token", lambda: None)
+    monkeypatch.setattr("smortboard.exec.backends._credential_store_token", lambda: None)
     token = tmp_path / "card_token"
     token.write_text("from-the-file\n")
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(token))
@@ -312,9 +312,29 @@ def test_the_default_token_path_is_honoured(tmp_path, monkeypatch):
     assert read_card_token() == "from-the-file"
 
 
-def test_the_keychain_wins_over_a_file(tmp_path, monkeypatch):
-    monkeypatch.setattr("smortboard.exec.backends._keychain_token", lambda: "from-the-keychain")
+def test_the_credential_store_wins_over_a_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "smortboard.exec.backends._credential_store_token", lambda: "from-the-keychain"
+    )
     token = tmp_path / "card_token"
     token.write_text("from-the-file\n")
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(token))
     assert read_card_token() == "from-the-keychain"
+
+
+def test_the_instructions_name_the_platform_actually_in_use(tmp_path, monkeypatch):
+    """the message used to tell a Windows user to run a macOS command."""
+    monkeypatch.setattr("smortboard.exec.backends._credential_store_token", lambda: None)
+    monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "absent"))
+
+    monkeypatch.setattr("smortboard.exec.backends.os.name", "nt")
+    with pytest.raises(CardTokenMissing) as win:
+        read_card_token()
+    assert "Credential Manager" in str(win.value)
+    assert "security add-generic-password" not in str(win.value)
+
+    monkeypatch.setattr("smortboard.exec.backends.os.name", "posix")
+    monkeypatch.setattr("smortboard.exec.backends.sys.platform", "darwin")
+    with pytest.raises(CardTokenMissing) as mac:
+        read_card_token()
+    assert "security add-generic-password" in str(mac.value)
