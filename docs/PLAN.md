@@ -252,16 +252,40 @@ with a correct reason code.
 
 ### Phase 3 — the gates
 
-- Unit test runner per card, derived from acceptance criteria.
-- Reviewer agent: practices, vulnerabilities, inefficiencies, leaked credentials, performance.
-- Review setting per card with global override: findings auto-fixed by the worker, or surfaced via
-  attention.
-- Worker summary and reviewer verdict rendered in the card.
-- Merge request: push the branch, surface the GitHub PR link. Never merge.
-- Rejection: destroy the worktree, cut fresh from base, attach a read-only diff of the attempt.
-- Dependent cards of a rejected card get the yellow highlight for review.
+**Two gates, and they answer different questions.** Keeping them apart is the point of having two:
 
-**Ships when:** the whole-system test passes end to end.
+| gate | question | input |
+|---|---|---|
+| unit tests | did it do the thing that was asked? | the acceptance criteria |
+| reviewer | is the code safe and decent? | the diff |
+
+**The reviewer does not judge acceptance criteria.** The tests do that, and they were written from
+the criteria before the work started. The reviewer reads the diff and answers four questions and no
+others:
+
+- **vulnerabilities** — injection, unsafe deserialisation, path traversal, unchecked input
+- **leaked credentials** — a key, token or password reaching the diff at all
+- **best practices** — the project's own conventions, and the language's
+- **efficient coding** — work done repeatedly that could be done once, and obvious waste
+
+This is why criteria are immutable and tests come first. A reviewer that also judged "did it meet
+the criteria" would be judging a target the same run could have moved; splitting them means each
+gate has something fixed to measure against.
+
+```
+unit test runner per card, from the acceptance criteria
+reviewer agent over the diff, on the four questions above
+review setting per card with a global override: findings auto-fixed by the worker, or surfaced
+  through attention
+worker summary and reviewer verdict rendered on the card
+merge request: push the branch and OPEN THE PULL REQUEST with gh, title and body written. never
+  merge - that is Fabian's, and the hook refuses it anyway
+rejection: destroy the worktree, cut fresh from base, attach a read-only diff of the attempt
+dependent cards of a rejected card take the attention colour for review
+```
+
+**Ships when:** the whole-system test passes end to end, including a card whose reviewer finds
+something and whose card lands in attention rather than in Checking.
 
 ### Phase 4 — Mission Control
 
@@ -370,6 +394,24 @@ claimed but never released, a reviewer that approves before tests finish.
 - Docker image builds and the board survives a container restart with state intact.
 
 ## Risks
+
+- **A card is not contained, only guided.** The lease hook stops writes outside the card's paths and
+  a Bash guard stops the obvious escapes, but shell is arbitrary and a determined command gets out.
+  Real containment means running the card in a container — and a git WORKTREE IS NOT SELF-CONTAINED:
+  its `.git` is a pointer file into the parent repo, so mounting only the worktree leaves git dead
+  and the card unable to commit. That forces a choice, which belongs to Phase 5 when parallelism
+  makes it matter:
+  - **mount the parent repo** — git works, the scope is the repo, and the lease stays what keeps one
+    card out of another's worktree
+  - **clone per card** — genuinely self-contained and mounts cleanly, at the cost of disk and a few
+    seconds per card
+  Two things a container does not solve either way: the card needs the CLI and an authenticated
+  token inside it, so the subscription seat crosses the boundary by design; and network cannot be
+  off, since the run has to reach the API. The boundary is filesystem and process, not credential
+  and not network.
+- **Everything a card needs must be in the repo**, which is a good contract and makes the container
+  reproducible — with the standing exception that secrets are mounted, never committed.
+
 
 - **S1 falsified** — headless Claude Code cannot be driven per card. Forces the Agent SDK and
   re-plans Phase 2. Highest-impact unknown; spike first.
