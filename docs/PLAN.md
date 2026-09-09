@@ -274,6 +274,10 @@ the criteria" would be judging a target the same run could have moved; splitting
 gate has something fixed to measure against.
 
 ```
+pass the card's path lease into the prompt, not only into the guard - see "What a card is, and
+  what it costs": it is navigation the agent is currently denied
+pass --max-budget-usd, defaulting from the board, so a runaway card is refused rather than found
+  on the bill
 unit test runner per card, from the acceptance criteria
 reviewer agent over the diff, on the four questions above
 review setting per card with a global override: findings auto-fixed by the worker, or surfaced
@@ -467,6 +471,69 @@ get a runtime.
 - **the token is inside it.** A container is a filesystem boundary, not a credential one. What
   protects the credential is that it is a *separate* one: a card token can be revoked without
   touching the operator's own session
+
+## What a card is, and what it costs
+
+### A card is a feature, not an edit
+
+A card is a unit of work with an outcome and a list of tasks that get there: *"wowtomate needs a new
+tab, here is what it shows, here is how it behaves."* Not *"change this sentence."*
+
+That is a design choice, and it is also the cheaper one, which is not obvious. **The token cost of a
+run is turns multiplied by context-per-turn, and there is a floor.** Measured on a real card: 13
+turns, 209,503 cache-read tokens, and only 22 tokens of genuinely new input — roughly 16k of system
+prompt and tool definitions re-read on *every* turn, before the card does anything at all. A
+three-turn card pays about 48k to accomplish almost nothing.
+
+So slicing work into many tiny cards is actively wasteful: you pay the fixed overhead again for each
+one, and none of them learn from the last. The board's own affordances make small cards tempting;
+the cost floor is the reason not to.
+
+### Where a feature-sized card gets expensive instead
+
+The opposite failure. A long card's context grows as it reads, and **a file read on turn 2 is
+re-read from cache on every turn after it** — read one big file early in a fifty-turn card and you
+pay for it fifty times. The tax compounds in a way it never does for a short card.
+
+Which makes three things load-bearing rather than nice:
+
+- **the task list is the convergence mechanism.** An agent working through stated tasks does not
+  explore, and exploration is what multiplies turns
+- **`--max-budget-usd`**, which `claude -p` accepts and the runner does not yet pass. A budget turns
+  "a card looped and burned forty dollars" from a discovery on the bill into a refusal. It belongs
+  on the card, defaulting from the board
+- **acceptance criteria written before the work**, which is already the rule for the test gate, and
+  is what stops a card wandering past its outcome
+
+**Unresolved:** a card large enough may exhaust its context window before finishing. Nothing handles
+that today. The honest options are compaction inside the run, or the board splitting the card — and
+neither should be designed before a real card actually hits it.
+
+### The levers, in the order they matter
+
+1. **Fewer turns.** The path lease is computed and then *hidden from the agent*, used only to refuse
+   writes. Putting it in the prompt turns a security mechanism into navigation, for free, and is the
+   cheapest change available.
+2. **Smaller context per turn**, because it compounds. The per-repo `allowedTools` scoping shrinks
+   every turn, not just the first.
+3. **A budget ceiling**, as above.
+4. **The reviewer reads the diff, not the repo** — already decided, and this is a second reason for
+   it.
+
+Two things already true and worth not breaking: the repo's own `CLAUDE.md` is inherited through
+`--setting-sources project`, so a good one prevents exploration; and every run's `usage` and
+`total_cost_usd` already land in the event log, so cost per card is measurable rather than guessed.
+**Instrument before optimising** — the numbers above come from two runs on a one-file repo, which is
+not a real codebase.
+
+### A card is not a conversation
+
+Worth stating because the two get conflated. The API is stateless: every turn re-sends the whole
+context, in a card exactly as in an interactive session. The difference is across runs, not within
+one. A long session amortises understanding and pays a per-turn tax that grows without limit; a card
+starts small, stays small, and learns nothing from the card before it. Neither is simply cheaper —
+they trade reuse against boundedness, which is why the Phase 5 resume briefing hands a card a
+summary rather than letting it re-derive.
 
 ## Risks
 
