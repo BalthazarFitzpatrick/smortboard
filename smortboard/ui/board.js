@@ -71,6 +71,9 @@ function cardClasses(card) {
   // both reads as progress
   if (card.blocked_reason_code) classes.push('card-attention');
   else if (card.status === 'doing') classes.push('card-working');
+  else if (card.status === 'rejected') classes.push('card-rejected');
+  // PREVIEW ONLY - the fan, still being judged
+  if (card.workstream === 'overlap') classes.push('card-overlap');
   return classes.join(' ');
 }
 
@@ -85,6 +88,9 @@ function renderBuckets(cards) {
       .forEach(card => bucket.appendChild(renderCardStrip(card)));
   });
   bucketsApi = makeBuckets(row, {onExitTop: returnToBoardBar});
+  // the cream marker glides to whatever took focus, rather than every card drawing its own ring.
+  // focusin rather than a per-card handler, so it also catches focus arriving by click or by tab
+  row.addEventListener('focusin', evt => indicateFocus(evt.target));
 }
 
 function renderCardStrip(card) {
@@ -92,12 +98,30 @@ function renderCardStrip(card) {
   strip.className = cardClasses(card);
   strip.tabIndex = -1;
   strip.dataset.cardId = card.id;
+  // a card, not a strip: a title band at the top, a rule, the description with the room, and the
+  // secondary facts sitting on the floor. ui_base draws the rule with .h-divider - the parent
+  // spaces its children and the rule only draws the line
+  const stat = card.blocked_reason_code || card.status;
   strip.innerHTML = `
-    <div class="card-title">${escapeHtml(card.title)}</div>
-    <div class="card-workstream">${escapeHtml(card.workstream || '')}</div>
+    <div class="card-head"><div class="card-title">${escapeHtml(card.title)}</div></div>
+    <div class="h-divider"></div>
+    <div class="card-body">${escapeHtml(card.description || '')}</div>
+    <div class="h-divider"></div>
+    <div class="card-foot">
+      <span class="card-workstream">${escapeHtml(card.workstream || '')}</span>
+      <span class="card-stat">${escapeHtml(stat)}</span>
+    </div>
   `;
   const expander = makeExpander(strip, {
-    onOpen: panel => openCardPanel(panel, card.id),
+    // THE PLATE BECOMES A BORDER ON THE WAY OPEN. a panel painted with the plate would make a whole
+    // screen of it, and the colour stops being a signal once it is the background you are reading
+    // on - as an edge it survives the expansion without taking the panel over
+    onOpen: panel => {
+      cardClasses(card).split(' ')
+        .filter(c => c.startsWith('card-') && c !== 'card-strip')
+        .forEach(c => panel.classList.add(c));
+      openCardPanel(panel, card.id);
+    },
     onClose: () => { openCard = null; },
   });
   strip.addEventListener('keydown', evt => {
@@ -111,7 +135,10 @@ function renderCardStrip(card) {
 }
 
 function returnToBoardBar() {
-  document.querySelector('.board-bar .nav-tab.active')?.focus();
+  const tab = document.querySelector('.board-bar .nav-tab.active');
+  if (!tab) return;
+  tab.focus();
+  indicateFocus(tab);
 }
 
 // ---- card panel -------------------------------------------------------------------
@@ -177,14 +204,20 @@ function escapeHtml(str) {
 // rebuilt per keypress loses its open state and re-animates from parked every time
 const drawers = {};
 
+// the gap above and below a drawer, equal at both ends so it reads as pinned rather than floating
+const DRAWER_INSET_PX = 50;
+
 function drawerFor(edge, label) {
   if (drawers[edge]) return drawers[edge];
   const bar = document.querySelector('.board-bar');
   const drawer = makeDrawer({
     edge,
-    sliverRatio: 0.125,
-    heightRatio: 0.625,
-    top: bar ? Math.round(bar.getBoundingClientRect().bottom) : 0,
+    // two fifths of the eighth it used to show - enough to say a drawer is there, little
+    // enough that it stays out of the way of the board
+    sliverRatio: 0.05,
+    widthRatio: 0.85,
+    top: (bar ? Math.round(bar.getBoundingClientRect().bottom) : 0) + DRAWER_INSET_PX,
+    bottom: DRAWER_INSET_PX,
   });
   const box = document.createElement('div');
   box.className = 'hazard-stripes hazard-placeholder';
@@ -194,20 +227,58 @@ function drawerFor(edge, label) {
   return drawer;
 }
 
-function openPlaceholder(label) {
-  const box = document.createElement('div');
-  box.className = 'hazard-stripes hazard-placeholder';
-  box.innerHTML = `<span class="hazard-label">${escapeHtml(label)}</span>`;
-  new Menu({title: label, sections: [{kind: 'node', node: box}]})
-    .openAt({x: window.innerWidth / 2 - 160, y: window.innerHeight / 2 - 80});
+// BUILT AT STARTUP, NOT ON FIRST PRESS. the sliver is the affordance that tells you a drawer is
+// there at all, so a drawer that only exists once you already knew to press the key is useless
+function buildDrawers() {
+  drawerFor('left', 'workforce');
+  drawerFor('right', 'mission control');
+}
+
+// THE KEY THAT OPENS AN OVERLAY ALSO CLOSES IT. Menu dismisses on outside click and escape but
+// knows nothing about the key that summoned it, so the caller remembers which one is open. onDismiss
+// clears the record however the menu went away, or the next press reopens what the user just closed
+let openOverlay = null;
+
+function toggleOverlay(key, build) {
+  if (openOverlay && openOverlay.key === key) {
+    openOverlay.menu.close();
+    openOverlay = null;
+    return;
+  }
+  if (openOverlay) { openOverlay.menu.close(); openOverlay = null; }
+  const menu = build();
+  openOverlay = {key, menu};
+  return menu;
+}
+
+function openPlaceholder(key, label) {
+  toggleOverlay(key, () => {
+    const box = document.createElement('div');
+    box.className = 'hazard-stripes hazard-placeholder';
+    box.innerHTML = `<span class="hazard-label">${escapeHtml(label)}</span>`;
+    const menu = new Menu({
+      title: label,
+      sections: [{kind: 'node', node: box}],
+      onDismiss: () => { if (openOverlay && openOverlay.key === key) openOverlay = null; },
+    });
+    menu.openAt({x: window.innerWidth / 2 - 160, y: window.innerHeight / 2 - 80});
+    return menu;
+  });
 }
 
 // ---- shortcut overlay, built from BINDINGS so it cannot drift -----------------------
 
 function openShortcutOverlay() {
-  const items = BINDINGS.map(b => ({id: b.code, label: `${b.label} - ${b.action}`, disabled: true}));
-  new Menu({title: 'keyboard shortcuts', sections: [{kind: 'list', items}]})
-    .openAt({x: window.innerWidth / 2 - 160, y: 60});
+  toggleOverlay('KeyS', () => {
+    const items = BINDINGS.map(b => ({id: b.code, label: `${b.label} - ${b.action}`, disabled: true}));
+    const menu = new Menu({
+      title: 'keyboard shortcuts',
+      sections: [{kind: 'list', items}],
+      onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyS') openOverlay = null; },
+    });
+    menu.openAt({x: window.innerWidth / 2 - 160, y: 60});
+    return menu;
+  });
 }
 
 // ---- global keyboard model, entirely on event.code ----------------------------------
@@ -228,8 +299,8 @@ document.addEventListener('keydown', evt => {
   if (typing) return; // letters and slash only fire the model outside text input
 
   if (evt.code === 'KeyG') { grouped = !grouped; return; }
-  if (evt.code === 'KeyU') { openPlaceholder('usage'); return; }
-  if (evt.code === 'KeyA') { openPlaceholder('agent roster'); return; }
+  if (evt.code === 'KeyU') { openPlaceholder('KeyU', 'usage'); return; }
+  if (evt.code === 'KeyA') { openPlaceholder('KeyA', 'agent roster'); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'Comma') { drawerFor('left', 'workforce').toggle(); return; }
   if (evt.code === 'Period') { drawerFor('right', 'mission control').toggle(); return; }
@@ -243,4 +314,4 @@ document.addEventListener('keydown', evt => {
 
 // FOCUS STARTS ON THE BOARD BAR, per the brief. returnToBoardBar was wired only to onExitTop, so
 // nothing ever focused on load and every key was dead until the user clicked - which no test saw
-loadBoards().then(returnToBoardBar);
+loadBoards().then(() => { buildDrawers(); returnToBoardBar(); });

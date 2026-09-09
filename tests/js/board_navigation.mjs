@@ -27,9 +27,9 @@ STATUS_ORDER.forEach(status => {
 document.body.appendChild(boardBar);
 document.body.appendChild(bucketRow);
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('shell.js'), smort('board.js')].join('\n;\n');
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('board.js')].join('\n;\n');
 const mod = new Function(`${src}
-;return {STATUSES, BINDINGS, renderBuckets, renderCardStrip};`)();
+;return {STATUSES, BINDINGS, renderBuckets, renderCardStrip, cardClasses};`)();
 
 // ---- five status buckets, matching the contract's kanban columns exactly
 assert.deepEqual(mod.STATUSES, STATUS_ORDER, 'board.js should declare exactly the five kanban statuses');
@@ -67,3 +67,13 @@ assert.equal(document.body.children.filter(c => c.classList.contains('modal-back
   'Escape should close the open card');
 
 console.log('ok');
+
+// a rejected card wears the stone fill; nothing applied the class before, so the style existed and
+// was never reachable from real data
+const rejected = mod.cardClasses({status: 'rejected', blocked_reason_code: null});
+assert.ok(rejected.includes('card-rejected'), 'a rejected card takes the stone fill');
+const working = mod.cardClasses({status: 'doing', blocked_reason_code: null});
+assert.ok(working.includes('card-working') && !working.includes('card-rejected'));
+const blocked = mod.cardClasses({status: 'doing', blocked_reason_code: 'USAGE_LIMIT'});
+assert.ok(blocked.includes('card-attention') && !blocked.includes('card-working'),
+  'blocked wins over working - a card waiting on you is not a card making progress');
