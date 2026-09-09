@@ -122,10 +122,34 @@ body {
    means the arrow keys already drive it and no script has to track a selection.
    only the siblings AFTER the focused card move: the ones above it are already fully visible,
    since each card overlaps the one before it rather than the one after. */
-.card-overlap { margin-top: calc(var(--fan-overlap, 96px) * -1); transition: transform 140ms; }
+/* 176 of a 264px card, so about a third stays visible - the title band and the top of the rule.
+   at 96 the cards barely touched and the whole question of telling them apart did not arise */
+/* THE SEAM AND THE CAST TOGETHER. a collapsed stack read as one ruled list, because consecutive
+   title bands with nothing between them look like rows rather than like cards. an 8px band of the
+   page's own ground cuts each card off from the one beneath, and the cast behind it does what a
+   real pile does - together they say "separate object" where either alone only hinted at it.
+   THE SPREAD IS POSITIVE AND THAT IS THE POINT: a negative spread pulls the shadow in before it
+   blurs, so it rises off the top edge and never turns the corner. spread buys the wrap around the
+   corners, blur buys the fade.
+   both offsets are negative because a card is pulled UP over the one before it, so the edge doing
+   the overlapping is its top */
+.card-overlap {
+  /* THE OVERLAP IS A PROPORTION, NOT A PIXEL COUNT. at a fixed 176px the strip shrank with the
+     column - 106px of card showing at 1600 wide, 43px at 1100 - and on a narrow enough window the
+     cards would have hidden completely. a percentage margin resolves against the container's WIDTH,
+     and the card is width x 1.2, so -80% hides exactly two thirds of its height at any size */
+  margin-top: -80%;
+  transition: transform 140ms;
+  box-shadow:
+    0 -8px 0 0 var(--bg),
+    0 -8px 20px 3px rgba(0, 0, 0, 0.72);
+}
+
 .card-overlap:first-child { margin-top: 0; }
 .card-overlap:focus { position: relative; z-index: 2; }
-.card-overlap:focus ~ .card-overlap { transform: translateY(var(--fan-overlap, 96px)); }
+/* the slide matches the hidden fraction, so a focused card is revealed exactly */
+.card-overlap:focus ~ .card-overlap { transform: translateY(80%); }
+
 /* ===== end preview block ==================================================================== */
 
 /* the cream border stays on every card; state is a 3px glow OUTSIDE it. the innermost pixel is the
