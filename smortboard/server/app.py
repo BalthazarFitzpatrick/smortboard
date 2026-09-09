@@ -36,6 +36,7 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/attachments$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/attachments/(?P<attachment_id>[^/]+)$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/events$"), "GET"),
+    (re.compile(r"^/api/tasks/(?P<task_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
 ]
 
@@ -132,6 +133,8 @@ def _make_handler(store: Store) -> type[BaseHTTPRequestHandler]:
             elif "board_id" in params and method == "DELETE":
                 store.delete_board(params["board_id"])
                 self._send_status(204)
+            elif "task_id" in params and method == "PATCH":
+                self._handle_patch_task(params["task_id"])
             elif "name" in params:
                 self._handle_asset(params["name"])
             else:
@@ -145,6 +148,16 @@ def _make_handler(store: Store) -> type[BaseHTTPRequestHandler]:
                 return
             card = store.update_card(card_id, **body)
             self._send_json(200, card)
+
+        def _handle_patch_task(self, task_id: str) -> None:
+            # only "done" is exposed here - add_task/remove_task stay store-only, for a human
+            body = self._read_json()
+            unknown = set(body) - {"done"}
+            if unknown:
+                self._send_json(400, {"error": f"not writable: {sorted(unknown)}"})
+                return
+            task = store.set_task_done(task_id, done=bool(body.get("done", True)))
+            self._send_json(200, task)
 
         def _handle_upload(self, card_id: str) -> None:
             content_type = self.headers.get("Content-Type", "")

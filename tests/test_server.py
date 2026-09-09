@@ -137,6 +137,37 @@ def test_patch_card_blocked_without_reason_is_400(running_server):
     assert "error" in body
 
 
+def test_patch_task_done_round_trips(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "x", "tasks": ["ship it"]},
+    )
+    task_id = card["tasks"][0]["id"]
+
+    status, task = _request(f"{running_server}/api/tasks/{task_id}", "PATCH", {"done": True})
+    assert status == 200
+    assert task["done"] == 1
+
+    status, fetched = _request(f"{running_server}/api/cards/{card['id']}")
+    assert fetched["tasks"][0]["done"] == 1
+
+
+def test_patch_task_unknown_field_is_400(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "x", "tasks": ["ship it"]},
+    )
+    task_id = card["tasks"][0]["id"]
+
+    status, body = _request(f"{running_server}/api/tasks/{task_id}", "PATCH", {"text": "rewritten"})
+    assert status == 400
+    assert "error" in body
+
+
 def test_get_missing_card_is_404(running_server):
     status, body = _request(f"{running_server}/api/cards/does-not-exist")
     assert status == 404
