@@ -6,7 +6,12 @@ requires-python = ">=3.11"
 dependencies = [
     # pinned to a sha, not a tag: ui_base and smortboard are co-developed in lockstep
     "ui_base @ git+https://github.com/BalthazarFitzpatrick/ui_base.git@7a6619bf4f236e3e316010f2b6f033cd1cc6f533",
+    # os-correct data dir for the default db location — not the cwd, not a hand-rolled path
+    "platformdirs>=4.0",
 ]
+
+[project.scripts]
+smortboard = "smortboard.cli:main"
 
 # dependency-groups is the current form; [tool.uv] dev-dependencies is deprecated
 [dependency-groups]
@@ -15,6 +20,20 @@ dev = [
     "pytest>=8.0",
     "pre-commit>=3.7",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ui assets under smortboard/ui/ are not .py files, so hatchling's default python-source
+# packaging must be told about them explicitly or the wheel installs but serves nothing
+[tool.hatch.build.targets.wheel]
+packages = ["smortboard"]
+artifacts = ["smortboard/ui/**"]
+
+# ui_base is pinned to a git sha, not a pypi release, while the two repos are co-developed
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.ruff]
 line-length = 100
