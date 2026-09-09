@@ -14,10 +14,10 @@ import pytest
 
 from smortboard.exec import backends
 from smortboard.exec.backends import (
+    CardRuntimeUnavailable,
     ContainerBackend,
-    SubprocessBackend,
     docker_available,
-    select_backend,
+    require_card_runtime,
 )
 from smortboard.exec.runner import RunResult
 from smortboard.exec.worktrees import WorktreeError, create_worktree
@@ -50,26 +50,27 @@ def _fake_result(subtype="success"):
 # -- backend selection ---------------------------------------------------------
 
 
-def test_select_backend_is_subprocess_when_docker_unavailable(monkeypatch):
-    monkeypatch.setattr(backends, "docker_available", lambda: False)
-    backend = select_backend(token_path="/nonexistent/token")
-    assert backend.name == "subprocess"
-    assert isinstance(backend, SubprocessBackend)
+def test_no_docker_refuses_rather_than_falling_back(monkeypatch):
+    """there is no subprocess fallback on purpose: it would put an agent that may have read
+    untrusted input on the operator's own filesystem, with their own credential."""
+    monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: False)
+    with pytest.raises(CardRuntimeUnavailable) as exc:
+        require_card_runtime(token_path="/nonexistent/token")
+    assert "Docker" in str(exc.value)
 
 
-def test_select_backend_is_subprocess_when_token_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(backends, "docker_available", lambda: True)
-    backend = select_backend(token_path=tmp_path / "missing-token")
-    assert backend.name == "subprocess"
+def test_missing_card_credential_refuses_and_says_how_to_fix_it(tmp_path, monkeypatch):
+    monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: True)
+    with pytest.raises(CardRuntimeUnavailable) as exc:
+        require_card_runtime(token_path=tmp_path / "missing-token")
+    assert "claude setup-token" in str(exc.value)
 
 
-def test_select_backend_is_container_when_docker_and_token_are_there(tmp_path, monkeypatch):
-    monkeypatch.setattr(backends, "docker_available", lambda: True)
-    token = tmp_path / "token"
-    token.write_text("secret")
-    backend = select_backend(token_path=token)
-    assert backend.name == "container"
-    assert isinstance(backend, ContainerBackend)
+def test_the_runtime_is_the_container_when_docker_and_token_are_there(tmp_path, monkeypatch):
+    monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: True)
+    token = tmp_path / "card_token"
+    token.write_text("t")
+    assert isinstance(require_card_runtime(token_path=token), ContainerBackend)
 
 
 def test_docker_available_false_when_docker_missing_from_path(monkeypatch):
@@ -278,38 +279,6 @@ def test_container_run_card_raises_when_token_missing(tmp_path):
 # -- subprocess backend: token becomes an env var, never for the container ----
 
 
-def test_subprocess_backend_puts_token_in_env(tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _init_repo(repo)
-    info = create_worktree(repo, "card-5")
-
-    token = tmp_path / "token"
-    token.write_text("shh\n")
-
-    seen = {}
-
-    def _fake_run_process(store, card_id, cmd, cwd=None, env=None):
-        seen["env"] = env
-        return _fake_result()
-
-    monkeypatch.setattr("smortboard.exec.backends.run_process", _fake_run_process)
-
-    backend = SubprocessBackend()
-    with Store(tmp_path / "board.sqlite3") as store:
-        board = store.create_board("b")
-        card = store.create_card(board["id"], None, "a card")
-        backend.run_card(
-            store, card["id"], info.path, "prompt", tmp_path / "settings.json", token_path=token
-        )
-
-    assert seen["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "shh"
-
-
-# -- real docker smoke test: skipped unless Docker actually works ------------
-
-
-@pytest.mark.skipif(not docker_available(), reason="requires a working docker daemon")
 def test_container_backend_real_docker_smoke(tmp_path):
     """end to end: builds nothing (no image required), just proves docker itself can run a
     throwaway container against a real bind mount and this backend can shell out to it"""
