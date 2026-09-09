@@ -112,6 +112,14 @@ _MIGRATIONS: list[str] = [
     """
     ALTER TABLE repos ADD COLUMN test_command TEXT;
     """,
+    # 3: the image a card on this repo runs in. SHARED TOOLS, ISOLATED CARDS: the toolchain is baked
+    # into one image per repo so a fresh container per card does not reinstall dependencies every
+    # run, while each card still gets its own container and its own clone. a shared package cache
+    # would have been cheaper still and is deliberately not used - it is a writable surface every
+    # later card reads, which is the cross-card contamination the per-card container exists to stop
+    """
+    ALTER TABLE repos ADD COLUMN image TEXT;
+    """,
 ]
 
 

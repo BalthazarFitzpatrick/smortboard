@@ -338,3 +338,22 @@ def test_the_instructions_name_the_platform_actually_in_use(tmp_path, monkeypatc
     with pytest.raises(CardTokenMissing) as mac:
         read_card_token()
     assert "security add-generic-password" in str(mac.value)
+
+
+def test_a_repo_brings_its_own_image_and_a_card_still_gets_its_own_container(tmp_path):
+    """shared tools, isolated cards: the toolchain is baked into one image per repo so a fresh
+    container per card does not reinstall dependencies, while each card keeps its own container."""
+    backend = ContainerBackend(image="default-img")
+    repo = {"image": "smortboard-card-python:latest", "test_command": "uv run pytest"}
+
+    with_repo = backend._docker_command(tmp_path / "c", "p", tmp_path / "s.json", "sonnet", repo)
+    assert "smortboard-card-python:latest" in with_repo
+    assert "default-img" not in with_repo
+
+    without = backend._docker_command(tmp_path / "c", "p", tmp_path / "s.json", "sonnet", None)
+    assert "default-img" in without
+
+    # the image is the only thing shared - still one clone mount, still --rm, still no env credential
+    assert with_repo.count("-v") == 1
+    assert "--rm" in with_repo
+    assert "-e" not in with_repo

@@ -426,6 +426,24 @@ guard that refuses a push to main lives in the operator's user settings, and a c
 `--setting-sources project` and never sees it. A card that cannot reach GitHub cannot write main
 whatever it decides to do.
 
+### Shared tools, isolated cards
+
+The toolchain lives in **one image per repo**, declared on the repo alongside its `test_command`.
+A fresh container per card would otherwise pay for `uv sync` or `npm install` on every single run —
+not a second, but minutes, on every card. Baked into the image, a card's container costs about a
+second to start.
+
+**A shared package cache was the cheaper option and is deliberately not used.** A cache mounted
+writable across cards is a surface every later card reads, so one injected card poisons the next —
+which is exactly the cross-card contamination the per-card container exists to prevent. An image is
+read-only; a cache is not.
+
+Per-card rather than per-repo containers, for two reasons beyond isolation. **Lifecycle:** a
+container that lives and dies with its card needs no process management, no idle cleanup, and no
+answer to "one card wedged the container two others are using". **And it costs no disk:** two cards
+on one repo are on different branches, so they need separate checkouts either way — sharing a clone
+would put them back on a shared `.git`, where one card can rewrite another's refs.
+
 ### One card runtime, and Docker is a hard dependency
 
 **There is no second mode.** A card runs in a container or it does not run. If Docker is missing, or

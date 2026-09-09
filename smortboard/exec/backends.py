@@ -216,6 +216,17 @@ class ContainerBackend:
         if result.returncode != 0:
             raise WorktreeError(f"clone for card container failed: {result.stderr.strip()}")
 
+    def _image_for(self, repo: dict[str, Any] | None) -> str:
+        """the repo's own image if it declares one, else the default.
+
+        SHARED TOOLS, ISOLATED CARDS: one image per repo carries the toolchain already installed, so
+        a fresh container per card costs a second rather than a dependency install. the isolation is
+        unchanged - the image is read-only and every card still gets its own container and clone.
+        """
+        if repo and repo.get("image"):
+            return str(repo["image"])
+        return self.image
+
     def _docker_command(
         self,
         clone_path: Path,
@@ -250,7 +261,7 @@ class ContainerBackend:
             f"{clone_path}:{_CONTAINER_WORKDIR}:rw",
             "-w",
             _CONTAINER_WORKDIR,
-            self.image,
+            self._image_for(repo),
             "sh",
             "-c",
             inner,
