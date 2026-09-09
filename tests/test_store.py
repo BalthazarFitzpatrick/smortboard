@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from smortboard.store import BlockedReasonInvalidError, NotFoundError, Store
+from smortboard.store import BlockedReasonInvalidError, NotFoundError, Store, UnknownFieldError
 from smortboard.store.schema import STATUSES
 
 
@@ -212,3 +212,83 @@ def test_deleting_a_board_takes_its_cards_with_it(store):
         store.get_board(board["id"])
     with pytest.raises(NotFoundError):
         store.get_card(card["id"])
+
+
+# -- repos: test_command -----------------------------------------------------
+
+
+def test_migration_2_applies_to_an_existing_database_without_loss(tmp_path):
+    """a repo written under migration 1 keeps its data after opening the db again applies
+    migration 2 - the new column must be additive, not destructive"""
+    db_path = tmp_path / "board.sqlite3"
+    with Store(db_path) as store:
+        board = store.create_board("Phase 1")
+        repo = store.create_repo(board["id"], "smortboard", "/repo", "main")
+        card = store.create_card(board["id"], repo["id"], "a card")
+
+    # reopening re-runs migrate(); it must be a no-op on the parts already applied
+    with Store(db_path) as reopened:
+        assert reopened.get_repo(repo["id"])["name"] == "smortboard"
+        assert reopened.get_repo(repo["id"])["test_command"] is None
+        assert reopened.get_card(card["id"])["title"] == "a card"
+
+
+def test_create_repo_with_test_command(store):
+    board = store.create_board("Phase 1")
+    repo = store.create_repo(board["id"], "smortboard", "/repo", "main", test_command="pytest")
+    assert store.get_repo(repo["id"])["test_command"] == "pytest"
+
+
+def test_set_repo_test_command_round_trips(store):
+    board = store.create_board("Phase 1")
+    repo = store.create_repo(board["id"], "smortboard", "/repo", "main")
+    assert store.get_repo(repo["id"])["test_command"] is None
+    updated = store.set_repo_test_command(repo["id"], "uv run pytest")
+    assert updated["test_command"] == "uv run pytest"
+    cleared = store.set_repo_test_command(repo["id"], None)
+    assert cleared["test_command"] is None
+
+
+# -- tasks: tick, don't rewrite ------------------------------------------------
+
+
+def test_set_task_done_round_trips(store):
+    _, card = _make_board_and_card(store, tasks=["write the guard"])
+    task_id = card["tasks"][0]["id"]
+    assert card["tasks"][0]["done"] == 0
+
+    done = store.set_task_done(task_id, True)
+    assert done["done"] == 1
+    assert store.get_card(card["id"])["tasks"][0]["done"] == 1
+
+    undone = store.set_task_done(task_id, False)
+    assert undone["done"] == 0
+
+
+def test_add_and_remove_task(store):
+    _, card = _make_board_and_card(store)
+    task = store.add_task(card["id"], "a new task")
+    assert task["text"] == "a new task"
+    assert store.get_card(card["id"])["tasks"][0]["id"] == task["id"]
+
+    store.remove_task(task["id"])
+    assert store.get_card(card["id"])["tasks"] == []
+
+
+def test_criteria_have_no_update_path(store):
+    """acceptance criteria are the contract a card is judged against - there is no method on
+    Store that can change card_criteria.text once a card exists"""
+    _, card = _make_board_and_card(store, criteria=["must pass review"])
+    criterion_id = card["criteria"][0]["id"]
+
+    store_methods = [name for name in dir(Store) if not name.startswith("_")]
+    for name in store_methods:
+        assert "criteri" not in name.lower() or name == "create_card"
+
+    # the row is unreachable through update_card too - criteria isn't a writable card field
+    with pytest.raises(UnknownFieldError):
+        store.update_card(card["id"], criteria=["rewritten"])
+
+    unchanged = store.get_card(card["id"])
+    assert unchanged["criteria"][0]["id"] == criterion_id
+    assert unchanged["criteria"][0]["text"] == "must pass review"
