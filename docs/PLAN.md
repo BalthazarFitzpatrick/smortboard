@@ -278,7 +278,11 @@ pass the card's path lease into the prompt, not only into the guard - see "What 
   what it costs": it is navigation the agent is currently denied
 pass --max-budget-usd, defaulting from the board, so a runaway card is refused rather than found
   on the bill
-unit test runner per card, from the acceptance criteria
+unit test runner per card, from the acceptance criteria - THE BOARD RUNS IT, NOT THE AGENT: an
+  agent reporting "tests pass" is grading its own homework, and a card that convinced itself is the
+  case a gate exists to catch. it re-runs the repo's own command against what the card committed,
+  in a container the agent never touched, with the work mounted READ ONLY and --network none. that
+  independence is free: the gate makes no model call, so it needs no credential either
 reviewer agent over the diff, on the four questions above
 review setting per card with a global override: findings auto-fixed by the worker, or surfaced
   through attention
