@@ -54,7 +54,22 @@ function renderBoardBar() {
 async function loadBoards() {
   boards = await api('/api/boards');
   renderBoardBar();
+  if (boards.length === 0) {
+    renderEmptyState();
+    return;
+  }
   initShell({onEnter: onBoardEnter, fallback: boards[0]?.id || ''});
+}
+
+// a fresh install has no boards - say so instead of showing five silent empty columns
+function renderEmptyState() {
+  const row = document.getElementById('bucket-row');
+  row.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'hazard-stripes hazard-placeholder';
+  box.innerHTML = `<span class="hazard-label">no boards yet</span>
+    <span class="hazard-note">POST /api/boards to create one</span>`;
+  row.appendChild(box);
 }
 
 async function onBoardEnter(boardId) {
