@@ -87,15 +87,28 @@ class Store:
         path: str,
         default_branch: str,
         test_command: str | None = None,
+        image: str | None = None,
     ) -> dict:
         repo_id = _new_id()
         self._conn.execute(
             """
-            INSERT INTO repos (id, board_id, name, path, default_branch, test_command)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO repos (id, board_id, name, path, default_branch, test_command, image)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (repo_id, board_id, name, path, default_branch, test_command),
+            (repo_id, board_id, name, path, default_branch, test_command, image),
         )
+        self._conn.commit()
+        return self.get_repo(repo_id)
+
+    def set_repo_image(self, repo_id: str, image: str | None) -> dict[str, Any]:
+        """sets (or clears, with None) the container image cards on this repo run in.
+
+        one image per repo with the toolchain already installed, so a fresh container per card does
+        not pay for `uv sync` or `npm install` on every run. cleared, cards fall back to the
+        default image.
+        """
+        self.get_repo(repo_id)  # raises NotFoundError on a bad id
+        self._conn.execute("UPDATE repos SET image = ? WHERE id = ?", (image, repo_id))
         self._conn.commit()
         return self.get_repo(repo_id)
 

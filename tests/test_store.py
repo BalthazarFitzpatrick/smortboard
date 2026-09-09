@@ -292,3 +292,11 @@ def test_criteria_have_no_update_path(store):
     unchanged = store.get_card(card["id"])
     assert unchanged["criteria"][0]["id"] == criterion_id
     assert unchanged["criteria"][0]["text"] == "must pass review"
+
+
+def test_a_repo_can_declare_its_image(store):
+    board = store.create_board("b")
+    repo = store.create_repo(board["id"], "r", "/tmp/r", "main", image="card-python:latest")
+    assert repo["image"] == "card-python:latest"
+    cleared = store.set_repo_image(repo["id"], None)
+    assert cleared["image"] is None
