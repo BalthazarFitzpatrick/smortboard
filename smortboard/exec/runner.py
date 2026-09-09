@@ -164,32 +164,41 @@ def result_to_run_result(result_event: dict[str, Any]) -> RunResult:
     )
 
 
-def run_card(
+def run_process(
     store: Store,
     card_id: str,
-    worktree_path: str | Path,
-    prompt: str,
-    settings_path: str | Path,
-    model: str = "sonnet",
-    repo: dict[str, Any] | None = None,
+    cmd: list[str],
+    cwd: str | Path | None = None,
+    env: dict[str, str] | None = None,
+    stdin_text: str | None = None,
 ) -> RunResult:
-    """runs one card headlessly, recording every stream event into the store as it arrives
+    """launches `cmd`, recording every stream-json line into the store as it arrives
+
+    shared by the card runtime and by tests: the container runtime runs `docker run` with the
+    worktree; a `ContainerBackend` runs `docker run ...` wrapping the same `claude` invocation, and
+    the container's stdout is exactly the same stream, so classification does not change per
+    backend - only how the process is launched does.
 
     subprocess is managed directly rather than via `claude --bg` + `claude stop`: we need to record
     each line into the event log as it streams, and a plain Popen gives us that plus a straightforward
     kill path (see stop_card) without a second process to poll for logs.
     """
-    cmd = build_command(
-        prompt, settings_path, model=model, allowed_tools=allowed_tools_for_repo(repo)
-    )
     process = subprocess.Popen(
         cmd,
-        cwd=str(worktree_path),
-        stdin=subprocess.DEVNULL,
+        cwd=str(cwd) if cwd is not None else None,
+        env=env,
+        # stdin carries the card credential when there is one, and is closed immediately after -
+        # the container's shell reads exactly one line. DEVNULL otherwise, because `claude -p`
+        # waits three seconds for input it will never get (S1)
+        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+
+    if stdin_text is not None and process.stdin is not None:
+        process.stdin.write(stdin_text)
+        process.stdin.close()
 
     result_event: dict[str, Any] | None = None
     blocked_reason_code: str | None = None
@@ -228,6 +237,29 @@ def run_card(
             **{**run_result.__dict__, "blocked_reason_code": blocked_reason_code}
         )
     return run_result
+
+
+def run_card(
+    store: Store,
+    card_id: str,
+    worktree_path: str | Path,
+    prompt: str,
+    settings_path: str | Path,
+    model: str = "sonnet",
+    repo: dict[str, Any] | None = None,
+) -> RunResult:
+    """runs one card headlessly in the current host process.
+
+    NOT how a card runs in production - cards run in a container, see backends.py. this stays for
+    tests and for the whole-system harness, which need a path that does not require Docker.
+
+
+    `backends.py` is a thin wrapper over this.
+    """
+    cmd = build_command(
+        prompt, settings_path, model=model, allowed_tools=allowed_tools_for_repo(repo)
+    )
+    return run_process(store, card_id, cmd, cwd=worktree_path)
 
 
 def stop_card(process: subprocess.Popen) -> None:

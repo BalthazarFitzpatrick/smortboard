@@ -1,5 +1,12 @@
 """phase 2 execution layer — worktree per card, path leases, and the headless runner"""
 
+from smortboard.exec.backends import (
+    CardRuntimeUnavailable,
+    ContainerBackend,
+    RunnerBackend,
+    docker_available,
+    require_card_runtime,
+)
 from smortboard.exec.bash_guard import BASH_ESCAPE_PREFIX
 from smortboard.exec.leases import write_lease_settings
 from smortboard.exec.runner import RunResult, allowed_tools_for_repo, run_card
@@ -11,6 +18,8 @@ from smortboard.exec.worktrees import (
 )
 
 __all__ = [
+    "CardRuntimeUnavailable",
+    "require_card_runtime",
     "WorktreeInfo",
     "create_worktree",
     "destroy_worktree",
@@ -20,4 +29,7 @@ __all__ = [
     "RunResult",
     "run_card",
     "allowed_tools_for_repo",
+    "RunnerBackend",
+    "ContainerBackend",
+    "docker_available",
 ]

@@ -39,7 +39,7 @@ below.
 | Prompts | Layered by **role** only: orchestrator, worker, reviewer. |
 | UI | ui_base first, domain-free vocabulary. Git pin, sha while co-developing. PyPI whenever it chafes. |
 | Packaging | `uv tool install smortboard`, a native local app. Docker isolates cards, it is not how the board ships. |
-| Isolation | One throwaway container per card, with a clone bind-mounted and a card-scoped token. No GitHub credential inside. |
+| Isolation | One throwaway container per card, with a clone bind-mounted and a card-scoped token. No GitHub credential inside. **Docker is a hard dependency — there is no fallback.** |
 | Out of scope | Ollama, workstream column mode, scheduling/digest, Omarchy, fish_gate. |
 
 ### Resolved from the brief's open flags
@@ -426,18 +426,38 @@ guard that refuses a push to main lives in the operator's user settings, and a c
 `--setting-sources project` and never sees it. A card that cannot reach GitHub cannot write main
 whatever it decides to do.
 
-### One runner interface, two backends
+### Shared tools, isolated cards
 
-The runner takes a working directory and a token, and nothing else changes behind it:
+The toolchain lives in **one image per repo**, declared on the repo alongside its `test_command`.
+A fresh container per card would otherwise pay for `uv sync` or `npm install` on every single run —
+not a second, but minutes, on every card. Baked into the image, a card's container costs about a
+second to start.
 
-| backend | when | isolation |
-|---|---|---|
-| container | Docker is available | filesystem and process, per card |
-| subprocess | Docker is not | the lease hook and the Bash guard only |
+**A shared package cache was the cheaper option and is deliberately not used.** A cache mounted
+writable across cards is a surface every later card reads, so one injected card poisons the next —
+which is exactly the cross-card contamination the per-card container exists to prevent. An image is
+read-only; a cache is not.
 
-The subprocess backend is not a lesser mode to be ashamed of — it is what makes `uvx smortboard`
-work for someone trying it in a minute. **The board states which backend is running**, because
-isolation that is silently absent is worse than isolation that was never claimed.
+Per-card rather than per-repo containers, for two reasons beyond isolation. **Lifecycle:** a
+container that lives and dies with its card needs no process management, no idle cleanup, and no
+answer to "one card wedged the container two others are using". **And it costs no disk:** two cards
+on one repo are on different branches, so they need separate checkouts either way — sharing a clone
+would put them back on a shared `.git`, where one card can rewrite another's refs.
+
+### One card runtime, and Docker is a hard dependency
+
+**There is no second mode.** A card runs in a container or it does not run. If Docker is missing, or
+the card credential is not configured, the board refuses and says how to fix it rather than starting
+the card some other way.
+
+That is deliberate and it is the whole point of the decision above. A subprocess fallback would put
+an agent that may have read untrusted input onto the operator's own filesystem, with the operator's
+own credential and their own GitHub access — which is precisely what the container exists to
+prevent. A board that quietly degraded would be claiming an isolation it no longer had, and the
+person relying on it would have no way to know.
+
+So Docker joins `uv` as something you install once, and `require_card_runtime()` is the only way to
+get a runtime.
 
 ### What a container still does not solve
 
