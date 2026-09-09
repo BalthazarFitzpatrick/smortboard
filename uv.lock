@@ -228,8 +228,9 @@ wheels = [
 [[package]]
 name = "smortboard"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
+    { name = "platformdirs" },
     { name = "ui-base" },
 ]
 
@@ -241,7 +242,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=7a6619bf4f236e3e316010f2b6f033cd1cc6f533" }]
+requires-dist = [
+    { name = "platformdirs", specifier = ">=4.0" },
+    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=7a6619bf4f236e3e316010f2b6f033cd1cc6f533" },
+]
 
 [package.metadata.requires-dev]
 dev = [
