@@ -5,28 +5,47 @@ come back to finished work.
 
 ## How to run
 
-Docker, the way it is meant to be distributed:
+No install, one command:
 
 ```bash
-docker compose -f docker/docker-compose.yml up -d --build
-open http://127.0.0.1:8000/ui/index.html
+uvx smortboard
 ```
 
-Stop it, keeping the data:
+Or install it once and keep the command around:
 
 ```bash
-docker compose -f docker/docker-compose.yml down
+uv tool install smortboard
+smortboard
 ```
 
-Locally, without Docker, on a scratch database:
+Either way it starts the server, prints the URL it's serving, and opens a browser tab. The
+database defaults to a path under your user data directory, not the current working directory,
+so running it from anywhere never scatters `.db` files around.
+
+Overrides, in order of precedence — flag, then env var, then default:
+
+```bash
+smortboard --port 8042 --db ./board.db --no-browser
+# or
+SMORTBOARD_DB=board.db SMORTBOARD_PORT=8042 smortboard
+```
+
+`smortboard --help` shows all flags and this precedence.
+
+Docker is no longer how the board itself ships — the board is a plain installable CLI now.
+Docker still isolates the *cards*: each one executes in its own worktree, and giving the board
+container access to run further containers for that would mean handing it the Docker socket,
+which is root on the host. See `docs/PLAN.md`'s locked-decisions table (Isolation, Packaging) for
+the reasoning.
+
+Running from a checkout without installing:
 
 ```bash
 uv sync
-SMORTBOARD_DB=board.db SMORTBOARD_PORT=8042 uv run python -m smortboard.server
-open http://127.0.0.1:8042/ui/index.html
+uv run smortboard --db board.db --port 8042
 ```
 
-A fresh board is empty. Create one and give it a card:
+A fresh board is empty — the interface says so and how to fix it. To do it by hand:
 
 ```bash
 BOARD=$(curl -s -X POST http://127.0.0.1:8042/api/boards \
