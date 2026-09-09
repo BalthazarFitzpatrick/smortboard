@@ -107,6 +107,11 @@ _MIGRATIONS: list[str] = [
         UNIQUE (card_id, seq)
     );
     """,
+    # 2: a repo's test invocation, so the runner can scope a card's Bash allowlist to it rather
+    # than granting unscoped Bash. nullable - a repo with none falls back to today's narrower set
+    """
+    ALTER TABLE repos ADD COLUMN test_command TEXT;
+    """,
 ]
 
 
