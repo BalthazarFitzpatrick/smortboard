@@ -9,6 +9,8 @@ import json
 import sys
 from pathlib import Path
 
+from smortboard.exec.bash_guard import write_bash_guard_hook
+
 # our own prefix, so the board can tell a lease refusal apart from any other hook denial
 LEASE_CONFLICT_PREFIX = "LEASE_CONFLICT:"
 
@@ -42,9 +44,10 @@ sys.exit(2)
 
 
 def write_lease_settings(worktree_path: str | Path, path_globs: list[str]) -> Path:
-    """writes lease.json, the hook script, and a settings.json wiring PreToolUse to it
+    """writes lease.json, both hook scripts, and a settings.json wiring PreToolUse to them
 
-    returns the settings.json path, which the runner passes via `--settings`.
+    also wires bash_guard's PreToolUse:Bash guard, so every card gets both guards from one
+    --settings file. returns the settings.json path, which the runner passes via `--settings`.
     """
     worktree_path = Path(worktree_path)
     claude_dir = worktree_path / ".claude"
@@ -57,21 +60,13 @@ def write_lease_settings(worktree_path: str | Path, path_globs: list[str]) -> Pa
     hook_script.write_text(_HOOK_SCRIPT)
     hook_script.chmod(0o755)
 
-    settings = {
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": "Edit|Write",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": f"{sys.executable} {hook_script}",
-                        }
-                    ],
-                }
-            ]
-        }
+    lease_entry = {
+        "matcher": "Edit|Write",
+        "hooks": [{"type": "command", "command": f"{sys.executable} {hook_script}"}],
     }
+    bash_guard_entry = write_bash_guard_hook(worktree_path)
+
+    settings = {"hooks": {"PreToolUse": [lease_entry, bash_guard_entry]}}
     settings_file = claude_dir / "settings.json"
     settings_file.write_text(json.dumps(settings, indent=2))
     return settings_file

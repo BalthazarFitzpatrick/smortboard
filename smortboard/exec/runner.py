@@ -28,10 +28,37 @@ SYSTEM_PROMPT = (
     "You are a headless worker executing one card in its own git worktree, already checked out on "
     "its branch. Do not create or switch branches, and do not ask for permission to commit — "
     "committing to this branch is expected. Writes outside your declared path lease are blocked by "
-    "a hook; if one is refused, do not retry it, note it and continue with the rest of the task."
+    "a hook; if one is refused, do not retry it, note it and continue with the rest of the task.\n\n"
+    "House conventions:\n"
+    "- commit messages: lowercase, past tense, no trailing period\n"
+    "- no emojis anywhere\n"
+    "- code comments: lowercase, one to three lines\n"
+    "- run python via `uv run`, never `python`/`python3` directly"
 )
 
 DEFAULT_ALLOWED_TOOLS = ("Bash(git *)", "Edit", "Read", "Write")
+
+
+def allowed_tools_for_repo(repo: dict[str, Any] | None) -> tuple[str, ...]:
+    """derives a card's Bash allowlist from its repo's test_command.
+
+    a card needs to run tests (Phase 3), but "let it run tests" must not mean "let it run any
+    Bash command" - so the allowlist is scoped to exactly the repo's declared test invocation,
+    plus git. a repo with no test_command declared keeps today's narrower default rather than
+    being granted an unscoped Bash.
+    """
+    test_command = (repo or {}).get("test_command")
+    if not test_command:
+        return DEFAULT_ALLOWED_TOOLS
+    return (
+        "Read",
+        "Edit",
+        "Write",
+        "Glob",
+        "Grep",
+        "Bash(git *)",
+        f"Bash({test_command} *)",
+    )
 
 
 def build_command(
@@ -144,6 +171,7 @@ def run_card(
     prompt: str,
     settings_path: str | Path,
     model: str = "sonnet",
+    repo: dict[str, Any] | None = None,
 ) -> RunResult:
     """runs one card headlessly, recording every stream event into the store as it arrives
 
@@ -151,7 +179,9 @@ def run_card(
     each line into the event log as it streams, and a plain Popen gives us that plus a straightforward
     kill path (see stop_card) without a second process to poll for logs.
     """
-    cmd = build_command(prompt, settings_path, model=model)
+    cmd = build_command(
+        prompt, settings_path, model=model, allowed_tools=allowed_tools_for_repo(repo)
+    )
     process = subprocess.Popen(
         cmd,
         cwd=str(worktree_path),

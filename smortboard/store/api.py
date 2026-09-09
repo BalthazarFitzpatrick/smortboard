@@ -20,6 +20,10 @@ _CARD_WRITABLE_FIELDS = {
     "review_flag",
     "repo_id",
 }
+# card_criteria has deliberately no entry here and no update_criteria method anywhere in this
+# file. acceptance criteria are the contract a card is judged against; a card agent that could
+# edit its own criteria could move its own goalposts. add_task/remove_task/set_task_done exist
+# for tasks (progress checkboxes) but there is no equivalent for criteria, on purpose.
 
 
 def _now() -> str:
@@ -76,11 +80,31 @@ class Store:
 
     # -- repos ---------------------------------------------------------------
 
-    def create_repo(self, board_id: str, name: str, path: str, default_branch: str) -> dict:
+    def create_repo(
+        self,
+        board_id: str,
+        name: str,
+        path: str,
+        default_branch: str,
+        test_command: str | None = None,
+    ) -> dict:
         repo_id = _new_id()
         self._conn.execute(
-            "INSERT INTO repos (id, board_id, name, path, default_branch) VALUES (?, ?, ?, ?, ?)",
-            (repo_id, board_id, name, path, default_branch),
+            """
+            INSERT INTO repos (id, board_id, name, path, default_branch, test_command)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (repo_id, board_id, name, path, default_branch, test_command),
+        )
+        self._conn.commit()
+        return self.get_repo(repo_id)
+
+    def set_repo_test_command(self, repo_id: str, test_command: str | None) -> dict[str, Any]:
+        """sets (or clears, with None) the shell invocation the runner may add to a card's Bash
+        allowlist for this repo - see allowed_tools_for_repo in smortboard.exec.runner"""
+        self.get_repo(repo_id)  # raises NotFoundError on a bad id
+        self._conn.execute(
+            "UPDATE repos SET test_command = ? WHERE id = ?", (test_command, repo_id)
         )
         self._conn.commit()
         return self.get_repo(repo_id)
@@ -232,6 +256,48 @@ class Store:
         )
         self._conn.commit()
         return self.get_card(card_id)
+
+    # -- tasks: progress checkboxes, distinct from criteria (see the comment above) -------------
+
+    def set_task_done(self, task_id: str, done: bool) -> dict[str, Any]:
+        """the one thing a card agent may record about its own tasks: ticking progress.
+
+        does not touch text or position, and there is no equivalent for card_criteria.
+        """
+        row = self._conn.execute("SELECT * FROM card_tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise NotFoundError(f"no task {task_id}")
+        self._conn.execute("UPDATE card_tasks SET done = ? WHERE id = ?", (int(done), task_id))
+        self._conn.commit()
+        updated = self._conn.execute("SELECT * FROM card_tasks WHERE id = ?", (task_id,)).fetchone()
+        return _row_to_dict(updated)
+
+    def add_task(self, card_id: str, text: str) -> dict[str, Any]:
+        """for a human editing a card's checklist, not for a card agent - hence store-only,
+        with no HTTP route."""
+        self._card_row(card_id)  # raises NotFoundError on a bad id
+        next_position_row = self._conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next_position FROM card_tasks "
+            "WHERE card_id = ?",
+            (card_id,),
+        ).fetchone()
+        task_id = _new_id()
+        self._conn.execute(
+            "INSERT INTO card_tasks (id, card_id, position, text, done) VALUES (?, ?, ?, ?, 0)",
+            (task_id, card_id, next_position_row["next_position"], text),
+        )
+        self._conn.commit()
+        row = self._conn.execute("SELECT * FROM card_tasks WHERE id = ?", (task_id,)).fetchone()
+        return _row_to_dict(row)
+
+    def remove_task(self, task_id: str) -> None:
+        """for a human editing a card's checklist, not for a card agent - hence store-only,
+        with no HTTP route."""
+        row = self._conn.execute("SELECT * FROM card_tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise NotFoundError(f"no task {task_id}")
+        self._conn.execute("DELETE FROM card_tasks WHERE id = ?", (task_id,))
+        self._conn.commit()
 
     # every table that points at a card, so deleting one takes its children with it. named
     # explicitly rather than relying on ON DELETE CASCADE, which the schema does not declare and

@@ -3,8 +3,11 @@ import subprocess
 
 import pytest
 
+from smortboard.exec.bash_guard import BASH_ESCAPE_PREFIX
 from smortboard.exec.leases import LEASE_CONFLICT_PREFIX, write_lease_settings
 from smortboard.exec.runner import (
+    DEFAULT_ALLOWED_TOOLS,
+    allowed_tools_for_repo,
     classify_rate_limit,
     classify_result,
     parse_line,
@@ -214,3 +217,75 @@ def test_events_recorded_into_store(tmp_path):
         assert len(events) == 1
         assert events[0]["kind"] == "result"
         assert events[0]["payload"]["subtype"] == "success"
+
+
+# -- allowlist derived from a repo's test_command -----------------------------
+
+
+def test_allowed_tools_falls_back_without_a_test_command():
+    assert allowed_tools_for_repo(None) == DEFAULT_ALLOWED_TOOLS
+    assert allowed_tools_for_repo({"test_command": None}) == DEFAULT_ALLOWED_TOOLS
+    assert allowed_tools_for_repo({}) == DEFAULT_ALLOWED_TOOLS
+
+
+def test_allowed_tools_scopes_bash_to_the_test_command():
+    tools = allowed_tools_for_repo({"test_command": "uv run pytest"})
+    assert tools == (
+        "Read",
+        "Edit",
+        "Write",
+        "Glob",
+        "Grep",
+        "Bash(git *)",
+        "Bash(uv run pytest *)",
+    )
+    # nothing else in Bash - no bare "Bash" entry that would allow an unscoped command
+    assert "Bash" not in tools
+
+
+# -- bash guard: refuses a command that reaches outside the worktree ----------
+
+
+def _run_bash_guard(worktree, command):
+    settings_path = write_lease_settings(worktree, ["src/*"])
+    settings = json.loads(settings_path.read_text())
+    bash_entry = next(e for e in settings["hooks"]["PreToolUse"] if e["matcher"] == "Bash")
+    hook_command = bash_entry["hooks"][0]["command"]
+    payload = json.dumps({"tool_input": {"command": command}})
+    return subprocess.run(
+        hook_command.split(" ", 1),
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_bash_guard_permits_a_command_inside_the_worktree(tmp_path):
+    worktree = tmp_path / "wt"
+    (worktree / "src").mkdir(parents=True)
+    result = _run_bash_guard(worktree, f"cat {worktree / 'src' / 'file.py'}")
+    assert result.returncode == 0
+
+
+def test_bash_guard_refuses_an_absolute_path_outside_the_worktree(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    outside = tmp_path / "elsewhere" / "secret.txt"
+    result = _run_bash_guard(worktree, f"cat {outside}")
+    assert result.returncode == 2
+    assert BASH_ESCAPE_PREFIX in result.stderr
+
+
+def test_bash_guard_refuses_cd_dotdot(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    result = _run_bash_guard(worktree, "cd .. && rm -rf something")
+    assert result.returncode == 2
+    assert BASH_ESCAPE_PREFIX in result.stderr
+
+
+def test_bash_guard_allows_a_plain_command_with_no_paths(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    result = _run_bash_guard(worktree, "git status")
+    assert result.returncode == 0
