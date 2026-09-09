@@ -241,7 +241,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=090c8b16e0bea46a6b6c0ee429470956f08fdaac" }]
+requires-dist = [{ name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=d3b0d47f49385ff08bf6c91b6b46ecf8ca695fc1" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -253,7 +253,7 @@ dev = [
 [[package]]
 name = "ui-base"
 version = "0.1.0"
-source = { git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=090c8b16e0bea46a6b6c0ee429470956f08fdaac#090c8b16e0bea46a6b6c0ee429470956f08fdaac" }
+source = { git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=d3b0d47f49385ff08bf6c91b6b46ecf8ca695fc1#d3b0d47f49385ff08bf6c91b6b46ecf8ca695fc1" }
 
 [[package]]
 name = "virtualenv"
