@@ -6,6 +6,7 @@ would otherwise shell out to it. The one exception is test_container_backend_rea
 which is skipped unless Docker is actually usable on the machine running the suite.
 """
 
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -15,8 +16,11 @@ import pytest
 from smortboard.exec import backends
 from smortboard.exec.backends import (
     CardRuntimeUnavailable,
+    CardTokenMissing,
     ContainerBackend,
+    card_token_path,
     docker_available,
+    read_card_token,
     require_card_runtime,
 )
 from smortboard.exec.runner import RunResult
@@ -91,32 +95,40 @@ def test_docker_available_false_when_daemon_does_not_answer(monkeypatch):
 # -- the container command line ------------------------------------------------
 
 
-def test_docker_command_mounts_clone_rw_and_token_ro_with_no_env_credential(tmp_path):
-    backend = ContainerBackend(image="smortboard-card:test")
-    clone_path = tmp_path / "clone"
-    token_path = tmp_path / "token"
-    clone_path.mkdir()
-    token_path.write_text("secret-token")
-    settings_path = tmp_path / "settings.json"
-    settings_path.write_text("{}")
+def test_the_token_is_never_on_the_command_line_or_a_mount(tmp_path):
+    """it arrives on stdin instead. a mount meant a plaintext credential had to exist on the
+    operator's disk; an env var would show up in `docker inspect`."""
+    backend = ContainerBackend(image="img")
+    cmd = backend._docker_command(tmp_path / "clone", "prompt", tmp_path / "s.json", "sonnet", None)
+    joined = shlex.join(cmd)
+    assert "-e" not in cmd and "--env" not in cmd
+    assert "/run/secrets" not in joined
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in joined  # read from stdin, never assigned a literal
+    assert "read -r CLAUDE_CODE_OAUTH_TOKEN" in joined
+    # only the clone is mounted
+    assert cmd.count("-v") == 1  # the list, not the string: a temp path can contain "-v"
+    assert "-i" in cmd  # stdin has to stay open long enough to hand it over
 
-    cmd = backend._docker_command(
-        clone_path, token_path, "do the thing", settings_path, "sonnet", None
-    )
 
-    assert cmd[:3] == ["docker", "run", "--rm"]
-    joined = " ".join(cmd)
-    assert f"{clone_path}:/workspace:rw" in joined
-    assert f"{token_path}:/run/secrets/card_token:ro" in joined
-    # the token is read from the mounted file inside the container, never handed over as -e/--env
-    assert "-e" not in cmd
-    assert "--env" not in cmd
-    assert "CLAUDE_CODE_OAUTH_TOKEN" not in " ".join(cmd[:-1])  # not in the docker args themselves
-    assert "cat /run/secrets/card_token" in cmd[-1]
-    # no github credential anywhere in the command
-    assert "github" not in joined.lower()
-    assert "GH_TOKEN" not in joined
-    assert "GITHUB_TOKEN" not in joined
+def test_the_credential_reaches_the_container_only_through_stdin(tmp_path, monkeypatch):
+    seen = {}
+
+    def _fake_run_process(store, card_id, cmd, cwd=None, env=None, stdin_text=None):
+        seen["stdin"] = stdin_text
+        seen["cmd"] = shlex.join(cmd)
+        return "result"
+
+    monkeypatch.setattr("smortboard.exec.backends.run_process", _fake_run_process)
+    monkeypatch.setattr("smortboard.exec.backends.read_card_token", lambda p=None: "s3cret")
+    monkeypatch.setattr("smortboard.exec.backends.repo_root_of_worktree", lambda p: tmp_path)
+    monkeypatch.setattr("smortboard.exec.backends.current_branch", lambda p: "card/x")
+    monkeypatch.setattr(ContainerBackend, "_clone", lambda self, w, c, b: c.mkdir(exist_ok=True))
+    monkeypatch.setattr(ContainerBackend, "_fetch_back", lambda self, r, c, b: None)
+
+    ContainerBackend(image="img").run_card(None, "card", tmp_path, "prompt", tmp_path / "s.json")
+
+    assert seen["stdin"] == "s3cret\n"
+    assert "s3cret" not in seen["cmd"]
 
 
 def test_docker_command_uses_the_configured_image(tmp_path):
@@ -128,7 +140,7 @@ def test_docker_command_uses_the_configured_image(tmp_path):
     settings_path = tmp_path / "settings.json"
     settings_path.write_text("{}")
 
-    cmd = backend._docker_command(clone_path, token_path, "p", settings_path, "sonnet", None)
+    cmd = backend._docker_command(clone_path, "p", settings_path, "sonnet", None)
     assert "my-registry/smortboard-card:1.2.3" in cmd
 
 
@@ -194,7 +206,7 @@ def test_container_run_card_cleans_up_clone_on_success(tmp_path, monkeypatch):
 
     seen = {}
 
-    def _fake_run_process(store, card_id, cmd, cwd=None, env=None):
+    def _fake_run_process(store, card_id, cmd, cwd=None, env=None, stdin_text=None):
         seen["cmd"] = cmd
         return _fake_result()
 
@@ -265,7 +277,7 @@ def test_container_run_card_raises_when_token_missing(tmp_path):
     with Store(tmp_path / "board.sqlite3") as store:
         board = store.create_board("b")
         card = store.create_card(board["id"], None, "a card")
-        with pytest.raises(WorktreeError):
+        with pytest.raises(CardTokenMissing):
             backend.run_card(
                 store,
                 card["id"],
@@ -287,3 +299,22 @@ def test_container_backend_real_docker_smoke(tmp_path):
         capture_output=True,
     )
     assert result.returncode == 0
+
+
+def test_the_default_token_path_is_honoured(tmp_path, monkeypatch):
+    """exercises card_token_path()'s default branch, which nothing reached before - ruff caught an
+    undefined constant on that line that the whole suite had walked straight past."""
+    monkeypatch.setattr("smortboard.exec.backends._keychain_token", lambda: None)
+    token = tmp_path / "card_token"
+    token.write_text("from-the-file\n")
+    monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(token))
+    assert card_token_path() == token
+    assert read_card_token() == "from-the-file"
+
+
+def test_the_keychain_wins_over_a_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("smortboard.exec.backends._keychain_token", lambda: "from-the-keychain")
+    token = tmp_path / "card_token"
+    token.write_text("from-the-file\n")
+    monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(token))
+    assert read_card_token() == "from-the-keychain"

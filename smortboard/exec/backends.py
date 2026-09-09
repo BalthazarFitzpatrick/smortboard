@@ -33,7 +33,7 @@ CARD_TOKEN_PATH_ENV = "SMORTBOARD_CARD_TOKEN_PATH"
 
 # where the token lands inside the container - read-only, never passed as an env var so it never
 # shows up in `docker inspect`
-_CONTAINER_TOKEN_PATH = "/run/secrets/card_token"
+_KEYCHAIN_SERVICE = "smortboard-card-token"
 _CONTAINER_WORKDIR = "/workspace"
 
 
@@ -41,8 +41,64 @@ def card_image() -> str:
     return os.environ.get(CARD_IMAGE_ENV, DEFAULT_CARD_IMAGE)
 
 
+class CardTokenMissing(RuntimeError):
+    """no card credential in the keychain or on disk"""
+
+
 def card_token_path() -> Path:
-    return Path(os.environ.get(CARD_TOKEN_PATH_ENV, str(DEFAULT_TOKEN_PATH)))
+    """where a card token lives when it is a file rather than a keychain entry"""
+    return Path(
+        os.environ.get(CARD_TOKEN_PATH_ENV, Path.home() / ".config" / "smortboard" / "card_token")
+    )
+
+
+def _keychain_token() -> str | None:
+    """the macOS keychain, which is where Claude Code keeps its own credentials.
+
+    preferred over a file because a file means a plaintext credential sitting under the operator's
+    home directory for as long as the board exists. absent or unreadable, the caller falls back.
+    """
+    if not shutil.which("security"):
+        return None
+    result = subprocess.run(
+        ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE, "-w"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    token = result.stdout.strip()
+    return token if result.returncode == 0 and token else None
+
+
+def read_card_token(token_path: str | Path | None = None) -> str:
+    """the card credential, keychain first, then a file.
+
+    NEVER returned to anywhere it could be logged: the one caller writes it straight to the
+    container's stdin. It is not stored on the backend and not put in the environment.
+    """
+    explicit = token_path is not None
+    if not explicit:
+        from_keychain = _keychain_token()
+        if from_keychain:
+            return from_keychain
+    resolved = Path(token_path or card_token_path())
+    if resolved.is_file():
+        token = resolved.read_text().strip()
+        if token:
+            return token
+    raise CardTokenMissing(
+        f"No card credential. Run `claude setup-token`, then either\n"
+        f"  security add-generic-password -s {_KEYCHAIN_SERVICE} -a smortboard -w <token>\n"
+        f"or write it to {resolved} with mode 600."
+    )
+
+
+def card_token_available(token_path: str | Path | None = None) -> bool:
+    try:
+        read_card_token(token_path)
+    except CardTokenMissing:
+        return False
+    return True
 
 
 def docker_available() -> bool:
@@ -79,13 +135,14 @@ class RunnerBackend(Protocol):
 
 
 class ContainerBackend:
-    """one throwaway container per card - clone bind-mounted, token bind-mounted read-only, no
-    GitHub credential inside it anywhere.
+    """one throwaway container per card: a clone bind-mounted, the token handed over on stdin, and
+    no GitHub credential inside it anywhere.
 
     What this contains: the card's filesystem and process, and the shell escapes bash_guard.py
     admits it cannot stop. What it does not contain: the network (the run has to reach the API, so
     egress is open) and the credential itself (a container is a filesystem boundary, not a
-    credential one - what protects the token is that it is a separate, revocable one).
+    credential one - what protects the token is that it is a separate, narrower one: a
+    setup-token can only make model requests).
     """
 
     name = "container"
@@ -104,27 +161,18 @@ class ContainerBackend:
         repo: dict[str, Any] | None = None,
         token_path: str | Path | None = None,
     ) -> RunResult:
-        token_path = Path(token_path or card_token_path())
-        if not token_path.is_file():
-            raise WorktreeError(f"card token not found at {token_path}")
-
+        token = read_card_token(token_path)
+        clone_path = Path(tempfile.mkdtemp(prefix=f"smortboard-card-{uuid.uuid4().hex[:8]}-"))
         repo_root = repo_root_of_worktree(worktree_path)
         branch = current_branch(worktree_path)
-
-        clone_path = (
-            Path(tempfile.gettempdir()) / f"smortboard-card-{card_id}-{uuid.uuid4().hex[:8]}"
-        )
         try:
             self._clone(worktree_path, clone_path, branch)
-            docker_cmd = self._docker_command(
-                clone_path, token_path, prompt, settings_path, model, repo
-            )
-            run_result = run_process(store, card_id, docker_cmd)
+            cmd = self._docker_command(clone_path, prompt, settings_path, model, repo)
+            # the token goes straight down the container's stdin and is not kept anywhere
+            result = run_process(store, card_id, cmd, cwd=clone_path, stdin_text=token + "\n")
             self._fetch_back(repo_root, clone_path, branch)
-            return run_result
+            return result
         finally:
-            # the container itself is removed by `--rm` on the docker command whether the run
-            # succeeded, crashed or was killed; the clone is ours to clean up either way
             shutil.rmtree(clone_path, ignore_errors=True)
 
     def _clone(self, worktree_path: str | Path, clone_path: Path, branch: str) -> None:
@@ -142,7 +190,6 @@ class ContainerBackend:
     def _docker_command(
         self,
         clone_path: Path,
-        token_path: Path,
         prompt: str,
         settings_path: str | Path,
         model: str,
@@ -154,20 +201,24 @@ class ContainerBackend:
             model=model,
             allowed_tools=allowed_tools_for_repo(repo),
         )
-        # the token is read from the mounted file at container start and exported into this
-        # shell's own env - never passed via `-e`/`--env`, so `docker inspect` never shows it
+        # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK. it used to be a bind-mounted file, which
+        # meant a plaintext credential had to exist under the operator's home directory for as long
+        # as the board did. read from stdin it exists only in the container's memory.
+        # `read` consumes exactly the first line, then stdin is redirected from /dev/null for the
+        # run itself - without that redirect `claude -p` waits 3s for input it will never get (S1).
+        # still never `-e`/`--env`, so `docker inspect` shows nothing either.
         inner = (
-            f"export CLAUDE_CODE_OAUTH_TOKEN=$(cat {shlex.quote(_CONTAINER_TOKEN_PATH)}) && "
+            "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN && "
             + shlex.join(claude_cmd)
+            + " < /dev/null"
         )
         return [
             "docker",
             "run",
             "--rm",
+            "-i",  # stdin stays open exactly long enough to hand the token over
             "-v",
             f"{clone_path}:{_CONTAINER_WORKDIR}:rw",
-            "-v",
-            f"{token_path}:{_CONTAINER_TOKEN_PATH}:ro",
             "-w",
             _CONTAINER_WORKDIR,
             self.image,
