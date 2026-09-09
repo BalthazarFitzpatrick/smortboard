@@ -32,11 +32,40 @@ SMORTBOARD_DB=board.db SMORTBOARD_PORT=8042 smortboard
 
 `smortboard --help` shows all flags and this precedence.
 
-Docker is no longer how the board itself ships — the board is a plain installable CLI now.
-Docker still isolates the *cards*: each one executes in its own worktree, and giving the board
-container access to run further containers for that would mean handing it the Docker socket,
-which is root on the host. See `docs/PLAN.md`'s locked-decisions table (Isolation, Packaging) for
-the reasoning.
+## Before a card can run
+
+The board starts and serves the interface with nothing but the command above. **Running a card
+needs two more things**, and it refuses rather than running one unisolated:
+
+**1. Docker, running.** Every card executes in its own throwaway container, with a clone of its
+repo and nothing else of yours mounted. There is no fallback mode — a card that ran as an ordinary
+process would be an agent that may have read untrusted input, on your filesystem, with your
+credential. A board that quietly degraded would be claiming an isolation it no longer had.
+
+**2. A card credential**, separate from your own login:
+
+```bash
+claude setup-token          # prints a one-year token; it is not saved anywhere
+```
+
+Store it where your OS keeps secrets — Keychain on macOS, Credential Manager on Windows, Secret
+Service on Linux:
+
+```bash
+security add-generic-password -s smortboard-card-token -a smortboard -w <token>
+```
+
+The board reads it from there and hands it to the container on stdin, so it is never written to
+disk and never visible to `docker inspect`. That token can only make model requests, so it is
+narrower than your own login by construction.
+
+A repo can declare the image its cards run in, so the toolchain is installed once rather than on
+every card run, and the command its tests use. Both live on the repo, next to its path.
+
+Docker is not how the board ships — the board is a plain installable CLI. Giving a *containerised*
+board the ability to start card containers would mean handing it the Docker socket, which is root
+on the host, so the board runs natively and only the cards are contained. See "The containment
+decision" in `docs/PLAN.md` for the whole argument.
 
 Running from a checkout without installing:
 
