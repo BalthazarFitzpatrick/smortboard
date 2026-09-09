@@ -74,108 +74,14 @@ body {
 
 /* collapsed card: a wide flat strip - makeExpander reads its own rect as the animation's starting
    box, so this is the only place that ratio lives */
-.card-strip {
-  /* a card rather than a strip: taller than it is wide, so a title has room to sit above a rule
-     instead of sharing a line with everything else */
-  aspect-ratio: 1 / 1.2;
-  /* the plain grey border every control in the system wears. cream belongs to the focus marker,
-     which glides between cards - a cream border here competes with it and the two read as one */
-  border: 2px solid var(--grey-border);
-  background: var(--panel-row);
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  cursor: pointer;
-}
-
-.card-strip { justify-content: flex-start; gap: 0; }
-.card-head { flex: 0 0 auto; padding-bottom: 8px; }
-.card-strip .card-title {
-  color: var(--cream);
-  /* ALWAYS TWO ROWS, whether the title needs them or not. a title block that grows with its text
-     puts every rule and every footer at a different height, and a wall of cards stops reading as a
-     grid. line-height is stated here because the reserved height is computed from it */
-  line-height: 1.35;
-  min-height: calc(2 * 1.35em);
-  overflow: hidden; display: -webkit-box;
-  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-}
-/* THE RULE STOPS SHORT OF THE BORDER. running it edge to edge made it collide with the frame and
-   read as a break in the card rather than a division inside it - base.css says the same thing about
-   dividers never touching the container edge */
-.card-strip .h-divider { flex: 0 0 auto; margin: 0 -4px; }
-.card-body {
-  flex: 1 1 auto; min-height: 0; overflow: hidden;
-  padding-top: 8px; color: var(--text-dim);
-  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
-}
-.card-foot {
-  flex: 0 0 auto; display: flex; justify-content: space-between; gap: 8px;
-  color: var(--text-dim); padding-top: 8px;
-}
-.card-foot .card-stat { color: var(--text); }
-
-/* ===== PREVIEW ONLY: the fan, still being judged ============================================ */
-/* THE FAN. cards overlap, and the focused one stays put while everything below it slides down out
-   of the way - so the card you are reading is never the one that moved. pure css off :focus, which
-   means the arrow keys already drive it and no script has to track a selection.
-   only the siblings AFTER the focused card move: the ones above it are already fully visible,
-   since each card overlaps the one before it rather than the one after. */
-/* 176 of a 264px card, so about a third stays visible - the title band and the top of the rule.
-   at 96 the cards barely touched and the whole question of telling them apart did not arise */
-/* THE SEAM AND THE CAST TOGETHER. a collapsed stack read as one ruled list, because consecutive
-   title bands with nothing between them look like rows rather than like cards. an 8px band of the
-   page's own ground cuts each card off from the one beneath, and the cast behind it does what a
-   real pile does - together they say "separate object" where either alone only hinted at it.
-   THE SPREAD IS POSITIVE AND THAT IS THE POINT: a negative spread pulls the shadow in before it
-   blurs, so it rises off the top edge and never turns the corner. spread buys the wrap around the
-   corners, blur buys the fade.
-   both offsets are negative because a card is pulled UP over the one before it, so the edge doing
-   the overlapping is its top */
-.card-overlap {
-  /* THE OVERLAP IS A PROPORTION, NOT A PIXEL COUNT. at a fixed 176px the strip shrank with the
-     column - 106px of card showing at 1600 wide, 43px at 1100 - and on a narrow enough window the
-     cards would have hidden completely. a percentage margin resolves against the container's WIDTH,
-     and the card is width x 1.2, so -80% hides exactly two thirds of its height at any size */
-  margin-top: -80%;
-  transition: transform 140ms;
-  box-shadow:
-    0 -8px 0 0 var(--bg),
-    0 -8px 20px 3px rgba(0, 0, 0, 0.72);
-}
-
-.card-overlap:first-child { margin-top: 0; }
-.card-overlap:focus { position: relative; z-index: 2; }
-/* the slide matches the hidden fraction, so a focused card is revealed exactly */
-.card-overlap:focus ~ .card-overlap { transform: translateY(80%); }
-
-/* ===== end preview block ==================================================================== */
-
-/* the cream border stays on every card; state is a 3px glow OUTSIDE it. the innermost pixel is the
-   colour at full strength and the two beyond it fall away, so the edge reads as light coming off
-   the card rather than as a second border competing with the cream one. three stacked box-shadows
-   rather than an outline, because each ring carries its own alpha and an outline carries one */
-/* WORKING AND REJECTED TINT THE CARD; ATTENTION RINGS IT. the two that describe what the card IS
-   colour its body, and the one that demands something of you reaches outside its edge - so a glance
-   across the board separates "state" from "you are needed" by shape before colour.
-   the fills are the hue mixed into the panel rather than the hue itself: a saturated fill would
-   take the cream text with it, and matte is what keeps a wall of them calm */
-/* COLOUR ON THE EDGE, NEVER A FILL. a filled card makes the plate the ground you read on, and a
-   colour stops signalling the moment it becomes the background */
+/* the card and the fan now live in ui_base. what stays here is configuration: which state paints
+   which edge, and the panel an opened card fills */
 .card-strip.card-working { border-color: var(--fill-good); }
-/* nothing sets this yet - it is here so a rejected card has a colour waiting when phase 3 lands */
 .card-strip.card-rejected { border-color: var(--fill-warn); }
-
-/* A PLATED CARD SWAPS TO DARK TEXT, the way base.css makes .toggle.on do. all three plates are
-   light enough that the quiet card's cream text vanishes into them */
-/* the card keeps its normal text now that the colour is on the edge rather than under the words */
-
 .card-strip.card-attention { border-color: var(--fill-attention); }
-
-/* NO OUTLINE ON A FOCUSED CARD. focus is the gliding cream marker from indicate.js, and an outline
-   as well meant a second cream line sitting 7px out with the page showing through the gap */
+/* focus is indicate.js's gliding marker, not a ring drawn by each card */
 .card-strip:focus-visible { outline: none; }
+
 
 .expand-panel .card-panel {
   padding: 14px;
@@ -195,7 +101,15 @@ body {
 .card-panel .comment-input { width: 100%; box-sizing: border-box; margin-top: 4px; }
 
 /* fills whatever holds it - a drawer body, not a fixed box */
-.hazard-placeholder { width: 100%; height: 100%; min-height: 160px; }
+.hazard-placeholder {
+  width: 100%; height: 100%; min-height: 160px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+}
+/* the note sits under the name and stays quieter than it - what the panel is, then what it does */
+.hazard-note {
+  background: var(--panel-row); color: var(--text-dim);
+  padding: 4px 10px; max-width: 80%; text-align: center;
+}
 
 /* an expanded card keeps its state as an edge rather than a fill - see the onOpen comment */
 .expand-panel.card-working { border-color: var(--fill-good); }

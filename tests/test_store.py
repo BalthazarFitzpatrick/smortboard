@@ -182,3 +182,33 @@ def _assert_databases_identical(store, fresh_path):
             fresh_rows, key=lambda r: r.get("id", "")
         ), f"table {table} differs after round trip"
     fresh_conn.close()
+
+
+def test_deleting_a_card_takes_its_children_with_it(store):
+    """the old delete was a single DELETE against cards, so it passed for a bare card and raised
+    FOREIGN KEY constraint failed for any card that had ever been used."""
+    board, card = _make_board_and_card(store)
+    other = store.create_card(board["id"], None, "the other one")
+    store.add_comment(card["id"], "someone", "a comment")
+    store.append_event(card["id"], "run_started", {"pid": 1})
+    store.add_attachment(card["id"], "note.txt", "text/plain", b"bytes")
+    store.add_dependency(card["id"], other["id"])
+    store.add_dependency(other["id"], card["id"])
+
+    store.delete_card(card["id"])
+
+    with pytest.raises(NotFoundError):
+        store.get_card(card["id"])
+    # the dependency edges named it at both ends, and both had to go
+    assert store.get_dependencies(other["id"]) == []
+    assert store.get_dependents(other["id"]) == []
+
+
+def test_deleting_a_board_takes_its_cards_with_it(store):
+    board, card = _make_board_and_card(store)
+    store.add_comment(card["id"], "someone", "a comment")
+    store.delete_board(board["id"])
+    with pytest.raises(NotFoundError):
+        store.get_board(board["id"])
+    with pytest.raises(NotFoundError):
+        store.get_card(card["id"])

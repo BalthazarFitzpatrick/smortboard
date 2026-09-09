@@ -143,6 +143,28 @@ def test_get_missing_card_is_404(running_server):
     assert "error" in body
 
 
+def test_delete_a_card_that_has_been_used(running_server):
+    """the endpoint dropped the connection without a status for any card with children, because the
+    store raised and nothing caught it. a 000 from curl is the least diagnosable failure there is."""
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "used"})
+    _, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "has been used"},
+    )
+    _request(
+        f"{running_server}/api/cards/{card['id']}/comments",
+        "POST",
+        {"author": "me", "body": "hello"},
+    )
+
+    status, _ = _request(f"{running_server}/api/cards/{card['id']}", "DELETE")
+    assert status == 204
+
+    status, _ = _request(f"{running_server}/api/cards/{card['id']}", "GET")
+    assert status == 404
+
+
 def test_delete_card(running_server):
     _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
     _, card = _request(
