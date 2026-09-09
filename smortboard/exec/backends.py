@@ -21,7 +21,13 @@ import uuid
 from pathlib import Path
 from typing import Any, Protocol
 
-from smortboard.exec.runner import RunResult, allowed_tools_for_repo, build_command, run_process
+from smortboard.exec.runner import (
+    RunResult,
+    allowed_tools_for_repo,
+    build_command,
+    lease_preamble,
+    run_process,
+)
 from smortboard.exec.worktrees import WorktreeError, current_branch, repo_root_of_worktree
 from smortboard.store.api import Store
 
@@ -196,7 +202,12 @@ class ContainerBackend:
         branch = current_branch(worktree_path)
         try:
             self._clone(worktree_path, clone_path, branch)
-            cmd = self._docker_command(clone_path, prompt, settings_path, model, repo)
+            # the card's own lease, prepended to its brief: the backend has the store and the id,
+            # so no caller has to remember to pass what is already recorded
+            leases = store.get_card(card_id).get("leases") if store else None
+            cmd = self._docker_command(
+                clone_path, lease_preamble(leases) + prompt, settings_path, model, repo
+            )
             # the token goes straight down the container's stdin and is not kept anywhere
             result = run_process(store, card_id, cmd, cwd=clone_path, stdin_text=token + "\n")
             self._fetch_back(repo_root, clone_path, branch)

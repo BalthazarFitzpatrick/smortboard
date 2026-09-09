@@ -509,6 +509,33 @@ Which makes three things load-bearing rather than nice:
 that today. The honest options are compaction inside the run, or the board splitting the card — and
 neither should be designed before a real card actually hits it.
 
+### Measured, on the same card twice
+
+The first guess was that the path lease in the prompt would be the big saving. It was not, and the
+experiment says so plainly. Running one card, then fixing what the transcript showed and running the
+identical card again:
+
+| | before | after |
+|---|---|---|
+| turns | 32 | 16 |
+| cost | $0.347 | $0.235 |
+| cache reads | 728,877 | 336,530 |
+| permission denials | 10 | 4 |
+| outcome | `AGENT_QUESTION` | completed |
+
+**The cost was permission denials, not exploration.** The default allowlist had no `Glob` or `Grep`,
+so the agent reached for `Bash grep`, was refused, and then tried reworded variants of every blocked
+command — ten refusals across thirty-two turns, before giving up and asking a question nobody was
+there to answer. Granting two read-only tools and adding one sentence — *a refused command will not
+succeed reworded* — halved the run.
+
+**The lease preamble's effect remains unmeasured**: it was present in both runs, so this says
+nothing about it either way.
+
+Four denials remain, and they are the same shape: the card cannot execute anything to check its own
+work, because no repo declared a `test_command`. That is the next thing to measure, and it matters
+for Phase 3 rather than only for cost — a test gate needs a card that can run tests.
+
 ### The levers, in the order they matter
 
 1. **Fewer turns.** The path lease is computed and then *hidden from the agent*, used only to refuse
