@@ -124,43 +124,54 @@ body {
    since each card overlaps the one before it rather than the one after. */
 /* 176 of a 264px card, so about a third stays visible - the title band and the top of the rule.
    at 96 the cards barely touched and the whole question of telling them apart did not arise */
-.card-overlap { margin-top: calc(var(--fan-overlap, 176px) * -1); transition: transform 140ms; }
+/* THE SEAM AND THE CAST TOGETHER. a collapsed stack read as one ruled list, because consecutive
+   title bands with nothing between them look like rows rather than like cards. the solid 4px in the
+   page's own ground cuts each card off from the one beneath, and the blur behind it does what a
+   real pile does - together they say "separate object" where either alone only hinted at it.
+   both offsets are negative because a card is pulled UP over the one before it, so the edge doing
+   the overlapping is its top */
+.card-overlap {
+  margin-top: calc(var(--fan-overlap, 176px) * -1);
+  transition: transform 140ms;
+  box-shadow:
+    0 -4px 0 0 var(--bg),
+    0 -10px 16px -4px rgba(0, 0, 0, 0.7);
+}
+
+/* three classes, so it outranks .card-strip.card-working wherever that sits in the file. every
+   preview card wears the plain border, or the status colour varies alongside the cast and neither
+   can be judged */
+.card-strip.card-overlap[class*="card-cast-"] { border-color: var(--grey-border); }
+
+/* ---- five casts over the same 4px seam. the shadow has to reach a little around the top corners
+   and then fall away; the current one has a negative spread, so it rises off the top edge and
+   never turns the corner. spread is what buys the wrap, blur is what buys the fade -------------- */
+
+/* 1. tight - spread pulled to zero, so the blur alone turns the corner. the least of it */
+.card-cast-c1 { box-shadow: 0 -4px 0 0 var(--bg), 0 -7px 11px 0 rgba(0, 0, 0, 0.6); }
+
+/* 2. wide - the same shape, more blur, so the wrap reaches further down the sides */
+.card-cast-c2 { box-shadow: 0 -4px 0 0 var(--bg), 0 -8px 20px 0 rgba(0, 0, 0, 0.55); }
+
+/* 3. layered - a tight dark core under a wide faint one. two falloffs rather than one, which is
+   what an actual shadow does and the only version here that is not a single gradient */
+.card-cast-c3 {
+  box-shadow:
+    0 -4px 0 0 var(--bg),
+    0 -5px 7px -1px rgba(0, 0, 0, 0.65),
+    0 -12px 22px 1px rgba(0, 0, 0, 0.4);
+}
+
+/* 4. cornered - positive spread pushes the shadow out sideways before it fades, so the corners
+   carry the most of it. the most explicit answer to "go around the top corners" */
+.card-cast-c4 { box-shadow: 0 -4px 0 0 var(--bg), 0 -6px 14px 3px rgba(0, 0, 0, 0.5); }
+
+/* 5. soft - diffuse and low, wrapping furthest but faintest. reads as height rather than as edge */
+.card-cast-c5 { box-shadow: 0 -4px 0 0 var(--bg), 0 -10px 28px 2px rgba(0, 0, 0, 0.45); }
 .card-overlap:first-child { margin-top: 0; }
 .card-overlap:focus { position: relative; z-index: 2; }
 .card-overlap:focus ~ .card-overlap { transform: translateY(var(--fan-overlap, 176px)); }
 
-/* NEUTRALISED FOR THE COMPARISON: every preview card wears the plain border, so the only thing
-   differing between columns is the treatment and not the card's status colour */
-/* three classes, so it outranks .card-strip.card-working wherever that sits in the file -
-   relying on source order would have made this depend on which rule moved next */
-.card-strip.card-overlap[class*="card-fan-"] { border-color: var(--grey-border); }
-
-/* ---- five ways to tell a collapsed stack apart. one per column, judged side by side ----------
-   the problem: with 96px of a 233px card showing, consecutive title bands read as one ruled list
-   rather than as a pile of cards. */
-
-/* 1. GAP - a dark line where one card lands on the next, so the seam is visible as a seam */
-.card-fan-gap { box-shadow: 0 -3px 0 0 var(--bg); }
-
-/* 2. FRAME - the overlapped edge carries a heavier border, so each card announces its own top */
-.card-fan-frame { border-top-width: 5px; }
-
-/* 3. TILT TOWARDS - the top of each card leans out of the screen and the bottom falls away.
-   perspective on the column, rotateX on the card: 2d elements, read as a 3d stack.
-   the transform origin sits at the top so the card pivots on the edge you can see */
-.bucket-rows:has(.card-fan-tilt-out) { perspective: 700px; perspective-origin: 50% 0%; }
-.card-fan-tilt-out { transform-origin: 50% 0%; transform: rotateX(18deg); }
-.card-fan-tilt-out:focus { transform: rotateX(0deg); }
-.card-fan-tilt-out:focus ~ .card-fan-tilt-out { transform: rotateX(18deg) translateY(var(--fan-overlap, 176px)); }
-
-/* 4. TILT AWAY - the same, inverted: the top falls away and the bottom leans towards you */
-.bucket-rows:has(.card-fan-tilt-in) { perspective: 700px; perspective-origin: 50% 100%; }
-.card-fan-tilt-in { transform-origin: 50% 100%; transform: rotateX(-18deg); }
-.card-fan-tilt-in:focus { transform: rotateX(0deg); }
-.card-fan-tilt-in:focus ~ .card-fan-tilt-in { transform: rotateX(-18deg) translateY(var(--fan-overlap, 176px)); }
-
-/* 5. CAST - each card drops a shadow onto the one beneath, which is what a real pile does */
-.card-fan-cast { box-shadow: 0 -6px 12px -2px rgba(0, 0, 0, 0.75); }
 /* ===== end preview block ==================================================================== */
 
 /* the cream border stays on every card; state is a 3px glow OUTSIDE it. the innermost pixel is the
