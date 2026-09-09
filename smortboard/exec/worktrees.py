@@ -66,6 +66,43 @@ def destroy_worktree(repo_path: str | Path, card_id: str, force: bool = False) -
     _run_git(repo_path, *args)
 
 
+def repo_root_of_worktree(worktree_path: str | Path) -> Path:
+    """resolves the main repo a card worktree belongs to.
+
+    a worktree's `.git` is a pointer file into the parent repo's `.git/worktrees/<name>` - this
+    walks that indirection with `git rev-parse` rather than assuming a fixed directory shape, so
+    the container backend can fetch the card's commits back into the repo that owns them.
+    """
+    worktree_path = Path(worktree_path).resolve()
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(worktree_path),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise WorktreeError(
+            f"could not resolve repo root for {worktree_path}: {result.stderr.strip()}"
+        )
+    common_dir = Path(result.stdout.strip())
+    # a non-bare repo's common git dir is "<repo_root>/.git"
+    return common_dir.parent
+
+
+def current_branch(worktree_path: str | Path) -> str:
+    """the branch a worktree is checked out on - S1/S3 require this to already be the card's
+    branch, never `base`, so callers can trust it rather than re-deriving the name themselves"""
+    result = _run_git(Path(worktree_path).resolve(), "branch", "--show-current")
+    return result.stdout.strip()
+
+
 def list_worktrees(repo_path: str | Path) -> list[WorktreeInfo]:
     """lists worktrees under the card convention — plain `git worktree list` includes the main
     checkout too, which is not a card worktree, so it is filtered out here"""
