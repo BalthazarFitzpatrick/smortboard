@@ -38,7 +38,8 @@ below.
 | Outputs | Always a git commit — decisions and documents included. |
 | Prompts | Layered by **role** only: orchestrator, worker, reviewer. |
 | UI | ui_base first, domain-free vocabulary. Git pin, sha while co-developing. PyPI whenever it chafes. |
-| Packaging | Docker + browser. No desktop app. |
+| Packaging | `uv tool install smortboard`, a native local app. Docker isolates cards, it is not how the board ships. |
+| Isolation | One throwaway container per card, with a clone bind-mounted and a card-scoped token. No GitHub credential inside. |
 | Out of scope | Ollama, workstream column mode, scheduling/digest, Omarchy, fish_gate. |
 
 ### Resolved from the brief's open flags
@@ -392,6 +393,60 @@ claimed but never released, a reviewer that approves before tests finish.
   board's own first workstream spans smortboard and ui_base, which is exactly why repo is a card
   attribute.
 - Docker image builds and the board survives a container restart with state intact.
+
+## The containment decision
+
+**A card will eventually read input nobody wrote for it** — an issue body, a fetched page, a
+dependency's README. That makes prompt injection a real path rather than a theoretical one, and it
+is the fact that decides this section. Against a merely confused agent almost anything is adequate;
+against an injected one, only a boundary it cannot argue with is.
+
+### The board runs natively, and that is the safer choice
+
+A containerised board that starts card containers needs the Docker socket, which is root-equivalent
+on the host. A native board runs with the user's own privileges. **The container was never
+protecting the operator from the board — it protects them from the cards**, so moving the board out
+of Docker removes a root-shaped hole and costs nothing.
+
+It ships as `uv tool install smortboard`, or `uvx smortboard` with no install at all. One command,
+no virtualenv to manage, and `uv` is already the house toolchain.
+
+### A card gets a container, a clone, and no way to reach GitHub
+
+- a **clone** rather than a worktree, because a worktree's `.git` is a pointer file into the parent
+  repo: mount only the worktree and git is dead, and committing is the card's whole job
+- the clone is bind-mounted, so the commits are on the host's disk the moment the container exits
+- a card-scoped credential from `claude setup-token`, mounted read-only. Never an environment
+  variable, which `docker inspect` shows to anyone who can run it
+- **no GitHub credential at all.** The card commits locally; the board fetches, runs the gates,
+  pushes and opens the pull request from the host where the operator's rules apply
+
+That last point is what actually protects `main`, and it is structural rather than a rule: the
+guard that refuses a push to main lives in the operator's user settings, and a card runs with
+`--setting-sources project` and never sees it. A card that cannot reach GitHub cannot write main
+whatever it decides to do.
+
+### One runner interface, two backends
+
+The runner takes a working directory and a token, and nothing else changes behind it:
+
+| backend | when | isolation |
+|---|---|---|
+| container | Docker is available | filesystem and process, per card |
+| subprocess | Docker is not | the lease hook and the Bash guard only |
+
+The subprocess backend is not a lesser mode to be ashamed of — it is what makes `uvx smortboard`
+work for someone trying it in a minute. **The board states which backend is running**, because
+isolation that is silently absent is worse than isolation that was never claimed.
+
+### What a container still does not solve
+
+- **the network is open.** The run has to reach the API, so `--network none` is not available.
+  Restricting egress to that one host is possible inside a container and impractical outside one,
+  which is a reason to have the container rather than a claim about what it already does
+- **the token is inside it.** A container is a filesystem boundary, not a credential one. What
+  protects the credential is that it is a *separate* one: a card token can be revoked without
+  touching the operator's own session
 
 ## Risks
 
