@@ -1,11 +1,14 @@
-"""two ways to run a card, behind one interface: `run_card(store, card_id, worktree_path, ...)`.
+"""how a card runs: one throwaway container, and nothing else.
 
-Per docs/PLAN.md "The containment decision": a card will eventually read input nobody wrote for
-it, so only a boundary it cannot argue with is worth having. `ContainerBackend` is that boundary;
-`SubprocessBackend` is today's behaviour, kept because `uvx smortboard` has to work even where
-Docker does not. Isolation that is silently absent is worse than isolation never claimed, so
-`select_backend` always returns a backend with a `.name` the board can display - never a backend
-whose kind is ambiguous.
+Per docs/PLAN.md "The containment decision": a card will eventually read input nobody wrote for it -
+an issue body, a fetched page, a dependency's readme - so only a boundary it cannot argue with is
+worth having.
+
+THERE IS NO SECOND MODE. `require_card_runtime` returns the container runtime or refuses with
+instructions. A subprocess fallback would put an agent that may have read untrusted input on the
+operator's own filesystem, with their own credential and their own GitHub access - which is the
+whole thing the container exists to prevent. A board that quietly degraded would be claiming an
+isolation it no longer had.
 """
 
 import os
@@ -73,36 +76,6 @@ class RunnerBackend(Protocol):
         repo: dict[str, Any] | None = None,
         token_path: str | Path | None = None,
     ) -> RunResult: ...
-
-
-class SubprocessBackend:
-    """today's behaviour: `claude` runs directly on the host, in the card's worktree.
-
-    isolation here is the lease hook and the Bash guard only (see bash_guard.py) - real, but not a
-    boundary an injected agent cannot argue with.
-    """
-
-    name = "subprocess"
-
-    def run_card(
-        self,
-        store: Store,
-        card_id: str,
-        worktree_path: str | Path,
-        prompt: str,
-        settings_path: str | Path,
-        model: str = "sonnet",
-        repo: dict[str, Any] | None = None,
-        token_path: str | Path | None = None,
-    ) -> RunResult:
-        cmd = build_command(
-            prompt, settings_path, model=model, allowed_tools=allowed_tools_for_repo(repo)
-        )
-        env = None
-        if token_path is not None:
-            # host-side only: no docker inspect to leak this to, so a plain env var is fine here
-            env = {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": Path(token_path).read_text().strip()}
-        return run_process(store, card_id, cmd, cwd=worktree_path, env=env)
 
 
 class ContainerBackend:
@@ -227,14 +200,32 @@ class ContainerBackend:
             raise WorktreeError(f"fetching card commits back failed: {result.stderr.strip()}")
 
 
-def select_backend(token_path: str | Path | None = None) -> RunnerBackend:
-    """the container backend only when it can actually run: Docker answers, and a token is there.
+class CardRuntimeUnavailable(RuntimeError):
+    """docker or the card credential is missing, so no card can run.
 
-    silently falling back when Docker is merely "installed but not usable" would be exactly the
-    absent-but-unclaimed isolation the plan warns against - callers must read `.name` and surface
-    it rather than assume.
+    THERE IS NO FALLBACK ON PURPOSE. running the card as a plain subprocess would put an agent that
+    may have read untrusted input on the operator's own filesystem, with their own credential and
+    their own GitHub access - the exact thing the container exists to prevent. A board that quietly
+    degraded would be claiming an isolation it no longer had, so it refuses instead and says how to
+    fix it.
     """
-    resolved_token = Path(token_path or card_token_path())
-    if docker_available() and resolved_token.is_file():
-        return ContainerBackend()
-    return SubprocessBackend()
+
+
+def require_card_runtime(token_path: str | Path | None = None) -> ContainerBackend:
+    """the one way a card runs. raises CardRuntimeUnavailable with instructions if it cannot."""
+    problems = []
+    if not docker_available():
+        problems.append(
+            "Docker is not running or not installed. smortboard runs every card in its own "
+            "container; install Docker Desktop and start it."
+        )
+    resolved = Path(token_path or card_token_path())
+    if not resolved.is_file():
+        problems.append(
+            f"No card credential at {resolved}. Run `claude setup-token` and write the token "
+            f"there - a card-scoped credential, so it can be revoked without touching your own "
+            f"session."
+        )
+    if problems:
+        raise CardRuntimeUnavailable("  " + "\n  ".join(problems))
+    return ContainerBackend()

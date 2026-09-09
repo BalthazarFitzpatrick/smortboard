@@ -173,7 +173,7 @@ def run_process(
 ) -> RunResult:
     """launches `cmd`, recording every stream-json line into the store as it arrives
 
-    shared by both backends: a `SubprocessBackend` runs `claude` directly with `cwd` as the
+    shared by the card runtime and by tests: the container runtime runs `docker run` with the
     worktree; a `ContainerBackend` runs `docker run ...` wrapping the same `claude` invocation, and
     the container's stdout is exactly the same stream, so classification does not change per
     backend - only how the process is launched does.
@@ -240,9 +240,12 @@ def run_card(
     model: str = "sonnet",
     repo: dict[str, Any] | None = None,
 ) -> RunResult:
-    """runs one card headlessly in the current host process - the `SubprocessBackend` shape.
+    """runs one card headlessly in the current host process.
 
-    kept as a free function for backward compatibility; `SubprocessBackend.run_card` in
+    NOT how a card runs in production - cards run in a container, see backends.py. this stays for
+    tests and for the whole-system harness, which need a path that does not require Docker.
+
+
     `backends.py` is a thin wrapper over this.
     """
     cmd = build_command(

@@ -38,7 +38,8 @@ below.
 | Outputs | Always a git commit — decisions and documents included. |
 | Prompts | Layered by **role** only: orchestrator, worker, reviewer. |
 | UI | ui_base first, domain-free vocabulary. Git pin, sha while co-developing. PyPI whenever it chafes. |
-| Packaging | Docker + browser. No desktop app. |
+| Packaging | `uv tool install smortboard`, a native local app. Docker isolates cards, it is not how the board ships. |
+| Isolation | One throwaway container per card, with a clone bind-mounted and a card-scoped token. No GitHub credential inside. **Docker is a hard dependency — there is no fallback.** |
 | Out of scope | Ollama, workstream column mode, scheduling/digest, Omarchy, fish_gate. |
 
 ### Resolved from the brief's open flags
@@ -252,16 +253,40 @@ with a correct reason code.
 
 ### Phase 3 — the gates
 
-- Unit test runner per card, derived from acceptance criteria.
-- Reviewer agent: practices, vulnerabilities, inefficiencies, leaked credentials, performance.
-- Review setting per card with global override: findings auto-fixed by the worker, or surfaced via
-  attention.
-- Worker summary and reviewer verdict rendered in the card.
-- Merge request: push the branch, surface the GitHub PR link. Never merge.
-- Rejection: destroy the worktree, cut fresh from base, attach a read-only diff of the attempt.
-- Dependent cards of a rejected card get the yellow highlight for review.
+**Two gates, and they answer different questions.** Keeping them apart is the point of having two:
 
-**Ships when:** the whole-system test passes end to end.
+| gate | question | input |
+|---|---|---|
+| unit tests | did it do the thing that was asked? | the acceptance criteria |
+| reviewer | is the code safe and decent? | the diff |
+
+**The reviewer does not judge acceptance criteria.** The tests do that, and they were written from
+the criteria before the work started. The reviewer reads the diff and answers four questions and no
+others:
+
+- **vulnerabilities** — injection, unsafe deserialisation, path traversal, unchecked input
+- **leaked credentials** — a key, token or password reaching the diff at all
+- **best practices** — the project's own conventions, and the language's
+- **efficient coding** — work done repeatedly that could be done once, and obvious waste
+
+This is why criteria are immutable and tests come first. A reviewer that also judged "did it meet
+the criteria" would be judging a target the same run could have moved; splitting them means each
+gate has something fixed to measure against.
+
+```
+unit test runner per card, from the acceptance criteria
+reviewer agent over the diff, on the four questions above
+review setting per card with a global override: findings auto-fixed by the worker, or surfaced
+  through attention
+worker summary and reviewer verdict rendered on the card
+merge request: push the branch and OPEN THE PULL REQUEST with gh, title and body written. never
+  merge - that is Fabian's, and the hook refuses it anyway
+rejection: destroy the worktree, cut fresh from base, attach a read-only diff of the attempt
+dependent cards of a rejected card take the attention colour for review
+```
+
+**Ships when:** the whole-system test passes end to end, including a card whose reviewer finds
+something and whose card lands in attention rather than in Checking.
 
 ### Phase 4 — Mission Control
 
@@ -369,7 +394,81 @@ claimed but never released, a reviewer that approves before tests finish.
   attribute.
 - Docker image builds and the board survives a container restart with state intact.
 
+## The containment decision
+
+**A card will eventually read input nobody wrote for it** — an issue body, a fetched page, a
+dependency's README. That makes prompt injection a real path rather than a theoretical one, and it
+is the fact that decides this section. Against a merely confused agent almost anything is adequate;
+against an injected one, only a boundary it cannot argue with is.
+
+### The board runs natively, and that is the safer choice
+
+A containerised board that starts card containers needs the Docker socket, which is root-equivalent
+on the host. A native board runs with the user's own privileges. **The container was never
+protecting the operator from the board — it protects them from the cards**, so moving the board out
+of Docker removes a root-shaped hole and costs nothing.
+
+It ships as `uv tool install smortboard`, or `uvx smortboard` with no install at all. One command,
+no virtualenv to manage, and `uv` is already the house toolchain.
+
+### A card gets a container, a clone, and no way to reach GitHub
+
+- a **clone** rather than a worktree, because a worktree's `.git` is a pointer file into the parent
+  repo: mount only the worktree and git is dead, and committing is the card's whole job
+- the clone is bind-mounted, so the commits are on the host's disk the moment the container exits
+- a card-scoped credential from `claude setup-token`, mounted read-only. Never an environment
+  variable, which `docker inspect` shows to anyone who can run it
+- **no GitHub credential at all.** The card commits locally; the board fetches, runs the gates,
+  pushes and opens the pull request from the host where the operator's rules apply
+
+That last point is what actually protects `main`, and it is structural rather than a rule: the
+guard that refuses a push to main lives in the operator's user settings, and a card runs with
+`--setting-sources project` and never sees it. A card that cannot reach GitHub cannot write main
+whatever it decides to do.
+
+### One card runtime, and Docker is a hard dependency
+
+**There is no second mode.** A card runs in a container or it does not run. If Docker is missing, or
+the card credential is not configured, the board refuses and says how to fix it rather than starting
+the card some other way.
+
+That is deliberate and it is the whole point of the decision above. A subprocess fallback would put
+an agent that may have read untrusted input onto the operator's own filesystem, with the operator's
+own credential and their own GitHub access — which is precisely what the container exists to
+prevent. A board that quietly degraded would be claiming an isolation it no longer had, and the
+person relying on it would have no way to know.
+
+So Docker joins `uv` as something you install once, and `require_card_runtime()` is the only way to
+get a runtime.
+
+### What a container still does not solve
+
+- **the network is open.** The run has to reach the API, so `--network none` is not available.
+  Restricting egress to that one host is possible inside a container and impractical outside one,
+  which is a reason to have the container rather than a claim about what it already does
+- **the token is inside it.** A container is a filesystem boundary, not a credential one. What
+  protects the credential is that it is a *separate* one: a card token can be revoked without
+  touching the operator's own session
+
 ## Risks
+
+- **A card is not contained, only guided.** The lease hook stops writes outside the card's paths and
+  a Bash guard stops the obvious escapes, but shell is arbitrary and a determined command gets out.
+  Real containment means running the card in a container — and a git WORKTREE IS NOT SELF-CONTAINED:
+  its `.git` is a pointer file into the parent repo, so mounting only the worktree leaves git dead
+  and the card unable to commit. That forces a choice, which belongs to Phase 5 when parallelism
+  makes it matter:
+  - **mount the parent repo** — git works, the scope is the repo, and the lease stays what keeps one
+    card out of another's worktree
+  - **clone per card** — genuinely self-contained and mounts cleanly, at the cost of disk and a few
+    seconds per card
+  Two things a container does not solve either way: the card needs the CLI and an authenticated
+  token inside it, so the subscription seat crosses the boundary by design; and network cannot be
+  off, since the run has to reach the API. The boundary is filesystem and process, not credential
+  and not network.
+- **Everything a card needs must be in the repo**, which is a good contract and makes the container
+  reproducible — with the standing exception that secrets are mounted, never committed.
+
 
 - **S1 falsified** — headless Claude Code cannot be driven per card. Forces the Agent SDK and
   re-plans Phase 2. Highest-impact unknown; spike first.
