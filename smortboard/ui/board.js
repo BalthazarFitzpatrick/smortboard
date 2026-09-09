@@ -74,11 +74,7 @@ function cardClasses(card) {
   else if (card.status === 'rejected') classes.push('card-rejected');
   // PREVIEW ONLY - the fan, still being judged
   // PREVIEW - the fan, plus one treatment per column for telling a collapsed stack apart
-  if (card.workstream && card.workstream.startsWith('overlap')) {
-    classes.push('card-overlap');
-    const variant = card.workstream.split(':')[1];
-    if (variant) classes.push('card-cast-' + variant);   // PREVIEW - cast shapes being judged
-  }
+  if (card.workstream && card.workstream.startsWith('overlap')) classes.push('card-overlap');
   return classes.join(' ');
 }
 
