@@ -15,6 +15,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
 from pathlib import Path
@@ -34,6 +35,7 @@ CARD_TOKEN_PATH_ENV = "SMORTBOARD_CARD_TOKEN_PATH"
 # where the token lands inside the container - read-only, never passed as an env var so it never
 # shows up in `docker inspect`
 _KEYCHAIN_SERVICE = "smortboard-card-token"
+_KEYCHAIN_USER = "smortboard"
 _CONTAINER_WORKDIR = "/workspace"
 
 
@@ -47,27 +49,55 @@ class CardTokenMissing(RuntimeError):
 
 def card_token_path() -> Path:
     """where a card token lives when it is a file rather than a keychain entry"""
-    return Path(
-        os.environ.get(CARD_TOKEN_PATH_ENV, Path.home() / ".config" / "smortboard" / "card_token")
-    )
+    return Path(os.environ.get(CARD_TOKEN_PATH_ENV) or _default_token_file())
 
 
-def _keychain_token() -> str | None:
-    """the macOS keychain, which is where Claude Code keeps its own credentials.
+def _default_token_file() -> Path:
+    """where the fallback token file lives, per platform.
 
-    preferred over a file because a file means a plaintext credential sitting under the operator's
-    home directory for as long as the board exists. absent or unreadable, the caller falls back.
+    APPDATA on Windows, XDG_CONFIG_HOME or ~/.config elsewhere. Only reached when no OS credential
+    store is available - a headless Linux box with no Secret Service, mainly.
     """
-    if not shutil.which("security"):
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return base / "smortboard" / "card_token"
+
+
+def _credential_store_token() -> str | None:
+    """the OS credential store: Keychain on macOS, Credential Manager on Windows, Secret Service on
+    Linux. One API for all three, which is why this is `keyring` rather than shelling out to
+    `security` - that only ever worked on macOS.
+
+    Returns None when there is no usable backend, which is normal on a headless Linux box; the
+    caller falls back to a file.
+    """
+    try:
+        import keyring
+        from keyring.errors import KeyringError
+    except ImportError:
         return None
-    result = subprocess.run(
-        ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE, "-w"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    token = result.stdout.strip()
-    return token if result.returncode == 0 and token else None
+    try:
+        return keyring.get_password(_KEYCHAIN_SERVICE, _KEYCHAIN_USER) or None
+    except KeyringError:
+        return None
+
+
+def _store_instructions(path: Path) -> str:
+    """how to save the token on the platform actually in use, rather than on mine"""
+    if os.name == "nt":
+        store = "  cmdkey, or Windows Credential Manager, under the name above"
+        file_note = f"or write it to {path} - your user profile directory already restricts it"
+    elif sys.platform == "darwin":
+        store = (
+            f"  security add-generic-password -s {_KEYCHAIN_SERVICE} -a {_KEYCHAIN_USER} -w <token>"
+        )
+        file_note = f"or write it to {path} with mode 600 (owner read and write, nobody else)"
+    else:
+        store = f"  secret-tool store --label=smortboard service {_KEYCHAIN_SERVICE} username {_KEYCHAIN_USER}"
+        file_note = f"or write it to {path} with mode 600 (owner read and write, nobody else)"
+    return f"{store}\n{file_note}"
 
 
 def read_card_token(token_path: str | Path | None = None) -> str:
@@ -78,7 +108,7 @@ def read_card_token(token_path: str | Path | None = None) -> str:
     """
     explicit = token_path is not None
     if not explicit:
-        from_keychain = _keychain_token()
+        from_keychain = _credential_store_token()
         if from_keychain:
             return from_keychain
     resolved = Path(token_path or card_token_path())
@@ -87,9 +117,8 @@ def read_card_token(token_path: str | Path | None = None) -> str:
         if token:
             return token
     raise CardTokenMissing(
-        f"No card credential. Run `claude setup-token`, then either\n"
-        f"  security add-generic-password -s {_KEYCHAIN_SERVICE} -a smortboard -w <token>\n"
-        f"or write it to {resolved} with mode 600."
+        "No card credential. Run `claude setup-token`, then either\n"
+        + _store_instructions(resolved)
     )
 
 
