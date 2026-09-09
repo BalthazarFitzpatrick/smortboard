@@ -18,8 +18,8 @@ const BINDINGS = [
   {code: 'KeyA', label: 'a', action: 'agent roster (placeholder)'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay'},
   {code: 'Slash', label: '/', action: "focus the open card's comment input"},
-  {code: 'Comma', label: ',', action: 'workforce panel (placeholder)'},
-  {code: 'Period', label: '.', action: 'mission control panel (placeholder)'},
+  {code: 'Comma', label: ',', action: 'agent observation deck'},
+  {code: 'Period', label: '.', action: 'orchestration and planning agent'},
   ...Array.from({length: 9}, (_, i) => ({
     code: `Digit${i + 1}`, label: String(i + 1), action: `jump to board ${i + 1}`,
   })),
@@ -66,7 +66,8 @@ async function onBoardEnter(boardId) {
 // ---- buckets of card strips -------------------------------------------------------
 
 function cardClasses(card) {
-  const classes = ['row', 'card-strip'];
+  // every card fans: the stack is the layout now, not a preview keyed off a workstream
+  const classes = ['row', 'card', 'card-strip', 'fan-item'];
   // blocked wins over working: a card waiting on you is not a card making progress, and showing
   // both reads as progress
   if (card.blocked_reason_code) classes.push('card-attention');
@@ -74,7 +75,6 @@ function cardClasses(card) {
   else if (card.status === 'rejected') classes.push('card-rejected');
   // PREVIEW ONLY - the fan, still being judged
   // PREVIEW - the fan, plus one treatment per column for telling a collapsed stack apart
-  if (card.workstream && card.workstream.startsWith('overlap')) classes.push('card-overlap');
   return classes.join(' ');
 }
 
@@ -110,7 +110,7 @@ function renderCardStrip(card) {
     <div class="h-divider"></div>
     <div class="card-foot">
       <span class="card-workstream">${escapeHtml(card.workstream || '')}</span>
-      <span class="card-stat">${escapeHtml(stat)}</span>
+      <span class="stat">${escapeHtml(stat)}</span>
     </div>
   `;
   const expander = makeExpander(strip, {
@@ -208,7 +208,13 @@ const drawers = {};
 // the gap above and below a drawer, equal at both ends so it reads as pinned rather than floating
 const DRAWER_INSET_PX = 50;
 
-function drawerFor(edge, label) {
+// what each drawer is, and what it does - the second line is the part a colleague reads
+const DRAWERS = {
+  left: ['agent observation deck', 'loops over all active cards or pins to selected card'],
+  right: ['orchestration and planning agent', 'this is where you will spend your time'],
+};
+
+function drawerFor(edge) {
   if (drawers[edge]) return drawers[edge];
   const bar = document.querySelector('.board-bar');
   const drawer = makeDrawer({
@@ -220,9 +226,11 @@ function drawerFor(edge, label) {
     top: (bar ? Math.round(bar.getBoundingClientRect().bottom) : 0) + DRAWER_INSET_PX,
     bottom: DRAWER_INSET_PX,
   });
+  const [title, note] = DRAWERS[edge];
   const box = document.createElement('div');
   box.className = 'hazard-stripes hazard-placeholder';
-  box.innerHTML = `<span class="hazard-label">${escapeHtml(label)}</span>`;
+  box.innerHTML = `<span class="hazard-label">${escapeHtml(title)}</span>
+    <span class="hazard-note">${escapeHtml(note)}</span>`;
   drawer.body.appendChild(box);
   drawers[edge] = drawer;
   return drawer;
@@ -231,8 +239,8 @@ function drawerFor(edge, label) {
 // BUILT AT STARTUP, NOT ON FIRST PRESS. the sliver is the affordance that tells you a drawer is
 // there at all, so a drawer that only exists once you already knew to press the key is useless
 function buildDrawers() {
-  drawerFor('left', 'workforce');
-  drawerFor('right', 'mission control');
+  drawerFor('left');
+  drawerFor('right');
 }
 
 // THE KEY THAT OPENS AN OVERLAY ALSO CLOSES IT. Menu dismisses on outside click and escape but
@@ -303,8 +311,8 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyU') { openPlaceholder('KeyU', 'usage'); return; }
   if (evt.code === 'KeyA') { openPlaceholder('KeyA', 'agent roster'); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
-  if (evt.code === 'Comma') { drawerFor('left', 'workforce').toggle(); return; }
-  if (evt.code === 'Period') { drawerFor('right', 'mission control').toggle(); return; }
+  if (evt.code === 'Comma') { drawerFor('left').toggle(); return; }
+  if (evt.code === 'Period') { drawerFor('right').toggle(); return; }
   if (evt.code === 'Slash' && openCard) { evt.preventDefault(); openCard.input.focus(); return; }
   if (binding.code.startsWith('Digit')) {
     const index = Number(binding.label) - 1;
