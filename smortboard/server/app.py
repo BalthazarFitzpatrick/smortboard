@@ -2,6 +2,7 @@
 
 import json
 import re
+import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 
@@ -30,6 +31,7 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "DELETE"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)$"), "DELETE"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/comments$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/attachments$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/attachments/(?P<attachment_id>[^/]+)$"), "GET"),
@@ -81,6 +83,11 @@ def _make_handler(store: Store) -> type[BaseHTTPRequestHandler]:
                 self._send_json(404, {"error": str(exc)})
             except (BlockedReasonInvalidError, UnknownFieldError) as exc:
                 self._send_json(400, {"error": str(exc)})
+            except sqlite3.Error as exc:
+                # a store error must still be an HTTP response. uncaught, it escaped _dispatch and
+                # killed the connection, so the client saw no status at all - which is the hardest
+                # possible failure to diagnose from the outside
+                self._send_json(500, {"error": f"store error: {exc}"})
             except MultipartError as exc:
                 self._send_json(400, {"error": str(exc)})
             except (KeyError, TypeError, ValueError) as exc:
@@ -121,6 +128,9 @@ def _make_handler(store: Store) -> type[BaseHTTPRequestHandler]:
                 self._handle_patch_card(params["card_id"])
             elif "card_id" in params and method == "DELETE":
                 store.delete_card(params["card_id"])
+                self._send_status(204)
+            elif "board_id" in params and method == "DELETE":
+                store.delete_board(params["board_id"])
                 self._send_status(204)
             elif "name" in params:
                 self._handle_asset(params["name"])
