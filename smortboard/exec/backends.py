@@ -89,10 +89,10 @@ def card_token_path() -> Path:
 
 
 def _default_token_file() -> Path:
-    """where the fallback token file lives, per platform.
+    """where the token file lives, per platform - the first place the board looks.
 
-    APPDATA on Windows, XDG_CONFIG_HOME or ~/.config elsewhere. Only reached when no OS credential
-    store is available - a headless Linux box with no Secret Service, mainly.
+    APPDATA on Windows, XDG_CONFIG_HOME or ~/.config elsewhere. The OS credential store is only
+    the fallback when this file is absent.
     """
     if os.name == "nt":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
@@ -106,8 +106,8 @@ def _credential_store_token() -> str | None:
     Linux. One API for all three, which is why this is `keyring` rather than shelling out to
     `security` - that only ever worked on macOS.
 
-    Returns None when there is no usable backend, which is normal on a headless Linux box; the
-    caller falls back to a file.
+    Returns None when there is no usable backend, which is normal on a headless Linux box. Only
+    reached when there is no token file - on macOS every read here raises a keychain prompt.
     """
     try:
         import keyring
@@ -123,35 +123,39 @@ def _credential_store_token() -> str | None:
 def _store_instructions(path: Path) -> str:
     """how to save the token on the platform actually in use, rather than on mine"""
     if os.name == "nt":
-        store = "  cmdkey, or Windows Credential Manager, under the name above"
-        file_note = f"or write it to {path} - your user profile directory already restricts it"
+        file_note = f"  write it to {path} - your user profile directory already restricts it"
+        store = "or cmdkey, or Windows Credential Manager, under the name above"
     elif sys.platform == "darwin":
+        file_note = f"  write it to {path} with mode 600 (owner read and write, nobody else)"
         store = (
-            f"  security add-generic-password -s {_KEYCHAIN_SERVICE} -a {_KEYCHAIN_USER} -w <token>"
+            f"or security add-generic-password -s {_KEYCHAIN_SERVICE} -a {_KEYCHAIN_USER} -w"
+            " - but macOS then prompts on every read"
         )
-        file_note = f"or write it to {path} with mode 600 (owner read and write, nobody else)"
     else:
-        store = f"  secret-tool store --label=smortboard service {_KEYCHAIN_SERVICE} username {_KEYCHAIN_USER}"
-        file_note = f"or write it to {path} with mode 600 (owner read and write, nobody else)"
-    return f"{store}\n{file_note}"
+        file_note = f"  write it to {path} with mode 600 (owner read and write, nobody else)"
+        store = f"or secret-tool store --label=smortboard service {_KEYCHAIN_SERVICE} username {_KEYCHAIN_USER}"
+    return f"{file_note}\n{store}"
 
 
 def read_card_token(token_path: str | Path | None = None) -> str:
-    """the card credential, keychain first, then a file.
+    """the card credential, a mode-600 file first, then the OS credential store.
+
+    FILE FIRST since 2026-09-10: on macOS every keyring read raised a keychain prompt, and one
+    ruined a screen recording. With the file present the keychain is never touched.
 
     NEVER returned to anywhere it could be logged: the one caller writes it straight to the
     container's stdin. It is not stored on the backend and not put in the environment.
     """
-    explicit = token_path is not None
-    if not explicit:
-        from_keychain = _credential_store_token()
-        if from_keychain:
-            return from_keychain
     resolved = Path(token_path or card_token_path())
     if resolved.is_file():
         token = resolved.read_text().strip()
         if token:
             return token
+    # an explicit path is the whole answer, so callers that name one never reach the keychain
+    if token_path is None:
+        from_keychain = _credential_store_token()
+        if from_keychain:
+            return from_keychain
     raise CardTokenMissing(
         "No card credential. Run `claude setup-token`, then either\n"
         + _store_instructions(resolved)
@@ -320,9 +324,9 @@ class ContainerBackend:
             model=model,
             allowed_tools=allowed_tools_for_repo(repo),
         )
-        # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK. it used to be a bind-mounted file, which
-        # meant a plaintext credential had to exist under the operator's home directory for as long
-        # as the board did. read from stdin it exists only in the container's memory.
+        # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK INSIDE THE CONTAINER. the host's token
+        # file, if there is one, is never mounted - read from stdin the token exists only in the
+        # container's memory.
         # `read` consumes exactly the first line, then stdin is redirected from /dev/null for the
         # run itself - without that redirect `claude -p` waits 3s for input it will never get (S1).
         # still never `-e`/`--env`, so `docker inspect` shows nothing either.
