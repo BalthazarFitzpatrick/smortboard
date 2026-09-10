@@ -26,8 +26,12 @@ def _worktree_root(repo_path: Path) -> Path:
     return repo_path / ".claude" / "worktrees"
 
 
-def _branch_name(card_id: str) -> str:
+def branch_name(card_id: str) -> str:
     return f"card/{card_id}"
+
+
+def worktree_path(repo_path: str | Path, card_id: str) -> Path:
+    return _worktree_root(Path(repo_path).resolve()) / card_id
 
 
 def _run_git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
@@ -45,25 +49,53 @@ def _run_git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
 def create_worktree(repo_path: str | Path, card_id: str, base: str = "main") -> WorktreeInfo:
     """cuts a worktree + branch for card_id off base, and returns it already on that branch"""
     repo_path = Path(repo_path).resolve()
-    branch = _branch_name(card_id)
-    worktree_path = _worktree_root(repo_path) / card_id
-    if worktree_path.exists():
-        raise WorktreeError(f"worktree already exists at {worktree_path}")
-    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    branch = branch_name(card_id)
+    path = worktree_path(repo_path, card_id)
+    if path.exists():
+        raise WorktreeError(f"worktree already exists at {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
     # -b creates the branch and checks the new worktree out onto it in one step
-    _run_git(repo_path, "worktree", "add", "-b", branch, str(worktree_path), base)
-    return WorktreeInfo(card_id=card_id, path=worktree_path, branch=branch)
+    _run_git(repo_path, "worktree", "add", "-b", branch, str(path), base)
+    return WorktreeInfo(card_id=card_id, path=path, branch=branch)
 
 
 def destroy_worktree(repo_path: str | Path, card_id: str, force: bool = False) -> None:
     """removes the card's worktree; the branch itself is left for review/rejection to handle"""
     repo_path = Path(repo_path).resolve()
-    worktree_path = _worktree_root(repo_path) / card_id
     args = ["worktree", "remove"]
     if force:
         args.append("--force")
-    args.append(str(worktree_path))
+    args.append(str(worktree_path(repo_path, card_id)))
     _run_git(repo_path, *args)
+
+
+def branch_exists(repo_path: str | Path, card_id: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "rev-parse", "--verify", "--quiet", branch_name(card_id)],
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def delete_branch(repo_path: str | Path, card_id: str) -> None:
+    """drops the card's local branch. -D because a rejected attempt is never merged anywhere"""
+    _run_git(Path(repo_path).resolve(), "branch", "-D", branch_name(card_id))
+
+
+def branch_diff(repo_path: str | Path, base: str, branch: str) -> str:
+    """what the card actually changed - what the reviewer reads and what a rejection keeps.
+
+    Three dots: the diff against the merge base, so work that landed on `base` while the card was
+    running does not show up as something the card did.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "diff", f"{base}...{branch}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout if result.returncode == 0 else ""
 
 
 def repo_root_of_worktree(worktree_path: str | Path) -> Path:

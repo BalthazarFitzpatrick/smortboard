@@ -15,6 +15,10 @@ BLOCKED_REASON_CODES = (
     "REVIEW_REJECTED",
     "DEPENDENCY_REJECTED",
 )
+# where reviewer findings go. attention is the default: a card fixing its own findings unattended
+# spends a run's worth of tokens that nobody asked for
+FINDINGS_ROUTES = ("fix", "attention")
+DEFAULT_FINDINGS_ROUTE = "attention"
 
 _MIGRATIONS: list[str] = [
     # 1: base tables
@@ -119,6 +123,12 @@ _MIGRATIONS: list[str] = [
     # later card reads, which is the cross-card contamination the per-card container exists to stop
     """
     ALTER TABLE repos ADD COLUMN image TEXT;
+    """,
+    # 4: where a card's reviewer findings go - back to the worker to fix, or to a human through
+    # attention. null on a card means the default. the global value in settings forces every card
+    """
+    ALTER TABLE cards ADD COLUMN findings_route TEXT CHECK (findings_route IN ('fix', 'attention'));
+    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
     """,
 ]
 

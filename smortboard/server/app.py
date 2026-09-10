@@ -6,6 +6,8 @@ import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 
+from smortboard.review.decide import DecisionRefused, accept_card, reject_card
+from smortboard.review.outcome import card_outcome
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import Readiness, RunRegistry
@@ -21,6 +23,7 @@ _CARD_WRITABLE_FIELDS = {
     "position",
     "review_flag",
     "repo_id",
+    "findings_route",
 }
 
 _ROUTES = [
@@ -39,10 +42,15 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/attachments$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/attachments/(?P<attachment_id>[^/]+)$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/events$"), "GET"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/outcome$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/run$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/run$"), "GET"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/accept$"), "POST"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/reject$"), "POST"),
     (re.compile(r"^/api/runs$"), "GET"),
     (re.compile(r"^/api/runtime$"), "GET"),
+    (re.compile(r"^/api/settings$"), "GET"),
+    (re.compile(r"^/api/settings$"), "PATCH"),
     (re.compile(r"^/api/tasks/(?P<task_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
 ]
@@ -154,10 +162,23 @@ def _make_handler(
                     if state
                     else {"card_id": params["card_id"], "phase": None, "running": False},
                 )
+            elif path.endswith("/accept"):
+                self._handle_decision(params["card_id"], accept_card)
+            elif path.endswith("/reject"):
+                self._handle_decision(params["card_id"], reject_card)
+            elif path.endswith("/outcome"):
+                store.get_card(params["card_id"])  # a 404 for a missing card, not an empty outcome
+                self._send_json(200, card_outcome(store, params["card_id"]))
             elif path == "/api/runs":
                 self._send_json(200, [state.as_dict() for state in runs.active()])
             elif path == "/api/runtime":
                 self._send_json(200, readiness.check())
+            elif path == "/api/settings" and method == "GET":
+                self._send_json(200, store.get_settings())
+            elif path == "/api/settings" and method == "PATCH":
+                for key, value in self._read_json().items():
+                    store.set_setting(key, value)
+                self._send_json(200, store.get_settings())
             elif path.endswith("/events"):
                 self._send_json(200, store.list_events(params["card_id"]))
             elif "card_id" in params and method == "GET":
@@ -186,6 +207,20 @@ def _make_handler(
             store.get_card(card_id)  # raises NotFoundError before a thread is ever started
             state = runs.start(card_id)
             self._send_json(202, state.as_dict())
+
+        def _handle_decision(self, card_id: str, decide) -> None:
+            """accept or reject. 409 while a run holds the card: deciding under a live agent
+            would destroy the worktree it is writing to"""
+            state = runs.get(card_id)
+            if state is not None and state.running:
+                self._send_json(409, {"error": "this card is still running"})
+                return
+            try:
+                card = decide(store, card_id)
+            except DecisionRefused as exc:
+                self._send_json(409, {"error": str(exc)})
+                return
+            self._send_json(200, card)
 
         def _handle_patch_card(self, card_id: str) -> None:
             body = self._read_json()
