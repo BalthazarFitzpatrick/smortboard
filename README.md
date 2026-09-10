@@ -59,16 +59,21 @@ fresh container per card costs a second rather than a dependency install.
 claude setup-token          # prints a one-year token; it is not saved anywhere
 ```
 
-Store it where your OS keeps secrets — Keychain on macOS, Credential Manager on Windows, Secret
-Service on Linux:
+Store it in a file only you can read. The board looks there first:
 
 ```bash
-security add-generic-password -s smortboard-card-token -a smortboard -w <token>
+mkdir -p ~/.config/smortboard
+(umask 077; cat > ~/.config/smortboard/card_token)   # paste the token, Enter, then Ctrl-D
 ```
 
-The board reads it from there and hands it to the container on stdin, so it is never written to
-disk and never visible to `docker inspect`. That token can only make model requests, so it is
-narrower than your own login by construction.
+On Windows the file is `%APPDATA%\smortboard\card_token`; `SMORTBOARD_CARD_TOKEN_PATH` points it
+anywhere else. With no file, the board falls back to the OS credential store (service
+`smortboard-card-token`, account `smortboard`). On macOS every read from the Keychain raised a
+prompt, which is why the file comes first.
+
+The board hands the token to the container on stdin, so it never lands on the container's disk and
+is never visible to `docker inspect`. That token can only make model requests, so it is narrower
+than your own login by construction.
 
 A repo can declare the image its cards run in, so the toolchain is installed once rather than on
 every card run, and the command its tests use. Both live on the repo, next to its path.
