@@ -17,6 +17,8 @@ const BINDINGS = [
   {code: 'KeyU', label: 'u', action: 'usage dropdown (placeholder)'},
   {code: 'KeyA', label: 'a', action: 'agent roster (placeholder)'},
   {code: 'KeyR', label: 'r', action: 'run the focused card'},
+  {code: 'KeyY', label: 'y', action: 'accept the focused card'},
+  {code: 'KeyX', label: 'x', action: 'reject the focused card'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay'},
   {code: 'Slash', label: '/', action: "focus the open card's comment input"},
   {code: 'Comma', label: ',', action: 'agent observation deck'},
@@ -36,6 +38,14 @@ async function api(path, opts) {
   const res = await fetch(path, opts);
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.status === 204 ? null : res.json();
+}
+
+// like api(), but a 409 is a normal outcome here (accept/reject refusal) rather than a throw -
+// the caller needs the server's error text, which plain api() discards
+async function apiOrError(path, opts) {
+  const res = await fetch(path, opts);
+  const body = res.status === 204 ? null : await res.json().catch(() => null);
+  return {ok: res.ok, body};
 }
 
 // ---- board bar ------------------------------------------------------------------
@@ -162,9 +172,12 @@ function returnToBoardBar() {
 // ---- card panel -------------------------------------------------------------------
 
 async function openCardPanel(panel, cardId) {
-  const card = await api(`/api/cards/${cardId}`);
+  const [card, outcome] = await Promise.all([
+    api(`/api/cards/${cardId}`),
+    api(`/api/cards/${cardId}/outcome`),
+  ]);
   panel.classList.add('card-panel');
-  panel.innerHTML = cardPanelHtml(card);
+  panel.innerHTML = cardPanelHtml(card, outcome);
 
   // the panel's one .card-sections div is a single-column bucket - reuses the 2D grid nav as a
   // plain vertical list rather than inventing a second focus system for "move between sections"
@@ -191,10 +204,38 @@ async function openCardPanel(panel, cardId) {
     }
   });
 
-  openCard = {sectionsApi, input};
+  openCard = {sectionsApi, input, cardId};
 }
 
-function cardPanelHtml(card) {
+// worker summary, test gate, reviewer verdict, PR link and the fix-round count - all of it null
+// until a run has actually landed on this card, in which case the section says so plainly
+function outcomeSectionHtml(outcome) {
+  const empty = !outcome || (!outcome.summary && !outcome.tests && !outcome.review && !outcome.pr_url);
+  if (empty) {
+    return `<div class="card-section" tabindex="0"><div class="field-label">outcome</div>not run yet</div>`;
+  }
+  const parts = [];
+  if (outcome.summary) parts.push(`<div>${escapeHtml(outcome.summary)}</div>`);
+  if (outcome.tests) {
+    const t = outcome.tests;
+    parts.push(`<div>${t.passed ? 'tests passed' : 'tests failed'} - ${escapeHtml(t.command)} (exit ${t.exit_code})</div>`);
+  }
+  if (outcome.review) {
+    const r = outcome.review;
+    parts.push(`<div>${r.approved ? 'approved' : 'not approved'}${r.error ? `: ${escapeHtml(r.error)}` : ''}</div>`);
+    const findings = (r.findings || [])
+      .map(f => `<li>${escapeHtml(f.severity)} ${escapeHtml(f.category)} in ${escapeHtml(f.file)}: ${escapeHtml(f.message)}</li>`)
+      .join('');
+    if (findings) parts.push(`<ul>${findings}</ul>`);
+  }
+  if (outcome.pr_url) {
+    parts.push(`<div><a href="${escapeHtml(outcome.pr_url)}" target="_blank" rel="noreferrer">${escapeHtml(outcome.pr_url)}</a></div>`);
+  }
+  parts.push(`<div>findings route: ${escapeHtml(outcome.findings_route || '')}, fix rounds: ${outcome.fix_rounds ?? 0}</div>`);
+  return `<div class="card-section" tabindex="0"><div class="field-label">outcome</div>${parts.join('')}</div>`;
+}
+
+function cardPanelHtml(card, outcome) {
   const tasks = (card.tasks || []).map(t => `<li>${t.done ? '[x]' : '[ ]'} ${escapeHtml(t.text)}</li>`).join('');
   const criteria = (card.criteria || []).map(c => `<li>${escapeHtml(c.text)}</li>`).join('');
   const deps = (card.deps || []).map(d => `<li>${escapeHtml(d)}</li>`).join('');
@@ -206,6 +247,7 @@ function cardPanelHtml(card) {
       <div class="card-section" tabindex="0"><div class="field-label">title</div>${escapeHtml(card.title)}</div>
       <div class="card-section" tabindex="0"><div class="field-label">workstream</div>${escapeHtml(card.workstream || '')}</div>
       <div class="card-section" tabindex="0"><div class="field-label">status</div>${escapeHtml(card.status)}${card.blocked_reason_code ? ` (${escapeHtml(card.blocked_reason_code)})` : ''}</div>
+      ${outcomeSectionHtml(outcome)}
       <div class="card-section" tabindex="0"><div class="field-label">description</div>${escapeHtml(card.description || '')}</div>
       <div class="card-section" tabindex="0"><div class="field-label">tasks</div><ul>${tasks}</ul></div>
       <div class="card-section" tabindex="0"><div class="field-label">acceptance criteria</div><ul>${criteria}</ul></div>
@@ -310,6 +352,29 @@ async function finishRun(cardId, state) {
   else if (state.blocked_reason_code) showRun(cardId, state.blocked_reason_code);
   else showRun(cardId, state.error ? 'failed' : 'refused', null,
                state.refusal || state.error || state.phase);
+}
+
+// ---- accept / reject a checking card (y / x) -----------------------------------------
+
+// same focus source runFocusedCard uses, plus the card whose panel is open - focus inside the
+// panel is not under a [data-card-id] strip, so openCard has to remember which card that is
+function actionableCardId() {
+  return focusedCardId() || (openCard && openCard.cardId) || null;
+}
+
+async function acceptOrRejectCard(action) {
+  const cardId = actionableCardId();
+  if (!cardId) return;
+
+  const {ok, body} = await apiOrError(`/api/cards/${cardId}/${action}`, {method: 'POST'});
+  if (!ok) { showRun(cardId, 'refused', null, (body && body.error) || ''); return; }
+
+  // same order finishRun uses and for the same reason: reload first, THEN focus, THEN badge, or
+  // the reload's fresh strips throw the badge and the focus away with the old ones
+  if (currentBoardId) await onBoardEnter(currentBoardId);
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  if (strip) { strip.focus(); indicateFocus(strip); }
+  showRun(cardId, action === 'accept' ? 'accepted' : 'rejected');
 }
 
 // ---- placeholders (,  .  u  a) ------------------------------------------------------
@@ -437,6 +502,8 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyU') { openPlaceholder('KeyU', 'usage'); return; }
   if (evt.code === 'KeyA') { openPlaceholder('KeyA', 'agent roster'); return; }
   if (evt.code === 'KeyR') { runFocusedCard(); return; }
+  if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
+  if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'Comma') { drawerFor('left').toggle(); return; }
   if (evt.code === 'Period') { drawerFor('right').toggle(); return; }
