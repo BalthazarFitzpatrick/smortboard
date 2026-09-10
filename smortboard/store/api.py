@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
-from smortboard.store.schema import BLOCKED_REASON_CODES, STATUSES, migrate
+from smortboard.store.schema import (
+    BLOCKED_REASON_CODES,
+    DEFAULT_FINDINGS_ROUTE,
+    FINDINGS_ROUTES,
+    STATUSES,
+    migrate,
+)
 
 _CARD_WRITABLE_FIELDS = {
     "title",
@@ -19,7 +25,18 @@ _CARD_WRITABLE_FIELDS = {
     "position",
     "review_flag",
     "repo_id",
+    "findings_route",
 }
+
+# board-wide values, one settings row per key. unset means no row
+_SETTING_KEYS = ("findings_route",)
+
+
+def _check_findings_route(value: str | None) -> None:
+    if value is not None and value not in FINDINGS_ROUTES:
+        raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
+
+
 # card_criteria has deliberately no entry here and no update_criteria method anywhere in this
 # file. acceptance criteria are the contract a card is judged against; a card agent that could
 # edit its own criteria could move its own goalposts. add_task/remove_task/set_task_done exist
@@ -262,6 +279,8 @@ class Store:
         next_status = fields.get("status", current["status"])
         next_reason = fields.get("blocked_reason_code", current["blocked_reason_code"])
         self._check_blocked_invariant(next_status, next_reason)
+        if "findings_route" in fields:
+            _check_findings_route(fields["findings_route"])
 
         merged = {**fields, "status": next_status, "blocked_reason_code": next_reason}
         assignments = ", ".join(f"{key} = ?" for key in merged)
@@ -272,6 +291,38 @@ class Store:
         )
         self._conn.commit()
         return self.get_card(card_id)
+
+    # -- settings -------------------------------------------------------------
+
+    def get_settings(self) -> dict[str, Any]:
+        rows = self._conn.execute("SELECT key, value FROM settings").fetchall()
+        stored = {r["key"]: r["value"] for r in rows}
+        return {key: stored.get(key) for key in _SETTING_KEYS}
+
+    def set_setting(self, key: str, value: str | None) -> dict[str, Any]:
+        """sets a board-wide value, or clears it with None"""
+        if key not in _SETTING_KEYS:
+            raise UnknownFieldError(f"no setting {key!r}")
+        _check_findings_route(value)
+        if value is None:
+            self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+        else:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
+            )
+        self._conn.commit()
+        return self.get_settings()
+
+    def findings_route(self, card_id: str) -> str:
+        """where this card's reviewer findings go.
+
+        the global value FORCES every card when set - fabian's reading of "global override",
+        2026-09-10. unset, the card's own value decides, and a card with none gets the default
+        """
+        forced = self.get_settings()["findings_route"]
+        if forced:
+            return forced
+        return self._card_row(card_id)["findings_route"] or DEFAULT_FINDINGS_ROUTE
 
     # -- tasks: progress checkboxes, distinct from criteria (see the comment above) -------------
 

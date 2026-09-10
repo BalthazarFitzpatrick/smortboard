@@ -7,7 +7,8 @@ export class Element {}
 
 function compoundMatch(el, compound) {
   if (compound.startsWith('#')) return el.id === compound.slice(1);
-  const attrRe = /\[([\w-]+)="([^"]*)"\]/g;
+  // both forms: [attr="val"] (must equal) and bare [attr] (must merely be present)
+  const attrRe = /\[([\w-]+)(?:="([^"]*)")?\]/g;
   const attrs = [];
   let m;
   while ((m = attrRe.exec(compound))) attrs.push([m[1], m[2]]);
@@ -20,7 +21,9 @@ function compoundMatch(el, compound) {
     const key = k.startsWith('data-')
       ? k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())
       : k;
-    if (String((el.dataset || {})[key] ?? '') !== v) return false;
+    const present = (el.dataset || {})[key] !== undefined;
+    if (v === undefined) { if (!present) return false; }
+    else if (String((el.dataset || {})[key] ?? '') !== v) return false;
   }
   return true;
 }
