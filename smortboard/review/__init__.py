@@ -7,6 +7,13 @@ from smortboard.review.merge_request import (
     merge_request_is_configured,
     open_merge_request,
 )
+from smortboard.review.reviewer import (
+    ReviewFinding,
+    ReviewResult,
+    ReviewUnavailable,
+    reviewer_is_configured,
+    run_review,
+)
 
 __all__ = [
     "GateResult",
@@ -16,4 +23,9 @@ __all__ = [
     "MergeRequestUnavailable",
     "open_merge_request",
     "merge_request_is_configured",
+    "ReviewFinding",
+    "ReviewResult",
+    "ReviewUnavailable",
+    "run_review",
+    "reviewer_is_configured",
 ]
