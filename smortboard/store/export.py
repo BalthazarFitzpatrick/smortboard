@@ -19,6 +19,7 @@ _TABLES = (
     "card_deps",
     "comments",
     "events",
+    "settings",
 )
 
 _FORMAT_VERSION = 1
@@ -51,6 +52,7 @@ def import_bundle(conn: sqlite3.Connection, path: str | Path) -> None:
     _insert_all(conn, "card_deps", bundle.get("card_deps", []))
     _insert_all(conn, "comments", bundle.get("comments", []))
     _insert_all(conn, "events", bundle.get("events", []))
+    _insert_all(conn, "settings", bundle.get("settings", []))
 
     for record in bundle.get("attachments", []):
         record = dict(record)

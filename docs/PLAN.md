@@ -305,6 +305,22 @@ Two things a card needs are outside the board - Docker and a card credential - s
 answers whether it can run one at all, and the interface says which is missing rather than doing
 nothing when the key is pressed.
 
+**The decision half, built 2026-09-10.** A card reaches Checking only once both gates pass - it
+used to move there before them, so a card the gates blocked sat in the Checking column. The card
+panel shows an outcome projected from the event log: the worker's summary, the test gate, the
+reviewer's verdict and the PR link (`GET /api/cards/{id}/outcome`). `y` accepts: the worktree goes,
+the branch stays under its open PR. `x` rejects: the attempt's diff is attached to the card as
+`attempt-N.diff`, the PR is closed with its branch kept, the local worktree and branch are
+destroyed, and dependents still to come get `DEPENDENCY_REJECTED`. The next run cuts fresh from
+base - at run time rather than at rejection, so a rejected card that is never re-run holds no
+worktree.
+
+Reviewer findings route per card (`findings_route`: fix or attention, attention by default), and a
+global value in `/api/settings` forces every card when set. On the fix route the worker gets the
+findings and both gates re-run, at most two rounds, then the card blocks `REVIEW_REJECTED`.
+`tests/test_whole_system.py` drives all of it over real http in a real git repo, with fakes only
+where the model, docker and gh sit.
+
 Still to prove: a real card, end to end, against a real credential. Everything below the model call
 has been exercised for real; the model call itself has not been run through this chain yet.
 

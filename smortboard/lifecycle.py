@@ -17,17 +17,16 @@ which a human takes over. There is no step after this one.
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from smortboard.exec.backends import CardRuntimeUnavailable, require_card_runtime
 from smortboard.exec.leases import write_lease_settings
-from smortboard.exec.worktrees import WorktreeError, create_worktree
+from smortboard.exec.worktrees import WorktreeError, branch_diff, create_worktree
 from smortboard.review.gates import GateUnavailable, run_test_gate
 from smortboard.review.merge_request import MergeRequestUnavailable, open_merge_request
-from smortboard.review.reviewer import ReviewUnavailable, run_review
+from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
 from smortboard.store.api import Store
 
 # the phases a card passes through, in order. the last three are terminal
@@ -36,11 +35,16 @@ PHASES = (
     "running",
     "testing",
     "reviewing",
+    "fixing",
     "opening",
     "opened",
     "blocked",
     "refused",
 )
+
+# how often a card on the fix route gets its findings back before it goes to a human. operator chose
+# two on 2026-09-10 - each round is roughly one more card run, so this also caps the cost
+MAX_FIX_ROUNDS = 2
 
 # who a board-written comment is from. cards already carry comments, so the pull request link lands
 # where a human is already looking rather than needing a column of its own
@@ -58,6 +62,7 @@ class LifecycleResult:
     # why the chain stopped short of a pull request without the card being at fault: no repo, no
     # test command, no Docker. distinct from blocked_reason_code, which is about the work
     refusal: str | None = None
+    fix_rounds: int = 0
 
     @property
     def finished(self) -> bool:
@@ -94,6 +99,35 @@ def build_card_prompt(card: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _format_findings(review: ReviewResult) -> str:
+    return "\n".join(
+        f"- {f.severity} {f.category} in {f.file}"
+        + (f":{f.line}" if f.line is not None else "")
+        + f": {f.message}"
+        for f in review.findings
+    )
+
+
+def build_fix_prompt(card: dict[str, Any], review: ReviewResult) -> str:
+    """a fix round's brief: the findings to address, with the card underneath for context.
+
+    A fresh headless session remembers nothing of the first run, so the card goes along - but the
+    instruction is to fix these findings and nothing else, not to redo the card.
+    """
+    return "\n".join(
+        [
+            "Your work on this card is already committed on this branch. A reviewer read the diff",
+            "and did not approve it. Fix these findings, and nothing else, then commit the fix:",
+            "",
+            _format_findings(review),
+            "",
+            "For context, the card was:",
+            "",
+            build_card_prompt(card),
+        ]
+    )
+
+
 def _lease_globs(card: dict[str, Any]) -> list[str]:
     """the card's lease as a list of globs.
 
@@ -101,21 +135,6 @@ def _lease_globs(card: dict[str, Any]) -> list[str]:
     preamble that listed python dicts at the agent, and a settings file that matched nothing.
     """
     return [row["path_glob"] for row in card.get("leases") or []]
-
-
-def _diff(repo_path: str | Path, base: str, branch: str) -> str:
-    """what the card actually changed, which is what the reviewer reads.
-
-    Three dots: the diff against the merge base, so work that landed on `base` while the card was
-    running does not show up as something the card did.
-    """
-    result = subprocess.run(
-        ["git", "-C", str(repo_path), "diff", f"{base}...{branch}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.stdout if result.returncode == 0 else ""
 
 
 def _note(store: Store, card_id: str, text: str) -> None:
@@ -170,6 +189,8 @@ def run_card_lifecycle(
 
     state = LifecycleResult(card_id=card_id, phase="preparing")
     phase("preparing")
+    # marks where this attempt's events begin, so the outcome of a re-run is not mixed with the last
+    store.append_event(card_id, "lifecycle_started", {})
     card = store.get_card(card_id)
     if not card.get("repo_id"):
         return _refuse(
@@ -190,65 +211,82 @@ def run_card_lifecycle(
     state.branch, state.worktree = tree.branch, str(tree.path)
 
     settings = write_lease_settings(tree.path, _lease_globs(card))
-    store.update_card(card_id, status="doing", blocked_reason_code=None)
+    store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
+
+    def work(prompt: str) -> LifecycleResult | None:
+        """one agent run in the card's worktree; returns the blocked state if it stopped short"""
+        run = runtime.run_card(
+            store, card_id, tree.path, prompt, settings, repo=repo, token_path=token_path
+        )
+        if run.blocked_reason_code:
+            return _block(
+                store,
+                state,
+                run.blocked_reason_code,
+                f"The run stopped: {run.blocked_reason_code}.\n\n{run.result_text or ''}".strip(),
+            )
+        store.append_event(card_id, "worker_summary", {"text": run.result_text})
+        return None
 
     phase("running")
-    run = runtime.run_card(
-        store,
-        card_id,
-        tree.path,
-        build_card_prompt(card),
-        settings,
-        repo=repo,
-        token_path=token_path,
-    )
-    if run.blocked_reason_code:
-        return _block(
-            store,
-            state,
-            run.blocked_reason_code,
-            f"The run stopped: {run.blocked_reason_code}.\n\n{run.result_text or ''}".strip(),
-        )
+    if (stopped := work(build_card_prompt(card))) is not None:
+        return stopped
 
-    # from here the card is work waiting to be judged, not work in progress
+    # both gates, and on the fix route the findings go back to the worker until the reviewer
+    # approves or the rounds run out. the tests re-run after every fix, since a fix can break them
+    while True:
+        phase("testing")
+        try:
+            gate = run_test_gate(store, card_id, tree.path, repo)
+        except GateUnavailable as exc:
+            return _refuse(store, state, f"The test gate could not run: {exc}")
+        if not gate.passed:
+            return _block(
+                store,
+                state,
+                "TESTS_FAILED",
+                f"`{gate.command}` exited {gate.exit_code}.\n\n```\n{gate.output}\n```",
+            )
+
+        phase("reviewing")
+        try:
+            review = run_review(
+                store,
+                card_id,
+                branch_diff(repo["path"], base, tree.branch),
+                tree.path,
+                settings,
+                repo=repo,
+                token_path=token_path,
+            )
+        except ReviewUnavailable as exc:
+            return _refuse(store, state, f"The reviewer could not run: {exc}")
+        if review.approved:
+            break
+
+        # a reviewer that failed to deliver a verdict gave the worker nothing to fix
+        fixable = review.error is None and review.findings
+        if (
+            not fixable
+            or store.findings_route(card_id) != "fix"
+            or state.fix_rounds >= MAX_FIX_ROUNDS
+        ):
+            return _block(
+                store,
+                state,
+                "REVIEW_REJECTED",
+                f"The reviewer did not approve.\n\n{_format_findings(review) or review.error or ''}"
+                + (f"\n\nAfter {state.fix_rounds} fix round(s)." if state.fix_rounds else ""),
+            )
+
+        state.fix_rounds += 1
+        phase("fixing")
+        store.append_event(card_id, "fix_round", {"round": state.fix_rounds})
+        if (stopped := work(build_fix_prompt(card, review))) is not None:
+            return stopped
+
+    # only now is the card work waiting on a human: checking requires both gates, not either
     store.update_card(card_id, status="checking")
-
-    phase("testing")
-    try:
-        gate = run_test_gate(store, card_id, tree.path, repo)
-    except GateUnavailable as exc:
-        return _refuse(store, state, f"The test gate could not run: {exc}")
-    if not gate.passed:
-        return _block(
-            store,
-            state,
-            "TESTS_FAILED",
-            f"`{gate.command}` exited {gate.exit_code}.\n\n```\n{gate.output}\n```",
-        )
-
-    phase("reviewing")
-    try:
-        review = run_review(
-            store,
-            card_id,
-            _diff(repo["path"], base, tree.branch),
-            tree.path,
-            settings,
-            repo=repo,
-            token_path=token_path,
-        )
-    except ReviewUnavailable as exc:
-        return _refuse(store, state, f"The reviewer could not run: {exc}")
-    if not review.approved:
-        findings = "\n".join(
-            f"- {f.severity} {f.category} in {f.file}: {f.message}" for f in review.findings
-        )
-        return _block(
-            store,
-            state,
-            "REVIEW_REJECTED",
-            f"The reviewer did not approve.\n\n{findings or review.error or ''}".strip(),
-        )
 
     phase("opening")
     try:
