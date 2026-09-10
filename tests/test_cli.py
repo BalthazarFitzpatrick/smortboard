@@ -4,7 +4,10 @@ no browser is started in any of these — main() itself is left untested here si
 on serve_forever(); parse_args and the resolver helpers cover the precedence contract instead
 """
 
+import importlib.metadata
 import importlib.resources
+
+import pytest
 
 from smortboard.cli import _default_db_path, _resolve_db, _resolve_port, parse_args
 
@@ -42,6 +45,15 @@ def test_no_browser_flag_parses():
     assert args.no_browser is True
     assert args.port == 8123
     assert args.db == "x.db"
+
+
+def test_version_flag_prints_pyproject_version_and_exits_zero(capsys):
+    # argparse's version action prints and raises SystemExit(0) — no server ever starts
+    with pytest.raises(SystemExit) as excinfo:
+        parse_args(["--version"])
+    assert excinfo.value.code == 0
+    printed = capsys.readouterr().out.strip()
+    assert printed == importlib.metadata.version("smortboard")
 
 
 def test_ui_assets_reachable_from_installed_package():
