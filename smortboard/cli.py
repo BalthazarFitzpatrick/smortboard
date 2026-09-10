@@ -6,6 +6,7 @@ they are the most explicit thing a person can do at the terminal
 
 import argparse
 import contextlib
+import importlib.metadata
 import os
 import webbrowser
 from pathlib import Path
@@ -17,6 +18,11 @@ from smortboard.store import Store
 
 _APP_NAME = "smortboard"
 _DEFAULT_PORT = 8000
+
+
+def _version() -> str:
+    # installed package metadata is derived from pyproject.toml's [project].version
+    return importlib.metadata.version(_APP_NAME)
 
 
 def _default_db_path() -> Path:
@@ -64,6 +70,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--no-browser", action="store_true", help="do not open a browser tab on start"
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=_version(),
+        help="print the installed version and exit",
     )
     return parser.parse_args(argv)
 
