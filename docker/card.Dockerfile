@@ -7,8 +7,9 @@
 FROM node:20-slim
 
 # git: the card's whole job is a local commit. curl: fetches the claude CLI installer.
+# python3: runs the lease and bash guard hooks - without it they exit 127, which does not block
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git curl ca-certificates \
+    && apt-get install -y --no-install-recommends git curl ca-certificates python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # uv: the repo's own toolchain (project.CLAUDE.md: `uv run` for every python invocation)

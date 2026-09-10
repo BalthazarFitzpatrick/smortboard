@@ -219,6 +219,15 @@ def test_the_work_path_is_mounted_read_only(tmp_path, monkeypatch):
     assert mounts and all(str(m).endswith(":ro") for m in mounts)
 
 
+def test_the_settings_path_is_the_one_inside_the_container(tmp_path, monkeypatch):
+    calls = []
+    _wire(monkeypatch, capture=calls)
+    run_review(None, "card", DIFF, tmp_path, tmp_path / "guards" / "s.json", REPO)
+    cmd = calls[0]["cmd"]
+    assert f"{tmp_path / 'guards'}:/smortboard:ro" in cmd
+    assert "--settings /smortboard/s.json" in cmd[-1]
+
+
 def test_the_verdict_lands_in_the_event_log(tmp_path, monkeypatch):
     _wire(monkeypatch, run_result=_clean_result(json.dumps({"findings": []})))
     with Store(tmp_path / "board.db") as store:
