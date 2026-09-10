@@ -80,9 +80,38 @@ A fresh board is empty — the interface says so and how to fix it. To do it by 
 BOARD=$(curl -s -X POST http://127.0.0.1:8042/api/boards \
   -H 'content-type: application/json' -d '{"name":"smortboard"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
 
+# a repo is what a card runs against: where it lives, what its tests are, what image it runs in
+REPO=$(curl -s -X POST http://127.0.0.1:8042/api/boards/$BOARD/repos \
+  -H 'content-type: application/json' \
+  -d '{"name":"smortboard","path":"/path/to/repo","default_branch":"main",
+       "test_command":"uv run pytest","image":"smortboard-card:latest"}' \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+
 curl -s -X POST http://127.0.0.1:8042/api/cards -H 'content-type: application/json' \
-  -d "{\"board_id\":\"$BOARD\",\"repo_id\":null,\"title\":\"first card\",\"status\":\"todo\"}"
+  -d "{\"board_id\":\"$BOARD\",\"repo_id\":\"$REPO\",\"title\":\"first card\",\"status\":\"todo\"}"
 ```
+
+## Running a card
+
+Focus a card and press `r`. If the board cannot run one it says which of Docker and the card
+credential is missing, rather than doing nothing.
+
+What happens then is the whole of it, in order:
+
+1. a worktree and a branch are cut for the card, off the repo's default branch
+2. the agent runs in its own container, with a clone and its path lease, and commits
+3. **the board re-runs the repo's tests** in a second container, with no network - the agent
+   reporting that the tests pass is the agent grading its own homework
+4. **a separate reviewer reads the diff** and answers four questions: vulnerabilities, leaked
+   credentials, best practices, efficient coding. It has no Edit, no Write and no Bash
+5. if both pass, the board pushes the branch and opens a pull request, and stops
+
+The card's foot shows the phase while it runs and where it landed when it stops - a link to the
+pull request, or the reason code that blocked it. The full reason is a comment on the card.
+
+**The board never merges.** There is no code path that can: every `gh` call goes through a
+three-command allowlist that does not contain `merge`, and every push refuses a protected
+destination. The pull request is where the board's job ends and yours begins.
 
 Tests:
 
@@ -106,6 +135,7 @@ use and so cannot drift.
 | `g` | switch kanban / workstream grouping |
 | `u` | usage and account |
 | `a` | agent roster |
+| `r` | run the focused card |
 | `s` | this list |
 | `/` | focus a panel's input |
 | `,` / `.` | workforce / mission control panels |
