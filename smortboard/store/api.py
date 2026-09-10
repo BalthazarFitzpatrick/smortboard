@@ -42,6 +42,9 @@ class Store:
     """owns one sqlite file: its schema, migrations, and every read/write of board state"""
 
     def __init__(self, path: str | Path) -> None:
+        # kept because a card run happens on its own thread with its own connection, and it needs
+        # to know which file to open - sqlite refuses a connection shared across threads
+        self.path = Path(path)
         self._conn = sqlite3.connect(str(path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")

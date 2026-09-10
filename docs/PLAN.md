@@ -296,6 +296,29 @@ dependent cards of a rejected card take the attention colour for review
 **Ships when:** the whole-system test passes end to end, including a card whose reviewer finds
 something and whose card lands in attention rather than in Checking.
 
+**Built so far.** The chain exists and is wired to the board: `smortboard/lifecycle.py` runs
+worktree -> agent -> test gate -> reviewer -> push and open a pull request, `r` on a focused card
+starts it, and `POST /api/cards/{id}/run` does it over http. A run happens on its own thread with
+its own store connection, because the server is single-threaded and a card takes minutes.
+
+Two things a card needs are outside the board - Docker and a card credential - so `GET /api/runtime`
+answers whether it can run one at all, and the interface says which is missing rather than doing
+nothing when the key is pressed.
+
+Still to prove: a real card, end to end, against a real credential. Everything below the model call
+has been exercised for real; the model call itself has not been run through this chain yet.
+
+Two things this cost, both found by running it rather than by testing it:
+
+- `docker info` took **4.9s against its own 5s timeout** on a healthy machine, so the board reported
+  Docker as down about half the time and refused every card. `docker version --format
+  {{.Server.Version}}` answers the same question - the Server field is empty unless a daemon
+  answered - in 0.3s.
+- the run badge was set on the card strip and then the board reloaded, which threw the strip away
+  with the badge on it. The whole chain fired correctly and the result was invisible. It reloads
+  first now, and puts focus back on the card that ran - without that the fan hides the result
+  anyway, since only the focused card's foot is showing.
+
 ### Phase 4 — Mission Control
 
 - ui_base: the sliver drawer component.
