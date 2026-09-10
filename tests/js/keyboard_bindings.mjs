@@ -9,7 +9,10 @@ const root = new URL('../../', import.meta.url);
 const uiBase = p => readFileSync(new URL(`../ui_base/ui_base/assets/${p}`, root), 'utf8');
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
-installStubDom({fetchImpl: () => new Promise(() => {})});
+// never resolves (nothing in this file awaits a fetch), but records what was asked for so y/x can
+// be proven to reach their handler and hit the right route
+const fetchCalls = [];
+installStubDom({fetchImpl: path => { fetchCalls.push(path); return new Promise(() => {}); }});
 
 const boardBar = element('div', 'board-bar');
 boardBar.id = 'board-bar';
@@ -53,7 +56,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
-  'KeyG', 'KeyU', 'KeyA', 'KeyR', 'KeyS', 'Slash', 'Comma', 'Period',
+  'KeyG', 'KeyU', 'KeyA', 'KeyR', 'KeyY', 'KeyX', 'KeyS', 'Slash', 'Comma', 'Period',
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
 const boundCodes = mod.BINDINGS.map(b => b.code);
 CONTRACT_KEYS.forEach(code => assert.ok(boundCodes.includes(code), `${code} must be in BINDINGS`));
@@ -96,5 +99,16 @@ assert.deepEqual(overlayItems.map(i => i.id), boundCodes, 'the overlay must list
 mod.BINDINGS.forEach((b, i) => {
   assert.ok(overlayItems[i].label.startsWith(b.label), `overlay row ${i} should show binding label "${b.label}"`);
 });
+
+// ---- y and x reach acceptOrRejectCard and post the right route for whatever card is focused
+const strip = element('div', 'row card card-strip');
+strip.dataset.cardId = 'c9';
+strip.tabIndex = -1;
+bucketRow.appendChild(strip);
+strip.focus();
+press('KeyY');
+press('KeyX');
+assert.ok(fetchCalls.includes('/api/cards/c9/accept'), 'y should post accept for the focused card');
+assert.ok(fetchCalls.includes('/api/cards/c9/reject'), 'x should post reject for the focused card');
 
 console.log('ok');
