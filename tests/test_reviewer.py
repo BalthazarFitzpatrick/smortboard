@@ -244,3 +244,17 @@ def test_the_verdict_lands_in_the_event_log(tmp_path, monkeypatch):
 def test_review_result_reports_its_own_reason_code():
     assert ReviewResult(True).blocked_reason_code is None
     assert ReviewResult(False).blocked_reason_code == "REVIEW_REJECTED"
+
+
+def test_a_stored_reviewer_header_reaches_the_review_prompt(tmp_path, monkeypatch):
+    """the layered prompt - see smortboard/prompts.py - overrides REVIEW_PROMPT_HEADER"""
+    calls = []
+    _wire(monkeypatch, capture=calls)
+    with Store(tmp_path / "b.db") as store:
+        store.set_prompt("reviewer", "a custom reviewer header\n")
+        board = store.create_board("b")
+        card = store.create_card(board["id"], None, "a card")
+        run_review(store, card["id"], DIFF, tmp_path, tmp_path / "s.json", REPO)
+    joined = shlex.join(calls[0]["cmd"])
+    assert "a custom reviewer header" in joined
+    assert "vulnerabilities" not in joined  # the default header, not layered on top of it

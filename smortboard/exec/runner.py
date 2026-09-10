@@ -37,7 +37,12 @@ SYSTEM_PROMPT = (
     "- commit messages: lowercase, past tense, no trailing period\n"
     "- no emojis anywhere\n"
     "- comments lowercase, one to three lines, explaining intent rather than mechanics\n"
-    "- run python through `uv run`, never bare python\n"
+    "- run python through `uv run`, never bare python\n\n"
+    "Narrate as you go, in plain text between tool calls - not code, not diffs, those already land "
+    "in the event log. Before each step, one short sentence to operator about what you are doing and "
+    "why. When something needs his decision, ask it as one clear question on its own line, then take "
+    "the most reversible option and say which you chose - his answer, if any, arrives as a note on "
+    "this card's next run, not mid-run.\n"
 )
 
 
@@ -126,12 +131,17 @@ DEFAULT_CARD_BUDGET_USD = 5.0
 
 def build_command(
     prompt: str,
-    settings_path: str | Path,
+    settings_path: str | Path | None,
     model: str = "sonnet",
     allowed_tools: tuple[str, ...] = DEFAULT_ALLOWED_TOOLS,
     budget_usd: float | None = DEFAULT_CARD_BUDGET_USD,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> list[str]:
-    """the proven S1 invocation shape, with our lease settings and scoping decision wired in"""
+    """the proven S1 invocation shape, with our lease settings and scoping decision wired in.
+
+    `settings_path` is optional - the orchestrator runs with no lease/hook file at all, so None
+    omits `--settings` rather than passing a path that does not exist.
+    """
     cmd = [
         "claude",
         "-p",
@@ -144,12 +154,11 @@ def build_command(
         "--setting-sources",
         SETTING_SOURCES,
         "--system-prompt",
-        SYSTEM_PROMPT,
-        "--settings",
-        str(settings_path),
-        "--model",
-        model,
+        system_prompt,
     ]
+    if settings_path is not None:
+        cmd += ["--settings", str(settings_path)]
+    cmd += ["--model", model]
     # A CEILING, NOT A TARGET. a card that loops burns real money quietly - measured, a single
     # 13-turn card re-read 209k cached tokens, so a card that thrashes multiplies that. with a
     # budget the run is refused at the limit rather than found afterwards on the bill
@@ -250,7 +259,7 @@ def result_to_run_result(result_event: dict[str, Any]) -> RunResult:
 
 
 def run_process(
-    store: Store,
+    store: Store | None,
     card_id: str,
     cmd: list[str],
     cwd: str | Path | None = None,
@@ -292,7 +301,9 @@ def run_process(
         event = parse_line(raw_line)
         if event is None:
             continue
-        store.append_event(card_id, event.get("type", "unknown"), event)
+        # the orchestrator passes no store: it has no card of its own, only a board-wide turn
+        if store is not None:
+            store.append_event(card_id, event.get("type", "unknown"), event)
 
         if event.get("type") == "result":
             result_event = event

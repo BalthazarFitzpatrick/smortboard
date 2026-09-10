@@ -14,15 +14,15 @@ const BINDINGS = [
   {code: 'Space', label: 'space', action: 'open the focused card, or close the open one'},
   {code: 'Escape', label: 'esc', action: 'one level back: input -> panel -> closed'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping'},
-  {code: 'KeyU', label: 'u', action: 'usage dropdown (placeholder)'},
-  {code: 'KeyA', label: 'a', action: 'agent roster (placeholder)'},
+  {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend'},
+  {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card'},
   {code: 'KeyR', label: 'r', action: 'run the focused card'},
   {code: 'KeyY', label: 'y', action: 'accept the focused card'},
   {code: 'KeyX', label: 'x', action: 'reject the focused card'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay'},
   {code: 'Slash', label: '/', action: "focus the open card's comment input"},
-  {code: 'Comma', label: ',', action: 'agent observation deck'},
-  {code: 'Period', label: '.', action: 'orchestration and planning agent'},
+  {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent'},
+  {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator'},
   ...Array.from({length: 9}, (_, i) => ({
     code: `Digit${i + 1}`, label: String(i + 1), action: `jump to board ${i + 1}`,
   })),
@@ -87,6 +87,8 @@ async function onBoardEnter(boardId) {
   currentBoardId = boardId;
   const cards = await api(`/api/boards/${boardId}/cards`);
   renderBuckets(cards);
+  // mission control is per-board, so a board switch while it is open reloads its conversation
+  if (drawers.right && drawers.right.isOpen()) loadMissionControl();
 }
 
 // ---- buckets of card strips -------------------------------------------------------
@@ -446,7 +448,283 @@ async function acceptOrRejectCard(action) {
   // in colour - a second "accepted" beside the first was noise
 }
 
-// ---- placeholders (,  .  u  a) ------------------------------------------------------
+// ---- terminal chat, the shared shape behind mission control (.) and workforce (,) ---------------
+// a log of author-prefixed lines plus one input row - no bubbles, no avatars, the board's own
+// monospace and 2px lines. styling lives in layout.css as configuration, same rule board.js
+// states at the top of this file
+
+// built with createElement/appendChild rather than innerHTML, so the refs below are live nodes -
+// the test dom stub does not parse innerHTML strings back into a tree, and a real browser doesn't
+// care either way
+function terminalDom(promptGlyph) {
+  const wrap = document.createElement('div');
+  wrap.className = 'terminal';
+
+  const header = document.createElement('div');
+  header.className = 'terminal-header';
+  const title = document.createElement('span');
+  title.className = 'terminal-title';
+  const cycle = document.createElement('span');
+  cycle.className = 'terminal-cycle';
+  cycle.hidden = true;
+  const prev = document.createElement('span');
+  prev.className = 'terminal-prev toggle';
+  prev.textContent = '<';
+  const count = document.createElement('span');
+  count.className = 'terminal-count';
+  const next = document.createElement('span');
+  next.className = 'terminal-next toggle';
+  next.textContent = '>';
+  cycle.append(prev, count, next);
+  header.append(title, cycle);
+
+  const subheader = document.createElement('div');
+  subheader.className = 'terminal-subheader';
+  subheader.hidden = true;
+
+  const log = document.createElement('div');
+  log.className = 'terminal-log';
+  log.tabIndex = 0;
+
+  const inputRow = document.createElement('div');
+  inputRow.className = 'terminal-input-row';
+  const prompt = document.createElement('span');
+  prompt.className = 'terminal-prompt';
+  prompt.textContent = promptGlyph;
+  const input = document.createElement('textarea');
+  input.className = 'terminal-input text-field';
+  input.rows = 1;
+  inputRow.append(prompt, input);
+
+  wrap.append(header, subheader, log, inputRow);
+  return wrap;
+}
+
+// author drives the gutter's colour class; cls overrides it for board/error/thinking lines whose
+// author name (e.g. "orchestrator") shouldn't paint the same as an authored message would
+function appendLine(log, author, body, cls) {
+  const line = document.createElement('div');
+  line.className = `terminal-line author-${cls || author}`;
+  line.innerHTML = `<span class="terminal-author">${escapeHtml(author)}</span>` +
+    `<span class="terminal-body">${escapeHtml(body)}</span>`;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+  return line;
+}
+
+// enter sends, shift+enter is left alone so the textarea's own newline behaviour handles it.
+// escape steps from the input to the log, which is focusable so the drawer's own key then closes it
+function wireTerminalInput(input, log, onSend) {
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); log.focus(); return; }
+    if (evt.code === 'Enter' && !evt.shiftKey) {
+      evt.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      onSend(text);
+    }
+  });
+}
+
+// ---- mission control (.) - the orchestrator's chat for the current board ------------------------
+
+const mc = {header: null, cycle: null, log: null, input: null, poll: null};
+
+function buildMissionControlDom(drawer) {
+  const term = terminalDom('>');
+  drawer.body.appendChild(term);
+  mc.header = term.querySelector('.terminal-title');
+  mc.log = term.querySelector('.terminal-log');
+  mc.input = term.querySelector('.terminal-input');
+  wireTerminalInput(mc.input, mc.log, sendMissionControl);
+}
+
+async function openMissionControl() {
+  mc.input.focus();
+  await loadMissionControl();
+}
+
+function closeMissionControl() {
+  clearTimeout(mc.poll);
+}
+
+async function loadMissionControl() {
+  clearTimeout(mc.poll);
+  if (!currentBoardId) {
+    mc.header.textContent = 'mission control';
+    mc.log.innerHTML = '';
+    appendLine(mc.log, 'board', 'no board selected', 'board');
+    return;
+  }
+  try {
+    const data = await api(`/api/boards/${currentBoardId}/orchestrator`);
+    renderMissionControl(data);
+  } catch (err) {
+    mc.header.textContent = 'mission control';
+    mc.log.innerHTML = '';
+    appendLine(mc.log, 'board', `could not reach the orchestrator: ${err.message}`, 'error');
+  }
+}
+
+// justFinished marks a poll result, the only moment a newly-created card should pull the board
+function renderMissionControl(data, {justFinished = false} = {}) {
+  mc.header.textContent = `mission control - ${data.model || '?'}`;
+  mc.log.innerHTML = '';
+  (data.messages || []).forEach(m => {
+    appendLine(mc.log, m.author, m.body);
+    if (m.cards && m.cards.length) {
+      appendLine(mc.log, 'board', `created: ${m.cards.map(c => c.title).join(', ')}`, 'board');
+    }
+  });
+  if (data.error) appendLine(mc.log, 'board', data.error, 'error');
+  if (data.thinking) {
+    appendLine(mc.log, 'orchestrator', 'orchestrator is thinking', 'thinking');
+    mc.poll = setTimeout(pollMissionControl, 1500);
+    return;
+  }
+  const last = data.messages && data.messages[data.messages.length - 1];
+  if (justFinished && last && last.cards && last.cards.length && currentBoardId) {
+    onBoardEnter(currentBoardId);
+  }
+}
+
+async function pollMissionControl() {
+  if (!drawers.right || !drawers.right.isOpen() || !currentBoardId) return;
+  try {
+    const data = await api(`/api/boards/${currentBoardId}/orchestrator`);
+    renderMissionControl(data, {justFinished: true});
+  } catch (err) {
+    appendLine(mc.log, 'board', `lost contact with the orchestrator: ${err.message}`, 'error');
+  }
+}
+
+async function sendMissionControl(text) {
+  if (!currentBoardId) { appendLine(mc.log, 'board', 'no board selected', 'error'); return; }
+  appendLine(mc.log, 'operator', text);
+  try {
+    const res = await fetch(`/api/boards/${currentBoardId}/orchestrator`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
+    });
+    const body = await res.json().catch(() => null);
+    if (res.status === 409) { appendLine(mc.log, 'board', (body && body.error) || 'already thinking', 'error'); return; }
+    if (!res.ok) { appendLine(mc.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error'); return; }
+    renderMissionControl(body);
+  } catch (err) {
+    appendLine(mc.log, 'board', `could not reach the orchestrator: ${err.message}`, 'error');
+  }
+}
+
+// ---- workforce (,) - one card's agent chat -------------------------------------------------------
+
+const wf = {header: null, cycle: null, count: null, subheader: null, log: null, input: null,
+  poll: null, cardId: null, working: [], index: 0, pinned: false};
+
+function buildWorkforceDom(drawer) {
+  const term = terminalDom('$');
+  drawer.body.appendChild(term);
+  wf.header = term.querySelector('.terminal-title');
+  wf.cycle = term.querySelector('.terminal-cycle');
+  wf.count = term.querySelector('.terminal-count');
+  wf.subheader = term.querySelector('.terminal-subheader');
+  wf.log = term.querySelector('.terminal-log');
+  wf.input = term.querySelector('.terminal-input');
+  wireTerminalInput(wf.input, wf.log, sendWorkforce);
+  term.querySelector('.terminal-prev').onclick = () => cycleWorkforce(-1);
+  term.querySelector('.terminal-next').onclick = () => cycleWorkforce(1);
+}
+
+async function openWorkforce() {
+  // THE CARD IS READ BEFORE THE INPUT TAKES FOCUS. focusing first left no card focused, so , said
+  // "no card is focused" over the card you were looking at
+  const target = resolveWorkforceTarget();
+  wf.input.focus();
+  await loadWorkforce(await target);
+}
+
+function closeWorkforce() {
+  clearTimeout(wf.poll);
+}
+
+// focused card wins, then the open card, then the roster's first working row - so , always lands
+// on the card you are looking at before it falls back to whatever is running
+async function resolveWorkforceTarget() {
+  const focused = focusedCardId();
+  if (focused) return {cardId: focused, pinned: true};
+  if (openCard) return {cardId: openCard.cardId, pinned: true};
+  let roster = [];
+  try { roster = await api('/api/roster'); } catch (err) { roster = []; }
+  const working = roster.filter(r => r.state === 'working');
+  if (!working.length) return {cardId: null, pinned: false, working: []};
+  return {cardId: working[0].card_id, pinned: false, working, index: 0};
+}
+
+async function loadWorkforce(resolved) {
+  const target = resolved || await resolveWorkforceTarget();
+  wf.cardId = target.cardId;
+  wf.pinned = target.pinned;
+  wf.working = target.working || [];
+  wf.index = target.index || 0;
+  if (!wf.cardId) {
+    wf.header.textContent = 'workforce';
+    wf.subheader.hidden = true;
+    wf.cycle.hidden = true;
+    wf.log.innerHTML = '';
+    appendLine(wf.log, 'board', 'no card is focused and no agent is running', 'board');
+    return;
+  }
+  await renderWorkforceConversation();
+}
+
+function updateWorkforceCycle() {
+  const show = !wf.pinned && wf.working.length > 1;
+  wf.cycle.hidden = !show;
+  if (show) wf.count.textContent = `${wf.index + 1}/${wf.working.length}`;
+}
+
+function cycleWorkforce(delta) {
+  if (wf.pinned || wf.working.length < 2) return;
+  wf.index = (wf.index + delta + wf.working.length) % wf.working.length;
+  wf.cardId = wf.working[wf.index].card_id;
+  renderWorkforceConversation();
+}
+
+async function renderWorkforceConversation() {
+  clearTimeout(wf.poll);
+  wf.subheader.hidden = false;
+  wf.subheader.textContent = 'notes reach the agent on its next run';
+  updateWorkforceCycle();
+  try {
+    const data = await api(`/api/cards/${wf.cardId}/conversation`);
+    wf.header.textContent = `${data.title} - ${data.running ? `running - ${data.phase || '...'}` : 'idle'}`;
+    wf.log.innerHTML = '';
+    (data.messages || []).forEach(m => appendLine(wf.log, m.author, m.body));
+    if (data.running && drawers.left && drawers.left.isOpen()) {
+      wf.poll = setTimeout(renderWorkforceConversation, 2000);
+    }
+  } catch (err) {
+    wf.header.textContent = 'workforce';
+    appendLine(wf.log, 'board', `could not load conversation: ${err.message}`, 'error');
+  }
+}
+
+async function sendWorkforce(text) {
+  if (!wf.cardId) return;
+  appendLine(wf.log, 'operator', text);
+  try {
+    const res = await fetch(`/api/cards/${wf.cardId}/conversation`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      appendLine(wf.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error');
+    }
+  } catch (err) {
+    appendLine(wf.log, 'board', `could not reach the agent: ${err.message}`, 'error');
+  }
+}
+
+// ---- the two side drawers -------------------------------------------------------------------
 
 // the two side drawers, parked off-screen with a sliver showing. built once and reused: a drawer
 // rebuilt per keypress loses its open state and re-animates from parked every time
@@ -454,12 +732,6 @@ const drawers = {};
 
 // the gap above and below a drawer, equal at both ends so it reads as pinned rather than floating
 const DRAWER_INSET_PX = 50;
-
-// what each drawer is, and what it does - the second line is the part a colleague reads
-const DRAWERS = {
-  left: ['agent observation deck', 'loops over all active cards or pins to selected card'],
-  right: ['orchestration and planning agent', 'this is where you will spend your time'],
-};
 
 function drawerFor(edge) {
   if (drawers[edge]) return drawers[edge];
@@ -472,13 +744,19 @@ function drawerFor(edge) {
     widthRatio: 0.85,
     top: (bar ? Math.round(bar.getBoundingClientRect().bottom) : 0) + DRAWER_INSET_PX,
     bottom: DRAWER_INSET_PX,
+    onOpen: () => (edge === 'right' ? openMissionControl() : openWorkforce()),
+    onClose: () => {
+      // typing in a drawer's own input/log must not leave focus dangling once the drawer parks -
+      // hand it back to the board, the same recovery reenterIfFocusLost already does elsewhere
+      if (drawer.el.contains(document.activeElement)) {
+        document.activeElement.blur?.();
+        reenterIfFocusLost();
+      }
+      if (edge === 'right') closeMissionControl(); else closeWorkforce();
+    },
   });
-  const [title, note] = DRAWERS[edge];
-  const box = document.createElement('div');
-  box.className = 'hazard-stripes hazard-placeholder';
-  box.innerHTML = `<span class="hazard-label">${escapeHtml(title)}</span>
-    <span class="hazard-note">${escapeHtml(note)}</span>`;
-  drawer.body.appendChild(box);
+  if (edge === 'right') buildMissionControlDom(drawer);
+  else buildWorkforceDom(drawer);
   drawers[edge] = drawer;
   return drawer;
 }
@@ -507,19 +785,133 @@ function toggleOverlay(key, build) {
   return menu;
 }
 
-function openPlaceholder(key, label) {
-  toggleOverlay(key, () => {
-    const box = document.createElement('div');
-    box.className = 'hazard-stripes hazard-placeholder';
-    box.innerHTML = `<span class="hazard-label">${escapeHtml(label)}</span>`;
+// ---- agent roster (a) -----------------------------------------------------------------------
+
+function openRosterPanel() {
+  toggleOverlay('KeyA', () => {
     const menu = new Menu({
-      title: label,
-      sections: [{kind: 'node', node: box}],
-      onDismiss: () => { if (openOverlay && openOverlay.key === key) openOverlay = null; },
+      title: 'agent roster',
+      sections: [{kind: 'list', items: [], empty: 'loading...'}],
+      onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyA') openOverlay = null; },
     });
-    menu.openAt({x: window.innerWidth / 2 - 160, y: window.innerHeight / 2 - 80});
+    menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    loadRoster(menu);
     return menu;
   });
+}
+
+async function loadRoster(menu) {
+  try {
+    const roster = await api('/api/roster');
+    if (!roster.length) {
+      const box = document.createElement('div');
+      box.className = 'hazard-stripes hazard-placeholder';
+      box.innerHTML = '<span class="hazard-label">no agent is holding a card</span>';
+      menu.refresh([{kind: 'node', node: box}]);
+      return;
+    }
+    const items = roster.map(r => ({
+      id: r.card_id, label: r.title,
+      stats: r.state === 'blocked' ? `blocked: ${r.reason || ''}` : r.activity,
+      on: r.state === 'working', disabled: r.state === 'blocked',
+    }));
+    menu.refresh([{kind: 'list', items, onPick: item => jumpToCard(item.id, roster)}]);
+  } catch (err) {
+    menu.refresh([{kind: 'list', items: [], empty: `could not load the roster: ${err.message}`}]);
+  }
+}
+
+// picking a roster row does exactly what selecting that card by hand would: switch board if
+// needed, wait for it to render, focus the strip, mark it, and open it
+async function jumpToCard(cardId, roster) {
+  const row = roster.find(r => r.card_id === cardId);
+  if (!row) return;
+  if (row.board_id !== currentBoardId) {
+    activateTab(row.board_id);
+    await onBoardEnter(row.board_id);
+  }
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  if (!strip) return;
+  strip.focus();
+  indicateFocus(strip);
+  strip._expander?.open();
+}
+
+// ---- usage (u) --------------------------------------------------------------------------------
+
+function windowLabel(type) {
+  if (type === 'five_hour' || type === 'five-hour') return 'five-hour window';
+  if (type === 'seven_day' || type === 'seven-day') return 'seven-day window';
+  return type;
+}
+
+// resets_at is a unix-epoch second count; shown in whoever's looking at the drawer's own local time
+function formatResetTime(resetsAt) {
+  if (resetsAt == null) return null;
+  const d = new Date(resetsAt * 1000);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `resets ${hh}:${mm}`;
+}
+
+function formatTokenCount(n) {
+  const count = n || 0;
+  return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
+}
+
+function windowStats(w) {
+  const parts = [w.status];
+  const resets = formatResetTime(w.resets_at);
+  if (resets) parts.push(resets);
+  // NEVER INVENT A PERCENTAGE. null means the server has none to give, not zero
+  if (w.utilization != null) parts.push(`${(w.utilization * 100).toFixed(1)}%`);
+  return parts.join(' - ');
+}
+
+function usageSections(data) {
+  const windows = data.windows || [];
+  const models = data.models || [];
+  if (!windows.length && !models.length && !data.runs) {
+    const box = document.createElement('div');
+    box.className = 'hazard-stripes hazard-placeholder';
+    box.innerHTML = '<span class="hazard-label">no usage yet</span>';
+    return [{kind: 'node', node: box}];
+  }
+  const windowItems = windows.map(w => ({id: w.type, label: windowLabel(w.type), stats: windowStats(w)}));
+  const modelItems = models.map(m => ({
+    id: m.model, label: m.model,
+    stats: `in ${formatTokenCount(m.input_tokens)} - out ${formatTokenCount(m.output_tokens)} - ` +
+      `cache ${formatTokenCount((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))} - $${(m.cost_usd || 0).toFixed(2)}`,
+    disabled: true,
+  }));
+  const totalItem = {id: 'total', label: 'total', stats: `${data.runs || 0} runs - $${(data.total_cost_usd || 0).toFixed(2)}`, disabled: true};
+  return [
+    {kind: 'list', label: 'windows', items: windowItems, empty: 'no usage yet'},
+    {kind: 'list', label: 'by model', items: modelItems, empty: 'no usage yet'},
+    {kind: 'list', items: [totalItem]},
+  ];
+}
+
+function openUsagePanel() {
+  toggleOverlay('KeyU', () => {
+    const menu = new Menu({
+      title: 'usage',
+      sections: [{kind: 'list', items: [], empty: 'loading...'}],
+      onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyU') openOverlay = null; },
+    });
+    menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    loadUsage(menu);
+    return menu;
+  });
+}
+
+async function loadUsage(menu) {
+  try {
+    const data = await api('/api/usage');
+    menu.refresh(usageSections(data));
+  } catch (err) {
+    menu.refresh([{kind: 'list', items: [], empty: `could not load usage: ${err.message}`}]);
+  }
 }
 
 // ---- shortcut overlay, built from BINDINGS so it cannot drift -----------------------
@@ -572,14 +964,15 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'Space' && openCard) { evt.preventDefault(); openCard.expander.close(); return; }
 
   if (evt.code === 'KeyG') { grouped = !grouped; return; }
-  if (evt.code === 'KeyU') { openPlaceholder('KeyU', 'usage'); return; }
-  if (evt.code === 'KeyA') { openPlaceholder('KeyA', 'agent roster'); return; }
+  if (evt.code === 'KeyU') { openUsagePanel(); return; }
+  if (evt.code === 'KeyA') { openRosterPanel(); return; }
   if (evt.code === 'KeyR') { runFocusedCard(); return; }
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
   if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
-  if (evt.code === 'Comma') { drawerFor('left').toggle(); return; }
-  if (evt.code === 'Period') { drawerFor('right').toggle(); return; }
+  // preventDefault: opening a drawer focuses its input, and the key that opened it typed itself there
+  if (evt.code === 'Comma') { evt.preventDefault(); drawerFor('left').toggle(); return; }
+  if (evt.code === 'Period') { evt.preventDefault(); drawerFor('right').toggle(); return; }
   if (evt.code === 'Slash' && openCard?.input) { evt.preventDefault(); openCard.input.focus(); return; }
   if (binding.code.startsWith('Digit')) {
     const index = Number(binding.label) - 1;

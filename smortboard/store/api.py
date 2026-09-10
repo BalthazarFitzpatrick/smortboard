@@ -28,8 +28,10 @@ _CARD_WRITABLE_FIELDS = {
     "findings_route",
 }
 
-# board-wide values, one settings row per key. unset means no row
-_SETTING_KEYS = ("findings_route",)
+# board-wide values, one settings row per key. unset means no row.
+# orchestrator_model: unset means "opus" - the caller applies that default, this stores only
+# what operator actually set
+_SETTING_KEYS = ("findings_route", "orchestrator_model")
 
 
 def _check_findings_route(value: str | None) -> None:
@@ -305,7 +307,8 @@ class Store:
         """sets a board-wide value, or clears it with None"""
         if key not in _SETTING_KEYS:
             raise UnknownFieldError(f"no setting {key!r}")
-        _check_findings_route(value)
+        if key == "findings_route":
+            _check_findings_route(value)
         if value is None:
             self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))
         else:
@@ -527,6 +530,117 @@ class Store:
             event["payload"] = json.loads(event.pop("payload_json"))
             events.append(event)
         return events
+
+    # -- prompts: layered by role, every save a new version, history kept -----
+
+    def get_prompt(self, role: str) -> dict[str, Any] | None:
+        """the latest stored version for `role`, or None if it has never been saved -
+        the caller falls back to that role's seed default (see smortboard.prompts.active_prompt)"""
+        row = self._conn.execute(
+            "SELECT * FROM prompts WHERE role = ? ORDER BY version DESC LIMIT 1", (role,)
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
+    def set_prompt(self, role: str, body: str) -> dict[str, Any]:
+        """stores a new version for `role`. never overwrites - the old version stays in history"""
+        next_version_row = self._conn.execute(
+            "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM prompts WHERE role = ?",
+            (role,),
+        ).fetchone()
+        version = next_version_row["next_version"]
+        self._conn.execute(
+            "INSERT INTO prompts (role, version, body, created_at) VALUES (?, ?, ?, ?)",
+            (role, version, body, _now()),
+        )
+        self._conn.commit()
+        return self.get_prompt(role)
+
+    def list_prompt_versions(self, role: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM prompts WHERE role = ? ORDER BY version", (role,)
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    # -- orchestrator: messages and plan, one board's mission control session ----
+
+    def add_orchestrator_message(
+        self, board_id: str, author: str, body: str, cards: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        message_id = _new_id()
+        created_at = _now()
+        self._conn.execute(
+            """
+            INSERT INTO orchestrator_messages (id, board_id, author, body, cards_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (message_id, board_id, author, body, json.dumps(cards) if cards else None, created_at),
+        )
+        self._conn.commit()
+        row = self._conn.execute(
+            "SELECT * FROM orchestrator_messages WHERE id = ?", (message_id,)
+        ).fetchone()
+        return self._orchestrator_message_dict(row)
+
+    def _orchestrator_message_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        message = _row_to_dict(row)
+        cards_json = message.pop("cards_json")
+        message["cards"] = json.loads(cards_json) if cards_json else []
+        return message
+
+    def list_orchestrator_messages(
+        self, board_id: str, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM orchestrator_messages WHERE board_id = ? ORDER BY created_at"
+        params: tuple[Any, ...] = (board_id,)
+        if limit is not None:
+            # the tail, not the head - the most recent `limit` messages, oldest first
+            query = (
+                "SELECT * FROM (SELECT * FROM orchestrator_messages WHERE board_id = ? "
+                "ORDER BY created_at DESC LIMIT ?) ORDER BY created_at"
+            )
+            params = (board_id, limit)
+        rows = self._conn.execute(query, params).fetchall()
+        return [self._orchestrator_message_dict(r) for r in rows]
+
+    def get_plan(self, board_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT body FROM orchestrator_plans WHERE board_id = ?", (board_id,)
+        ).fetchone()
+        return row["body"] if row is not None else None
+
+    def set_plan(self, board_id: str, body: str) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO orchestrator_plans (board_id, body, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT (board_id) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at
+            """,
+            (board_id, body, _now()),
+        )
+        self._conn.commit()
+
+    # -- telemetry projections: reads only, see smortboard/telemetry.py for the shaping ----
+
+    def list_events_by_kind(self, kinds: list[str]) -> list[dict[str, Any]]:
+        """every event of these kinds, across every card - usage is board-agnostic, see the
+        /api/usage contract. ordered oldest first, same as list_events"""
+        placeholders = ", ".join("?" for _ in kinds)
+        rows = self._conn.execute(
+            f"SELECT * FROM events WHERE kind IN ({placeholders}) ORDER BY card_id, seq", kinds
+        ).fetchall()
+        events = []
+        for row in rows:
+            event = _row_to_dict(row)
+            event["payload"] = json.loads(event.pop("payload_json"))
+            events.append(event)
+        return events
+
+    def list_doing_cards_blocked(self) -> list[dict[str, Any]]:
+        """cards in 'doing' with a blocked_reason_code set, across every board - half of the
+        roster (the other half is whatever RunRegistry.active() says is actually running)"""
+        rows = self._conn.execute(
+            "SELECT id FROM cards WHERE status = 'doing' AND blocked_reason_code IS NOT NULL"
+        ).fetchall()
+        return [self.get_card(r["id"]) for r in rows]
 
     # -- export / import --------------------------------------------------
 

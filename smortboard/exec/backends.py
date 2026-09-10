@@ -23,6 +23,7 @@ from typing import Any, Protocol
 
 from smortboard.exec.leases import write_lease_settings
 from smortboard.exec.runner import (
+    SYSTEM_PROMPT,
     RunResult,
     allowed_tools_for_repo,
     build_command,
@@ -31,6 +32,7 @@ from smortboard.exec.runner import (
     run_process,
 )
 from smortboard.exec.worktrees import WorktreeError, current_branch, repo_root_of_worktree
+from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
 
 # defaults, overridable per deployment - never the credential itself, which is never an env var
@@ -281,7 +283,7 @@ class ContainerBackend:
             lease_rows = store.get_card(card_id).get("leases") if store else None
             leases = [row["path_glob"] for row in lease_rows or []]
             brief = lease_preamble(leases) + commands_preamble(repo) + prompt
-            cmd = self._docker_command(clone_path, brief, settings_path, model, repo)
+            cmd = self._docker_command(clone_path, brief, settings_path, model, repo, store)
             # the token goes straight down the container's stdin and is not kept anywhere
             result = run_process(store, card_id, cmd, cwd=clone_path, stdin_text=token + "\n")
             self._fetch_back(repo_root, clone_path, branch, worktree_path)
@@ -323,6 +325,7 @@ class ContainerBackend:
         settings_path: str | Path,
         model: str,
         repo: dict[str, Any] | None,
+        store: Store | None = None,
     ) -> list[str]:
         mount, inner_settings = guard_mount(settings_path)
         claude_cmd = build_command(
@@ -330,6 +333,7 @@ class ContainerBackend:
             inner_settings,
             model=model,
             allowed_tools=allowed_tools_for_repo(repo),
+            system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT),
         )
         # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK INSIDE THE CONTAINER. the host's token
         # file, if there is one, is never mounted - read from stdin the token exists only in the
