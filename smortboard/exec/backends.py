@@ -161,6 +161,26 @@ def docker_available() -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def card_image_available(image: str | None = None) -> bool:
+    """whether the image a card would run in exists locally.
+
+    Nothing builds it for you, and without this the failure is an opaque CRASH minutes in: docker
+    says "Unable to find image", the container never starts, and the card looks like it broke.
+    """
+    if shutil.which("docker") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", image or card_image()],
+            capture_output=True,
+            timeout=_DOCKER_PROBE_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
 class RunnerBackend(Protocol):
     """a card runner: a working directory and a token in, a RunResult out.
 

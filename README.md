@@ -35,14 +35,25 @@ SMORTBOARD_DB=board.db SMORTBOARD_PORT=8042 smortboard
 ## Before a card can run
 
 The board starts and serves the interface with nothing but the command above. **Running a card
-needs two more things**, and it refuses rather than running one unisolated:
+needs three more things**, and it refuses rather than running one unisolated:
 
 **1. Docker, running.** Every card executes in its own throwaway container, with a clone of its
 repo and nothing else of yours mounted. There is no fallback mode — a card that ran as an ordinary
 process would be an agent that may have read untrusted input, on your filesystem, with your
 credential. A board that quietly degraded would be claiming an isolation it no longer had.
 
-**2. A card credential**, separate from your own login:
+**2. The card image, built once.** Nothing builds it for you, and a card started without it fails
+minutes in with an opaque crash — so the board checks for it up front and says this:
+
+```bash
+docker build -f docker/card.Dockerfile -t smortboard-card:latest .
+```
+
+It carries the `claude` CLI, git and uv, and nothing of yours: no GitHub credential, no token, no
+copy of a repo. A repo can name its own image instead, with its toolchain already installed, so a
+fresh container per card costs a second rather than a dependency install.
+
+**3. A card credential**, separate from your own login:
 
 ```bash
 claude setup-token          # prints a one-year token; it is not saved anywhere
@@ -93,8 +104,8 @@ curl -s -X POST http://127.0.0.1:8042/api/cards -H 'content-type: application/js
 
 ## Running a card
 
-Focus a card and press `r`. If the board cannot run one it says which of Docker and the card
-credential is missing, rather than doing nothing.
+Focus a card and press `r`. If the board cannot run one it says which of Docker, the card image
+and the card credential is missing, rather than doing nothing.
 
 What happens then is the whole of it, in order:
 
