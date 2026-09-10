@@ -59,7 +59,10 @@ assert.ok(exited, 'ArrowUp on the top row should exit toward the board bar witho
 
 // ---- enter opens the focused card, escape closes it (real expand.js lifecycle)
 const strip = mod.renderCardStrip(cards[0]);
-const backdrops = () => document.body.children.filter(c => c.classList.contains('modal-backdrop'));
+// a collapsing backdrop stays in the page until its animation lands, marked expand-closing - it is
+// closed as far as the keyboard and the host are concerned
+const backdrops = () => document.body.children.filter(c =>
+  c.classList.contains('modal-backdrop') && !c.classList.contains('expand-closing'));
 const press = code => strip._listeners.keydown[0]({code, preventDefault() {}, stopPropagation() {}});
 press('Enter');
 assert.equal(backdrops().length, 1, 'Enter should open the card into a backdrop + panel');
@@ -99,7 +102,8 @@ mod.slideFrom(moved, {left: 50, top: 20});
 assert.equal(moved.style.translate, '50px 20px', 'the strip should start at its old position');
 while (frames.length) frames.shift()();
 assert.equal(moved.style.translate, '', 'then it should be released into its new column');
-assert.equal(moved.style.transition, 'translate 220ms', 'with the expander\'s own 220ms beat');
+assert.equal(moved.style.transition, 'translate 220ms ease',
+  'with the motion token fallback - the stub has no computed style to read --motion-duration from');
 globalThis.requestAnimationFrame = realFrame;
 
 console.log('ok');

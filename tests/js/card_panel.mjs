@@ -87,7 +87,8 @@ strip.focus();
 responses.set('/api/cards/c2/accept', stubJson(409, {error: 'card not in checking'}));
 await mod.acceptOrRejectCard('accept');
 assert.equal(badge.hidden, false, 'the badge should show');
-assert.equal(badge.textContent, 'refused', 'a 409 should show refused, not throw');
+assert.equal(badge.textContent, "can't accept",
+  'a 409 should name the refused action - a bare "refused" read as the labels swapped');
 assert.equal(badge.title, 'card not in checking', 'the badge title should carry the server error');
 
 console.log('ok');
