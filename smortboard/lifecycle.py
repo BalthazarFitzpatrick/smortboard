@@ -200,9 +200,18 @@ def run_card_lifecycle(
 
     state = LifecycleResult(card_id=card_id, phase="preparing")
     phase("preparing")
+    card = store.get_card(card_id)
+    # an accepted card keeps its branch for the open pull request - cutting a fresh worktree would
+    # fail anyway, and recording lifecycle_started here would bury the real attempt's outcome
+    if card["status"] == "accepted":
+        return _refuse(
+            store,
+            state,
+            "This card is accepted; its branch is kept for the pull request. Reject it first to "
+            "run it again.",
+        )
     # marks where this attempt's events begin, so the outcome of a re-run is not mixed with the last
     store.append_event(card_id, "lifecycle_started", {})
-    card = store.get_card(card_id)
     if not card.get("repo_id"):
         return _refuse(
             store, state, "This card has no repo, so there is nowhere for an agent to work."
