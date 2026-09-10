@@ -21,8 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from smortboard.exec.backends import CardRuntimeUnavailable, require_card_runtime
-from smortboard.exec.leases import write_lease_settings
+from smortboard.exec.backends import (
+    CardRuntimeUnavailable,
+    require_card_runtime,
+    write_container_guards,
+)
 from smortboard.exec.worktrees import WorktreeError, branch_diff, create_worktree
 from smortboard.review.gates import GateUnavailable, run_test_gate
 from smortboard.review.merge_request import MergeRequestUnavailable, open_merge_request
@@ -210,7 +213,7 @@ def run_card_lifecycle(
         return _refuse(store, state, f"Could not cut a worktree for this card: {exc}")
     state.branch, state.worktree = tree.branch, str(tree.path)
 
-    settings = write_lease_settings(tree.path, _lease_globs(card))
+    settings = write_container_guards(tree.path, _lease_globs(card))
     store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
 
     def work(prompt: str) -> LifecycleResult | None:

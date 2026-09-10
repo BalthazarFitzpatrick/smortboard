@@ -114,6 +114,32 @@ def test_lease_hook_refuses_out_of_lease_path(tmp_path):
     assert LEASE_CONFLICT_PREFIX in result.stderr
 
 
+def _guard(settings_path, index, tool_input):
+    settings = json.loads(settings_path.read_text())
+    command = settings["hooks"]["PreToolUse"][index]["hooks"][0]["command"]
+    return subprocess.run(
+        command.split(" ", 1),
+        input=json.dumps({"tool_input": tool_input}),
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_lease_hook_takes_its_root_from_the_lease_when_mounted_elsewhere(tmp_path):
+    # the container case: the guards sit outside the repo, so __file__ cannot name the root
+    root = (tmp_path / "workspace").resolve()
+    settings_path = write_lease_settings(tmp_path / "wt", ["src/allowed.py"], root=str(root))
+    assert _guard(settings_path, 0, {"file_path": str(root / "src" / "allowed.py")}).returncode == 0
+    assert _guard(settings_path, 0, {"file_path": str(root / "src" / "other.py")}).returncode == 2
+
+
+def test_bash_guard_takes_its_root_from_the_lease_too(tmp_path):
+    root = (tmp_path / "workspace").resolve()
+    settings_path = write_lease_settings(tmp_path / "wt", [], root=str(root))
+    assert _guard(settings_path, 1, {"command": f"cat {root}/README.md"}).returncode == 0
+    assert _guard(settings_path, 1, {"command": f"cat {tmp_path}/wt/README.md"}).returncode == 2
+
+
 # -- runner: parsing and classification ---------------------------------------
 
 

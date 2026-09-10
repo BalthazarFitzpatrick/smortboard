@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from smortboard.exec.backends import card_image, docker_available, read_card_token
+from smortboard.exec.backends import card_image, docker_available, guard_mount, read_card_token
 from smortboard.exec.runner import RunResult, build_command, run_process
 from smortboard.store.api import Store
 
@@ -127,9 +127,10 @@ def _docker_command(
     repo: dict[str, Any] | None,
     budget_usd: float | None,
 ) -> list[str]:
+    mount, inner_settings = guard_mount(settings_path)
     claude_cmd = build_command(
         prompt,
-        settings_path,
+        inner_settings,
         model=model,
         allowed_tools=REVIEWER_ALLOWED_TOOLS,
         budget_usd=budget_usd,
@@ -149,6 +150,7 @@ def _docker_command(
         "-i",
         "-v",
         f"{Path(work_path)}:/workspace:ro",  # the reviewer inspects, it never writes
+        *mount,
         "-w",
         "/workspace",
         _image_for(repo),

@@ -29,7 +29,9 @@ command = payload.get("tool_input", {}).get("command")
 if not command:
     sys.exit(0)
 
-root = Path(__file__).resolve().parent.parent
+lease_file = Path(__file__).with_name("lease.json")
+lease = json.loads(lease_file.read_text()) if lease_file.exists() else {}
+root = Path(lease.get("root") or Path(__file__).resolve().parent.parent)
 
 for token in re.findall(r"/\\S+", command):
     candidate = token.rstrip("'\\",;)")
@@ -47,8 +49,13 @@ sys.exit(0)
 '''.replace("{prefix}", BASH_ESCAPE_PREFIX)
 
 
-def write_bash_guard_hook(worktree_path: str | Path) -> dict:
-    """writes the hook script under the worktree's .claude dir, returns its PreToolUse entry"""
+def write_bash_guard_hook(
+    worktree_path: str | Path, *, python: str = sys.executable, guard_dir: str | None = None
+) -> dict:
+    """writes the hook script under the worktree's .claude dir, returns its PreToolUse entry.
+
+    `python` and `guard_dir` are as the runner sees them - see leases.write_lease_settings.
+    """
     worktree_path = Path(worktree_path)
     claude_dir = worktree_path / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
@@ -57,7 +64,8 @@ def write_bash_guard_hook(worktree_path: str | Path) -> dict:
     hook_script.write_text(_HOOK_SCRIPT)
     hook_script.chmod(0o755)
 
+    seen_script = f"{guard_dir}/bash_guard.py" if guard_dir else hook_script
     return {
         "matcher": "Bash",
-        "hooks": [{"type": "command", "command": f"{sys.executable} {hook_script}"}],
+        "hooks": [{"type": "command", "command": f"{python} {seen_script}"}],
     }

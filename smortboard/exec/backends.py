@@ -21,6 +21,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Protocol
 
+from smortboard.exec.leases import write_lease_settings
 from smortboard.exec.runner import (
     RunResult,
     allowed_tools_for_repo,
@@ -43,10 +44,39 @@ CARD_TOKEN_PATH_ENV = "SMORTBOARD_CARD_TOKEN_PATH"
 _KEYCHAIN_SERVICE = "smortboard-card-token"
 _KEYCHAIN_USER = "smortboard"
 _CONTAINER_WORKDIR = "/workspace"
+# a card's guards (settings, lease, hooks) are mounted read-only here, outside /workspace, so the
+# agent can neither edit its own guard nor sweep it into a commit
+CONTAINER_GUARD_DIR = "/smortboard"
+# the guard hooks' interpreter inside the card image - docker/card.Dockerfile installs it
+CONTAINER_PYTHON = "python3"
 
 
 def card_image() -> str:
     return os.environ.get(CARD_IMAGE_ENV, DEFAULT_CARD_IMAGE)
+
+
+def write_container_guards(worktree_path: str | Path, path_globs: list[str]) -> Path:
+    """the card's lease and bash guards, written with the paths a card container sees"""
+    return write_lease_settings(
+        worktree_path,
+        path_globs,
+        python=CONTAINER_PYTHON,
+        guard_dir=CONTAINER_GUARD_DIR,
+        root=_CONTAINER_WORKDIR,
+    )
+
+
+def guard_mount(settings_path: str | Path) -> tuple[list[str], str]:
+    """docker args mounting the guard dir read-only, and the `--settings` path as seen inside.
+
+    The first real card run crashed without this: the host path went to `--settings` unchanged,
+    and inside the container it did not exist.
+    """
+    settings_path = Path(settings_path)
+    return (
+        ["-v", f"{settings_path.parent}:{CONTAINER_GUARD_DIR}:ro"],
+        f"{CONTAINER_GUARD_DIR}/{settings_path.name}",
+    )
 
 
 class CardTokenMissing(RuntimeError):
@@ -283,9 +313,10 @@ class ContainerBackend:
         model: str,
         repo: dict[str, Any] | None,
     ) -> list[str]:
+        mount, inner_settings = guard_mount(settings_path)
         claude_cmd = build_command(
             prompt,
-            settings_path,
+            inner_settings,
             model=model,
             allowed_tools=allowed_tools_for_repo(repo),
         )
@@ -307,6 +338,7 @@ class ContainerBackend:
             "-i",  # stdin stays open exactly long enough to hand the token over
             "-v",
             f"{clone_path}:{_CONTAINER_WORKDIR}:rw",
+            *mount,
             "-w",
             _CONTAINER_WORKDIR,
             self._image_for(repo),
