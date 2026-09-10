@@ -26,8 +26,9 @@ from smortboard.store.api import Store
 BOARD_AUTHOR = "smortboard"
 
 # a card nobody has finished judging can be rejected from doing (blocked, or orphaned by a board
-# restart) as well as from checking. only checking can be accepted - it is what the gates passed
-REJECTABLE = ("doing", "checking")
+# restart) as well as from checking. a decision can also be reversed: accepted to rejected, and a
+# rejected card accepted again. otherwise only checking can be accepted - it is what the gates passed
+REJECTABLE = ("doing", "checking", "accepted")
 
 # dependents already decided are left alone; only work still to come rests on the rejected card
 UNDECIDED = ("todo", "doing", "checking")
@@ -43,18 +44,49 @@ def _release_worktree(repo_path: str, card_id: str) -> None:
         destroy_worktree(repo_path, card_id, force=True)
 
 
+def _release_dependents(store: Store, card: dict[str, Any]) -> None:
+    """undoes reject_card's DEPENDENCY_REJECTED on work still to come, once nothing it rests on is
+    rejected any more - a card can depend on two, and only one of them came back"""
+    for dependent_id in card["depended_on_by"]:
+        dependent = store.get_card(dependent_id)
+        if dependent["status"] not in UNDECIDED:
+            continue
+        if dependent["blocked_reason_code"] != "DEPENDENCY_REJECTED":
+            continue
+        if any(store.get_card(dep)["status"] == "rejected" for dep in dependent["depends_on"]):
+            continue
+        store.update_card(dependent_id, blocked_reason_code=None, review_flag=False)
+        store.add_comment(
+            dependent_id,
+            author=BOARD_AUTHOR,
+            body=f"A card this one depends on was accepted after all: {card['title']}",
+        )
+
+
 def accept_card(store: Store, card_id: str) -> dict[str, Any]:
     card = store.get_card(card_id)
-    if card["status"] != "checking" or card["blocked_reason_code"]:
+    reversing = card["status"] == "rejected"
+    if not reversing and (card["status"] != "checking" or card["blocked_reason_code"]):
         raise DecisionRefused(
-            f"only a card in checking with nothing blocking it can be accepted; this one is "
+            f"only a rejected card, or one in checking with nothing blocking it, can be accepted; "
+            f"this one is "
             f"{card['status']}{' / ' + card['blocked_reason_code'] if card['blocked_reason_code'] else ''}"
         )
-    if card.get("repo_id"):
+    if card.get("repo_id") and not reversing:
         # the branch stays: the open pull request is built on it
         _release_worktree(store.get_repo(card["repo_id"])["path"], card_id)
     store.update_card(card_id, status="accepted", review_flag=False)
-    store.append_event(card_id, "decision", {"decision": "accepted"})
+    if reversing:
+        # rejecting closed the pull request and kept its branch on github; the board cannot reopen
+        # one (its gh allowlist has no reopen), so it says where the work still is
+        store.add_comment(
+            card_id,
+            author=BOARD_AUTHOR,
+            body="Accepted after being rejected. Rejecting closed its pull request and kept the "
+            "branch on GitHub - reopen the pull request there if this work should land.",
+        )
+        _release_dependents(store, card)
+    store.append_event(card_id, "decision", {"decision": "accepted", "reversed": reversing})
     return store.get_card(card_id)
 
 
@@ -91,6 +123,11 @@ def reject_card(
 
     store.update_card(card_id, status="rejected", blocked_reason_code=None, review_flag=False)
     note = "Rejected. The next run cuts a fresh worktree from base."
+    if card["status"] == "accepted":
+        note += (
+            "\nIt had been accepted: if its pull request was already merged, that merge stands - "
+            "revert it on main by hand."
+        )
     if attachment:
         note += f" This attempt is kept as {attachment}."
     if pr_url:

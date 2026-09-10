@@ -76,13 +76,41 @@ def test_only_an_unblocked_checking_card_can_be_accepted(store, card_id):
         accept_card(store, card_id)
     store.update_card(card_id, blocked_reason_code=None)
     assert accept_card(store, card_id)["status"] == "accepted"
+    with pytest.raises(DecisionRefused):
+        accept_card(store, card_id)  # already accepted
 
 
-def test_decided_cards_cannot_be_rejected(store, card_id):
-    for status in ("todo", "accepted", "rejected"):
+def test_undecided_and_rejected_cards_cannot_be_rejected(store, card_id):
+    for status in ("todo", "rejected"):
         store.update_card(card_id, status=status)
         with pytest.raises(DecisionRefused):
             reject_card(store, card_id, close_pr=lambda *a: None)
+
+
+def test_an_accepted_card_can_still_be_rejected(store, card_id):
+    # y then x: the decision flips, and the note says a merge that already happened stands
+    store.update_card(card_id, status="accepted")
+    card = reject_card(store, card_id, close_pr=lambda *a: None)
+    assert card["status"] == "rejected"
+    assert "already merged" in card["comments"][-1]["body"]
+
+
+def test_a_rejected_card_can_be_accepted_again(store, card_id):
+    store.update_card(card_id, status="rejected")
+    card = accept_card(store, card_id)
+    assert card["status"] == "accepted"
+    assert "reopen the pull request" in card["comments"][-1]["body"]
+
+
+def test_accepting_a_rejected_card_again_releases_its_dependents(store, card_id):
+    board_id = store.get_card(card_id)["board_id"]
+    waiting = store.create_card(board_id, None, "waiting")["id"]
+    store.add_dependency(waiting, card_id)
+    store.update_card(card_id, status="checking")
+    reject_card(store, card_id, close_pr=lambda *a: None)
+    assert store.get_card(waiting)["blocked_reason_code"] == "DEPENDENCY_REJECTED"
+    accept_card(store, card_id)
+    assert store.get_card(waiting)["blocked_reason_code"] is None
 
 
 def test_rejecting_leaves_already_decided_dependents_alone(store, card_id):
