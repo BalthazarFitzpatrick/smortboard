@@ -239,6 +239,12 @@ def test_create_repo_with_test_command(store):
     assert store.get_repo(repo["id"])["test_command"] == "pytest"
 
 
+def test_a_repo_can_declare_its_lint_command(store):
+    board = store.create_board("Phase 1")
+    repo = store.create_repo(board["id"], "smortboard", "/repo", "main", lint_command="ruff check")
+    assert store.get_repo(repo["id"])["lint_command"] == "ruff check"
+
+
 def test_set_repo_test_command_round_trips(store):
     board = store.create_board("Phase 1")
     repo = store.create_repo(board["id"], "smortboard", "/repo", "main")

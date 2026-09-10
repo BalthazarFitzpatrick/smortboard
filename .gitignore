@@ -43,6 +43,8 @@ __pycache__/
 
 # claude code — settings.local.json is machine-local permission grants, never shared
 .claude/settings.local.json
+# card worktrees - full repo copies the board cuts per card; ruff and git status reached into them
+.claude/worktrees/
 
 # ledgers live in the private dev_ledgers repo, symlinked in
 TASKS.jsonl
