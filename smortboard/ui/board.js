@@ -16,6 +16,7 @@ const BINDINGS = [
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping'},
   {code: 'KeyU', label: 'u', action: 'usage dropdown (placeholder)'},
   {code: 'KeyA', label: 'a', action: 'agent roster (placeholder)'},
+  {code: 'KeyR', label: 'r', action: 'run the focused card'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay'},
   {code: 'Slash', label: '/', action: "focus the open card's comment input"},
   {code: 'Comma', label: ',', action: 'agent observation deck'},
@@ -126,6 +127,7 @@ function renderCardStrip(card) {
     <div class="card-foot">
       <span class="card-workstream">${escapeHtml(card.workstream || '')}</span>
       <span class="stat">${escapeHtml(stat)}</span>
+      <span class="card-run" hidden></span>
     </div>
   `;
   const expander = makeExpander(strip, {
@@ -218,6 +220,96 @@ function cardPanelHtml(card) {
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
+}
+
+
+// ---- running a card (r) -------------------------------------------------------------
+
+// how often the board asks a running card where it got to. a card takes minutes, so a fast poll
+// buys nothing but requests - the phases it moves through are the only thing changing
+const RUN_POLL_MS = 2000;
+
+function focusedCardId() {
+  const el = document.activeElement;
+  const strip = el && el.closest ? el.closest('[data-card-id]') : null;
+  return strip ? strip.dataset.cardId : null;
+}
+
+function runBadge(cardId) {
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  return strip ? strip.querySelector('.card-run') : null;
+}
+
+function showRun(cardId, text, href, detail) {
+  const badge = runBadge(cardId);
+  if (!badge) return;
+  badge.hidden = false;
+  badge.textContent = '';
+  // the foot is one line and must stay one line - the long version is the comment the run left
+  badge.title = detail || '';
+  if (href) {
+    const link = document.createElement('a');
+    link.href = href;
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.textContent = text;
+    badge.appendChild(link);
+  } else {
+    badge.textContent = text;
+  }
+}
+
+// THE BOARD SAYS WHY IT CANNOT RUN, RATHER THAN DOING NOTHING. docker and the card credential both
+// live outside the board, and a button that silently fails is indistinguishable from a broken one
+function reportNotReady(missing) {
+  const box = document.createElement('div');
+  box.className = 'hazard-stripes hazard-placeholder';
+  box.innerHTML = `<span class="hazard-label">cannot run a card yet</span>` +
+    missing.map(m => `<span class="hazard-note">${escapeHtml(m)}</span>`).join('');
+  const menu = new Menu({title: 'card runtime', sections: [{kind: 'node', node: box}]});
+  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+}
+
+async function runFocusedCard() {
+  const cardId = focusedCardId();
+  if (!cardId) return;
+
+  const runtime = await api('/api/runtime');
+  if (!runtime.ready) { reportNotReady(runtime.missing); return; }
+
+  showRun(cardId, 'starting');
+  const state = await api(`/api/cards/${cardId}/run`, {method: 'POST'});
+  if (!state.running) { finishRun(cardId, state); return; }
+  pollRun(cardId);
+}
+
+function pollRun(cardId) {
+  setTimeout(async () => {
+    const state = await api(`/api/cards/${cardId}/run`);
+    if (state.running) {
+      showRun(cardId, state.phase);
+      pollRun(cardId);
+      return;
+    }
+    finishRun(cardId, state);
+  }, RUN_POLL_MS);
+}
+
+// the run is over: reload the board so the card's new status, reason code and comments are what is
+// on screen, THEN say where the run landed.
+// ORDER MATTERS AND IT BIT ONCE. Setting the badge first and reloading after threw the badge away
+// with the strip it was on - the whole chain fired correctly and the result was invisible.
+async function finishRun(cardId, state) {
+  if (currentBoardId) await onBoardEnter(currentBoardId);
+  // the reload built new strips, so put focus back on the card that ran. without this the user
+  // loses their place after every run AND the result is invisible: only the focused card's foot
+  // is showing in the fan, so the badge lands on a card nobody can see
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  if (strip) { strip.focus(); indicateFocus(strip); }
+  if (state.pr_url) showRun(cardId, 'pull request', state.pr_url);
+  else if (state.blocked_reason_code) showRun(cardId, state.blocked_reason_code);
+  else showRun(cardId, state.error ? 'failed' : 'refused', null,
+               state.refusal || state.error || state.phase);
 }
 
 // ---- placeholders (,  .  u  a) ------------------------------------------------------
@@ -344,6 +436,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyG') { grouped = !grouped; return; }
   if (evt.code === 'KeyU') { openPlaceholder('KeyU', 'usage'); return; }
   if (evt.code === 'KeyA') { openPlaceholder('KeyA', 'agent roster'); return; }
+  if (evt.code === 'KeyR') { runFocusedCard(); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'Comma') { drawerFor('left').toggle(); return; }
   if (evt.code === 'Period') { drawerFor('right').toggle(); return; }

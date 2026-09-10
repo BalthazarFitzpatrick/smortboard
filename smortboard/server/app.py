@@ -8,6 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
+from smortboard.server.runs import Readiness, RunRegistry
 from smortboard.store import Store
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
 
@@ -27,6 +28,8 @@ _ROUTES = [
     (re.compile(r"^/api/boards$"), "GET"),
     (re.compile(r"^/api/boards$"), "POST"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/cards$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "POST"),
     (re.compile(r"^/api/cards$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "PATCH"),
@@ -36,6 +39,10 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/attachments$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/attachments/(?P<attachment_id>[^/]+)$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/events$"), "GET"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/run$"), "POST"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/run$"), "GET"),
+    (re.compile(r"^/api/runs$"), "GET"),
+    (re.compile(r"^/api/runtime$"), "GET"),
     (re.compile(r"^/api/tasks/(?P<task_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
 ]
@@ -48,7 +55,9 @@ def _version() -> str:
         return "0.0.0-dev"
 
 
-def _make_handler(store: Store) -> type[BaseHTTPRequestHandler]:
+def _make_handler(
+    store: Store, runs: RunRegistry, readiness: Readiness
+) -> type[BaseHTTPRequestHandler]:
     """closes over the store instance; http.server wants a class, not an instance"""
 
     class Handler(BaseHTTPRequestHandler):
@@ -104,9 +113,23 @@ def _make_handler(store: Store) -> type[BaseHTTPRequestHandler]:
                 body = self._read_json()
                 board = store.create_board(name=body["name"])
                 self._send_json(201, board)
-            elif "board_id" in params:
-                cards = store.list_cards(params["board_id"])
-                self._send_json(200, cards)
+            elif "board_id" in params and path.endswith("/cards"):
+                self._send_json(200, store.list_cards(params["board_id"]))
+            elif "board_id" in params and path.endswith("/repos") and method == "GET":
+                self._send_json(200, store.list_repos(params["board_id"]))
+            elif "board_id" in params and path.endswith("/repos") and method == "POST":
+                body = self._read_json()
+                # a card cannot run without one of these, and there was no way to make one from the
+                # board at all - the run button was unusable on a board created through the api
+                repo = store.create_repo(
+                    params["board_id"],
+                    name=body["name"],
+                    path=body["path"],
+                    default_branch=body.get("default_branch", "main"),
+                    test_command=body.get("test_command"),
+                    image=body.get("image"),
+                )
+                self._send_json(201, repo)
             elif path == "/api/cards" and method == "POST":
                 body = self._read_json()
                 card = store.create_card(**body)
@@ -121,6 +144,20 @@ def _make_handler(store: Store) -> type[BaseHTTPRequestHandler]:
                 self._send_json(201, comment)
             elif path.endswith("/attachments"):
                 self._handle_upload(params["card_id"])
+            elif path.endswith("/run") and method == "POST":
+                self._handle_run(params["card_id"])
+            elif path.endswith("/run") and method == "GET":
+                state = runs.get(params["card_id"])
+                self._send_json(
+                    200,
+                    state.as_dict()
+                    if state
+                    else {"card_id": params["card_id"], "phase": None, "running": False},
+                )
+            elif path == "/api/runs":
+                self._send_json(200, [state.as_dict() for state in runs.active()])
+            elif path == "/api/runtime":
+                self._send_json(200, readiness.check())
             elif path.endswith("/events"):
                 self._send_json(200, store.list_events(params["card_id"]))
             elif "card_id" in params and method == "GET":
@@ -139,6 +176,16 @@ def _make_handler(store: Store) -> type[BaseHTTPRequestHandler]:
                 self._handle_asset(params["name"])
             else:
                 self._send_json(404, {"error": f"no route for {method} {path}"})
+
+        def _handle_run(self, card_id: str) -> None:
+            """starts a card, or reports the run already going for it.
+
+            202, not 200: the card has been accepted and is running somewhere else. The response
+            is where it is right now, not where it ended up - GET the same path for that.
+            """
+            store.get_card(card_id)  # raises NotFoundError before a thread is ever started
+            state = runs.start(card_id)
+            self._send_json(202, state.as_dict())
 
         def _handle_patch_card(self, card_id: str) -> None:
             body = self._read_json()
@@ -224,7 +271,16 @@ def _make_handler(store: Store) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
-def build_server(store: Store, port: int, host: str = "0.0.0.0") -> HTTPServer:
-    # single-threaded: the store's sqlite3 connection is bound to the thread that opened it
-    handler_cls = _make_handler(store)
-    return HTTPServer((host, port), handler_cls)
+def build_server(
+    store: Store,
+    port: int,
+    host: str = "0.0.0.0",
+    token_path: str | None = None,
+) -> HTTPServer:
+    # single-threaded: the store's sqlite3 connection is bound to the thread that opened it. card
+    # runs are the exception and get their own thread and their own connection - see runs.py
+    runs = RunRegistry(store.path, token_path=token_path)
+    handler_cls = _make_handler(store, runs, Readiness(token_path))
+    server = HTTPServer((host, port), handler_cls)
+    server.runs = runs  # the cli and the tests reach the registry through the server
+    return server

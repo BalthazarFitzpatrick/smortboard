@@ -136,15 +136,29 @@ def card_token_available(token_path: str | Path | None = None) -> bool:
     return True
 
 
+# `docker version --format {{.Server.Version}}`, NOT `docker info`. Both prove a daemon answered -
+# the Server field is empty unless one did - but measured on a healthy Docker Desktop, `info` took
+# 4.9s against its own 5s timeout and reported Docker as down about half the time, which made the
+# board refuse every card. The version probe answers the same question in 0.3s.
+_DOCKER_PROBE = ["docker", "version", "--format", "{{.Server.Version}}"]
+_DOCKER_PROBE_TIMEOUT = 10
+
+
 def docker_available() -> bool:
     """true if `docker` is on PATH and a daemon actually answers - not just installed but unusable"""
     if shutil.which("docker") is None:
         return False
     try:
-        result = subprocess.run(["docker", "info"], capture_output=True, timeout=5, check=False)
+        result = subprocess.run(
+            _DOCKER_PROBE,
+            capture_output=True,
+            text=True,
+            timeout=_DOCKER_PROBE_TIMEOUT,
+            check=False,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return result.returncode == 0
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 class RunnerBackend(Protocol):
@@ -204,7 +218,10 @@ class ContainerBackend:
             self._clone(worktree_path, clone_path, branch)
             # the card's own lease, prepended to its brief: the backend has the store and the id,
             # so no caller has to remember to pass what is already recorded
-            leases = store.get_card(card_id).get("leases") if store else None
+            # lease ROWS, not strings: get_card returns dicts, and handing those straight to
+            # lease_preamble listed python dicts at the agent instead of paths
+            lease_rows = store.get_card(card_id).get("leases") if store else None
+            leases = [row["path_glob"] for row in lease_rows or []]
             cmd = self._docker_command(
                 clone_path, lease_preamble(leases) + prompt, settings_path, model, repo
             )
@@ -321,12 +338,13 @@ def require_card_runtime(token_path: str | Path | None = None) -> ContainerBacke
             "Docker is not running or not installed. smortboard runs every card in its own "
             "container; install Docker Desktop and start it."
         )
-    resolved = Path(token_path or card_token_path())
-    if not resolved.is_file():
+    # card_token_available, not is_file: the credential normally lives in the OS credential store
+    # and never becomes a file at all, so checking for the file refused a board that was ready
+    if not card_token_available(token_path):
+        resolved = Path(token_path or card_token_path())
         problems.append(
-            f"No card credential at {resolved}. Run `claude setup-token` and write the token "
-            f"there - a card-scoped credential, so it can be revoked without touching your own "
-            f"session."
+            "No card credential. Run `claude setup-token`, then either\n"
+            + _store_instructions(resolved)
         )
     if problems:
         raise CardRuntimeUnavailable("  " + "\n  ".join(problems))

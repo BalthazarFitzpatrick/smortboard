@@ -357,3 +357,32 @@ def test_a_repo_brings_its_own_image_and_a_card_still_gets_its_own_container(tmp
     assert with_repo.count("-v") == 1
     assert "--rm" in with_repo
     assert "-e" not in with_repo
+
+
+def test_docker_available_asks_the_daemon_not_just_the_client(monkeypatch):
+    """`docker version` prints client info even with no daemon, so an exit code alone is not proof.
+
+    the empty Server field IS the daemon being down, and measured, `docker info` took 4.9s against
+    its own 5s timeout on a healthy machine - which reported docker as down and refused every card
+    """
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/docker")
+
+    class _Completed:
+        returncode = 0
+        stdout = "\n"
+        stderr = ""
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _Completed())
+    assert docker_available() is False
+
+
+def test_docker_available_true_when_the_daemon_answers(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/docker")
+
+    class _Completed:
+        returncode = 0
+        stdout = "29.2.1\n"
+        stderr = ""
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _Completed())
+    assert docker_available() is True

@@ -116,3 +116,13 @@ body {
 .expand-panel.card-attention { border-color: var(--fill-attention); }
 .expand-panel.card-rejected { border-color: var(--fill-warn); }
 
+
+/* ---- the run badge -------------------------------------------------------------------------
+   A card that is running says so where its status already is, rather than somewhere new. The
+   workstream takes the slack so status and run sit together on the right and the status does not
+   shift sideways the moment a run starts. */
+.card-foot .card-workstream { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.card-foot .card-run { flex: 0 0 auto; color: var(--text-dim); white-space: nowrap; }
+/* the finished state is the one worth looking at, so the link is the only coloured thing here */
+.card-foot .card-run a { color: var(--kingfisher); text-decoration: none; }
+.card-foot .card-run a:hover { text-decoration: underline; }
