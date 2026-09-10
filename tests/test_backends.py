@@ -338,13 +338,25 @@ def test_the_default_token_path_is_honoured(tmp_path, monkeypatch):
     assert read_card_token() == "from-the-file"
 
 
-def test_the_credential_store_wins_over_a_file(tmp_path, monkeypatch):
+def test_a_file_wins_and_the_credential_store_is_never_asked(tmp_path, monkeypatch):
+    # every macos keychain read raised a prompt, so with a file present it must not happen at all
+    asked = []
     monkeypatch.setattr(
-        "smortboard.exec.backends._credential_store_token", lambda: "from-the-keychain"
+        "smortboard.exec.backends._credential_store_token",
+        lambda: asked.append(True) or "from-the-keychain",
     )
     token = tmp_path / "card_token"
     token.write_text("from-the-file\n")
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(token))
+    assert read_card_token() == "from-the-file"
+    assert asked == []
+
+
+def test_the_credential_store_is_the_fallback_without_a_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "smortboard.exec.backends._credential_store_token", lambda: "from-the-keychain"
+    )
+    monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "absent"))
     assert read_card_token() == "from-the-keychain"
 
 
