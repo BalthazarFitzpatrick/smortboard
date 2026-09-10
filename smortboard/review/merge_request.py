@@ -28,8 +28,9 @@ from typing import Any
 PROTECTED_BRANCHES = frozenset({"main", "master", "trunk"})
 
 # the only gh subcommands this module may run. `merge` is not on it, and cannot be added by a
-# caller - see _gh, which matches the first two words of the invocation against this set
-ALLOWED_GH_COMMANDS = frozenset({("pr", "create"), ("pr", "list"), ("pr", "view")})
+# caller - see _gh, which matches the first two words of the invocation against this set.
+# `close` is for a rejected card, and close_merge_request never passes --delete-branch
+ALLOWED_GH_COMMANDS = frozenset({("pr", "create"), ("pr", "list"), ("pr", "view"), ("pr", "close")})
 
 # a push or a pr create that has not answered in two minutes is a network problem, not slow work
 GH_TIMEOUT_SECONDS = 120
@@ -354,6 +355,18 @@ def _record(store: Any, card_id: str, result: MergeRequestResult) -> None:
             "already_existed": result.already_existed,
         },
     )
+
+
+def close_merge_request(repo_path: str | Path, url: str) -> str | None:
+    """closes a rejected card's pull request, keeping its branch. returns a refusal, or None.
+
+    the branch stays on purpose (fabian, 2026-09-10): a closed pull request still reads as a record
+    of the attempt, and deleting the branch would leave its diff view with nothing behind it
+    """
+    if shutil.which("gh") is None:
+        return "gh is not installed"
+    result = _gh(["pr", "close", url, "--comment", "Rejected on the board."], cwd=repo_path)
+    return None if result.returncode == 0 else result.stderr.strip() or "gh pr close failed"
 
 
 def merge_request_is_configured(repo_path: str | Path) -> bool:
