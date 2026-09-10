@@ -129,18 +129,37 @@ class Readiness:
         if self._answer is not None and time.time() - self._measured_at < READINESS_TTL_SECONDS:
             return self._answer
 
-        from smortboard.exec.backends import card_token_available, docker_available
+        from smortboard.exec.backends import (
+            card_image,
+            card_image_available,
+            card_token_available,
+            docker_available,
+        )
 
         docker = docker_available()
         token = card_token_available(self._token_path)
+        # only checked when docker answers - "the image is missing" is not useful news when the
+        # thing that would hold the image is not running
+        image = docker and card_image_available()
         missing = []
         if not docker:
             missing.append("Docker is not running. Every card runs in its own container.")
+        elif not image:
+            missing.append(
+                f"No card image. Build it once: "
+                f"docker build -f docker/card.Dockerfile -t {card_image()} ."
+            )
         if not token:
             missing.append(
                 "No card credential. Run `claude setup-token` and store it as "
                 "smortboard-card-token."
             )
-        self._answer = {"ready": not missing, "docker": docker, "token": token, "missing": missing}
+        self._answer = {
+            "ready": not missing,
+            "docker": docker,
+            "image": image,
+            "token": token,
+            "missing": missing,
+        }
         self._measured_at = time.time()
         return self._answer

@@ -206,6 +206,7 @@ def test_the_board_lists_what_is_running(server):
 def test_readiness_says_what_is_missing_rather_than_just_no(monkeypatch):
     monkeypatch.setattr(runs_module, "READINESS_TTL_SECONDS", 0)
     monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: False)
+    monkeypatch.setattr("smortboard.exec.backends.card_image_available", lambda i=None: False)
     monkeypatch.setattr("smortboard.exec.backends.card_token_available", lambda p=None: False)
     answer = runs_module.Readiness().check()
     assert answer["ready"] is False
@@ -213,8 +214,30 @@ def test_readiness_says_what_is_missing_rather_than_just_no(monkeypatch):
     assert any("setup-token" in m for m in answer["missing"])
 
 
-def test_readiness_is_cached_because_docker_info_is_slow(monkeypatch):
+def test_a_missing_card_image_is_named_before_a_card_crashes_on_it(monkeypatch):
+    """nothing builds the image, and without this the failure is an opaque CRASH minutes in"""
+    monkeypatch.setattr(runs_module, "READINESS_TTL_SECONDS", 0)
+    monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: True)
+    monkeypatch.setattr("smortboard.exec.backends.card_image_available", lambda i=None: False)
+    monkeypatch.setattr("smortboard.exec.backends.card_token_available", lambda p=None: True)
+    answer = runs_module.Readiness().check()
+    assert answer["ready"] is False
+    assert answer["image"] is False
+    assert any("docker build -f docker/card.Dockerfile" in m for m in answer["missing"])
+
+
+def test_a_missing_image_is_not_reported_while_docker_itself_is_down(monkeypatch):
+    monkeypatch.setattr(runs_module, "READINESS_TTL_SECONDS", 0)
+    monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: False)
+    monkeypatch.setattr("smortboard.exec.backends.card_image_available", lambda i=None: False)
+    monkeypatch.setattr("smortboard.exec.backends.card_token_available", lambda p=None: True)
+    answer = runs_module.Readiness().check()
+    assert not any("card image" in m for m in answer["missing"])
+
+
+def test_readiness_is_cached_because_the_probes_are_not_free(monkeypatch):
     calls = []
+    monkeypatch.setattr("smortboard.exec.backends.card_image_available", lambda i=None: True)
     monkeypatch.setattr(
         "smortboard.exec.backends.docker_available", lambda: (calls.append(1), True)[1]
     )
