@@ -49,6 +49,10 @@ PHASES = (
 # two on 2026-09-10 - each round is roughly one more card run, so this also caps the cost
 MAX_FIX_ROUNDS = 2
 
+# the models when neither the card nor the board's settings name one
+DEFAULT_WORKER_MODEL = "sonnet"
+DEFAULT_REVIEWER_MODEL = "sonnet"
+
 # who a board-written comment is from. cards already carry comments, so the pull request link lands
 # where a human is already looking rather than needing a column of its own
 BOARD_AUTHOR = "smortboard"
@@ -224,10 +228,23 @@ def run_card_lifecycle(
     settings = write_container_guards(tree.path, _lease_globs(card))
     store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
 
+    # the card's own model wins, then the board's worker setting, then sonnet. the reviewer has a
+    # setting of its own, so a cheap worker never means a cheap review
+    configured = store.get_settings()
+    worker_model = card.get("model") or configured.get("worker_model") or DEFAULT_WORKER_MODEL
+    reviewer_model = configured.get("reviewer_model") or DEFAULT_REVIEWER_MODEL
+
     def work(prompt: str) -> LifecycleResult | None:
         """one agent run in the card's worktree; returns the blocked state if it stopped short"""
         run = runtime.run_card(
-            store, card_id, tree.path, prompt, settings, repo=repo, token_path=token_path
+            store,
+            card_id,
+            tree.path,
+            prompt,
+            settings,
+            repo=repo,
+            token_path=token_path,
+            model=worker_model,
         )
         if run.blocked_reason_code:
             return _block(
@@ -269,6 +286,7 @@ def run_card_lifecycle(
                 settings,
                 repo=repo,
                 token_path=token_path,
+                model=reviewer_model,
             )
         except ReviewUnavailable as exc:
             return _refuse(store, state, f"The reviewer could not run: {exc}")

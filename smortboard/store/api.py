@@ -26,12 +26,13 @@ _CARD_WRITABLE_FIELDS = {
     "review_flag",
     "repo_id",
     "findings_route",
+    "model",
 }
 
 # board-wide values, one settings row per key. unset means no row.
-# orchestrator_model: unset means "opus" - the caller applies that default, this stores only
-# what operator actually set
-_SETTING_KEYS = ("findings_route", "orchestrator_model")
+# the three models are stored only when operator set them - callers apply the defaults (opus for the
+# orchestrator, sonnet for workers and the reviewer), so a changed default reaches unset boards
+_SETTING_KEYS = ("findings_route", "orchestrator_model", "worker_model", "reviewer_model")
 
 
 def _check_findings_route(value: str | None) -> None:
@@ -195,6 +196,7 @@ class Store:
         tasks: list[str] | None = None,
         criteria: list[str] | None = None,
         leases: list[str] | None = None,
+        model: str | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
         card_id = _new_id()
@@ -202,8 +204,9 @@ class Store:
         self._conn.execute(
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
-                blocked_reason_code, description, position, review_flag, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                blocked_reason_code, description, position, review_flag, model, created_at,
+                updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -216,6 +219,7 @@ class Store:
                 description,
                 position,
                 int(review_flag),
+                model,
                 now,
                 now,
             ),
@@ -266,6 +270,9 @@ class Store:
         ]
         card["depends_on"] = self.get_dependencies(card_id)
         card["depended_on_by"] = self.get_dependents(card_id)
+        # the panel lists these; without the key its attachments section always said "none", even
+        # over a rejected card's attempt diff
+        card["attachments"] = self.list_attachments(card_id)
         card["comments"] = self.list_comments(card_id)
         return card
 

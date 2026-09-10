@@ -135,7 +135,7 @@ _MIGRATIONS: list[str] = [
     """
     ALTER TABLE repos ADD COLUMN lint_command TEXT;
     """,
-    # 6: phase 4, mission control. prompts are layered by role only, never versioned; every save is
+    # 6: phase 4, mission control. prompts are layered by role only, and versioned: every save is
     # a new row so history is kept rather than overwritten. orchestrator_messages is the mission
     # control chat, one row per turn on either side; cards_json records which cards a reply created,
     # so the panel can link straight to them without re-deriving it. orchestrator_plans is the
@@ -164,6 +164,11 @@ _MIGRATIONS: list[str] = [
         body TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
+    """,
+    # 7: the model a card's worker runs on. null means the board's worker_model setting, then sonnet;
+    # the orchestrator proposes one when it plans a card, and operator can override it on the card
+    """
+    ALTER TABLE cards ADD COLUMN model TEXT;
     """,
 ]
 
