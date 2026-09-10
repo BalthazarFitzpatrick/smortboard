@@ -135,6 +135,24 @@ def test_the_credential_reaches_the_container_only_through_stdin(tmp_path, monke
     assert "s3cret" not in seen["cmd"]
 
 
+def test_narration_instruction_is_part_of_the_worker_system_prompt():
+    """the workforce panel shows only the agent's text blocks between tool calls, so the worker
+    has to be told to narrate rather than work silently"""
+    from smortboard.exec.runner import SYSTEM_PROMPT
+
+    assert "narrate" in SYSTEM_PROMPT.lower()
+
+
+def test_a_stored_worker_prompt_reaches_build_command(tmp_path):
+    """the layered prompt - see smortboard/prompts.py - overrides the code default"""
+    with Store(tmp_path / "b.db") as store:
+        store.set_prompt("worker", "a custom worker prompt")
+        cmd = ContainerBackend(image="img")._docker_command(
+            tmp_path / "clone", "p", tmp_path / "s.json", "sonnet", None, store
+        )
+    assert "a custom worker prompt" in shlex.join(cmd)
+
+
 def test_docker_command_uses_the_configured_image(tmp_path):
     backend = ContainerBackend(image="my-registry/smortboard-card:1.2.3")
     clone_path = tmp_path / "clone"

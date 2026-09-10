@@ -239,6 +239,16 @@ def test_a_done_task_is_not_asked_for_again(board):
     assert "- commit it" in prompt
 
 
+def test_fabian_notes_reach_the_prompt_since_a_running_agent_cannot_take_input(board):
+    store, card_id = board
+    store.add_comment(card_id, "fabian", "use the other endpoint instead")
+    store.add_comment(card_id, "someone-else", "not from fabian")
+    prompt = lifecycle.build_card_prompt(store.get_card(card_id))
+    assert "Notes from Fabian, oldest first:" in prompt
+    assert "- use the other endpoint instead" in prompt
+    assert "not from fabian" not in prompt
+
+
 def test_the_lease_reaches_the_run_as_globs_not_as_rows(board):
     """get_card returns lease rows; handing those straight on listed dicts at the agent"""
     store, card_id = board
