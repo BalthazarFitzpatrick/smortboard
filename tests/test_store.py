@@ -306,3 +306,116 @@ def test_a_repo_can_declare_its_image(store):
     assert repo["image"] == "card-python:latest"
     cleared = store.set_repo_image(repo["id"], None)
     assert cleared["image"] is None
+
+
+# -- migration 6: prompts, orchestrator messages and plan --------------------
+
+
+def test_migration_6_applies_to_an_existing_v5_database(tmp_path):
+    """a board written before phase 4 keeps its data after migration 6 adds the new tables"""
+    db_path = tmp_path / "board.sqlite3"
+    with Store(db_path) as store:
+        board = store.create_board("Phase 1")
+        card = store.create_card(board["id"], None, "a card")
+
+    with Store(db_path) as reopened:
+        assert reopened.get_card(card["id"])["title"] == "a card"
+        assert reopened.get_prompt("worker") is None
+        assert reopened.list_orchestrator_messages(board["id"]) == []
+        assert reopened.get_plan(board["id"]) is None
+
+
+def test_prompt_versioning_keeps_history(store):
+    first = store.set_prompt("worker", "be careful")
+    assert first["version"] == 1
+    second = store.set_prompt("worker", "be more careful")
+    assert second["version"] == 2
+
+    assert store.get_prompt("worker")["body"] == "be more careful"
+    history = store.list_prompt_versions("worker")
+    assert [h["version"] for h in history] == [1, 2]
+    assert [h["body"] for h in history] == ["be careful", "be more careful"]
+
+
+def test_a_prompt_with_no_saves_is_unset(store):
+    assert store.get_prompt("orchestrator") is None
+
+
+def test_orchestrator_messages_and_plan_round_trip(store):
+    board = store.create_board("b")
+    operator = store.add_orchestrator_message(board["id"], "operator", "build the thing")
+    assert operator["cards"] == []
+    reply = store.add_orchestrator_message(
+        board["id"], "orchestrator", "on it", cards=[{"id": "c1", "title": "the thing"}]
+    )
+    assert reply["cards"] == [{"id": "c1", "title": "the thing"}]
+
+    messages = store.list_orchestrator_messages(board["id"])
+    assert [m["author"] for m in messages] == ["operator", "orchestrator"]
+
+    assert store.get_plan(board["id"]) is None
+    store.set_plan(board["id"], "phase 1 first")
+    assert store.get_plan(board["id"]) == "phase 1 first"
+    store.set_plan(board["id"], "phase 2 next")  # overwrites, one plan per board
+    assert store.get_plan(board["id"]) == "phase 2 next"
+
+
+def test_orchestrator_messages_limit_keeps_the_tail(store):
+    board = store.create_board("b")
+    for i in range(5):
+        store.add_orchestrator_message(board["id"], "operator", f"message {i}")
+    tail = store.list_orchestrator_messages(board["id"], limit=2)
+    assert [m["body"] for m in tail] == ["message 3", "message 4"]
+
+
+def test_export_round_trips_the_phase_4_tables(store, tmp_path):
+    board = store.create_board("b")
+    store.set_prompt("worker", "custom worker prompt")
+    store.add_orchestrator_message(
+        board["id"],
+        "operator",
+        "hi",
+    )
+    store.set_plan(board["id"], "the plan")
+
+    bundle_path = tmp_path / "bundle.json"
+    store.export(bundle_path)
+
+    fresh_path = tmp_path / "fresh.sqlite3"
+    with Store(fresh_path) as fresh:
+        fresh.import_bundle(bundle_path)
+        assert fresh.get_prompt("worker")["body"] == "custom worker prompt"
+        assert fresh.get_plan(board["id"]) == "the plan"
+        assert len(fresh.list_orchestrator_messages(board["id"])) == 1
+
+
+def test_list_events_by_kind_spans_every_card(store):
+    board = store.create_board("b")
+    a = store.create_card(board["id"], None, "a")
+    b = store.create_card(board["id"], None, "b")
+    store.append_event(a["id"], "result", {"total_cost_usd": 0.1})
+    store.append_event(a["id"], "assistant", {})
+    store.append_event(b["id"], "result", {"total_cost_usd": 0.2})
+
+    results = store.list_events_by_kind(["result"])
+    assert len(results) == 2
+    assert {e["card_id"] for e in results} == {a["id"], b["id"]}
+
+
+def test_list_doing_cards_blocked_ignores_status_and_reason(store):
+    board = store.create_board("b")
+    doing_blocked = store.create_card(board["id"], None, "blocked while doing")
+    store.update_card(doing_blocked["id"], status="doing", blocked_reason_code="USAGE_LIMIT")
+    doing_clean = store.create_card(board["id"], None, "doing but fine")
+    store.update_card(doing_clean["id"], status="doing")
+    todo_blocked = store.create_card(board["id"], None, "blocked before starting")
+    store.update_card(todo_blocked["id"], blocked_reason_code="DEPENDENCY_REJECTED")
+
+    ids = {c["id"] for c in store.list_doing_cards_blocked()}
+    assert ids == {doing_blocked["id"]}
+
+
+def test_setting_orchestrator_model_round_trips(store):
+    assert store.get_settings()["orchestrator_model"] is None
+    updated = store.set_setting("orchestrator_model", "sonnet")
+    assert updated["orchestrator_model"] == "sonnet"

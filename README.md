@@ -163,12 +163,13 @@ use and so cannot drift.
 | Space | open the focused card, or close the open one |
 | Escape | one level back: input, then panel, then closed |
 | `g` | switch kanban / workstream grouping |
-| `u` | usage and account |
-| `a` | agent roster |
+| `u` | usage: rate-limit windows and per-model spend |
+| `a` | agent roster: pick a row to jump to that card |
 | `r` | run the focused card |
 | `s` | this list |
 | `/` | focus a panel's input |
-| `,` / `.` | workforce / mission control panels |
+| `,` | workforce: chat with the focused card's agent |
+| `.` | mission control: chat with the board's orchestrator |
 | `1`-`9` | jump to a board |
 
 ## Where things are

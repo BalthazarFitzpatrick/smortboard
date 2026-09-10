@@ -36,7 +36,7 @@ def test_the_global_route_forces_every_card(store, card_id):
     assert store.findings_route(card_id) == "attention"
     store.set_setting("findings_route", None)
     assert store.findings_route(card_id) == "fix"
-    assert store.get_settings() == {"findings_route": None}
+    assert store.get_settings() == {"findings_route": None, "orchestrator_model": None}
 
 
 def test_an_unknown_route_or_setting_is_refused(store, card_id):
@@ -53,7 +53,7 @@ def test_settings_travel_in_the_export_bundle(store, tmp_path):
     store.export(tmp_path / "bundle.json")
     with Store(tmp_path / "other.db") as other:
         other.import_bundle(tmp_path / "bundle.json")
-        assert other.get_settings() == {"findings_route": "fix"}
+        assert other.get_settings() == {"findings_route": "fix", "orchestrator_model": None}
 
 
 def test_the_outcome_only_reads_the_latest_attempt(store, card_id):

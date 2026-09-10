@@ -23,6 +23,7 @@ from typing import Any
 
 from smortboard.exec.backends import card_image, docker_available, guard_mount, read_card_token
 from smortboard.exec.runner import RunResult, build_command, run_process
+from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
 
 CATEGORIES = ("vulnerability", "leaked_credential", "best_practice", "efficiency")
@@ -115,8 +116,9 @@ def _image_for(repo: dict[str, Any] | None) -> str:
     return card_image()
 
 
-def _build_prompt(diff: str) -> str:
-    return REVIEW_PROMPT_HEADER + diff
+def _build_prompt(store: Store | None, diff: str) -> str:
+    header = active_prompt(store, "reviewer", REVIEW_PROMPT_HEADER)
+    return header + diff
 
 
 def _docker_command(
@@ -262,7 +264,9 @@ def run_review(
         _record(store, card_id, result)
         return result
 
-    cmd = _docker_command(work_path, _build_prompt(diff), settings_path, model, repo, budget_usd)
+    cmd = _docker_command(
+        work_path, _build_prompt(store, diff), settings_path, model, repo, budget_usd
+    )
     run_result = run_process(store, card_id, cmd, cwd=work_path, stdin_text=token + "\n")
     result = _parse(run_result)
     _record(store, card_id, result)

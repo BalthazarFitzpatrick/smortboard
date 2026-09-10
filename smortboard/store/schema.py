@@ -135,6 +135,36 @@ _MIGRATIONS: list[str] = [
     """
     ALTER TABLE repos ADD COLUMN lint_command TEXT;
     """,
+    # 6: phase 4, mission control. prompts are layered by role only, never versioned; every save is
+    # a new row so history is kept rather than overwritten. orchestrator_messages is the mission
+    # control chat, one row per turn on either side; cards_json records which cards a reply created,
+    # so the panel can link straight to them without re-deriving it. orchestrator_plans is the
+    # ledger's own plan text, one row per board, reconciled against cards rather than replacing them
+    # as ground truth
+    """
+    CREATE TABLE prompts (
+        role TEXT NOT NULL CHECK (role IN ('orchestrator', 'worker', 'reviewer')),
+        version INTEGER NOT NULL,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (role, version)
+    );
+
+    CREATE TABLE orchestrator_messages (
+        id TEXT PRIMARY KEY,
+        board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+        author TEXT NOT NULL CHECK (author IN ('operator', 'orchestrator', 'board')),
+        body TEXT NOT NULL,
+        cards_json TEXT,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE orchestrator_plans (
+        board_id TEXT PRIMARY KEY REFERENCES boards(id) ON DELETE CASCADE,
+        body TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """,
 ]
 
 
