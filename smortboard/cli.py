@@ -81,6 +81,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """cli entry point: parse args, open the store, and serve the board until interrupted."""
     args = parse_args(argv)
     db_path = _resolve_db(args.db)
     port = _resolve_port(args.port)
