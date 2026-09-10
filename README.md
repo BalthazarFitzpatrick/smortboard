@@ -81,6 +81,15 @@ path, and they are the only test and lint invocations a card is allowed - so kee
 check-only (`ruff check`, `ruff format --check`): a card's own edits go through its lease guard, a
 shell command's writes do not.
 
+The test gate runs with no network, so a repo's image must already hold its toolchain - the stock
+card image has no python. smortboard's own is `docker/repo.Dockerfile`, built on top of the card
+image; point the smortboard repo's `image` at `smortboard-repo:latest` and give it
+`uv run --no-sync python -m pytest -p no:cacheprovider -q` style commands, which never sync:
+
+```bash
+docker build -f docker/repo.Dockerfile -t smortboard-repo:latest .
+```
+
 Docker is not how the board ships — the board is a plain installable CLI. Giving a *containerised*
 board the ability to start card containers would mean handing it the Docker socket, which is root
 on the host, so the board runs natively and only the cards are contained. See "The containment
