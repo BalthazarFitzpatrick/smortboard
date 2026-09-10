@@ -26,6 +26,7 @@ from smortboard.exec.runner import (
     RunResult,
     allowed_tools_for_repo,
     build_command,
+    commands_preamble,
     lease_preamble,
     run_process,
 )
@@ -49,6 +50,9 @@ _CONTAINER_WORKDIR = "/workspace"
 CONTAINER_GUARD_DIR = "/smortboard"
 # the guard hooks' interpreter inside the card image - docker/card.Dockerfile installs it
 CONTAINER_PYTHON = "python3"
+# who authors a card's commits: one fixed identity, set by the board in every clone
+CARD_GIT_NAME = "smortboard"
+CARD_GIT_EMAIL = "smortboard@localhost"
 
 
 def card_image() -> str:
@@ -276,12 +280,11 @@ class ContainerBackend:
             # lease_preamble listed python dicts at the agent instead of paths
             lease_rows = store.get_card(card_id).get("leases") if store else None
             leases = [row["path_glob"] for row in lease_rows or []]
-            cmd = self._docker_command(
-                clone_path, lease_preamble(leases) + prompt, settings_path, model, repo
-            )
+            brief = lease_preamble(leases) + commands_preamble(repo) + prompt
+            cmd = self._docker_command(clone_path, brief, settings_path, model, repo)
             # the token goes straight down the container's stdin and is not kept anywhere
             result = run_process(store, card_id, cmd, cwd=clone_path, stdin_text=token + "\n")
-            self._fetch_back(repo_root, clone_path, branch)
+            self._fetch_back(repo_root, clone_path, branch, worktree_path)
             return result
         finally:
             shutil.rmtree(clone_path, ignore_errors=True)
@@ -297,6 +300,10 @@ class ContainerBackend:
         )
         if result.returncode != 0:
             raise WorktreeError(f"clone for card container failed: {result.stderr.strip()}")
+        # the image has no git identity, so a card's first commit failed and the agent invented
+        # one - the board chooses it instead, in the clone the container mounts
+        for key, value in (("user.name", CARD_GIT_NAME), ("user.email", CARD_GIT_EMAIL)):
+            subprocess.run(["git", "-C", str(clone_path), "config", key, value], check=True)
 
     def _image_for(self, repo: dict[str, Any] | None) -> str:
         """the repo's own image if it declares one, else the default.
@@ -351,12 +358,12 @@ class ContainerBackend:
             inner,
         ]
 
-    def _fetch_back(self, repo_root: Path, clone_path: Path, branch: str) -> None:
+    def _fetch_back(
+        self, repo_root: Path, clone_path: Path, branch: str, worktree_path: str | Path
+    ) -> None:
         # the clone is on the host, so pull the card's commits back into the repo that owns them;
         # the board pushes from there - nothing is ever pushed from inside the container
-        # --update-head-ok: the branch is checked out in the card's own worktree, which git
-        # otherwise refuses to fetch into directly - safe here since that worktree is destroyed
-        # once the card's run is reviewed, never used mid-run
+        # --update-head-ok: the branch is checked out in the card's own worktree
         result = subprocess.run(
             [
                 "git",
@@ -373,6 +380,16 @@ class ContainerBackend:
         )
         if result.returncode != 0:
             raise WorktreeError(f"fetching card commits back failed: {result.stderr.strip()}")
+        # the fetch moves the branch but not the worktree's files, and the test gate and reviewer
+        # read those files next - run 3's gate would have tested the code before the card's commit
+        synced = subprocess.run(
+            ["git", "-C", str(worktree_path), "reset", "-q", "--hard"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if synced.returncode != 0:
+            raise WorktreeError(f"syncing the card's worktree failed: {synced.stderr.strip()}")
 
 
 class CardRuntimeUnavailable(RuntimeError):

@@ -127,7 +127,7 @@ def test_the_credential_reaches_the_container_only_through_stdin(tmp_path, monke
     monkeypatch.setattr("smortboard.exec.backends.repo_root_of_worktree", lambda p: tmp_path)
     monkeypatch.setattr("smortboard.exec.backends.current_branch", lambda p: "card/x")
     monkeypatch.setattr(ContainerBackend, "_clone", lambda self, w, c, b: c.mkdir(exist_ok=True))
-    monkeypatch.setattr(ContainerBackend, "_fetch_back", lambda self, r, c, b: None)
+    monkeypatch.setattr(ContainerBackend, "_fetch_back", lambda self, r, c, b, w: None)
 
     ContainerBackend(image="img").run_card(None, "card", tmp_path, "prompt", tmp_path / "s.json")
 
@@ -201,7 +201,7 @@ def test_clone_then_fetch_round_trip(tmp_path):
         text=True,
     ).stdout.strip()
 
-    backend._fetch_back(repo, clone_path, info.branch)
+    backend._fetch_back(repo, clone_path, info.branch, info.path)
 
     repo_sha = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", info.branch],
@@ -210,6 +210,32 @@ def test_clone_then_fetch_round_trip(tmp_path):
         text=True,
     ).stdout.strip()
     assert repo_sha == new_sha
+    # the gates read the worktree next, so its files must be the card's commit, not the old ones
+    assert (info.path / "new.txt").read_text() == "card wrote this\n"
+    stale = subprocess.run(
+        ["git", "-C", str(info.path), "status", "--porcelain", "--untracked-files=no"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert stale == ""
+
+
+def test_the_board_sets_the_card_git_identity_in_the_clone(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    info = create_worktree(repo, "card-id")
+    clone_path = tmp_path / "clone"
+    ContainerBackend()._clone(info.path, clone_path, info.branch)
+
+    def _config(key):
+        return subprocess.run(
+            ["git", "-C", str(clone_path), "config", key], capture_output=True, text=True
+        ).stdout.strip()
+
+    assert _config("user.name") == backends.CARD_GIT_NAME
+    assert _config("user.email") == backends.CARD_GIT_EMAIL
 
 
 def test_clone_of_missing_source_raises_worktree_error(tmp_path):

@@ -136,6 +136,7 @@ def _make_handler(
                     default_branch=body.get("default_branch", "main"),
                     test_command=body.get("test_command"),
                     image=body.get("image"),
+                    lint_command=body.get("lint_command"),
                 )
                 self._send_json(201, repo)
             elif path == "/api/cards" and method == "POST":
