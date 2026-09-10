@@ -20,9 +20,12 @@ _TABLES = (
     "comments",
     "events",
     "settings",
+    "prompts",
+    "orchestrator_messages",
+    "orchestrator_plans",
 )
 
-_FORMAT_VERSION = 1
+_FORMAT_VERSION = 2
 
 
 def export_bundle(conn: sqlite3.Connection, path: str | Path) -> None:
@@ -53,6 +56,10 @@ def import_bundle(conn: sqlite3.Connection, path: str | Path) -> None:
     _insert_all(conn, "comments", bundle.get("comments", []))
     _insert_all(conn, "events", bundle.get("events", []))
     _insert_all(conn, "settings", bundle.get("settings", []))
+    # prompts have no foreign key; the other two reference boards, already inserted above
+    _insert_all(conn, "prompts", bundle.get("prompts", []))
+    _insert_all(conn, "orchestrator_messages", bundle.get("orchestrator_messages", []))
+    _insert_all(conn, "orchestrator_plans", bundle.get("orchestrator_plans", []))
 
     for record in bundle.get("attachments", []):
         record = dict(record)

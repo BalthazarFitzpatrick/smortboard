@@ -190,6 +190,45 @@ body {
 .expand-panel.card-accepted { border-color: var(--status-good); }
 
 
+/* ---- terminal chat: mission control (.) and workforce (,) -----------------------------------
+   a log of author-prefixed lines and one input row - a terminal, not a messenger: no bubbles, no
+   avatars, no rounded anything, the board's own monospace and 2px lines. this could move into
+   ui_base as a component later; nothing here depends on smortboard specifically except the routes
+   board.js calls, so the primitive itself belongs there once a second consumer wants it */
+.terminal { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; padding: 10px; gap: 8px; }
+.terminal-header {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  color: var(--cream); border-bottom: 2px solid var(--grey-border); padding-bottom: 8px; flex: 0 0 auto;
+}
+.terminal-cycle { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 0.9em; }
+.terminal-cycle .toggle { padding: 0 8px; height: auto; line-height: 1.6; }
+.terminal-subheader { color: var(--text-dim); flex: 0 0 auto; }
+/* the display rules above outrank the browser's own [hidden], so the cycle buttons stayed up with
+   no card to cycle through */
+.terminal-cycle[hidden], .terminal-subheader[hidden] { display: none; }
+.terminal-log {
+  flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+  border: 2px solid var(--grey-border); padding: 8px; min-height: 0;
+}
+.terminal-log:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cream); }
+.terminal-line { display: flex; gap: 10px; align-items: baseline; }
+/* 12ch: "orchestrator" is the longest author, and at 9ch it ran into its own message */
+.terminal-author { flex: 0 0 auto; width: 12ch; color: var(--text); text-align: right; }
+.terminal-body { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.terminal-line.author-fabian .terminal-author { color: var(--cream); }
+.terminal-line.author-board .terminal-author,
+.terminal-line.author-board .terminal-body,
+.terminal-line.author-thinking .terminal-author,
+.terminal-line.author-thinking .terminal-body { color: var(--text-dim); }
+.terminal-line.author-error .terminal-author,
+.terminal-line.author-error .terminal-body { color: var(--fill-warn); }
+.terminal-input-row { display: flex; gap: 8px; align-items: flex-start; flex: 0 0 auto; }
+.terminal-prompt { color: var(--text-dim); padding-top: 6px; }
+.terminal-input {
+  flex: 1 1 auto; resize: none; min-height: 30px; max-height: 30vh;
+  font-family: inherit; font-size: inherit;
+}
+
 /* ---- the run badge -------------------------------------------------------------------------
    A card that is running says so where its status already is, rather than somewhere new. The
    workstream takes the slack so status and run sit together on the right and the status does not

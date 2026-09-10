@@ -95,6 +95,14 @@ def build_card_prompt(card: dict[str, Any]) -> str:
         lines += [f"- {t['text']}" for t in tasks]
         lines.append("")
 
+    # a running headless session cannot take input, so a note fabian leaves mid-run only reaches
+    # the agent on the card's NEXT run - the conversation endpoint says so explicitly (delivery)
+    notes = [c["body"] for c in card.get("comments") or [] if c.get("author") == "fabian"]
+    if notes:
+        lines.append("Notes from Fabian, oldest first:")
+        lines += [f"- {text}" for text in notes]
+        lines.append("")
+
     lines += [
         "You are already on the correct branch. Work only inside this repository.",
         "Commit your work when it is done - an uncommitted change is a change nobody can review.",

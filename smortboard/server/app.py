@@ -6,13 +6,22 @@ import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 
+from smortboard.exec.runner import SYSTEM_PROMPT
+from smortboard.orchestrator import (
+    DEFAULT_ORCHESTRATOR_MODEL,
+    ORCHESTRATOR_PROMPT,
+    OrchestratorRegistry,
+)
+from smortboard.prompts import ROLES
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
+from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import Readiness, RunRegistry
 from smortboard.store import Store
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
+from smortboard.telemetry import roster_rows, usage_projection
 
 _CARD_WRITABLE_FIELDS = {
     "title",
@@ -52,8 +61,22 @@ _ROUTES = [
     (re.compile(r"^/api/settings$"), "GET"),
     (re.compile(r"^/api/settings$"), "PATCH"),
     (re.compile(r"^/api/tasks/(?P<task_id>[^/]+)$"), "PATCH"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "POST"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/conversation$"), "GET"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/conversation$"), "POST"),
+    (re.compile(r"^/api/roster$"), "GET"),
+    (re.compile(r"^/api/usage$"), "GET"),
+    (re.compile(r"^/api/prompts$"), "GET"),
+    (re.compile(r"^/api/prompts/(?P<role>[^/]+)$"), "PATCH"),
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
 ]
+
+_ROLE_DEFAULTS = {
+    "orchestrator": ORCHESTRATOR_PROMPT,
+    "worker": SYSTEM_PROMPT,
+    "reviewer": REVIEW_PROMPT_HEADER,
+}
 
 
 def _version() -> str:
@@ -64,7 +87,7 @@ def _version() -> str:
 
 
 def _make_handler(
-    store: Store, runs: RunRegistry, readiness: Readiness
+    store: Store, runs: RunRegistry, readiness: Readiness, orchestrator: OrchestratorRegistry
 ) -> type[BaseHTTPRequestHandler]:
     """closes over the store instance; http.server wants a class, not an instance"""
 
@@ -182,6 +205,23 @@ def _make_handler(
                 self._send_json(200, store.get_settings())
             elif path.endswith("/events"):
                 self._send_json(200, store.list_events(params["card_id"]))
+            elif "board_id" in params and path.endswith("/orchestrator") and method == "GET":
+                self._send_json(200, self._orchestrator_view(params["board_id"]))
+            elif "board_id" in params and path.endswith("/orchestrator") and method == "POST":
+                self._handle_orchestrator_post(params["board_id"])
+            elif "card_id" in params and path.endswith("/conversation") and method == "GET":
+                self._send_json(200, self._conversation_view(params["card_id"]))
+            elif "card_id" in params and path.endswith("/conversation") and method == "POST":
+                self._handle_conversation_post(params["card_id"])
+            elif path == "/api/roster":
+                active = [{"card_id": s.card_id, "phase": s.phase} for s in runs.active()]
+                self._send_json(200, roster_rows(store, active))
+            elif path == "/api/usage":
+                self._send_json(200, usage_projection(store))
+            elif path == "/api/prompts" and method == "GET":
+                self._send_json(200, self._prompts_view())
+            elif "role" in params and method == "PATCH":
+                self._handle_patch_prompt(params["role"])
             elif "card_id" in params and method == "GET":
                 self._send_json(200, store.get_card(params["card_id"]))
             elif "card_id" in params and method == "PATCH":
@@ -241,6 +281,158 @@ def _make_handler(
                 return
             task = store.set_task_done(task_id, done=bool(body.get("done", True)))
             self._send_json(200, task)
+
+        def _orchestrator_view(self, board_id: str) -> dict:
+            store.get_board(board_id)  # 404 for an unknown board rather than an empty session
+            model = store.get_settings().get("orchestrator_model") or DEFAULT_ORCHESTRATOR_MODEL
+            return {
+                "messages": [
+                    {k: m[k] for k in ("id", "author", "body", "created_at", "cards")}
+                    for m in store.list_orchestrator_messages(board_id)
+                ],
+                "plan": store.get_plan(board_id),
+                "thinking": orchestrator.thinking(board_id),
+                "error": orchestrator.error(board_id),
+                "model": model,
+            }
+
+        def _handle_orchestrator_post(self, board_id: str) -> None:
+            store.get_board(board_id)
+            message = (self._read_json().get("message") or "").strip()
+            if not message:
+                self._send_json(400, {"error": "message must not be empty"})
+                return
+            if orchestrator.thinking(board_id):
+                self._send_json(409, {"error": "a turn is already in progress on this board"})
+                return
+            # stored here, synchronously, so the 202 body already carries it - the thread that
+            # runs the turn is told not to store it again
+            store.add_orchestrator_message(board_id, "fabian", message)
+            orchestrator.start(board_id, message, message_already_stored=True)
+            self._send_json(202, self._orchestrator_view(board_id))
+
+        def _conversation_view(self, card_id: str) -> dict:
+            card = store.get_card(card_id)
+            run_state = runs.get(card_id)
+            running = bool(run_state and run_state.running)
+            phase = run_state.phase if run_state else None
+
+            timeline: list[tuple[str, dict]] = []
+            for event in store.list_events(card_id):
+                kind, payload = event["kind"], event["payload"]
+                if kind == "assistant":
+                    for block in (payload.get("message", {}) or {}).get("content") or []:
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type") == "text"
+                            and block.get("text")
+                        ):
+                            timeline.append(
+                                (event["created_at"], {"author": "agent", "body": block["text"]})
+                            )
+                elif kind == "lifecycle_started":
+                    timeline.append((event["created_at"], self._board_line("run started")))
+                elif kind == "test_gate":
+                    verdict = "tests passed" if payload.get("passed") else "tests failed"
+                    timeline.append((event["created_at"], self._board_line(verdict)))
+                elif kind == "review_gate":
+                    if payload.get("approved"):
+                        verdict = "reviewer approved"
+                    else:
+                        verdict = f"reviewer did not approve: {len(payload.get('findings') or [])} findings"
+                    timeline.append((event["created_at"], self._board_line(verdict)))
+                elif kind == "merge_request" and payload.get("url"):
+                    timeline.append(
+                        (
+                            event["created_at"],
+                            self._board_line(f"pull request opened: {payload['url']}"),
+                        )
+                    )
+                elif kind == "decision":
+                    timeline.append(
+                        (event["created_at"], self._board_line(payload.get("decision", "")))
+                    )
+
+            for comment in store.list_comments(card_id):
+                author = "fabian" if comment["author"] == "fabian" else "board"
+                timeline.append(
+                    (comment["created_at"], {"author": author, "body": comment["body"]})
+                )
+
+            timeline.sort(key=lambda entry: entry[0])
+            messages = []
+            for created_at, message in timeline:
+                messages.append({**message, "created_at": created_at})
+
+            return {
+                "card_id": card["id"],
+                "title": card["title"],
+                "running": running,
+                "phase": phase,
+                # a running headless session cannot take input - a note left now reaches the
+                # agent only on this card's NEXT run, never mid-run
+                "delivery": "next_run",
+                "messages": messages,
+            }
+
+        @staticmethod
+        def _board_line(text: str) -> dict:
+            return {"author": "board", "body": text}
+
+        def _handle_conversation_post(self, card_id: str) -> None:
+            store.get_card(card_id)
+            message = (self._read_json().get("message") or "").strip()
+            if not message:
+                self._send_json(400, {"error": "message must not be empty"})
+                return
+            comment = store.add_comment(card_id, author="fabian", body=message)
+            self._send_json(
+                201,
+                {"author": "fabian", "body": comment["body"], "created_at": comment["created_at"]},
+            )
+
+        def _prompts_view(self) -> list[dict]:
+            rows = []
+            for role in ROLES:
+                stored = store.get_prompt(role)
+                if stored is None:
+                    rows.append(
+                        {
+                            "role": role,
+                            "version": 0,
+                            "body": _ROLE_DEFAULTS[role],
+                            "is_default": True,
+                        }
+                    )
+                else:
+                    rows.append(
+                        {
+                            "role": role,
+                            "version": stored["version"],
+                            "body": stored["body"],
+                            "is_default": False,
+                        }
+                    )
+            return rows
+
+        def _handle_patch_prompt(self, role: str) -> None:
+            if role not in ROLES:
+                self._send_json(404, {"error": f"no such role {role!r}"})
+                return
+            body = self._read_json().get("body")
+            if not isinstance(body, str) or not body.strip():
+                self._send_json(400, {"error": "body must not be empty"})
+                return
+            stored = store.set_prompt(role, body)
+            self._send_json(
+                200,
+                {
+                    "role": role,
+                    "version": stored["version"],
+                    "body": stored["body"],
+                    "is_default": False,
+                },
+            )
 
         def _handle_upload(self, card_id: str) -> None:
             content_type = self.headers.get("Content-Type", "")
@@ -316,7 +508,9 @@ def build_server(
     # single-threaded: the store's sqlite3 connection is bound to the thread that opened it. card
     # runs are the exception and get their own thread and their own connection - see runs.py
     runs = RunRegistry(store.path, token_path=token_path)
-    handler_cls = _make_handler(store, runs, Readiness(token_path))
+    orchestrator = OrchestratorRegistry(store.path, token_path=token_path)
+    handler_cls = _make_handler(store, runs, Readiness(token_path), orchestrator)
     server = HTTPServer((host, port), handler_cls)
     server.runs = runs  # the cli and the tests reach the registry through the server
+    server.orchestrator = orchestrator
     return server
