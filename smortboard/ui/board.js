@@ -11,7 +11,7 @@ const BINDINGS = [
   {code: 'ArrowLeft', label: 'left', action: 'move focus left'},
   {code: 'ArrowRight', label: 'right', action: 'move focus right'},
   {code: 'Enter', label: 'enter', action: 'open the focused card'},
-  {code: 'Space', label: 'space', action: 'open the focused card'},
+  {code: 'Space', label: 'space', action: 'open the focused card, or close the open one'},
   {code: 'Escape', label: 'esc', action: 'one level back: input -> panel -> closed'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping'},
   {code: 'KeyU', label: 'u', action: 'usage dropdown (placeholder)'},
@@ -32,7 +32,7 @@ let boards = [];
 let currentBoardId = null;
 let bucketsApi = null;
 let grouped = false; // g toggles this; workstream layout itself ships post-v1
-let openCard = null; // {expander, sectionsApi} while a card panel is open
+let openCard = null; // {cardId, expander, sectionsApi, input} while a card panel is open
 
 async function api(path, opts) {
   const res = await fetch(path, opts);
@@ -141,6 +141,10 @@ function renderCardStrip(card) {
     </div>
   `;
   const expander = makeExpander(strip, {
+    // THREE TIMES THE DEFAULT WIDTH. at 1:3 an open card was a narrow column that wrapped every
+    // line of its outcome; makeExpander keeps the height and sizes width from the ratio, so 1:1
+    // triples it - still capped at 90% of the viewport width
+    expandedRatio: {w: 1, h: 1},
     // THE PLATE BECOMES A BORDER ON THE WAY OPEN. a panel painted with the plate would make a whole
     // screen of it, and the colour stops being a signal once it is the background you are reading
     // on - as an edge it survives the expansion without taking the panel over
@@ -148,15 +152,21 @@ function renderCardStrip(card) {
       cardClasses(card).split(' ')
         .filter(c => c.startsWith('card-') && c !== 'card-strip')
         .forEach(c => panel.classList.add(c));
+      // set before the fetch, so space and y/x can close this card while it is still loading
+      openCard = {cardId: card.id, expander};
       openCardPanel(panel, card.id);
     },
     onClose: () => { openCard = null; },
   });
   strip.addEventListener('keydown', evt => {
-    if (evt.code === 'Enter' || evt.code === 'NumpadEnter' || evt.code === 'Space') {
-      evt.preventDefault();
-      expander.open();
-    }
+    if (evt.code !== 'Enter' && evt.code !== 'NumpadEnter' && evt.code !== 'Space') return;
+    evt.preventDefault();
+    // the document handler also closes on space, so a press handled here stops here
+    evt.stopPropagation();
+    // SPACE TOGGLES. focus stays on the strip behind an open panel, so this handler sees the
+    // second press too - it closes the card it opened
+    if (evt.code === 'Space' && openCard?.expander === expander) expander.close();
+    else expander.open();
   });
   strip._expander = expander;
   return strip;
@@ -176,6 +186,8 @@ async function openCardPanel(panel, cardId) {
     api(`/api/cards/${cardId}`),
     api(`/api/cards/${cardId}/outcome`),
   ]);
+  // closed while loading - space or y/x can shut it before the fetch lands
+  if (!panel.isConnected) return;
   panel.classList.add('card-panel');
   panel.innerHTML = cardPanelHtml(card, outcome);
 
@@ -204,7 +216,7 @@ async function openCardPanel(panel, cardId) {
     }
   });
 
-  openCard = {sectionsApi, input, cardId};
+  if (openCard && openCard.cardId === cardId) Object.assign(openCard, {sectionsApi, input});
 }
 
 // worker summary, test gate, reviewer verdict, PR link and the fix-round count - all of it null
@@ -362,18 +374,44 @@ function actionableCardId() {
   return focusedCardId() || (openCard && openCard.cardId) || null;
 }
 
+// the expander's own beat, so a card changing columns moves like a card opening
+const MOVE_DURATION_MS = 220;
+
+// FLIP: the rebuilt strip is drawn back where the old one stood, then let go into its new column.
+// `translate`, not `transform`, so whatever transform the fan layout sets is left alone
+function slideFrom(strip, from) {
+  const to = strip.getBoundingClientRect();
+  const dx = from.left - to.left, dy = from.top - to.top;
+  if (!dx && !dy) return;
+  Object.assign(strip.style, {transition: 'none', translate: `${dx}px ${dy}px`});
+  // two frames, as in expand.js: the start position has to be painted before it is released
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    Object.assign(strip.style, {transition: `translate ${MOVE_DURATION_MS}ms`, translate: ''});
+    setTimeout(() => { strip.style.transition = ''; }, MOVE_DURATION_MS);
+  }));
+}
+
 async function acceptOrRejectCard(action) {
   const cardId = actionableCardId();
   if (!cardId) return;
+  // CLOSE FIRST, THEN MOVE. deciding from inside an open card used to slide the strip into its new
+  // column behind a panel still standing over it
+  if (openCard) openCard.expander.close();
 
   const {ok, body} = await apiOrError(`/api/cards/${cardId}/${action}`, {method: 'POST'});
   if (!ok) { showRun(cardId, 'refused', null, (body && body.error) || ''); return; }
 
   // same order finishRun uses and for the same reason: reload first, THEN focus, THEN badge, or
   // the reload's fresh strips throw the badge and the focus away with the old ones
+  const from = document.querySelector(`.card-strip[data-card-id="${cardId}"]`)
+    ?.getBoundingClientRect();
   if (currentBoardId) await onBoardEnter(currentBoardId);
   const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
-  if (strip) { strip.focus(); indicateFocus(strip); }
+  if (strip) {
+    if (from) slideFrom(strip, from);
+    strip.focus();
+    indicateFocus(strip);
+  }
   showRun(cardId, action === 'accept' ? 'accepted' : 'rejected');
 }
 
@@ -498,6 +536,10 @@ document.addEventListener('keydown', evt => {
   }
   if (typing) return; // letters and slash only fire the model outside text input
 
+  // THE KEY THAT OPENS ALSO CLOSES, next to escape - and in the comment input, which returned
+  // above, it stays a space
+  if (evt.code === 'Space' && openCard) { evt.preventDefault(); openCard.expander.close(); return; }
+
   if (evt.code === 'KeyG') { grouped = !grouped; return; }
   if (evt.code === 'KeyU') { openPlaceholder('KeyU', 'usage'); return; }
   if (evt.code === 'KeyA') { openPlaceholder('KeyA', 'agent roster'); return; }
@@ -507,7 +549,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'Comma') { drawerFor('left').toggle(); return; }
   if (evt.code === 'Period') { drawerFor('right').toggle(); return; }
-  if (evt.code === 'Slash' && openCard) { evt.preventDefault(); openCard.input.focus(); return; }
+  if (evt.code === 'Slash' && openCard?.input) { evt.preventDefault(); openCard.input.focus(); return; }
   if (binding.code.startsWith('Digit')) {
     const index = Number(binding.label) - 1;
     const board = boards[index];
