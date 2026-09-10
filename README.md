@@ -76,7 +76,10 @@ is never visible to `docker inspect`. That token can only make model requests, s
 than your own login by construction.
 
 A repo can declare the image its cards run in, so the toolchain is installed once rather than on
-every card run, and the command its tests use. Both live on the repo, next to its path.
+every card run, and the commands its tests and its linter use. They live on the repo, next to its
+path, and they are the only test and lint invocations a card is allowed - so keep the lint command
+check-only (`ruff check`, `ruff format --check`): a card's own edits go through its lease guard, a
+shell command's writes do not.
 
 Docker is not how the board ships — the board is a plain installable CLI. Giving a *containerised*
 board the ability to start card containers would mean handing it the Docker socket, which is root
@@ -100,7 +103,8 @@ BOARD=$(curl -s -X POST http://127.0.0.1:8042/api/boards \
 REPO=$(curl -s -X POST http://127.0.0.1:8042/api/boards/$BOARD/repos \
   -H 'content-type: application/json' \
   -d '{"name":"smortboard","path":"/path/to/repo","default_branch":"main",
-       "test_command":"uv run pytest","image":"smortboard-card:latest"}' \
+       "test_command":"uv run pytest","lint_command":"uv run ruff check . && uv run ruff format --check .",
+       "image":"smortboard-card:latest"}' \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
 
 curl -s -X POST http://127.0.0.1:8042/api/cards -H 'content-type: application/json' \

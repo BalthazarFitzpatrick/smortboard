@@ -130,6 +130,11 @@ _MIGRATIONS: list[str] = [
     ALTER TABLE cards ADD COLUMN findings_route TEXT CHECK (findings_route IN ('fix', 'attention'));
     CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
     """,
+    # 5: a repo's lint invocation, allowlisted for its cards like test_command. check-only by
+    # convention: a write through the shell bypasses the lease, which guards only Edit and Write
+    """
+    ALTER TABLE repos ADD COLUMN lint_command TEXT;
+    """,
 ]
 
 

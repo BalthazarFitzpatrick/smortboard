@@ -33,8 +33,12 @@ lease_file = Path(__file__).with_name("lease.json")
 lease = json.loads(lease_file.read_text()) if lease_file.exists() else {}
 root = Path(lease.get("root") or Path(__file__).resolve().parent.parent)
 
-for token in re.findall(r"/\\S+", command):
+# only a path that starts at a word boundary is absolute - a bare /\\S+ also matched the
+# `/test_cli.py` inside `tests/test_cli.py` and refused a card its own test command
+for token in re.findall(r"(?:^|(?<=[\\s'\\"=<>]))/\\S+", command):
     candidate = token.rstrip("'\\",;)")
+    if candidate == "/dev/null":
+        continue
     try:
         Path(candidate).resolve().relative_to(root)
     except ValueError:
