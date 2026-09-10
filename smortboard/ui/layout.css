@@ -79,6 +79,9 @@ body {
 .card-strip.card-working { border-color: var(--fill-good); }
 .card-strip.card-rejected { border-color: var(--fill-warn); }
 .card-strip.card-attention { border-color: var(--fill-attention); }
+/* done is lichen, an edge like every other state: the fills are too flat at card size. measured
+   under simulated deuteranopia it stays delta-e 54 from the rejected red, and 2.6x brighter */
+.card-strip.card-accepted { border-color: var(--status-good); }
 /* focus is indicate.js's gliding marker, not a ring drawn by each card */
 .card-strip:focus-visible { outline: none; }
 
@@ -93,12 +96,81 @@ body {
   box-sizing: border-box;
 }
 
+/* ---- the open card ------------------------------------------------------------------------
+   TWO-UP, A STATE EDGE, THE RUN AS A TIMELINE - Fabian's pick on 2026-09-10 from fifteen previews.
+   soft boxes in a two-column grid; the title and the run span both columns */
+.card-panel { --rule-soft: color-mix(in srgb, var(--grey-border) 55%, transparent); }
+.card-panel .card-sections {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  grid-template-areas:
+    "title title" "status workstream" "outcome outcome"
+    "description criteria" "tasks deps" "comments attachments";
+}
+.card-panel [data-section="title"] { grid-area: title; }
+.card-panel [data-section="workstream"] { grid-area: workstream; }
+.card-panel [data-section="status"] { grid-area: status; }
+.card-panel [data-section="outcome"] { grid-area: outcome; }
+.card-panel [data-section="description"] { grid-area: description; }
+.card-panel [data-section="tasks"] { grid-area: tasks; }
+.card-panel [data-section="criteria"] { grid-area: criteria; }
+.card-panel [data-section="deps"] { grid-area: deps; }
+.card-panel [data-section="attachments"] { grid-area: attachments; }
+.card-panel [data-section="comments"] { grid-area: comments; }
+/* one column once the panel is too narrow for two to hold a sentence */
+@media (max-width: 760px) {
+  .card-panel .card-sections {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "title" "status" "workstream" "outcome" "description" "criteria" "tasks" "deps"
+      "attachments" "comments";
+  }
+}
+
 .card-panel .field-label { color: var(--text-dim); }
-.card-panel .card-section { padding: 4px 0; }
+/* grid children default to min-width: auto, so one long path or url widened a column past the
+   panel - zero lets it wrap inside its box */
+.card-panel .card-section {
+  min-width: 0; overflow-wrap: anywhere;
+  border: 2px solid var(--rule-soft); padding: 10px 12px;
+}
 .card-panel .card-section:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cream); }
 
+/* THE STATE EDGE: the card's state as a thick bar on a band sunk into the page ground, the same
+   colour its collapsed strip wears as a border */
+.card-panel [data-section="title"] {
+  border: 0; border-left: 8px solid var(--grey-border);
+  background: var(--bg); padding: 12px 16px;
+}
+.card-panel [data-section="title"] .section-value { color: var(--cream); font-size: 1.15em; }
+.card-panel.card-working [data-section="title"] { border-left-color: var(--fill-good); }
+.card-panel.card-attention [data-section="title"] { border-left-color: var(--fill-attention); }
+.card-panel.card-accepted [data-section="title"] { border-left-color: var(--status-good); }
+.card-panel.card-rejected [data-section="title"] { border-left-color: var(--fill-warn); }
+
 .card-panel ul { margin: 4px 0; padding-left: 18px; }
-.card-panel .comment-input { width: 100%; box-sizing: border-box; margin-top: 4px; }
+.card-panel .comment-input { width: 100%; box-sizing: border-box; margin-top: 8px; }
+
+/* THE RUN AS A TIMELINE. worker, tests, review and pull request happened in that order, so they sit
+   on a rail with a marker each: filled lichen passed, filled red failed, hollow for no verdict */
+.card-panel .outcome-part {
+  position: relative; margin-left: 5px; padding: 2px 0 12px 20px;
+  border-left: 2px solid var(--grey-border);
+}
+/* the last step ends the rail - the route line after it is not a step */
+.card-panel .outcome-part:not(:has(~ .outcome-part)) { border-left-color: transparent; padding-bottom: 0; }
+.card-panel .outcome-part::before {
+  content: ""; position: absolute; left: -7px; top: 4px; width: 8px; height: 8px;
+  background: var(--panel-row); border: 2px solid var(--grey-border);
+}
+.card-panel .outcome-part[data-ok="true"]::before { border-color: var(--status-good); background: var(--status-good); }
+.card-panel .outcome-part[data-ok="false"]::before { border-color: var(--fill-warn); background: var(--fill-warn); }
+/* the verdicts carry their state in words as well as in the marker's colour */
+.card-panel .outcome-part[data-ok="true"] .verdict { color: var(--status-good); }
+.card-panel .outcome-part[data-ok="false"] .verdict { color: var(--fill-warn); }
+.card-panel .outcome-route { margin-top: 10px; }
+.card-panel .outcome-route, .card-panel .empty { color: var(--text-dim); }
+/* the browser's default link blue sat near-invisible on the panel ground */
+.card-panel a { color: var(--kingfisher); }
 
 /* fills whatever holds it - a drawer body, not a fixed box */
 .hazard-placeholder {
@@ -115,6 +187,7 @@ body {
 .expand-panel.card-working { border-color: var(--fill-good); }
 .expand-panel.card-attention { border-color: var(--fill-attention); }
 .expand-panel.card-rejected { border-color: var(--fill-warn); }
+.expand-panel.card-accepted { border-color: var(--status-good); }
 
 
 /* ---- the run badge -------------------------------------------------------------------------

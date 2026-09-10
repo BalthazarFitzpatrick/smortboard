@@ -1,0 +1,246 @@
+/* DESIGN ARCHIVE - the fifteen open-card layouts Fabian chose from on 2026-09-10, kept so the
+   decision can be looked back on. board.js adds .panel-layout-N when a card's workstream is
+   `layout-N`; the pick itself (7 two-up + 11 state edge + 14 run timeline) is the default in
+   layout.css, and nothing outside the archive board wears these.
+
+   every variant restyles the same markup: .card-section[data-section=...] for title, workstream,
+   status, outcome, description, tasks, criteria, deps, attachments and comments, each holding a
+   .field-label and a .section-value. only ui_base tokens, 2px lines and square corners throughout */
+
+/* groups, used by the grouped variants: header (title, workstream, status), run (outcome),
+   spec (description, tasks, criteria), links (deps, attachments), talk (comments) */
+
+/* a quieter line than the 2px structural rule, for dividers inside a group */
+.card-panel[class*="panel-layout-"] { --rule-soft: color-mix(in srgb, var(--grey-border) 55%, transparent); }
+
+/* ARCHIVE BASE. the default open card is now a grid of boxes with a state edge and a run timeline;
+   these variants were drawn against a flat list, so an archived panel starts from that again */
+.card-panel[class*="panel-layout-"] .card-sections { display: block; grid-template-areas: none; }
+.card-panel[class*="panel-layout-"] .card-section { border: 0; padding: 4px 0; grid-area: auto; }
+.card-panel[class*="panel-layout-"] [data-section="title"] { border: 0; background: none; padding: 4px 0; }
+.card-panel[class*="panel-layout-"] [data-section="title"] .section-value { font-size: inherit; }
+.card-panel[class*="panel-layout-"] .outcome-part { margin-left: 0; padding: 0; border-left: 0; }
+.card-panel[class*="panel-layout-"] .outcome-part + .outcome-part { margin-top: 6px; }
+.card-panel[class*="panel-layout-"] .outcome-part::before { content: none; }
+
+/* the grid layouts name their areas after the sections; without this each section just flowed
+   into the next free cell, and 8, 9 and 10 lost half their content */
+.card-panel:is(.panel-layout-7, .panel-layout-8, .panel-layout-9, .panel-layout-10) [data-section="title"] { grid-area: title; }
+.card-panel:is(.panel-layout-7, .panel-layout-8, .panel-layout-9, .panel-layout-10) [data-section="workstream"] { grid-area: workstream; }
+.card-panel:is(.panel-layout-7, .panel-layout-8, .panel-layout-9, .panel-layout-10) [data-section="status"] { grid-area: status; }
+.card-panel:is(.panel-layout-7, .panel-layout-8, .panel-layout-9, .panel-layout-10) [data-section="outcome"] { grid-area: outcome; }
+.card-panel:is(.panel-layout-7, .panel-layout-8, .panel-layout-9, .panel-layout-10) [data-section="description"] { grid-area: description; }
+.card-panel:is(.panel-layout-7, .panel-layout-8, .panel-layout-9, .panel-layout-10) [data-section="tasks"] { grid-area: tasks; }
+.card-panel:is(.panel-layout-7, .panel-layout-8, .panel-layout-9, .panel-layout-10) [data-section="criteria"] { grid-area: criteria; }
+.card-panel:is(.panel-layout-7, .panel-layout-8, .panel-layout-9, .panel-layout-10) [data-section="deps"] { grid-area: deps; }
+.card-panel:is(.panel-layout-7, .panel-layout-8, .panel-layout-9, .panel-layout-10) [data-section="attachments"] { grid-area: attachments; }
+.card-panel:is(.panel-layout-7, .panel-layout-8, .panel-layout-9, .panel-layout-10) [data-section="comments"] { grid-area: comments; }
+/* grid and flex children default to min-width: auto, so one long path or url widened a whole
+   column past the panel - zero lets it wrap inside its cell instead */
+.card-panel[class*="panel-layout-"] .card-section { min-width: 0; overflow-wrap: anywhere; }
+
+
+/* ---- 1 ruled list: one rule between every section ------------------------------------------ */
+.card-panel.panel-layout-1 .card-sections { display: flex; flex-direction: column; }
+.card-panel.panel-layout-1 .card-section { padding: 10px 0; }
+.card-panel.panel-layout-1 .card-section + .card-section { border-top: 2px solid var(--grey-border); }
+.card-panel.panel-layout-1 [data-section="title"] .section-value { color: var(--cream); }
+
+
+/* ---- 2 ledger: labels in a gutter, values in a column, a soft rule per row ------------------- */
+.card-panel.panel-layout-2 .card-section {
+  display: grid; grid-template-columns: 12ch 1fr; column-gap: 18px;
+  padding: 9px 0; border-bottom: 2px solid var(--rule-soft);
+}
+.card-panel.panel-layout-2 .card-section:last-child { border-bottom: 0; }
+.card-panel.panel-layout-2 .field-label { padding-top: 1px; }
+.card-panel.panel-layout-2 .comment-input { grid-column: 2; }
+.card-panel.panel-layout-2 [data-section="title"] .section-value { color: var(--cream); }
+
+
+/* ---- 3 grouped rules: soft rules inside a group, a hard rule and air between groups --------- */
+.card-panel.panel-layout-3 .card-section { padding: 8px 0; }
+.card-panel.panel-layout-3 .card-section + .card-section { border-top: 2px solid var(--rule-soft); }
+.card-panel.panel-layout-3 :is([data-section="outcome"], [data-section="description"],
+  [data-section="deps"], [data-section="comments"]) {
+  margin-top: 14px; border-top: 2px solid var(--grey-border);
+}
+.card-panel.panel-layout-3 [data-section="title"] .section-value { color: var(--cream); }
+
+
+/* ---- 4 boxed: every section its own box ---------------------------------------------------- */
+.card-panel.panel-layout-4 .card-sections { display: flex; flex-direction: column; gap: 10px; }
+.card-panel.panel-layout-4 .card-section { border: 2px solid var(--grey-border); padding: 10px 12px; }
+.card-panel.panel-layout-4 [data-section="title"] { border-color: var(--cream); }
+.card-panel.panel-layout-4 [data-section="title"] .section-value { color: var(--cream); }
+
+
+/* ---- 5 inset fills: sections sunk into the page ground, no lines at all -------------------- */
+.card-panel.panel-layout-5 .card-sections { display: flex; flex-direction: column; gap: 6px; }
+.card-panel.panel-layout-5 .card-section { background: var(--bg); padding: 10px 12px; }
+.card-panel.panel-layout-5 [data-section="title"] { background: transparent; padding: 4px 0 10px; }
+.card-panel.panel-layout-5 [data-section="title"] .section-value { color: var(--cream); font-size: 1.15em; }
+
+
+/* ---- 6 boxed groups: one box per group, soft rules between the sections inside it --------- */
+.card-panel.panel-layout-6 .card-section {
+  border-left: 2px solid var(--grey-border); border-right: 2px solid var(--grey-border);
+  padding: 9px 12px;
+}
+.card-panel.panel-layout-6 :is([data-section="workstream"], [data-section="status"],
+  [data-section="tasks"], [data-section="criteria"], [data-section="attachments"]) {
+  border-top: 2px solid var(--rule-soft);
+}
+.card-panel.panel-layout-6 :is([data-section="title"], [data-section="outcome"],
+  [data-section="description"], [data-section="deps"], [data-section="comments"]) {
+  border-top: 2px solid var(--grey-border);
+}
+.card-panel.panel-layout-6 :is([data-section="status"], [data-section="outcome"],
+  [data-section="criteria"], [data-section="attachments"], [data-section="comments"]) {
+  border-bottom: 2px solid var(--grey-border); margin-bottom: 12px;
+}
+.card-panel.panel-layout-6 [data-section="title"] .section-value { color: var(--cream); }
+
+
+/* ---- 7 two-up: a two-column grid of soft boxes, the run and the title across both ---------- */
+.card-panel.panel-layout-7 .card-sections {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  grid-template-areas:
+    "title title" "status workstream" "outcome outcome"
+    "description criteria" "tasks deps" "comments attachments";
+}
+.card-panel.panel-layout-7 .card-section { border: 2px solid var(--rule-soft); padding: 10px 12px; }
+.card-panel.panel-layout-7 [data-section="title"] { border-color: var(--grey-border); }
+.card-panel.panel-layout-7 [data-section="title"] .section-value { color: var(--cream); }
+
+
+/* ---- 8 main and sidebar: the work on the left, the facts in a ruled rail on the right ----- */
+.card-panel.panel-layout-8 .card-sections {
+  display: grid; grid-template-columns: 1fr 26ch; column-gap: 0; row-gap: 0;
+  grid-template-areas:
+    "title status" "outcome workstream" "outcome deps" "description attachments"
+    "criteria rail" "tasks rail" "comments rail";
+}
+.card-panel.panel-layout-8 .card-section { padding: 10px 18px 10px 0; }
+.card-panel.panel-layout-8 :is([data-section="status"], [data-section="workstream"],
+  [data-section="deps"], [data-section="attachments"]) {
+  padding: 10px 0 10px 16px; border-left: 2px solid var(--grey-border);
+}
+.card-panel.panel-layout-8 .card-sections::after {
+  content: ""; grid-area: rail; border-left: 2px solid var(--grey-border);
+}
+.card-panel.panel-layout-8 :is([data-section="outcome"], [data-section="description"],
+  [data-section="criteria"], [data-section="tasks"], [data-section="comments"]) {
+  border-top: 2px solid var(--rule-soft);
+}
+.card-panel.panel-layout-8 [data-section="title"] .section-value { color: var(--cream); font-size: 1.15em; }
+
+
+/* ---- 9 header trio: a large title, three fact tiles under it, the rest in three columns --- */
+.card-panel.panel-layout-9 .card-sections {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 14px;
+  grid-template-areas:
+    "title title title" "status workstream deps" "outcome outcome outcome"
+    "description criteria tasks" "attachments comments comments";
+}
+.card-panel.panel-layout-9 [data-section="title"] { padding: 2px 0 6px; }
+.card-panel.panel-layout-9 [data-section="title"] .field-label { display: none; }
+.card-panel.panel-layout-9 [data-section="title"] .section-value { color: var(--cream); font-size: 1.3em; }
+.card-panel.panel-layout-9 :is([data-section="status"], [data-section="workstream"], [data-section="deps"]) {
+  border: 2px solid var(--grey-border); padding: 8px 12px;
+}
+.card-panel.panel-layout-9 :is([data-section="outcome"], [data-section="description"],
+  [data-section="criteria"], [data-section="tasks"], [data-section="attachments"], [data-section="comments"]) {
+  border-top: 2px solid var(--grey-border); padding-top: 10px;
+}
+
+
+/* ---- 10 header band: title and facts on a sunk band, the body ruled beneath ------------- */
+.card-panel.panel-layout-10 .card-sections {
+  display: grid; grid-template-columns: 1fr auto auto; column-gap: 24px;
+  grid-template-areas:
+    "title workstream status" "outcome outcome outcome" "description description description"
+    "tasks tasks tasks" "criteria criteria criteria" "deps deps deps"
+    "attachments attachments attachments" "comments comments comments";
+}
+.card-panel.panel-layout-10 :is([data-section="title"], [data-section="workstream"], [data-section="status"]) {
+  background: var(--bg); padding: 12px 14px; margin-bottom: 8px;
+}
+.card-panel.panel-layout-10 [data-section="title"] .section-value { color: var(--cream); font-size: 1.15em; }
+.card-panel.panel-layout-10 .card-section:not([data-section="title"], [data-section="workstream"], [data-section="status"]) {
+  padding: 10px 0; border-bottom: 2px solid var(--rule-soft);
+}
+.card-panel.panel-layout-10 [data-section="comments"] { border-bottom: 0; }
+
+
+/* ---- 11 state edge: the band carries the card's state as a thick left edge, boxes below -- */
+.card-panel.panel-layout-11 .card-sections { display: flex; flex-direction: column; gap: 10px; }
+.card-panel.panel-layout-11 .card-section { border: 2px solid var(--rule-soft); padding: 10px 12px; }
+.card-panel.panel-layout-11 [data-section="title"] {
+  border: 0; border-left: 8px solid var(--grey-border); background: var(--bg); padding: 12px 16px;
+}
+.card-panel.panel-layout-11.card-working [data-section="title"] { border-left-color: var(--fill-good); }
+.card-panel.panel-layout-11.card-attention [data-section="title"] { border-left-color: var(--fill-attention); }
+.card-panel.panel-layout-11.card-accepted [data-section="title"] { border-left-color: var(--status-good); }
+.card-panel.panel-layout-11.card-rejected [data-section="title"] { border-left-color: var(--fill-warn); }
+.card-panel.panel-layout-11 [data-section="title"] .section-value { color: var(--cream); font-size: 1.15em; }
+
+
+/* ---- 12 outcome first: title, then the run as the one big box, the rest ruled ----------- */
+.card-panel.panel-layout-12 .card-sections { display: flex; flex-direction: column; }
+.card-panel.panel-layout-12 [data-section="title"] { order: 1; padding: 0 0 12px; }
+.card-panel.panel-layout-12 [data-section="outcome"] {
+  order: 2; border: 2px solid var(--grey-border); padding: 12px 14px; margin-bottom: 6px;
+}
+.card-panel.panel-layout-12 [data-section="outcome"] .section-value {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.card-panel.panel-layout-12 :is(.outcome-summary, .outcome-findings, .outcome-pr, .outcome-route) { grid-column: 1 / -1; }
+.card-panel.panel-layout-12 :is(.outcome-tests, .outcome-review) { background: var(--bg); padding: 8px 10px; }
+.card-panel.panel-layout-12 [data-section="status"] { order: 3; }
+.card-panel.panel-layout-12 [data-section="workstream"] { order: 4; }
+.card-panel.panel-layout-12 :is([data-section="description"], [data-section="criteria"],
+  [data-section="tasks"], [data-section="deps"], [data-section="attachments"], [data-section="comments"]) { order: 5; }
+.card-panel.panel-layout-12 .card-section:not([data-section="title"], [data-section="outcome"]) {
+  padding: 9px 0; border-top: 2px solid var(--rule-soft);
+}
+.card-panel.panel-layout-12 [data-section="title"] .section-value { color: var(--cream); font-size: 1.15em; }
+
+
+/* ---- 13 tiles: a three-wide grid of boxes, the long sections across the full width -------- */
+.card-panel.panel-layout-13 .card-sections { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.card-panel.panel-layout-13 .card-section { border: 2px solid var(--grey-border); padding: 10px 12px; }
+.card-panel.panel-layout-13 :is([data-section="title"], [data-section="outcome"],
+  [data-section="description"], [data-section="comments"]) { grid-column: 1 / -1; }
+.card-panel.panel-layout-13 [data-section="title"] .section-value { color: var(--cream); }
+
+
+/* ---- 14 run timeline: the run's steps on a rail in the order they happened, the rest ruled
+   the markers are earned here: worker, tests, review and pull request are a real sequence */
+.card-panel.panel-layout-14 .card-section { padding: 10px 0; }
+.card-panel.panel-layout-14 .card-section + .card-section { border-top: 2px solid var(--rule-soft); }
+.card-panel.panel-layout-14 .outcome-part {
+  position: relative; margin-left: 5px; padding: 2px 0 12px 20px;
+  border-left: 2px solid var(--grey-border);
+}
+/* the last step ends the rail - the route line after it is not a step */
+.card-panel.panel-layout-14 .outcome-part:not(:has(~ .outcome-part)) { border-left-color: transparent; padding-bottom: 0; }
+.card-panel.panel-layout-14 .outcome-part::before {
+  content: ""; position: absolute; left: -7px; top: 4px; width: 8px; height: 8px;
+  background: var(--panel-row); border: 2px solid var(--grey-border);
+}
+.card-panel.panel-layout-14 .outcome-part[data-ok="true"]::before { border-color: var(--status-good); background: var(--status-good); }
+.card-panel.panel-layout-14 .outcome-part[data-ok="false"]::before { border-color: var(--fill-warn); background: var(--fill-warn); }
+.card-panel.panel-layout-14 [data-section="title"] .section-value { color: var(--cream); }
+
+
+/* ---- 15 compact: short facts on one line each, the long sections boxed ------------------- */
+.card-panel.panel-layout-15 .card-sections { display: flex; flex-direction: column; gap: 8px; }
+.card-panel.panel-layout-15 :is([data-section="title"], [data-section="workstream"], [data-section="status"]) {
+  display: grid; grid-template-columns: 12ch 1fr; padding: 2px 0;
+}
+.card-panel.panel-layout-15 [data-section="status"] { padding-bottom: 10px; border-bottom: 2px solid var(--grey-border); }
+.card-panel.panel-layout-15 .card-section:not([data-section="title"], [data-section="workstream"], [data-section="status"]) {
+  border: 2px solid var(--rule-soft); padding: 10px 12px;
+}
+.card-panel.panel-layout-15 [data-section="title"] .section-value { color: var(--cream); }
