@@ -60,6 +60,30 @@ def lease_preamble(leases: list[str] | None) -> str:
     )
 
 
+def commands_preamble(repo: dict[str, Any] | None) -> str:
+    """the repo's test and lint commands, told to the agent word for word.
+
+    The allowlist admits exactly these, and the repo's own CLAUDE.md may name others - run 3 spent
+    most of its 16 denials on spellings of ruff the allowlist was never going to admit.
+    """
+    repo = repo or {}
+    lines = [
+        f"{label}: {command}"
+        for label, command in (
+            ("Run the tests with", repo.get("test_command")),
+            ("Run the linter with", repo.get("lint_command")),
+        )
+        if command
+    ]
+    if not lines:
+        return ""
+    return (
+        "\n".join(lines)
+        + "\nThese exact commands are the only test and lint invocations permitted; where the "
+        "repo's own instructions name others, use these instead.\n\n"
+    )
+
+
 def allowed_tools_for_repo(repo: dict[str, Any] | None) -> tuple[str, ...]:
     """derives a card's Bash allowlist from its repo's test_command.
 
@@ -71,6 +95,7 @@ def allowed_tools_for_repo(repo: dict[str, Any] | None) -> tuple[str, ...]:
     test_command = (repo or {}).get("test_command")
     if not test_command:
         return DEFAULT_ALLOWED_TOOLS
+    lint_command = (repo or {}).get("lint_command")
     return (
         "Read",
         "Edit",
@@ -78,8 +103,16 @@ def allowed_tools_for_repo(repo: dict[str, Any] | None) -> tuple[str, ...]:
         "Glob",
         "Grep",
         "Bash(git *)",
-        f"Bash({test_command} *)",
+        *_bash_grants(test_command),
+        *(_bash_grants(lint_command) if lint_command else ()),
     )
+
+
+def _bash_grants(command: str) -> tuple[str, ...]:
+    """allow rules for one repo command, each `&&` part on its own - a rule must match every
+    subcommand of a compound command. a trailing ` *` also matches the bare part (probed)"""
+    parts = [part.strip() for part in command.split("&&") if part.strip()]
+    return tuple(f"Bash({part} *)" for part in parts)
 
 
 # GLOB AND GREP ARE FREE AND THEIR ABSENCE IS EXPENSIVE. without a search tool an agent reaches for
@@ -138,12 +171,28 @@ class RunResult:
     result_text: str | None
 
 
+# phrases that put a question to the operator. "approval" alone is not one: run 3's summary quoted
+# the denial text "requires approval" while reporting, and the card blocked before its gates
+_ASKING_PHRASES = (
+    "ok to proceed",
+    "should i ",
+    "shall i ",
+    "may i ",
+    "do you want",
+    "would you like",
+)
+
+
 def _agent_question_signal(result_event: dict[str, Any]) -> bool:
     """S3: a populated permission_denials plus a question in result.result is the AGENT_QUESTION
-    signal — the agent stopped to ask something nobody headless can answer"""
+    signal — the agent stopped to ask something nobody headless can answer.
+
+    A question is a result that ends asking one, or asks for leave in so many words - not any text
+    that mentions a question mark or the word approval somewhere in a report.
+    """
     denials = result_event.get("permission_denials") or []
-    text = (result_event.get("result") or "").lower()
-    asked = any(marker in text for marker in ("?", "ok to proceed", "approval"))
+    text = (result_event.get("result") or "").strip().lower()
+    asked = text.endswith("?") or any(phrase in text for phrase in _ASKING_PHRASES)
     return bool(denials) and asked
 
 

@@ -13,6 +13,7 @@ from smortboard.exec.runner import (
     build_command,
     classify_rate_limit,
     classify_result,
+    commands_preamble,
     lease_preamble,
     parse_line,
     result_to_run_result,
@@ -224,6 +225,21 @@ def test_agent_question_is_detected():
     assert classify_result(result_event) == "AGENT_QUESTION"
 
 
+def test_a_report_that_mentions_approval_is_not_a_question():
+    # run 3: the agent reported its denied commands and finished; the card blocked anyway
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "permission_denials": [
+            {"tool_name": "Bash", "tool_use_id": "t1", "tool_input": {"command": "uv run ruff ."}}
+        ],
+        "result": "Done. Could not verify - every `uv run` was blocked with "
+        '"This command requires approval". Committed as 88b49d5.',
+    }
+    assert classify_result(result_event) is None
+
+
 def test_crash_when_is_error_and_no_other_signal():
     result_event = {
         "type": "result",
@@ -273,6 +289,27 @@ def test_allowed_tools_scopes_bash_to_the_test_command():
     assert "Bash" not in tools
 
 
+def test_allowed_tools_grant_the_lint_command_part_by_part():
+    # a rule must match every subcommand of a compound command, so each && part is granted alone
+    tools = allowed_tools_for_repo(
+        {
+            "test_command": "uv run pytest",
+            "lint_command": "uv run ruff check . && uv run ruff format --check .",
+        }
+    )
+    assert "Bash(uv run ruff check . *)" in tools
+    assert "Bash(uv run ruff format --check . *)" in tools
+    assert not any("&&" in tool for tool in tools)
+
+
+def test_the_brief_names_the_exact_test_and_lint_commands():
+    repo = {"test_command": "uv run pytest", "lint_command": "uv run ruff check ."}
+    brief = commands_preamble(repo)
+    assert "Run the tests with: uv run pytest" in brief
+    assert "Run the linter with: uv run ruff check ." in brief
+    assert commands_preamble({}) == ""
+
+
 # -- bash guard: refuses a command that reaches outside the worktree ----------
 
 
@@ -312,6 +349,21 @@ def test_bash_guard_refuses_cd_dotdot(tmp_path):
     result = _run_bash_guard(worktree, "cd .. && rm -rf something")
     assert result.returncode == 2
     assert BASH_ESCAPE_PREFIX in result.stderr
+
+
+def test_bash_guard_permits_a_relative_path_with_a_slash(tmp_path):
+    # run 3: the old regex read `/test_cli.py` out of `tests/test_cli.py` and refused the card
+    # its own test command
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    result = _run_bash_guard(worktree, "uv run pytest -p no:cacheprovider -q tests/test_cli.py")
+    assert result.returncode == 0
+
+
+def test_bash_guard_permits_dev_null(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    assert _run_bash_guard(worktree, "ls smortboard 2>/dev/null").returncode == 0
 
 
 def test_bash_guard_allows_a_plain_command_with_no_paths(tmp_path):

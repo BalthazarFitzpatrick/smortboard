@@ -108,14 +108,16 @@ class Store:
         default_branch: str,
         test_command: str | None = None,
         image: str | None = None,
+        lint_command: str | None = None,
     ) -> dict:
         repo_id = _new_id()
         self._conn.execute(
             """
-            INSERT INTO repos (id, board_id, name, path, default_branch, test_command, image)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO repos
+                (id, board_id, name, path, default_branch, test_command, image, lint_command)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (repo_id, board_id, name, path, default_branch, test_command, image),
+            (repo_id, board_id, name, path, default_branch, test_command, image, lint_command),
         )
         self._conn.commit()
         return self.get_repo(repo_id)
