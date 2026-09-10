@@ -6,6 +6,7 @@ would otherwise shell out to it. The one exception is test_container_backend_rea
 which is skipped unless Docker is actually usable on the machine running the suite.
 """
 
+import json
 import shlex
 import subprocess
 import tempfile
@@ -22,6 +23,7 @@ from smortboard.exec.backends import (
     docker_available,
     read_card_token,
     require_card_runtime,
+    write_container_guards,
 )
 from smortboard.exec.runner import RunResult
 from smortboard.exec.worktrees import WorktreeError, create_worktree
@@ -105,8 +107,10 @@ def test_the_token_is_never_on_the_command_line_or_a_mount(tmp_path):
     assert "/run/secrets" not in joined
     assert "CLAUDE_CODE_OAUTH_TOKEN" in joined  # read from stdin, never assigned a literal
     assert "read -r CLAUDE_CODE_OAUTH_TOKEN" in joined
-    # only the clone is mounted
-    assert cmd.count("-v") == 1  # the list, not the string: a temp path can contain "-v"
+    # only the clone and the read-only guards are mounted - the list, not the string: a temp path
+    # can contain "-v"
+    mounts = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-v"]
+    assert mounts == [f"{tmp_path / 'clone'}:/workspace:rw", f"{tmp_path}:/smortboard:ro"]
     assert "-i" in cmd  # stdin has to stay open long enough to hand it over
 
 
@@ -142,6 +146,28 @@ def test_docker_command_uses_the_configured_image(tmp_path):
 
     cmd = backend._docker_command(clone_path, "p", settings_path, "sonnet", None)
     assert "my-registry/smortboard-card:1.2.3" in cmd
+
+
+def test_the_guards_are_mounted_read_only_outside_the_workspace(tmp_path):
+    # the first real run crashed on this: a host path went to --settings and did not exist inside
+    settings_path = tmp_path / "wt" / ".claude" / "settings.json"
+    cmd = ContainerBackend(image="img")._docker_command(
+        tmp_path / "clone", "p", settings_path, "sonnet", None
+    )
+    assert f"{settings_path.parent}:/smortboard:ro" in cmd
+    assert "--settings /smortboard/settings.json" in cmd[-1]
+    assert str(tmp_path) not in cmd[-1]
+
+
+def test_container_guards_are_written_as_the_container_sees_them(tmp_path):
+    settings_path = write_container_guards(tmp_path / "wt", ["a.py"])
+    hooks = json.loads(settings_path.read_text())["hooks"]["PreToolUse"]
+    assert [h["hooks"][0]["command"] for h in hooks] == [
+        "python3 /smortboard/lease_guard.py",
+        "python3 /smortboard/bash_guard.py",
+    ]
+    assert json.loads((settings_path.parent / "lease.json").read_text())["root"] == "/workspace"
+    assert str(tmp_path) not in settings_path.read_text()
 
 
 # -- clone-then-fetch round trip, with real git -------------------------------
@@ -353,8 +379,10 @@ def test_a_repo_brings_its_own_image_and_a_card_still_gets_its_own_container(tmp
     without = backend._docker_command(tmp_path / "c", "p", tmp_path / "s.json", "sonnet", None)
     assert "default-img" in without
 
-    # the image is the only thing shared - still one clone mount, still --rm, still no env credential
-    assert with_repo.count("-v") == 1
+    # the image is the only thing shared - still the card's own clone and guards, still --rm, still
+    # no env credential
+    mounts = [with_repo[i + 1] for i, arg in enumerate(with_repo) if arg == "-v"]
+    assert mounts == [f"{tmp_path / 'c'}:/workspace:rw", f"{tmp_path}:/smortboard:ro"]
     assert "--rm" in with_repo
     assert "-e" not in with_repo
 
