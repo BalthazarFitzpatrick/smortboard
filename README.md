@@ -1,5 +1,7 @@
 # smortboard
 
+The board never merges — it opens a pull request and stops there.
+
 A convenience wrapper around coding agents. Define work as cards, hand them to agents, walk away,
 come back to finished work.
 
