@@ -150,7 +150,8 @@ use and so cannot drift.
 | Key | Action |
 |---|---|
 | arrows | move between cards and columns |
-| Enter / Space | open the focused card |
+| Enter | open the focused card |
+| Space | open the focused card, or close the open one |
 | Escape | one level back: input, then panel, then closed |
 | `g` | switch kanban / workstream grouping |
 | `u` | usage and account |

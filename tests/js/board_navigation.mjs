@@ -29,7 +29,7 @@ document.body.appendChild(bucketRow);
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('board.js')].join('\n;\n');
 const mod = new Function(`${src}
-;return {STATUSES, BINDINGS, renderBuckets, renderCardStrip, cardClasses};`)();
+;return {STATUSES, BINDINGS, renderBuckets, renderCardStrip, cardClasses, acceptOrRejectCard, slideFrom};`)();
 
 // ---- five status buckets, matching the contract's kanban columns exactly
 assert.deepEqual(mod.STATUSES, STATUS_ORDER, 'board.js should declare exactly the five kanban statuses');
@@ -59,12 +59,48 @@ assert.ok(exited, 'ArrowUp on the top row should exit toward the board bar witho
 
 // ---- enter opens the focused card, escape closes it (real expand.js lifecycle)
 const strip = mod.renderCardStrip(cards[0]);
-strip._listeners.keydown[0]({code: 'Enter', preventDefault() {}});
-assert.equal(document.body.children.filter(c => c.classList.contains('modal-backdrop')).length, 1,
-  'Enter should open the card into a backdrop + panel');
+const backdrops = () => document.body.children.filter(c => c.classList.contains('modal-backdrop'));
+const press = code => strip._listeners.keydown[0]({code, preventDefault() {}, stopPropagation() {}});
+press('Enter');
+assert.equal(backdrops().length, 1, 'Enter should open the card into a backdrop + panel');
 document._dispatch('keydown', {key: 'Escape', code: 'Escape', target: document.body});
-assert.equal(document.body.children.filter(c => c.classList.contains('modal-backdrop')).length, 0,
-  'Escape should close the open card');
+assert.equal(backdrops().length, 0, 'Escape should close the open card');
+
+// ---- an open card is three times the default width: 1:1 on an 800px-tall stub, not 1:3
+press('Enter');
+assert.equal(backdrops()[0].children[0].style.width, '800px',
+  'an open card should be three times the 266.7px of the default 1:3 portrait');
+
+// ---- space on the strip closes the card it opened - focus stays on the strip behind the panel
+press('Space');
+assert.equal(backdrops().length, 0, "space on the open card's strip should close it");
+
+// ---- from inside the panel too, but in the comment input it types a space
+press('Enter');
+const inputTarget = element('input');
+document._dispatch('keydown', {key: ' ', code: 'Space', target: inputTarget, preventDefault() {}});
+assert.equal(backdrops().length, 1, 'space in the comment input must not close the card');
+document._dispatch('keydown', {key: ' ', code: 'Space', target: document.body, preventDefault() {}});
+assert.equal(backdrops().length, 0, 'space should close the open card, next to escape');
+
+// ---- accepting from inside an open card closes it first, before the card moves columns
+press('Space');
+assert.equal(backdrops().length, 1, 'space on a closed card should still open it');
+strip.focus();
+mod.acceptOrRejectCard('accept'); // the fetch never resolves here - the close must not wait for it
+assert.equal(backdrops().length, 0, 'y should close the open card before it moves');
+
+// ---- the moved strip starts where the old one stood, then is released into its column
+const frames = [];
+const realFrame = globalThis.requestAnimationFrame;
+globalThis.requestAnimationFrame = fn => frames.push(fn);
+const moved = element('div');
+mod.slideFrom(moved, {left: 50, top: 20});
+assert.equal(moved.style.translate, '50px 20px', 'the strip should start at its old position');
+while (frames.length) frames.shift()();
+assert.equal(moved.style.translate, '', 'then it should be released into its new column');
+assert.equal(moved.style.transition, 'translate 220ms', 'with the expander\'s own 220ms beat');
+globalThis.requestAnimationFrame = realFrame;
 
 console.log('ok');
 
