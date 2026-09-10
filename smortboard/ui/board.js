@@ -20,6 +20,7 @@ const BINDINGS = [
   {code: 'KeyY', label: 'y', action: 'accept the focused card'},
   {code: 'KeyX', label: 'x', action: 'reject the focused card'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay'},
+  {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts'},
   {code: 'Slash', label: '/', action: "focus the open card's comment input"},
   {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent'},
   {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator'},
@@ -914,6 +915,169 @@ async function loadUsage(menu) {
   }
 }
 
+// ---- prompt editor (p) - edit the orchestrator/worker/reviewer role prompts ---------------------
+// NOT a Menu: Menu listens for arrow/enter/escape on the whole document while open, which would
+// eat every one of those keys typed into a textarea. built from the same modal-backdrop /
+// panel-floating pair expand.js and the roster/usage menus already ride, with its own escape and
+// outside-click dismiss - see the brief's note on menu.js before assuming Menu fits here.
+//
+// UNSAVED EDITS ARE KEPT AS A PER-ROLE DRAFT IN MEMORY, not warned-and-discarded: pe.drafts holds
+// whatever is in the textarea per role, surviving a role switch or a close/reopen, and is only
+// cleared once that role's save actually lands.
+const promptRoles = ['orchestrator', 'worker', 'reviewer'];
+const pe = {
+  backdrop: null, panel: null, roleRow: null, textarea: null, statusEl: null,
+  role: promptRoles[0], cache: {}, drafts: {},
+};
+
+function promptRoleLabel(row) {
+  return row ? (row.is_default ? 'default' : `version ${row.version}`) : '';
+}
+
+function buildPromptEditorDom() {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop prompt-backdrop';
+  const panel = document.createElement('div');
+  panel.className = 'panel-floating prompt-panel';
+
+  const title = document.createElement('div');
+  title.className = 'popup-title';
+  title.textContent = 'prompt editor';
+  const rule = document.createElement('div');
+  rule.className = 'h-divider';
+
+  const roleRow = document.createElement('div');
+  roleRow.className = 'prompt-roles';
+  // built with createElement/appendChild, not innerHTML, so the version span stays a queryable
+  // live node - the test dom stub does not parse innerHTML strings back into a tree (see the same
+  // note on terminalDom above)
+  promptRoles.forEach(role => {
+    const btn = document.createElement('div');
+    btn.className = 'toggle prompt-role';
+    btn.dataset.role = role;
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = role;
+    const version = document.createElement('span');
+    version.className = 'prompt-role-version';
+    btn.append(name, version);
+    btn.onclick = () => selectPromptRole(role);
+    roleRow.appendChild(btn);
+  });
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'prompt-body text-field';
+  textarea.rows = 18;
+  textarea.spellcheck = false;
+  // escape steps out of the panel rather than out of the textarea's own undo history, and
+  // cmd/ctrl+s saves without leaving the field - both stop here so they never reach the board's
+  // own keydown handler (which the typing check below already shields from every other key)
+  textarea.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); closePromptEditor(); return; }
+    if ((evt.metaKey || evt.ctrlKey) && evt.code === 'KeyS') { evt.preventDefault(); savePromptEditor(); }
+  });
+  textarea.addEventListener('input', () => { pe.drafts[pe.role] = textarea.value; });
+
+  const footer = document.createElement('div');
+  footer.className = 'prompt-footer';
+  const save = document.createElement('div');
+  save.className = 'toggle prompt-save';
+  save.textContent = 'save';
+  save.onclick = () => savePromptEditor();
+  const status = document.createElement('span');
+  status.className = 'prompt-status';
+  footer.append(save, status);
+
+  panel.append(title, rule, roleRow, textarea, footer);
+  backdrop.appendChild(panel);
+  // outside click closes, same as expand.js's backdrop - only a click ON the dim, not the panel
+  backdrop.addEventListener('mousedown', evt => { if (evt.target === backdrop) closePromptEditor(); });
+
+  Object.assign(pe, {backdrop, panel, roleRow, textarea, statusEl: status});
+  return backdrop;
+}
+
+function highlightPromptRole() {
+  [...pe.roleRow.children].forEach(btn => btn.classList.toggle('on', btn.dataset.role === pe.role));
+}
+
+function renderPromptRoleLabels() {
+  [...pe.roleRow.children].forEach(btn => {
+    btn.querySelector('.prompt-role-version').textContent = promptRoleLabel(pe.cache[btn.dataset.role]);
+  });
+}
+
+function setPromptStatus(text, tone) {
+  pe.statusEl.textContent = text;
+  pe.statusEl.className = 'prompt-status' + (tone ? ` prompt-${tone}` : '');
+}
+
+// a draft in memory always wins over the server's body - it is the point of keeping one
+function selectPromptRole(role) {
+  pe.role = role;
+  highlightPromptRole();
+  setPromptStatus('');
+  const draft = pe.drafts[role];
+  pe.textarea.value = draft !== undefined ? draft : (pe.cache[role] ? pe.cache[role].body : '');
+}
+
+async function loadPromptEditor() {
+  try {
+    const rows = await api('/api/prompts');
+    rows.forEach(row => { pe.cache[row.role] = row; });
+    renderPromptRoleLabels();
+    selectPromptRole(pe.role);
+  } catch (err) {
+    setPromptStatus(`could not load prompts: ${err.message}`, 'error');
+  }
+}
+
+async function savePromptEditor() {
+  const role = pe.role;
+  setPromptStatus('saving...');
+  try {
+    const res = await fetch(`/api/prompts/${role}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({body: pe.textarea.value}),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) { setPromptStatus((data && data.error) || `save failed (${res.status})`, 'error'); return; }
+    pe.cache[role] = data;
+    delete pe.drafts[role];
+    renderPromptRoleLabels();
+    // worker and reviewer are read at run time; the orchestrator picks it up at its next turn
+    setPromptStatus(`saved as version ${data.version} - applies from the next run`, 'dim');
+  } catch (err) {
+    setPromptStatus(`could not save: ${err.message}`, 'error');
+  }
+}
+
+function onPromptEditorKey(evt) {
+  if (evt.code === 'Escape') closePromptEditor();
+}
+
+function openPromptEditor() {
+  if (!pe.backdrop) buildPromptEditorDom();
+  document.body.appendChild(pe.backdrop);
+  document.addEventListener('keydown', onPromptEditorKey);
+  highlightPromptRole();
+  selectPromptRole(pe.role);
+  loadPromptEditor();
+  pe.textarea.focus();
+}
+
+function closePromptEditor() {
+  if (!pe.backdrop || !pe.backdrop.parentNode) return;
+  document.removeEventListener('keydown', onPromptEditorKey);
+  pe.backdrop.remove();
+  reenterIfFocusLost();
+}
+
+function togglePromptEditor() {
+  if (pe.backdrop && pe.backdrop.parentNode) closePromptEditor();
+  else openPromptEditor();
+}
+
 // ---- shortcut overlay, built from BINDINGS so it cannot drift -----------------------
 
 function openShortcutOverlay() {
@@ -970,6 +1134,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
   if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
+  if (evt.code === 'KeyP') { togglePromptEditor(); return; }
   // preventDefault: opening a drawer focuses its input, and the key that opened it typed itself there
   if (evt.code === 'Comma') { evt.preventDefault(); drawerFor('left').toggle(); return; }
   if (evt.code === 'Period') { evt.preventDefault(); drawerFor('right').toggle(); return; }
