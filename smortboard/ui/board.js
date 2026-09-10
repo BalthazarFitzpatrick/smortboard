@@ -99,6 +99,7 @@ function cardClasses(card) {
   if (card.blocked_reason_code) classes.push('card-attention');
   else if (card.status === 'doing') classes.push('card-working');
   else if (card.status === 'rejected') classes.push('card-rejected');
+  else if (card.status === 'accepted') classes.push('card-accepted');
   // PREVIEW ONLY - the fan, still being judged
   // PREVIEW - the fan, plus one treatment per column for telling a collapsed stack apart
   return classes.join(' ');
@@ -189,6 +190,10 @@ async function openCardPanel(panel, cardId) {
   // closed while loading - space or y/x can shut it before the fetch lands
   if (!panel.isConnected) return;
   panel.classList.add('card-panel');
+  // DESIGN ARCHIVE - a card whose workstream is layout-N wears panel-layouts.css's variant N, so
+  // the fifteen layouts behind the 2026-09-10 pick stay on their own board to look back on
+  const layout = /^layout-(\d+)$/.exec(card.workstream || '');
+  if (layout) panel.classList.add(`panel-layout-${layout[1]}`);
   panel.innerHTML = cardPanelHtml(card, outcome);
 
   // the panel's one .card-sections div is a single-column bucket - reuses the 2D grid nav as a
@@ -223,49 +228,62 @@ async function openCardPanel(panel, cardId) {
 // until a run has actually landed on this card, in which case the section says so plainly
 function outcomeSectionHtml(outcome) {
   const empty = !outcome || (!outcome.summary && !outcome.tests && !outcome.review && !outcome.pr_url);
-  if (empty) {
-    return `<div class="card-section" tabindex="0"><div class="field-label">outcome</div>not run yet</div>`;
-  }
+  if (empty) return sectionHtml('outcome', 'outcome', '<span class="empty">not run yet</span>');
+  // the run's steps in the order they happened, each marked passed or not, so a layout can draw
+  // them as a sequence
   const parts = [];
-  if (outcome.summary) parts.push(`<div>${escapeHtml(outcome.summary)}</div>`);
+  if (outcome.summary) parts.push(`<div class="outcome-part outcome-summary">${escapeHtml(outcome.summary)}</div>`);
   if (outcome.tests) {
     const t = outcome.tests;
-    parts.push(`<div>${t.passed ? 'tests passed' : 'tests failed'} - ${escapeHtml(t.command)} (exit ${t.exit_code})</div>`);
+    parts.push(`<div class="outcome-part outcome-tests" data-ok="${t.passed}"><span class="verdict">${t.passed ? 'tests passed' : 'tests failed'}</span> - ${escapeHtml(t.command)} (exit ${t.exit_code})</div>`);
   }
   if (outcome.review) {
     const r = outcome.review;
-    parts.push(`<div>${r.approved ? 'approved' : 'not approved'}${r.error ? `: ${escapeHtml(r.error)}` : ''}</div>`);
     const findings = (r.findings || [])
       .map(f => `<li>${escapeHtml(f.severity)} ${escapeHtml(f.category)} in ${escapeHtml(f.file)}: ${escapeHtml(f.message)}</li>`)
       .join('');
-    if (findings) parts.push(`<ul>${findings}</ul>`);
+    parts.push(`<div class="outcome-part outcome-review" data-ok="${r.approved}"><span class="verdict">${r.approved ? 'approved' : 'not approved'}</span>${r.error ? `: ${escapeHtml(r.error)}` : ''}${findings ? `<ul class="outcome-findings">${findings}</ul>` : ''}</div>`);
   }
   if (outcome.pr_url) {
-    parts.push(`<div><a href="${escapeHtml(outcome.pr_url)}" target="_blank" rel="noreferrer">${escapeHtml(outcome.pr_url)}</a></div>`);
+    parts.push(`<div class="outcome-part outcome-pr"><a href="${escapeHtml(outcome.pr_url)}" target="_blank" rel="noreferrer">${escapeHtml(outcome.pr_url)}</a></div>`);
   }
-  parts.push(`<div>findings route: ${escapeHtml(outcome.findings_route || '')}, fix rounds: ${outcome.fix_rounds ?? 0}</div>`);
-  return `<div class="card-section" tabindex="0"><div class="field-label">outcome</div>${parts.join('')}</div>`;
+  parts.push(`<div class="outcome-route">findings route: ${escapeHtml(outcome.findings_route || '')}, fix rounds: ${outcome.fix_rounds ?? 0}</div>`);
+  return sectionHtml('outcome', 'outcome', parts.join(''));
+}
+
+// one section per field: data-section names it for the layouts, .field-value holds what it says
+function sectionHtml(name, label, value) {
+  return `<div class="card-section" tabindex="0" data-section="${name}"><div class="field-label">${label}</div><div class="section-value">${value}</div></div>`;
+}
+
+// a list, or a quiet "none" - an empty <ul> drew a label with nothing under it
+function listHtml(items) {
+  return items.length ? `<ul>${items.join('')}</ul>` : '<span class="empty">none</span>';
 }
 
 function cardPanelHtml(card, outcome) {
-  const tasks = (card.tasks || []).map(t => `<li>${t.done ? '[x]' : '[ ]'} ${escapeHtml(t.text)}</li>`).join('');
-  const criteria = (card.criteria || []).map(c => `<li>${escapeHtml(c.text)}</li>`).join('');
-  const deps = (card.deps || []).map(d => `<li>${escapeHtml(d)}</li>`).join('');
-  const attachments = (card.attachments || []).map(a => `<li>${escapeHtml(a.filename)}</li>`).join('');
+  const tasks = (card.tasks || []).map(t => `<li>${t.done ? '[x]' : '[ ]'} ${escapeHtml(t.text)}</li>`);
+  const criteria = (card.criteria || []).map(c => `<li>${escapeHtml(c.text)}</li>`);
+  // depends_on is the store's key - this read card.deps, which never existed, so the section was
+  // always empty
+  const deps = (card.depends_on || []).map(d => `<li>${escapeHtml(d)}</li>`);
+  const attachments = (card.attachments || []).map(a => `<li>${escapeHtml(a.filename)}</li>`);
   const comments = (card.comments || [])
-    .map(c => `<li><span class="field-label">${escapeHtml(c.author)}</span> ${escapeHtml(c.body)}</li>`).join('');
+    .map(c => `<li><span class="field-label">${escapeHtml(c.author)}</span> ${escapeHtml(c.body)}</li>`);
+  const status = escapeHtml(card.status) + (card.blocked_reason_code ? ` (${escapeHtml(card.blocked_reason_code)})` : '');
   return `
     <div class="card-sections">
-      <div class="card-section" tabindex="0"><div class="field-label">title</div>${escapeHtml(card.title)}</div>
-      <div class="card-section" tabindex="0"><div class="field-label">workstream</div>${escapeHtml(card.workstream || '')}</div>
-      <div class="card-section" tabindex="0"><div class="field-label">status</div>${escapeHtml(card.status)}${card.blocked_reason_code ? ` (${escapeHtml(card.blocked_reason_code)})` : ''}</div>
+      ${sectionHtml('title', 'title', escapeHtml(card.title))}
+      ${sectionHtml('workstream', 'workstream', escapeHtml(card.workstream || '') || '<span class="empty">none</span>')}
+      ${sectionHtml('status', 'status', status)}
       ${outcomeSectionHtml(outcome)}
-      <div class="card-section" tabindex="0"><div class="field-label">description</div>${escapeHtml(card.description || '')}</div>
-      <div class="card-section" tabindex="0"><div class="field-label">tasks</div><ul>${tasks}</ul></div>
-      <div class="card-section" tabindex="0"><div class="field-label">acceptance criteria</div><ul>${criteria}</ul></div>
-      <div class="card-section" tabindex="0"><div class="field-label">dependencies</div><ul>${deps}</ul></div>
-      <div class="card-section" tabindex="0"><div class="field-label">attachments</div><ul>${attachments}</ul></div>
-      <div class="card-section" tabindex="0"><div class="field-label">comments</div><ul>${comments}</ul>
+      ${sectionHtml('description', 'description', escapeHtml(card.description || ''))}
+      ${sectionHtml('tasks', 'tasks', listHtml(tasks))}
+      ${sectionHtml('criteria', 'acceptance criteria', listHtml(criteria))}
+      ${sectionHtml('deps', 'dependencies', listHtml(deps))}
+      ${sectionHtml('attachments', 'attachments', listHtml(attachments))}
+      <div class="card-section" tabindex="0" data-section="comments"><div class="field-label">comments</div>
+        <div class="section-value">${listHtml(comments)}</div>
         <input class="comment-input text-field" placeholder="add a comment, enter to send">
       </div>
     </div>
@@ -374,20 +392,30 @@ function actionableCardId() {
   return focusedCardId() || (openCard && openCard.cardId) || null;
 }
 
-// the expander's own beat, so a card changing columns moves like a card opening
-const MOVE_DURATION_MS = 220;
+// ONE BEAT FOR EVERY MOTION: ui_base's --motion-duration and --motion-ease, so a card changing
+// columns moves like a card opening. the fallbacks cover a page without the tokens and the test stub
+function motion() {
+  const css = globalThis.getComputedStyle?.(document.documentElement);
+  const raw = (css?.getPropertyValue('--motion-duration') || '').trim();
+  const seconds = raw.endsWith('s') && !raw.endsWith('ms');
+  const duration = (parseFloat(raw) || 0) * (seconds ? 1000 : 1) || 220;
+  const ease = (css?.getPropertyValue('--motion-ease') || '').trim() || 'ease';
+  const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  return {duration: still ? 0 : duration, ease};
+}
 
 // FLIP: the rebuilt strip is drawn back where the old one stood, then let go into its new column.
 // `translate`, not `transform`, so whatever transform the fan layout sets is left alone
 function slideFrom(strip, from) {
+  const {duration, ease} = motion();
   const to = strip.getBoundingClientRect();
   const dx = from.left - to.left, dy = from.top - to.top;
-  if (!dx && !dy) return;
+  if (!duration || (!dx && !dy)) return;
   Object.assign(strip.style, {transition: 'none', translate: `${dx}px ${dy}px`});
   // two frames, as in expand.js: the start position has to be painted before it is released
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    Object.assign(strip.style, {transition: `translate ${MOVE_DURATION_MS}ms`, translate: ''});
-    setTimeout(() => { strip.style.transition = ''; }, MOVE_DURATION_MS);
+    Object.assign(strip.style, {transition: `translate ${duration}ms ${ease}`, translate: ''});
+    setTimeout(() => { strip.style.transition = ''; }, duration);
   }));
 }
 
@@ -399,7 +427,9 @@ async function acceptOrRejectCard(action) {
   if (openCard) openCard.expander.close();
 
   const {ok, body} = await apiOrError(`/api/cards/${cardId}/${action}`, {method: 'POST'});
-  if (!ok) { showRun(cardId, 'refused', null, (body && body.error) || ''); return; }
+  // NAME THE ACTION THAT WAS REFUSED. a bare "refused" beside the card's own "accepted" read as
+  // the two labels swapped
+  if (!ok) { showRun(cardId, `can't ${action}`, null, (body && body.error) || ''); return; }
 
   // same order finishRun uses and for the same reason: reload first, THEN focus, THEN badge, or
   // the reload's fresh strips throw the badge and the focus away with the old ones
@@ -412,7 +442,8 @@ async function acceptOrRejectCard(action) {
     strip.focus();
     indicateFocus(strip);
   }
-  showRun(cardId, action === 'accept' ? 'accepted' : 'rejected');
+  // no badge on success: the foot's status already says accepted or rejected, and the border says it
+  // in colour - a second "accepted" beside the first was noise
 }
 
 // ---- placeholders (,  .  u  a) ------------------------------------------------------
