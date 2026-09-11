@@ -1,0 +1,71 @@
+/* ---- RUN REPLAY (t) - scrub a card's run step by step ------------------------------------------
+   rides .modal-backdrop / .panel-floating, same as the prompt editor - see replay.js for why this
+   is not a Menu. card language throughout: ruled sections, dim labels, 2px lines, square corners,
+   ui_base tokens only - no new colours introduced here. */
+
+/* opened over an already-open card panel (expand.js's own backdrop sits at z-index 70), so this
+   has to outrank it or the replay panel renders underneath a panel still on screen */
+.replay-backdrop { z-index: 75; }
+
+.replay-panel {
+  width: min(1100px, 95vw); height: min(760px, 90vh);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.replay-panel:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cream); }
+
+.replay-attempts { display: flex; gap: 8px; flex: 0 0 auto; flex-wrap: wrap; }
+.replay-attempt.on { background: var(--accent-on); color: var(--accent-on-text); border-color: var(--cream); }
+
+.replay-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 0; }
+
+/* the rail: markers on a 2px line, same shape as the card panel's own run timeline in layout.css -
+   filled lichen for ok, filled stone red for a refusal or failure, hollow for no verdict */
+.replay-rail {
+  flex: 0 0 280px; overflow-y: auto; border-right: 2px solid var(--grey-border); padding-right: 10px;
+}
+.replay-step {
+  display: flex; align-items: baseline; gap: 8px; padding: 5px 6px; cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.replay-step:hover { color: var(--cream); }
+.replay-step.on { background: var(--bg); border-left-color: var(--cream); }
+.replay-marker {
+  flex: 0 0 auto; width: 9px; height: 9px; border: 2px solid var(--grey-border);
+  background: var(--panel-row);
+}
+.replay-marker-ok { border-color: var(--status-good); background: var(--status-good); }
+.replay-marker-fail { border-color: var(--fill-warn); background: var(--fill-warn); }
+.replay-step-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.replay-detail { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding-left: 14px; }
+.replay-detail-head {
+  display: flex; justify-content: space-between; gap: 10px; color: var(--text-dim);
+  border-bottom: 2px solid var(--grey-border); padding-bottom: 8px; margin-bottom: 10px;
+}
+.replay-detail-kind { color: var(--cream); text-transform: uppercase; letter-spacing: 0.04em; }
+.replay-field { color: var(--text); margin-bottom: 8px; word-break: break-all; }
+.replay-refused { color: var(--fill-warn); }
+.replay-text { white-space: pre-wrap; line-height: 1.5; }
+.replay-note { color: var(--text-dim); margin-top: 4px; }
+.replay-pre {
+  white-space: pre-wrap; word-break: break-word; background: var(--bg);
+  border: 2px solid var(--grey-border); padding: 8px; margin: 0 0 10px;
+}
+.replay-output { color: var(--text-dim); }
+.replay-findings { margin: 4px 0; padding-left: 18px; }
+
+/* removed then added, distinguished by the `-`/`+` gutter as well as colour - never colour alone */
+.replay-diff { background: var(--bg); border: 2px solid var(--grey-border); padding: 8px; margin: 0 0 10px; }
+.replay-diff-line { display: block; white-space: pre-wrap; word-break: break-word; }
+.replay-diff-removed { color: var(--fill-warn); }
+.replay-diff-added { color: var(--status-good); }
+
+.replay-footer { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+.replay-play.on { background: var(--accent-on); color: var(--accent-on-text); border-color: var(--cream); }
+.replay-hint { color: var(--text-dim); }
+
+@media (prefers-reduced-motion: reduce) {
+  /* the play control still steps (its own interval is skipped to 0 in js), so this only strips
+     any transition the shared .toggle/.replay-step rules would otherwise animate on state change */
+  .replay-step, .replay-play, .replay-attempt { transition: none; }
+}

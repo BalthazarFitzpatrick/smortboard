@@ -168,6 +168,7 @@ use and so cannot drift.
 | `a` | agent roster: pick a row to jump to that card |
 | `r` | run the focused card |
 | `m` | change the focused card's model: board default, haiku, sonnet, opus |
+| `t` | run replay: scrub the focused card's run step by step |
 | `s` | this list |
 | `p` | edit the orchestrator, worker and reviewer prompts |
 | `/` | focus a panel's input |
