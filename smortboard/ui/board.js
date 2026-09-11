@@ -354,6 +354,7 @@ function reportNotReady(missing) {
     missing.map(m => `<span class="hazard-note">${escapeHtml(m)}</span>`).join('');
   const menu = new Menu({title: 'card runtime', sections: [{kind: 'node', node: box}]});
   menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
 }
 
 async function runFocusedCard() {
@@ -820,6 +821,7 @@ function openRosterPanel() {
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyA') openOverlay = null; },
     });
     menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    menu.el?.classList.add('menu-centered');
     loadRoster(menu);
     return menu;
   });
@@ -973,13 +975,14 @@ function usageSection(label, className) {
 // A CARD'S LANGUAGE: ruled sections with dim labels, and a foot carrying the total - built with
 // createElement so every line is its own element, which is also what the node tests read
 function usageCard(data) {
-  const parts = (data.windows || []).map(w => {
+  const windowParts = (data.windows || []).map(w => {
     const section = usageSection(windowLabel(w.type), 'usage-window');
     const {fraction} = windowMeasure(w);
     if (fraction != null) section.appendChild(fillBar(fraction, w.status === 'allowed' ? '' : 'warn'));
     section.appendChild(textLine(windowStats(w), 'stat'));
     return section;
   });
+  const modelParts = [];
   const models = data.models || [];
   if (models.length) {
     const section = usageSection('spend by model', 'usage-models');
@@ -995,14 +998,23 @@ function usageCard(data) {
         `cache ${formatTokenCount((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))}`, 'stat'));
       section.appendChild(row);
     });
-    parts.push(section);
+    modelParts.push(section);
   }
   const card = document.createElement('div');
-  card.className = 'usage-card';
-  parts.forEach((part, i) => {
-    if (i) card.appendChild(textLine('', 'h-divider'));
-    card.appendChild(part);
+  card.className = 'usage-card usage-wide';
+  // wide, not tall: the rate-limit windows in one column, the spend by model in the other
+  const columns = document.createElement('div');
+  columns.className = 'usage-columns';
+  [windowParts, modelParts].filter(group => group.length).forEach(group => {
+    const column = document.createElement('div');
+    column.className = 'usage-column';
+    group.forEach((part, i) => {
+      if (i) column.appendChild(textLine('', 'h-divider'));
+      column.appendChild(part);
+    });
+    columns.appendChild(column);
   });
+  card.appendChild(columns);
   card.appendChild(textLine('', 'h-divider'));
   const foot = document.createElement('div');
   foot.className = 'card-foot usage-foot';
@@ -1031,6 +1043,7 @@ function openUsagePanel() {
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyU') openOverlay = null; },
     });
     menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    menu.el?.classList.add('menu-centered');
     loadUsage(menu);
     return menu;
   });
@@ -1227,7 +1240,7 @@ function openShortcutOverlay() {
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyS') openOverlay = null; },
     });
     menu.openAt({x: Math.max(16, window.innerWidth / 2 - 500), y: 60});
-    menu.el?.classList.add('shortcut-overlay');
+    menu.el?.classList.add('shortcut-overlay', 'menu-centered');
     return menu;
   });
 }
