@@ -95,7 +95,7 @@ body {
 
 
 .expand-panel .card-panel {
-  padding: 14px;
+  padding: 22px 28px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -106,10 +106,11 @@ body {
 
 /* ---- the open card ------------------------------------------------------------------------
    TWO-UP, A STATE EDGE, THE RUN AS A TIMELINE - operator's pick on 2026-09-10 from fifteen previews.
-   soft boxes in a two-column grid; the title and the run span both columns */
+   open sections in a two-column grid; the title and the run span both columns. no section is a
+   box: each is headed like a board column, and the gaps between them are what read as the boxes */
 .card-panel { --rule-soft: color-mix(in srgb, var(--grey-border) 55%, transparent); }
 .card-panel .card-sections {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 30px 40px;
   grid-template-areas:
     "title title" "status workstream" "outcome outcome"
     "description criteria" "tasks deps" "comments attachments";
@@ -137,11 +138,16 @@ body {
 .card-panel .field-label { color: var(--text-dim); }
 /* grid children default to min-width: auto, so one long path or url widened a column past the
    panel - zero lets it wrap inside its box */
-.card-panel .card-section {
-  min-width: 0; overflow-wrap: anywhere;
-  border: 2px solid var(--rule-soft); padding: 10px 12px;
+.card-panel .card-section { min-width: 0; overflow-wrap: anywhere; }
+/* a section's label is a board column's header: dim text on a 2px rule, the content below it */
+.card-panel .card-section:not([data-section="title"]) > .field-label {
+  padding: 2px 0; margin-bottom: 10px; border-bottom: 2px solid var(--grey-border);
 }
-.card-panel .card-section:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cream); }
+/* with no box of its own, a focused section lights its rule rather than drawing a ring */
+.card-panel .card-section:focus-visible { outline: none; }
+.card-panel .card-section:not([data-section="title"]):focus-visible > .field-label {
+  color: var(--cream); border-bottom-color: var(--cream);
+}
 
 /* THE STATE EDGE: the card's state as a thick bar on a band sunk into the page ground, the same
    colour its collapsed strip wears as a border */
