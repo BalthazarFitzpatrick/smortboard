@@ -16,6 +16,9 @@ RUN uv sync --no-dev --no-editable
 
 ENV SMORTBOARD_DB=/data/smortboard.db
 ENV SMORTBOARD_PORT=8000
+# every interface inside the container, or the published port reaches nothing - the compose file
+# publishes it on the host's loopback only
+ENV SMORTBOARD_HOST=0.0.0.0
 EXPOSE 8000
 
 CMD ["uv", "run", "python", "-m", "smortboard.server"]

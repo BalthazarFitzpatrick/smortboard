@@ -59,6 +59,9 @@ class RunRegistry:
         self._db_path = Path(db_path)
         self._token_path = token_path
         self._runs: dict[str, RunState] = {}
+        # notes queued for LIVE delivery: a card's run pops these itself, between turns, once the
+        # agent it belongs to finishes its current turn - see runner.run_process
+        self._pending: dict[str, list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
     def get(self, card_id: str) -> RunState | None:
@@ -69,12 +72,40 @@ class RunRegistry:
         with self._lock:
             return [state for state in self._runs.values() if state.running]
 
-    def start(self, card_id: str, runner: Callable[..., Any] | None = None) -> RunState:
+    def queue_note(self, card_id: str, comment: dict[str, Any]) -> bool:
+        """queues a comment for live delivery if this card's run is currently going.
+
+        returns whether it was queued - the conversation endpoint uses this to answer `delivery`
+        as "live" or "next_run". a card with no run, or a run that has already finished, cannot
+        accept it live even if the comment was written a second before the run ended.
+        """
+        with self._lock:
+            state = self._runs.get(card_id)
+            if state is None or not state.running:
+                return False
+            self._pending.setdefault(card_id, []).append(comment)
+            return True
+
+    def pop_pending(self, card_id: str) -> list[dict[str, Any]]:
+        """drains the notes queued for one card - called by the runner between turns"""
+        with self._lock:
+            return self._pending.pop(card_id, [])
+
+    def start(
+        self,
+        card_id: str,
+        runner: Callable[..., Any] | None = None,
+        on_finish: Callable[[RunState], None] | None = None,
+    ) -> RunState:
         """starts the card, or returns the run already going for it.
 
         ONE RUN PER CARD. Two agents on one card would race each other in the same worktree, and
         the second `git worktree add` would fail anyway - so this refuses to start a second one
         rather than producing a confusing error a minute later.
+
+        `on_finish`, if given, is called with the finished RunState from the run's own thread once
+        it is done - additive for smortboard.scheduler, which uses it to learn a slot freed up
+        without polling every card.
         """
         with self._lock:
             existing = self._runs.get(card_id)
@@ -84,12 +115,17 @@ class RunRegistry:
             self._runs[card_id] = state
 
         thread = threading.Thread(
-            target=self._run, args=(state, runner or run_card_lifecycle), daemon=True
+            target=self._run, args=(state, runner or run_card_lifecycle, on_finish), daemon=True
         )
         thread.start()
         return state
 
-    def _run(self, state: RunState, runner: Callable[..., Any]) -> None:
+    def _run(
+        self,
+        state: RunState,
+        runner: Callable[..., Any],
+        on_finish: Callable[[RunState], None] | None = None,
+    ) -> None:
         store = Store(self._db_path)  # this thread's own connection, never the server's
         try:
             result = runner(
@@ -97,6 +133,7 @@ class RunRegistry:
                 state.card_id,
                 token_path=self._token_path,
                 on_phase=lambda phase: setattr(state, "phase", phase),
+                pending_notes=lambda: self.pop_pending(state.card_id),
             )
             state.phase = result.phase
             state.pr_url = result.pr_url
@@ -110,6 +147,8 @@ class RunRegistry:
         finally:
             state.finished_at = time.time()
             store.close()
+        if on_finish is not None:
+            on_finish(state)
 
 
 class Readiness:

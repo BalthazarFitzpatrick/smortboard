@@ -4,7 +4,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     ports:
-      - "8000:8000"
+      # this machine only - the api has no auth
+      - "127.0.0.1:8000:8000"
     volumes:
       - smortboard-data:/data
 

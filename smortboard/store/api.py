@@ -31,8 +31,16 @@ CARD_WRITABLE_FIELDS = {
 
 # board-wide values, one settings row per key. unset means no row.
 # the three models are stored only when fabian set them - callers apply the defaults (opus for the
-# orchestrator, sonnet for workers and the reviewer), so a changed default reaches unset boards
-_SETTING_KEYS = ("findings_route", "orchestrator_model", "worker_model", "reviewer_model")
+# orchestrator, sonnet for workers and the reviewer), so a changed default reaches unset boards.
+# max_parallel is the scheduler's cap on cards run-all starts at once - unset means 2, see
+# smortboard.scheduler.DEFAULT_MAX_PARALLEL
+_SETTING_KEYS = (
+    "findings_route",
+    "orchestrator_model",
+    "worker_model",
+    "reviewer_model",
+    "max_parallel",
+)
 
 
 def _check_findings_route(value: str | None) -> None:
@@ -277,10 +285,60 @@ class Store:
         return card
 
     def list_cards(self, board_id: str) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            "SELECT id FROM cards WHERE board_id = ? ORDER BY position", (board_id,)
-        ).fetchall()
-        return [self.get_card(r["id"]) for r in rows]
+        """every card on the board, each exactly as get_card shapes it - but one query per child
+        table for the whole board instead of eight per card, since the inbox polls this"""
+        cards = [
+            _row_to_dict(r)
+            for r in self._conn.execute(
+                "SELECT * FROM cards WHERE board_id = ? ORDER BY position", (board_id,)
+            ).fetchall()
+        ]
+        on_board = "SELECT id FROM cards WHERE board_id = ?"
+
+        def grouped(sql: str, key: str = "card_id", value: str | None = None) -> dict[str, list]:
+            by_card: dict[str, list] = {card["id"]: [] for card in cards}
+            for row in self._conn.execute(sql, (board_id,)).fetchall():
+                by_card[row[key]].append(row[value] if value else _row_to_dict(row))
+            return by_card
+
+        # the same ORDER BY as each get_card query, so every list comes back in the same order
+        tasks = grouped(
+            f"SELECT * FROM card_tasks WHERE card_id IN ({on_board}) ORDER BY card_id, position"
+        )
+        criteria = grouped(
+            f"SELECT * FROM card_criteria WHERE card_id IN ({on_board}) ORDER BY card_id, position"
+        )
+        leases = grouped(
+            f"SELECT * FROM card_leases WHERE card_id IN ({on_board}) ORDER BY card_id, rowid"
+        )
+        depends_on = grouped(
+            f"SELECT card_id, depends_on_card_id FROM card_deps WHERE card_id IN ({on_board}) "
+            "ORDER BY card_id, depends_on_card_id",
+            value="depends_on_card_id",
+        )
+        depended_on_by = grouped(
+            f"SELECT card_id, depends_on_card_id FROM card_deps "
+            f"WHERE depends_on_card_id IN ({on_board}) ORDER BY rowid",
+            key="depends_on_card_id",
+            value="card_id",
+        )
+        attachments = grouped(
+            "SELECT id, card_id, filename, media_type, size_bytes, created_at FROM attachments "
+            f"WHERE card_id IN ({on_board}) ORDER BY created_at"
+        )
+        comments = grouped(
+            f"SELECT * FROM comments WHERE card_id IN ({on_board}) ORDER BY created_at"
+        )
+        for card in cards:
+            card_id = card["id"]
+            card["tasks"] = tasks[card_id]
+            card["criteria"] = criteria[card_id]
+            card["leases"] = leases[card_id]
+            card["depends_on"] = depends_on[card_id]
+            card["depended_on_by"] = depended_on_by[card_id]
+            card["attachments"] = attachments[card_id]
+            card["comments"] = comments[card_id]
+        return cards
 
     def update_card(self, card_id: str, **fields: Any) -> dict[str, Any]:
         unknown = set(fields) - CARD_WRITABLE_FIELDS
