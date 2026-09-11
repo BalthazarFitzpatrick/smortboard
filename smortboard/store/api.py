@@ -31,8 +31,16 @@ CARD_WRITABLE_FIELDS = {
 
 # board-wide values, one settings row per key. unset means no row.
 # the three models are stored only when fabian set them - callers apply the defaults (opus for the
-# orchestrator, sonnet for workers and the reviewer), so a changed default reaches unset boards
-_SETTING_KEYS = ("findings_route", "orchestrator_model", "worker_model", "reviewer_model")
+# orchestrator, sonnet for workers and the reviewer), so a changed default reaches unset boards.
+# max_parallel is the scheduler's cap on cards run-all starts at once - unset means 2, see
+# smortboard.scheduler.DEFAULT_MAX_PARALLEL
+_SETTING_KEYS = (
+    "findings_route",
+    "orchestrator_model",
+    "worker_model",
+    "reviewer_model",
+    "max_parallel",
+)
 
 
 def _check_findings_route(value: str | None) -> None:
