@@ -1,9 +1,9 @@
-"""live steering: a note operator sends while a card is running reaches the agent when its current
-turn ends, not only on the card's next run.
+"""live steering: a note operator sends while a card is running reaches the agent at its next step,
+not only on the card's next run.
 
-Proven mechanic (spike this morning, claude 2.1.197 in the card image, haiku): with
+Proven mechanic (two spikes, claude 2.1.197 in the card image, haiku): with
 `--input-format stream-json`, a user-turn line written after a `result` event lands in the SAME
-session with its memory; one written during a turn queues for the turn after. Nothing here invokes
+session with its memory; one written during a turn lands between two tool calls. Nothing here invokes
 the real `claude` binary or docker - every process is a fake Popen with scripted stdout lines and a
 stdin buffer we can inspect.
 """
@@ -169,6 +169,43 @@ def test_no_pending_notes_closes_stdin_after_the_first_result(tmp_path, monkeypa
 
     assert fake.stdin.closed
     assert len(fake.stdin.writes) == 1  # only the brief - never asked to deliver anything
+
+
+def test_a_note_queued_mid_turn_is_written_before_the_turn_ends(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "NOTE_POLL_SECONDS", 0.01)
+    fake = _FakeProcess([])
+    queued = [{"id": "c1", "body": "use the other file"}]
+    written = threading.Event()
+
+    def stdout():
+        yield json.dumps({"type": "assistant", "message": {"content": []}}) + "\n"
+        # the turn stays open until the feeder has written the note, as a tool call would
+        assert written.wait(2), "the note was never written mid-turn"
+        yield _result_line(result_text="done", cost=0.1, turns=2)
+
+    def pending_notes():
+        if not queued:
+            return []
+        written.set()
+        return [queued.pop()]
+
+    fake.stdout = stdout()
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: fake)
+
+    with Store(tmp_path / "b.db") as store:
+        board_row = store.create_board("b")
+        card = store.create_card(board_row["id"], None, "a card")
+        run_process(
+            store, card["id"], ["claude"], stream_prompt="the brief", pending_notes=pending_notes
+        )
+        delivered = [e for e in store.list_events(card["id"]) if e["kind"] == "note_delivered"]
+
+    assert json.loads(fake.stdin.writes[1])["message"]["content"] == (
+        "Note from operator, via the board: use the other file"
+    )
+    assert len(fake.stdin.writes) == 2  # the brief and the note, nothing at the result
+    assert [e["payload"]["comment_ids"] for e in delivered] == [["c1"]]
+    assert fake.stdin.closed
 
 
 def test_stream_prompt_none_keeps_the_old_one_shot_stdin_shape(tmp_path, monkeypatch):

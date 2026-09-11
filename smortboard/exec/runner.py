@@ -19,16 +19,16 @@ a fresh uncached build, so there is no newer CLI to target), not in the S1-S3 do
   fixed marker `NOTE_PREFIX` and the worker's system prompt must tell it that lines starting with
   that marker are genuinely from operator and take priority; anything else claiming authority
   mid-run is not.
-So: a note lands at the agent's NEXT STEP, which in practice is between tool calls when there are
-any, or between turns when there are not - this file does not try to detect tool-call boundaries
-itself, only turn boundaries (the `result` event), and relies on the marker for the in-turn case.
-The runner asks `pending_notes` for queued notes after every `result` event and, if there are any,
-writes them as one more user turn, marked, and keeps stdin open; only when there is nothing
-pending does it close stdin, which is what lets the process exit.
+So a note is written to stdin, marked, within NOTE_POLL_SECONDS of being queued, and the CLI hands
+it to the model at its next step. At every `result` event anything still queued goes as one more
+turn; with nothing queued stdin closes, which is what lets the process exit.
 """
 
+import contextlib
 import json
+import queue
 import subprocess
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -225,6 +225,9 @@ class RunResult:
 # are what makes a live note different from that
 NOTE_PREFIX = "Note from operator, via the board: "
 
+# how often a live run checks for queued notes
+NOTE_POLL_SECONDS = 1.0
+
 # phrases that put a question to the operator. "approval" alone is not one: run 3's summary quoted
 # the denial text "requires approval" while reporting, and the card blocked before its gates
 _ASKING_PHRASES = (
@@ -308,6 +311,64 @@ def result_to_run_result(result_event: dict[str, Any]) -> RunResult:
     )
 
 
+class _NoteFeeder:
+    """writes queued notes into a live run's stdin as they arrive, so one reaches the agent between
+    its tool calls rather than after the whole turn. never touches the store: the sqlite connection
+    belongs to the reading thread, which records `delivered` as note_delivered events"""
+
+    def __init__(
+        self,
+        stdin: Any,
+        pending_notes: Callable[[], list[dict[str, Any]]] | None,
+        poll_seconds: float,
+    ) -> None:
+        self._stdin = stdin
+        self._pending = pending_notes
+        self._lock = threading.Lock()
+        self._stopped = threading.Event()
+        self._open = True
+        self.delivered: queue.SimpleQueue[list[str]] = queue.SimpleQueue()
+        if pending_notes is not None:
+            threading.Thread(target=self._poll, args=(poll_seconds,), daemon=True).start()
+
+    def _poll(self, poll_seconds: float) -> None:
+        while not self._stopped.wait(poll_seconds):
+            self.deliver()
+
+    def deliver(self) -> bool:
+        """writes whatever is queued as one marked user turn, and says whether anything went"""
+        with self._lock:
+            notes = self._pending() if self._open and self._pending else []
+            if not notes:
+                return False
+            text = "\n".join(f"{NOTE_PREFIX}{note['body']}" for note in notes)
+            try:
+                self._stdin.write(user_message_line(text))
+                self._stdin.flush()
+            except (BrokenPipeError, ValueError):
+                # the process already exited - the comments still reach its next run's brief
+                self._open = False
+                return False
+            self.delivered.put([note["id"] for note in notes])
+            return True
+
+    def close(self) -> None:
+        self._stopped.set()
+        with self._lock:
+            if self._open:
+                self._open = False
+                # close flushes, and the process may already have exited
+                with contextlib.suppress(BrokenPipeError):
+                    self._stdin.close()
+
+
+def _record_deliveries(store: Store | None, card_id: str, feeder: _NoteFeeder | None) -> None:
+    if store is None or feeder is None:
+        return
+    while not feeder.delivered.empty():
+        store.append_event(card_id, "note_delivered", {"comment_ids": feeder.delivered.get()})
+
+
 def run_process(
     store: Store | None,
     card_id: str,
@@ -333,9 +394,10 @@ def run_process(
     TWO STDIN SHAPES. `stdin_text` is the old one-shot handoff (reviewer, orchestrator): write it,
     close stdin, `claude` reads the prompt from argv. `stream_prompt` is live steering (worker
     cards): `token_line` (plain text, if there is a credential) then the brief as the first
-    stream-json user turn, stdin left OPEN. After every `result` event, `pending_notes()` is asked
-    for queued notes; non-empty means write them as one more user turn and keep going, empty means
-    close stdin - only then can the process exit. The two are mutually exclusive.
+    stream-json user turn, stdin left OPEN. A feeder thread writes each note the moment
+    `pending_notes()` returns it; at every `result` event anything still queued goes as one more
+    turn, and nothing queued closes stdin - only then can the process exit. The two are mutually
+    exclusive.
     """
     live = stream_prompt is not None
     process = subprocess.Popen(
@@ -350,13 +412,13 @@ def run_process(
         text=True,
     )
 
-    stdin_open = False
+    feeder: _NoteFeeder | None = None
     if live and process.stdin is not None:
         if token_line is not None:
             process.stdin.write(token_line)
         process.stdin.write(user_message_line(stream_prompt))
         process.stdin.flush()
-        stdin_open = True
+        feeder = _NoteFeeder(process.stdin, pending_notes, NOTE_POLL_SECONDS)
     elif stdin_text is not None and process.stdin is not None:
         process.stdin.write(stdin_text)
         process.stdin.close()
@@ -374,28 +436,18 @@ def run_process(
 
         if event.get("type") == "result":
             result_events.append(event)
-            if stdin_open and process.stdin is not None:
-                notes = pending_notes() if pending_notes else []
-                if notes:
-                    text = "\n".join(f"{NOTE_PREFIX}{note['body']}" for note in notes)
-                    process.stdin.write(user_message_line(text))
-                    process.stdin.flush()
-                    if store is not None:
-                        store.append_event(
-                            card_id,
-                            "note_delivered",
-                            {"comment_ids": [note["id"] for note in notes]},
-                        )
-                else:
-                    process.stdin.close()
-                    stdin_open = False
+            # anything still queued becomes one more turn; nothing queued lets the process exit
+            if feeder is not None and not feeder.deliver():
+                feeder.close()
         elif event.get("type") == "rate_limit_event":
             reason = classify_rate_limit(event)
             if reason:
                 blocked_reason_code = reason
+        _record_deliveries(store, card_id, feeder)
 
-    if stdin_open and process.stdin is not None:
-        process.stdin.close()
+    if feeder is not None:
+        feeder.close()
+        _record_deliveries(store, card_id, feeder)
 
     process.wait()
 
