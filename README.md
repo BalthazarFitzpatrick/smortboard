@@ -166,6 +166,7 @@ use and so cannot drift.
 | `u` | usage: rate-limit windows and per-model spend |
 | `a` | agent roster: pick a row to jump to that card |
 | `r` | run the focused card |
+| `m` | change the focused card's model: board default, haiku, sonnet, opus |
 | `s` | this list |
 | `p` | edit the orchestrator, worker and reviewer prompts |
 | `/` | focus a panel's input |
