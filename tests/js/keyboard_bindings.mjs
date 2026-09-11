@@ -53,7 +53,7 @@ function SpyDrawer(opts) {
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
   smort('board.js'), smort('telemetry.js'), smort('costs.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {BINDINGS, buildDrawers, boardsRef: () => boards};`)(SpyMenu, SpyDrawer);
+;return {BINDINGS, buildDrawers, boardsRef: () => boards, overlayRows};`)(SpyMenu, SpyDrawer);
 
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
@@ -64,6 +64,15 @@ const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter
 const boundCodes = mod.BINDINGS.map(b => b.code);
 CONTRACT_KEYS.forEach(code => assert.ok(boundCodes.includes(code), `${code} must be in BINDINGS`));
 assert.equal(boundCodes.length, CONTRACT_KEYS.length, 'BINDINGS should declare exactly the contract keys, no more no less');
+
+// the overlay shows the nine board keys as one row, so the panels column fits on screen
+{
+  const rows = mod.overlayRows(mod.BINDINGS.filter(b => b.group === 'panels'));
+  const boardRows = rows.filter(r => /jump to board/.test(r.label));
+  assert.equal(boardRows.length, 1, 'one overlay row for all nine board keys');
+  assert.equal(boardRows[0].label, '1 .. 9 - jump to board 1 .. 9');
+  assert.equal(rows.length, mod.BINDINGS.filter(b => b.group === 'panels').length - 8, 'the other rows are untouched');
+}
 
 function press(code) {
   document._dispatch('keydown', {code, key: code, target: document.body, preventDefault() {}});
@@ -100,8 +109,11 @@ const overlay = openedMenus[openedMenus.length - 1];
 // two columns now, one section each - read together they must still be the whole table, in order
 assert.equal(overlay.sections.length, 2, 'the overlay has two columns');
 const overlayItems = overlay.sections.flatMap(s => s.items);
-assert.deepEqual(overlayItems.map(i => i.id), boundCodes, 'the overlay must list exactly the bound codes, in order');
-mod.BINDINGS.forEach((b, i) => {
+// the nine board keys fold into Digit1's row, so the panels column fits on screen
+const folded = code => /^Digit[2-9]$/.test(code);
+const expectedIds = boundCodes.filter(c => !folded(c)).map(c => (c === 'Digit1' ? 'boards' : c));
+assert.deepEqual(overlayItems.map(i => i.id), expectedIds, 'the overlay lists the bound codes in order, board keys as one row');
+mod.BINDINGS.filter(b => !folded(b.code)).forEach((b, i) => {
   assert.ok(overlayItems[i].label.startsWith(b.label), `overlay row ${i} should show binding label "${b.label}"`);
 });
 
