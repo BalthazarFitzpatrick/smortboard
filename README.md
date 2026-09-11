@@ -169,6 +169,7 @@ use and so cannot drift.
 | `m` | change the focused card's model: board default, haiku, sonnet, opus |
 | `s` | this list |
 | `p` | edit the orchestrator, worker and reviewer prompts |
+| `n` | attention inbox: answer a blocked card, across every board |
 | `/` | focus a panel's input |
 | `,` | workforce: chat with the focused card's agent |
 | `.` | mission control: chat with the board's orchestrator |
