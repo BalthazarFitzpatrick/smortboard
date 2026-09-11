@@ -19,6 +19,7 @@ const BINDINGS = [
   {code: 'KeyY', label: 'y', action: 'accept the focused card', group: 'cards'},
   {code: 'KeyX', label: 'x', action: 'reject the focused card', group: 'cards'},
   {code: 'KeyM', label: 'm', action: "cycle the card's model", group: 'cards'},
+  {code: 'KeyT', label: 't', action: "run replay: scrub the focused card's run step by step", group: 'cards'},
   {code: 'Slash', label: '/', action: "focus the open card's comment input", group: 'cards'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
@@ -1255,6 +1256,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
   if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
   if (evt.code === 'KeyM') { cycleCardModel(); return; }
+  if (evt.code === 'KeyT') { toggleReplay(); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
   // preventDefault: opening a drawer focuses its input, and the key that opened it typed itself there

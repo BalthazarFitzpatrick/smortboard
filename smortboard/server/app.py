@@ -5,6 +5,7 @@ import re
 import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
+from urllib.parse import parse_qs, urlsplit
 
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.orchestrator import (
@@ -23,6 +24,7 @@ from smortboard.store import Store
 from smortboard.store.api import CARD_WRITABLE_FIELDS
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
 from smortboard.telemetry import roster_rows, usage_projection
+from smortboard.timeline import card_timeline
 
 _ROUTES = [
     (re.compile(r"^/health$"), "GET"),
@@ -58,6 +60,7 @@ _ROUTES = [
     (re.compile(r"^/api/usage$"), "GET"),
     (re.compile(r"^/api/prompts$"), "GET"),
     (re.compile(r"^/api/prompts/(?P<role>[^/]+)$"), "PATCH"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/timeline$"), "GET"),
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
 ]
 
@@ -194,6 +197,8 @@ def _make_handler(
                 self._send_json(200, store.get_settings())
             elif path.endswith("/events"):
                 self._send_json(200, store.list_events(params["card_id"]))
+            elif "card_id" in params and path.endswith("/timeline"):
+                self._handle_timeline(params["card_id"])
             elif "board_id" in params and path.endswith("/orchestrator") and method == "GET":
                 self._send_json(200, self._orchestrator_view(params["board_id"]))
             elif "board_id" in params and path.endswith("/orchestrator") and method == "POST":
@@ -227,6 +232,14 @@ def _make_handler(
                 self._handle_asset(params["name"])
             else:
                 self._send_json(404, {"error": f"no route for {method} {path}"})
+
+        def _handle_timeline(self, card_id: str) -> None:
+            """RUN REPLAY: GET /api/cards/{id}/timeline?attempt=N - see smortboard/timeline.py"""
+            store.get_card(card_id)  # raises NotFoundError on a bad id
+            query = parse_qs(urlsplit(self.path).query)
+            raw_attempt = query.get("attempt", [None])[0]
+            attempt = int(raw_attempt) if raw_attempt else None
+            self._send_json(200, card_timeline(store, card_id, attempt=attempt))
 
         def _handle_run(self, card_id: str) -> None:
             """starts a card, or reports the run already going for it.
