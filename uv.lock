@@ -481,7 +481,7 @@ dev = [
 requires-dist = [
     { name = "keyring", specifier = ">=25.7.0" },
     { name = "platformdirs", specifier = ">=4.0" },
-    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=d9f8cca2f45b7cf9609407549fa13ae2510b3136" },
+    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=f1a3f54c81b7f0f870a2822734b7bd14a31e2a2b" },
 ]
 
 [package.metadata.requires-dev]
@@ -494,7 +494,7 @@ dev = [
 [[package]]
 name = "ui-base"
 version = "0.1.0"
-source = { git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=d9f8cca2f45b7cf9609407549fa13ae2510b3136#d9f8cca2f45b7cf9609407549fa13ae2510b3136" }
+source = { git = "https://github.com/BalthazarFitzpatrick/ui_base.git?rev=f1a3f54c81b7f0f870a2822734b7bd14a31e2a2b#f1a3f54c81b7f0f870a2822734b7bd14a31e2a2b" }
 
 [[package]]
 name = "virtualenv"

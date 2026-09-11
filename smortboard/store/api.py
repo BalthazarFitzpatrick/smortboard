@@ -16,7 +16,7 @@ from smortboard.store.schema import (
     migrate,
 )
 
-_CARD_WRITABLE_FIELDS = {
+CARD_WRITABLE_FIELDS = {
     "title",
     "workstream",
     "status",
@@ -283,7 +283,7 @@ class Store:
         return [self.get_card(r["id"]) for r in rows]
 
     def update_card(self, card_id: str, **fields: Any) -> dict[str, Any]:
-        unknown = set(fields) - _CARD_WRITABLE_FIELDS
+        unknown = set(fields) - CARD_WRITABLE_FIELDS
         if unknown:
             raise UnknownFieldError(f"not writable: {sorted(unknown)}")
         current = self._card_row(card_id)
