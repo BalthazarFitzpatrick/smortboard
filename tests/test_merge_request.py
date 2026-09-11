@@ -169,13 +169,38 @@ def test_an_empty_branch_refuses_rather_than_opening_an_empty_pr(tmp_path, monke
     store.close()
 
 
+def test_the_cost_line_sums_every_run_on_the_card(tmp_path, monkeypatch):
+    bodies = []
+    _fake(monkeypatch)
+    store, card_id = _store(tmp_path)
+    # the worker, then the reviewer: the old code kept only the last - the reviewer's 0.30 over 3
+    store.append_event(card_id, "result", {"total_cost_usd": 4.27, "num_turns": 37})
+    store.append_event(card_id, "result", {"total_cost_usd": 0.30, "num_turns": 3})
+    real_run = mr._run
+
+    def _capture(cmd, cwd=None):
+        if cmd[:3] == ["gh", "pr", "create"]:
+            bodies.append(Path(cmd[cmd.index("--body-file") + 1]).read_text())
+        return real_run(cmd, cwd=cwd)
+
+    monkeypatch.setattr(mr, "_run", _capture)
+    mr.open_merge_request(store, card_id, tmp_path, BRANCH)
+    assert "$4.57" in bodies[0] and "40 turns" in bodies[0]
+    store.close()
+
+
 def test_an_existing_pr_is_reported_not_duplicated(tmp_path, monkeypatch):
     seen = _fake(monkeypatch, existing='[{"url": "https://github.com/o/r/pull/3"}]')
     store, card_id = _store(tmp_path)
     result = mr.open_merge_request(store, card_id, tmp_path, BRANCH)
     assert result.already_existed
     assert result.url == "https://github.com/o/r/pull/3"
+    assert result.refusal is None, "an open PR that was pushed to is not a refusal"
     assert not any(c[:3] == ["gh", "pr", "create"] for c in seen)
+    # the re-run's commits reach the open PR - before, they were never pushed
+    pushes = [c for c in seen if c[0] == "git" and "push" in c]
+    assert pushes and f"refs/heads/{BRANCH}:refs/heads/{BRANCH}" in pushes[0]
+    assert not any("--force" in c or "-f" in c for c in pushes)
     store.close()
 
 
