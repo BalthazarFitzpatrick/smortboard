@@ -21,7 +21,7 @@ const BINDINGS = [
   {code: 'KeyX', label: 'x', action: 'reject the focused card', group: 'cards'},
   {code: 'KeyM', label: 'm', action: "cycle the card's model", group: 'cards'},
   {code: 'KeyT', label: 't', action: "run replay: scrub the focused card's run step by step", group: 'cards'},
-  {code: 'Slash', label: '/', action: "focus the open card's comment input", group: 'cards'},
+  {code: 'Slash', label: '/', action: "type: the open card's comment, or the open chat", group: 'cards'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
   {code: 'KeyW', label: 'w', action: 'run the board: start / stop the queue', group: 'cards'},
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
@@ -592,10 +592,11 @@ function appendLine(log, author, body, cls) {
 }
 
 // enter sends, shift+enter is left alone so the textarea's own newline behaviour handles it.
-// escape steps from the input to the log, which is focusable so the drawer's own key then closes it
+// escape leaves typing and hands focus back to the board, with the drawer still open - , and .
+// work again from there
 function wireTerminalInput(input, log, onSend) {
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); log.focus(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); input.blur(); reenterIfFocusLost(); return; }
     if (evt.code === 'Enter' && !evt.shiftKey) {
       evt.preventDefault();
       const text = input.value.trim();
@@ -620,7 +621,6 @@ function buildMissionControlDom(drawer) {
 }
 
 async function openMissionControl() {
-  mc.input.focus();
   await loadMissionControl();
 }
 
@@ -720,11 +720,9 @@ function buildWorkforceDom(drawer) {
 }
 
 async function openWorkforce() {
-  // THE CARD IS READ BEFORE THE INPUT TAKES FOCUS. focusing first left no card focused, so , said
-  // "no card is focused" over the card you were looking at
-  const target = resolveWorkforceTarget();
-  wf.input.focus();
-  await loadWorkforce(await target);
+  // OPENING LEAVES FOCUS ON THE BOARD, so , closes what , opened and the focused card stays the
+  // target. / is the way into the input
+  await loadWorkforce(await resolveWorkforceTarget());
 }
 
 function closeWorkforce() {
@@ -840,6 +838,18 @@ const drawers = {};
 // the gap above and below a drawer, equal at both ends so it reads as pinned rather than floating
 const DRAWER_INSET_PX = 50;
 
+// / picks the chat of the drawer opened last when both are open
+let lastDrawerEdge = null;
+
+// / IS THE ONE WAY INTO TYPING: the open card's comment first, else the chat of an open drawer.
+// opening a card or a drawer never focuses an input, so every letter stays a board key until /
+function focusTypingTarget() {
+  if (openCard?.input) { openCard.input.focus(); return; }
+  const edges = [lastDrawerEdge, lastDrawerEdge === 'right' ? 'left' : 'right'];
+  const edge = edges.find(e => e && drawers[e]?.isOpen());
+  if (edge) (edge === 'right' ? mc.input : wf.input).focus();
+}
+
 function drawerFor(edge) {
   if (drawers[edge]) return drawers[edge];
   const bar = document.querySelector('.board-bar');
@@ -851,7 +861,10 @@ function drawerFor(edge) {
     widthRatio: 0.85,
     top: (bar ? Math.round(bar.getBoundingClientRect().bottom) : 0) + DRAWER_INSET_PX,
     bottom: DRAWER_INSET_PX,
-    onOpen: () => (edge === 'right' ? openMissionControl() : openWorkforce()),
+    onOpen: () => {
+      lastDrawerEdge = edge;
+      return edge === 'right' ? openMissionControl() : openWorkforce();
+    },
     onClose: () => {
       // typing in a drawer's own input/log must not leave focus dangling once the drawer parks -
       // hand it back to the board, the same recovery reenterIfFocusLost already does elsewhere
@@ -1379,10 +1392,11 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyH') { evt.preventDefault(); togglePreflightPanel(); return; }
   // preventDefault: the panel focuses its first input, and the key that opened it typed itself there
   if (evt.code === 'KeyB') { evt.preventDefault(); toggleBoardsPanel(); return; }
-  // preventDefault: opening a drawer focuses its input, and the key that opened it typed itself there
+  // opening a drawer leaves focus on the board, so the key that opened it also closes it
   if (evt.code === 'Comma') { evt.preventDefault(); drawerFor('left').toggle(); return; }
   if (evt.code === 'Period') { evt.preventDefault(); drawerFor('right').toggle(); return; }
-  if (evt.code === 'Slash' && openCard?.input) { evt.preventDefault(); openCard.input.focus(); return; }
+  // preventDefault: the / would otherwise type itself into the input it focuses
+  if (evt.code === 'Slash') { evt.preventDefault(); focusTypingTarget(); return; }
   if (binding.code.startsWith('Digit')) {
     const index = Number(binding.label) - 1;
     const board = boards[index];
