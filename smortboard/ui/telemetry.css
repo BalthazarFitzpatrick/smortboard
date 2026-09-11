@@ -7,7 +7,16 @@
 .telemetry-refusals { margin: 4px 0 0; padding-left: 18px; color: var(--fill-warn); }
 .telemetry-refusals li { word-break: break-all; }
 
-/* cost overview (c): the boards side by side in the wide usage card, two to a row where they fit */
-.cost-boards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 22px 36px; }
+/* cost overview (c): one row per board so nine still fit, the figures in aligned columns */
+.cost-rows {
+  display: grid; align-items: center; gap: 9px 18px; font-variant-numeric: tabular-nums;
+  grid-template-columns: minmax(120px, 1.2fr) minmax(90px, 1fr) repeat(6, auto);
+}
+.cost-row { display: contents; }
+.cost-rows .cost-head { color: var(--text-dim); }
+.cost-rows .num { text-align: right; white-space: nowrap; }
+.cost-rows .cost-name { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cost-rows .cost-name:hover { color: var(--cream); }
+.cost-rows .progress-row { margin: 0; }
 .cost-foot { flex-direction: column; align-items: flex-start; gap: 4px; }
 .cost-foot .cost-note { color: var(--text-dim); }

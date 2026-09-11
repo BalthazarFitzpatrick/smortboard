@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {installStubDom, element} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../ui_base/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 // never resolves (nothing in this file awaits a fetch), but records what was asked for so y/x can

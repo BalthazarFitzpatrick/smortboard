@@ -74,7 +74,7 @@ function telemetryCard(data) {
     ? ` - ${formatUsd(data.totals.refusal_cost_usd)} on runs with refusals`
     : '';
   foot.appendChild(
-    textLine(`${data.totals.attempts} attempts - ${formatUsd(data.totals.cost_usd)}${wasteNote}`, 'stat')
+    textLine(`${data.totals.attempts} attempt${data.totals.attempts === 1 ? '' : 's'} - ${formatUsd(data.totals.cost_usd)}${wasteNote}`, 'stat')
   );
   card.appendChild(foot);
   return card;

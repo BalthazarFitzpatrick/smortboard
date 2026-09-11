@@ -242,27 +242,40 @@ async function openCardPanel(panel, cardId) {
 
 // worker summary, test gate, reviewer verdict, PR link and the fix-round count - all of it null
 // until a run has actually landed on this card, in which case the section says so plainly
-function outcomeSectionHtml(outcome) {
+// reason codes that stop a card on the operator rather than on a fault in the work
+const ATTENTION_CODES = new Set(['AGENT_QUESTION', 'LEASE_CONFLICT', 'USAGE_LIMIT', 'DEPENDENCY_REJECTED']);
+
+function outcomeSectionHtml(outcome, card = {}) {
+  const working = card.status === 'doing' && !card.blocked_reason_code;
   const empty = !outcome || (!outcome.summary && !outcome.tests && !outcome.review && !outcome.pr_url);
-  if (empty) return sectionHtml('outcome', 'outcome', '<span class="empty">not run yet</span>');
-  // the run's steps in the order they happened, each marked passed or not, so a layout can draw
-  // them as a sequence
+  const workingPart = '<div class="outcome-part outcome-working" data-state="doing"><span class="verdict">working</span></div>';
+  if (empty) {
+    return sectionHtml('outcome', 'outcome', working ? workingPart : '<span class="empty">not run yet</span>');
+  }
+  // the run's steps in the order they happened, each dot saying what that step came to: done, a
+  // problem, waiting on the operator, or still going
   const parts = [];
-  if (outcome.summary) parts.push(`<div class="outcome-part outcome-summary">${escapeHtml(outcome.summary)}</div>`);
+  if (outcome.summary) {
+    const waiting = !outcome.tests && ATTENTION_CODES.has(card.blocked_reason_code);
+    parts.push(`<div class="outcome-part outcome-summary" data-state="${waiting ? 'attention' : 'ok'}">${escapeHtml(outcome.summary)}</div>`);
+  }
   if (outcome.tests) {
     const t = outcome.tests;
-    parts.push(`<div class="outcome-part outcome-tests" data-ok="${t.passed}"><span class="verdict">${t.passed ? 'tests passed' : 'tests failed'}</span> - ${escapeHtml(t.command)} (exit ${t.exit_code})</div>`);
+    parts.push(`<div class="outcome-part outcome-tests" data-ok="${t.passed}" data-state="${t.passed ? 'ok' : 'problem'}"><span class="verdict">${t.passed ? 'tests passed' : 'tests failed'}</span> - ${escapeHtml(t.command)} (exit ${t.exit_code})</div>`);
   }
   if (outcome.review) {
     const r = outcome.review;
     const findings = (r.findings || [])
       .map(f => `<li>${escapeHtml(f.severity)} ${escapeHtml(f.category)} in ${escapeHtml(f.file)}: ${escapeHtml(f.message)}</li>`)
       .join('');
-    parts.push(`<div class="outcome-part outcome-review" data-ok="${r.approved}"><span class="verdict">${r.approved ? 'approved' : 'not approved'}</span>${r.error ? `: ${escapeHtml(r.error)}` : ''}${findings ? `<ul class="outcome-findings">${findings}</ul>` : ''}</div>`);
+    // a review that did not approve comes to the operator (or back to the worker, still going)
+    const reviewState = r.approved ? 'ok' : (working ? 'doing' : 'attention');
+    parts.push(`<div class="outcome-part outcome-review" data-ok="${r.approved}" data-state="${reviewState}"><span class="verdict">${r.approved ? 'approved' : 'not approved'}</span>${r.error ? `: ${escapeHtml(r.error)}` : ''}${findings ? `<ul class="outcome-findings">${findings}</ul>` : ''}</div>`);
   }
   if (outcome.pr_url) {
-    parts.push(`<div class="outcome-part outcome-pr"><a href="${escapeHtml(outcome.pr_url)}" target="_blank" rel="noreferrer">${escapeHtml(outcome.pr_url)}</a></div>`);
+    parts.push(`<div class="outcome-part outcome-pr" data-state="ok"><a href="${escapeHtml(outcome.pr_url)}" target="_blank" rel="noreferrer">${escapeHtml(outcome.pr_url)}</a></div>`);
   }
+  if (working && !outcome.pr_url) parts.push(workingPart);
   parts.push(`<div class="outcome-route">findings route: ${escapeHtml(outcome.findings_route || '')}, fix rounds: ${outcome.fix_rounds ?? 0}</div>`);
   return sectionHtml('outcome', 'outcome', parts.join(''));
 }
@@ -290,14 +303,14 @@ function cardPanelHtml(card, outcome) {
   const deps = (card.depends_on || []).map(d => `<li>${escapeHtml(dependencyLabel(d))}</li>`);
   const attachments = (card.attachments || []).map(a => `<li>${escapeHtml(a.filename)}</li>`);
   const comments = (card.comments || [])
-    .map(c => `<li><span class="field-label">${escapeHtml(c.author)}</span> ${escapeHtml(c.body)}</li>`);
+    .map(c => `<li><span class="field-label">${escapeHtml(authorLabel(c.author))}</span> ${escapeHtml(c.body)}</li>`);
   const status = escapeHtml(card.status) + (card.blocked_reason_code ? ` (${escapeHtml(card.blocked_reason_code)})` : '');
   return `
     <div class="card-sections">
       ${sectionHtml('title', 'title', escapeHtml(card.title))}
       ${sectionHtml('workstream', 'workstream', escapeHtml(card.workstream || '') || '<span class="empty">none</span>')}
       ${sectionHtml('status', 'status', `${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div>`)}
-      ${outcomeSectionHtml(outcome)}
+      ${outcomeSectionHtml(outcome, card)}
       ${sectionHtml('description', 'description', escapeHtml(card.description || ''))}
       ${sectionHtml('tasks', 'tasks', listHtml(tasks))}
       ${sectionHtml('criteria', 'acceptance criteria', listHtml(criteria))}
@@ -556,13 +569,19 @@ function terminalDom(promptGlyph) {
   return wrap;
 }
 
-// author drives the gutter's colour class; cls overrides it for board/error/thinking lines whose
+// the name shown for the operator's own lines - /health says who; stored rows keep the key "operator"
+let operatorName = 'you';
+function authorLabel(author) {
+  return author === 'operator' ? operatorName : author;
+}
+
+// author drives the line's colour class; cls overrides it for board/error/thinking lines whose
 // author name (e.g. "orchestrator") shouldn't paint the same as an authored message would
 function appendLine(log, author, body, cls) {
   const line = document.createElement('div');
   line.className = `terminal-line author-${cls || author}`;
-  line.innerHTML = `<span class="terminal-author">${escapeHtml(author)}</span>` +
-    `<span class="terminal-body">${escapeHtml(body)}</span>`;
+  line.innerHTML = `<div class="terminal-author">${escapeHtml(authorLabel(author))}</div>` +
+    `<div class="terminal-body">${escapeHtml(body)}</div>`;
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
   return line;
@@ -674,7 +693,11 @@ async function sendMissionControl(text) {
 // ---- workforce (,) - one card's agent chat -------------------------------------------------------
 
 const wf = {header: null, cycle: null, count: null, subheader: null, log: null, input: null,
-  poll: null, cardId: null, working: [], index: 0, pinned: false};
+  poll: null, rotate: null, prev: null, next: null, cardId: null, working: [], index: 0, pinned: false};
+
+// MALL CAM: with no card focused or open, the workforce is not pinned to one - it rotates through
+// every working card on its own, like a security monitor. arrows still step it by hand
+const MALL_CAM_SECONDS = 8;
 
 function buildWorkforceDom(drawer) {
   const term = terminalDom('$');
@@ -686,8 +709,10 @@ function buildWorkforceDom(drawer) {
   wf.log = term.querySelector('.terminal-log');
   wf.input = term.querySelector('.terminal-input');
   wireTerminalInput(wf.input, wf.log, sendWorkforce);
-  term.querySelector('.terminal-prev').onclick = () => cycleWorkforce(-1);
-  term.querySelector('.terminal-next').onclick = () => cycleWorkforce(1);
+  wf.prev = term.querySelector('.terminal-prev');
+  wf.next = term.querySelector('.terminal-next');
+  wf.prev.onclick = () => cycleWorkforce(-1);
+  wf.next.onclick = () => cycleWorkforce(1);
 }
 
 async function openWorkforce() {
@@ -700,6 +725,7 @@ async function openWorkforce() {
 
 function closeWorkforce() {
   clearTimeout(wf.poll);
+  clearTimeout(wf.rotate);
 }
 
 // focused card wins, then the open card, then the roster's first working row - so , always lands
@@ -732,10 +758,18 @@ async function loadWorkforce(resolved) {
   await renderWorkforceConversation();
 }
 
+// the header's mode: "pinned" to the card you are on, or the mall cam and where it is in its round
 function updateWorkforceCycle() {
-  const show = !wf.pinned && wf.working.length > 1;
-  wf.cycle.hidden = !show;
-  if (show) wf.count.textContent = `${wf.index + 1}/${wf.working.length}`;
+  const rotating = !wf.pinned && wf.working.length > 1;
+  wf.cycle.hidden = false;
+  if (wf.prev) wf.prev.hidden = !rotating;
+  if (wf.next) wf.next.hidden = !rotating;
+  if (wf.pinned) wf.count.textContent = 'pinned';
+  else wf.count.textContent = rotating ? `mall cam ${wf.index + 1}/${wf.working.length}` : 'mall cam';
+  clearTimeout(wf.rotate);
+  if (rotating && drawers.left && drawers.left.isOpen()) {
+    wf.rotate = setTimeout(() => cycleWorkforce(1), MALL_CAM_SECONDS * 1000);
+  }
 }
 
 function cycleWorkforce(delta) {
@@ -1352,3 +1386,5 @@ document.addEventListener('keydown', evt => {
 // FOCUS STARTS ON THE BOARD BAR, per the brief. returnToBoardBar was wired only to onExitTop, so
 // nothing ever focused on load and every key was dead until the user clicked - which no test saw
 loadBoards().then(() => { buildDrawers(); returnToBoardBar(); });
+// who the operator is, for their own lines in the chats and comments - "you" until the board answers
+api('/health').then(h => { if (h && h.operator) operatorName = h.operator; }).catch(() => {});
