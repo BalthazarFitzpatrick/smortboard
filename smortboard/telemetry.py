@@ -234,6 +234,8 @@ def _attempt_outcome(segment: list[dict[str, Any]]) -> str:
     for event in reversed(segment):
         if event["kind"] == "merge_request" and event["payload"].get("url"):
             return "pull request"
+    if any(event["kind"] == "run_refused" for event in segment):
+        return "refused"
     for event in reversed(segment):
         if event["kind"] == "rate_limit_event":
             reason = classify_rate_limit(event["payload"])

@@ -193,6 +193,9 @@ def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
     """
     store.update_card(state.card_id, review_flag=True)
     _note(store, state.card_id, note)
+    # the attempt's own record of how it ended - a refusal after both gates otherwise read as
+    # still in progress to telemetry, which only sees events
+    store.append_event(state.card_id, "run_refused", {"note": note})
     state.phase = "refused"
     state.refusal = note
     return state
