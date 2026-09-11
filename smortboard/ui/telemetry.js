@@ -20,7 +20,11 @@ function telemetryAttemptSection(attempt, cardTotal) {
   section.appendChild(textLine(when, 'field-label'));
 
   const share = cardTotal > 0 ? attempt.cost_usd / cardTotal : null;
-  const modelBits = [attempt.worker_model, attempt.reviewer_model].filter(Boolean);
+  // named by role: the same model twice read as a typo
+  const modelBits = [
+    attempt.worker_model ? `worker ${attempt.worker_model}` : null,
+    attempt.reviewer_model ? `reviewer ${attempt.reviewer_model}` : null,
+  ].filter(Boolean);
   const modelNote = modelBits.length ? ` - ${modelBits.join(', ')}` : '';
   section.appendChild(textLine(`${formatUsd(attempt.cost_usd)}${modelNote}`, 'usage-model-name'));
   if (share != null) section.appendChild(fillBar(share, attempt.refusal_count ? 'warn' : ''));
