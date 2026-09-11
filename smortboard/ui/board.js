@@ -1029,7 +1029,9 @@ function windowMeasure(w, now = Date.now() / 1000) {
   // A PAST RESET MEANS THE DATA IS OLD: the window rolled over after the last run reported it, so
   // there is nothing current to draw - a full bar reading "0m left" said the opposite
   if (left <= 0) return {fraction: null, note: 'reset since the last run reported it'};
-  return {fraction: Math.min(1, Math.max(0, 1 - left / length)), note: `${formatDuration(left)} left in the window`};
+  const fraction = Math.min(1, Math.max(0, 1 - left / length));
+  // the number reads as time, not usage: "through" the window, never "used"
+  return {fraction, note: `${Math.round(fraction * 100)}% through - ${formatDuration(left)} left in the window`};
 }
 
 function windowStats(w, now = Date.now() / 1000) {

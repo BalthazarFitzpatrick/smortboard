@@ -129,6 +129,8 @@ responses.set('/api/roster', stubJson(200, []));
   const win = sections[0].node.querySelectorAll('.usage-window')[0];
   assert.equal(win.querySelectorAll('.bar-fill')[0].style.width, '80%', 'four of five hours gone fills 80%');
   assert.ok(statOf2(win).includes('left in the window'), 'the line names what the bar measures');
+  assert.ok(statOf2(win).includes('80% through'), 'and carries the number the bar shows, as time not usage');
+  assert.ok(!statOf2(win).includes('used'), 'a time fraction never reads as usage');
   function statOf2(el) { return el.querySelectorAll('.stat')[0].textContent; }
 }
 
