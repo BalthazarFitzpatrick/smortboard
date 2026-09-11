@@ -123,6 +123,10 @@ class Store:
         image: str | None = None,
         lint_command: str | None = None,
     ) -> dict:
+        # no validation here on purpose - the http layer (app.py's repos POST route) validates a
+        # person's input with validate_repo before this is ever called; the store itself stays the
+        # thing every other test builds a repo row against without needing a real git checkout
+        self.get_board(board_id)  # raises NotFoundError on a bad board id
         repo_id = _new_id()
         self._conn.execute(
             """
