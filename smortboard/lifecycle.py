@@ -290,11 +290,13 @@ def run_card_lifecycle(
         # path, so the worktree from its first run reuses it (commits and all) rather than being
         # refused. only reached for a non-accepted card: accepted already returned above, and a
         # rejected card's decide.py step deletes the branch, so it always falls to the fresh cut
+        worktree_reused = True
         if worktree_path(repo["path"], card_id).exists():
             tree = existing_worktree(repo["path"], card_id)
         elif branch_exists(repo["path"], card_id):
             tree = add_worktree(repo["path"], card_id)
         else:
+            worktree_reused = False
             cut_base = base
             if card.get("depends_on"):
                 cut_base = _base_for_fresh_cut(store, state, repo["path"], base)
@@ -342,7 +344,7 @@ def run_card_lifecycle(
     # already did. "off" turns it off board-wide; unset means on.
     briefing = None
     if configured.get("resume_briefing") != "off":
-        briefing = resume_briefing(store, card_id)
+        briefing = resume_briefing(store, card_id, worktree_reused=worktree_reused)
 
     phase("running")
     if (stopped := work(build_card_prompt(card, briefing))) is not None:

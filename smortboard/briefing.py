@@ -108,7 +108,7 @@ def _format_finding(finding: dict[str, Any]) -> str:
     return f"- {finding.get('severity', '')} {finding.get('category', '')} {prefix}{finding.get('message', '')}".strip()
 
 
-def _detail_lines(segment: list[dict[str, Any]]) -> list[str]:
+def _detail_lines(segment: list[dict[str, Any]], worktree_reused: bool) -> list[str]:
     lines: list[str] = []
 
     outcome = _attempt_outcome(segment)
@@ -144,7 +144,11 @@ def _detail_lines(segment: list[dict[str, Any]]) -> list[str]:
     if summary:
         lines.append(f"Final worker summary: {summary}")
 
-    lines.append("Its commits are already on this branch.")
+    # a rejected card's branch is deleted, so its next run starts clean from the base branch
+    if worktree_reused:
+        lines.append("Its commits are already on this branch.")
+    else:
+        lines.append("Its branch is gone: this run starts fresh from the base branch.")
     return lines
 
 
@@ -154,20 +158,23 @@ def _truncate(text: str, cap: int) -> str:
     return text[:cap].rstrip() + "\n...[truncated]"
 
 
-def resume_briefing(store: Store, card_id: str) -> str | None:
+def resume_briefing(store: Store, card_id: str, worktree_reused: bool = True) -> str | None:
     """a compact summary of earlier attempts, for a resumed card's brief.
 
     None when no earlier attempt ever reached the worker - a fresh card, or one refused before it
     got that far, has nothing worth summarising.
     """
     segments = _attempts(store.list_events(card_id))
+    # the lifecycle asks after recording this run's own start - that run is not an earlier attempt
+    if segments and all(event["kind"] == "lifecycle_started" for event in segments[-1]):
+        segments = segments[:-1]
     worker_indexes = [i for i, segment in enumerate(segments) if _reached_worker(segment)]
     if not worker_indexes:
         return None
 
     latest_index = worker_indexes[-1]
     lines = [f"Attempt {latest_index + 1} of {len(segments)} (most recent that ran):"]
-    lines += _detail_lines(segments[latest_index])
+    lines += _detail_lines(segments[latest_index], worktree_reused)
 
     older = [(i, s) for i, s in enumerate(segments) if i != latest_index]
     if older:
