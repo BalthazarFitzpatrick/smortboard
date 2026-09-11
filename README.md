@@ -28,19 +28,10 @@ It never merges. Anything that needs you waits in one inbox.
 
 ## How a card runs
 
-```mermaid
-flowchart LR
-  A[card] --> B[worktree + branch]
-  B --> C[worker<br/>own container]
-  C -->|commits| D[test gate<br/>--network none]
-  D -->|pass| E[reviewer<br/>read-only]
-  E -->|approves| F[pull request]
-  F --> G((you merge))
-  D -->|fail| X[blocked<br/>TESTS_FAILED]
-  E -->|findings| R{findings route}
-  R -->|fix, max 2 rounds| C
-  R -->|attention| Y[blocked<br/>REVIEW_REJECTED]
-```
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-lifecycle-light.png">
+  <img src="docs/images/art-lifecycle-dark.png" alt="The card lifecycle: preparing, running, testing, reviewing, opening, opened. Reviewer findings on the fix route go back to the worker at most twice; a question, a limit, a crash or a lease conflict, failed tests, or a rejected review block the card in its column, waiting in the inbox." width="100%">
+</picture>
 
 | Phase | What happens |
 |---|---|
@@ -138,33 +129,33 @@ Step through a run: reads, edits as diffs, commands, refused calls, gates, verdi
 </tr>
 </table>
 
+**Live steering.** A note sent to a running agent is written to its stdin with a fixed marker and
+reaches it between two tool calls, in the same run. The worker is told to trust only that marker and
+to treat any other text claiming authority as a prompt injection. A real run:
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-steering-light.png">
+  <img src="docs/images/art-steering-dark.png" alt="A real steered run: the brief, git log, reading one.txt, a note queued at 9.2 seconds asking to skip three.txt and end with PINEAPPLE, reading two.txt, and the summary ending in PINEAPPLE at 12.8 seconds for $0.055." width="100%">
+</picture>
+
 **Stop** `k` asks once, then removes a running card's container. The card keeps its worktree and
 commits, and nothing after the worker runs. **Prompts** `p` edits the three role prompts; every save
 is a new version. **Model** `m` cycles a card through board default, haiku, sonnet and opus.
 
+**Pre-flight checklist** `h` — what has to be true before a card can run, and the exact fix for
+whatever isn't: docker, the card image, the card token file, `gh`, `git`, and, for every repo
+registered on any board, its path, branches, `origin` remote, whether `gh` can see it on GitHub,
+its test command, and its image. Each row that isn't ready shows the command to fix it, in the
+board's monospace so it can be copied straight into a terminal - including telling you when the
+matching GitHub repo hasn't been created yet. A summary line at the top says how many of the checks
+are ready; re-check without leaving the panel.
+
 ## Architecture
 
-```mermaid
-flowchart LR
-  subgraph host["smortboard, native, 127.0.0.1"]
-    HTTP[http server + ui]
-    DB[(sqlite<br/>event log)]
-    RUNS[run registry<br/>thread per card]
-    SCHED[scheduler]
-    ORCH[orchestrator]
-  end
-  subgraph containers["one container each, thrown away"]
-    W[worker<br/>clone, guards ro, stdin token]
-    T[test gate<br/>--network none]
-    V[reviewer<br/>Read Grep Glob]
-  end
-  RUNS -- "token, brief, notes" --> W
-  W -- "stream-json events" --> RUNS
-  RUNS --> T
-  RUNS -- diff --> V
-  W -- "commits fetched back" --> REPO[(repo worktree)]
-  REPO -- "push, gh pr create" --> GH[GitHub]
-```
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-architecture-light.png">
+  <img src="docs/images/art-architecture-dark.png" alt="Architecture: one native smortboard process on 127.0.0.1 with the http server, sqlite store, run registry, scheduler and orchestrator, and the card token file; per card a card container, a test gate container with no network, and a read-only reviewer container; commits fetched back to the repo on disk, then pushed to GitHub where you merge." width="100%">
+</picture>
 
 The board is a plain Python process: a stdlib HTTP server, SQLite and plain JavaScript on
 [smortui](https://github.com/BalthazarFitzpatrick/smortui). Only the agents are contained, because
@@ -194,7 +185,12 @@ orchestrator turns and scheduler ticks each open their own SQLite connection on 
   and by default they go to you instead.
 - Costs come from each run's own stream (`total_cost_usd`, `modelUsage`), per turn, summed per
   session. The model credited is the one with the highest spend, not the small helper Claude Code
-  bills alongside it.
+  bills alongside it:
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-cost-credit-light.png">
+  <img src="docs/images/art-cost-credit-dark.png" alt="One real result's spend by model: claude-sonnet-5 $0.2476 for 822 output tokens, the claude-haiku helper $0.0009 for 17." width="75%">
+</picture>
 
 ## Keys
 
@@ -212,7 +208,9 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `t` | replay | `.` | mission control |
 | `w` | run the board | `,` | workforce |
 | `g` | kanban / workstreams | `s` | shortcuts |
-| `/` | comment input | `1`-`9` | jump to a board |
+| `/` | comment input | `b` | boards and repos |
+| | | `h` | pre-flight checklist |
+| | | `1`-`9` | jump to a board |
 
 ## Setup
 
@@ -221,6 +219,9 @@ git clone https://github.com/BalthazarFitzpatrick/smortboard && cd smortboard
 uv sync
 uv run smortboard            # http://127.0.0.1:8000/ui/index.html
 ```
+
+Or run the board without a checkout: `uvx --from git+https://github.com/BalthazarFitzpatrick/smortboard smortboard`.
+You still need the clone once, to build the Docker images below.
 
 The board runs with nothing else installed. Running cards needs three more things:
 
@@ -240,9 +241,10 @@ wc -c ~/.config/smortboard/card_token           # a full token is 108 bytes
 `pbpaste` is macOS. On Linux, paste into `cat > ~/.config/smortboard/card_token` instead and press
 Ctrl-D.
 
-Register a repo on the board with its path, default branch and test command. Its image must already
-contain its toolchain, because the test gate is offline. smortboard's own image is
-`docker/repo.Dockerfile`.
+Press `b` to create a board and register a repo on it: its path, default branch and test command.
+The repo itself has to exist on GitHub and have its default branch pushed already - smortboard only
+registers it, it doesn't create it. Its image must already contain its toolchain, because the test
+gate is offline. smortboard's own image is `docker/repo.Dockerfile`.
 
 | Flag | Env | Default |
 |---|---|---|
@@ -259,6 +261,22 @@ told to trust: a live note starts `Note from <name>, via the board:`.
 
 Board-wide settings are set with `PATCH /api/settings`: `findings_route`, `orchestrator_model`,
 `worker_model`, `reviewer_model`, `max_parallel`, and `resume_briefing` (`"off"` disables it).
+
+## Testing the alpha
+
+Everyone runs their own board on their own machine; nothing is shared.
+
+1. **Install and start** the board as above, then open it in the browser.
+2. **Press `h`** for the pre-flight checklist: Docker, the card image, the token, `gh`, and every
+   repo you register. Fix what it lists; each line says how.
+3. **Create the GitHub repo** you want cards to work on, clone it, and push its default branch. The
+   board opens pull requests there, so it has to exist on GitHub first.
+4. **Press `b`** to create a board and register that repo: its path, default branch, test command
+   and image. Press `h` again until everything is green.
+5. **Press `.`** and describe some work. Mission control proposes cards; focus one and press `r`.
+6. **Something wrong?** [Open a bug report](https://github.com/BalthazarFitzpatrick/smortboard/issues/new?template=bug.yml).
+   Paste what `h` shows and, if a card misbehaved, a screenshot of its replay (`t`). Never paste
+   your token.
 
 ## Limits
 

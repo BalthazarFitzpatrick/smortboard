@@ -31,7 +31,9 @@ const BINDINGS = [
   {code: 'KeyD', label: 'd', action: 'morning digest: pull requests and open questions', group: 'panels'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
   {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts', group: 'panels'},
+  {code: 'KeyB', label: 'b', action: 'boards and repos: create a board, register a repo', group: 'panels'},
   {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
+  {code: 'KeyH', label: 'h', action: 'pre-flight checklist: what is missing before a card can run', group: 'panels'},
   {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent', group: 'panels'},
   {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator', group: 'panels'},
   ...Array.from({length: 9}, (_, i) => ({
@@ -79,21 +81,23 @@ function renderBoardBar() {
 async function loadBoards() {
   boards = await api('/api/boards');
   renderBoardBar();
-  if (boards.length === 0) {
-    renderEmptyState();
-    return;
-  }
+  renderEmptyState(boards.length === 0);
+  if (boards.length === 0) return;
   initShell({onEnter: onBoardEnter, fallback: boards[0]?.id || ''});
 }
 
-// a fresh install has no boards - say so instead of showing five silent empty columns
-function renderEmptyState() {
+// a fresh install has no boards - say so instead of showing five silent empty columns. the columns
+// are hidden, not removed: the first board created from b renders into them
+function renderEmptyState(empty) {
   const row = document.getElementById('bucket-row');
-  row.innerHTML = '';
+  row.querySelectorAll('.bucket').forEach(bucket => { bucket.hidden = empty; });
+  row.querySelector('.empty-state')?.remove();
+  if (!empty) return;
   const box = document.createElement('div');
-  box.className = 'hazard-stripes hazard-placeholder';
+  box.className = 'hazard-stripes hazard-placeholder empty-state';
   box.innerHTML = `<span class="hazard-label">no boards yet</span>
-    <span class="hazard-note">POST /api/boards to create one</span>`;
+    <span class="hazard-note">press b to create a board and register a repo</span>
+    <span class="hazard-note">press h to check the machine is ready</span>`;
   row.appendChild(box);
 }
 
@@ -1372,6 +1376,9 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
   if (evt.code === 'KeyN') { toggleInboxPanel(); return; }
+  if (evt.code === 'KeyH') { evt.preventDefault(); togglePreflightPanel(); return; }
+  // preventDefault: the panel focuses its first input, and the key that opened it typed itself there
+  if (evt.code === 'KeyB') { evt.preventDefault(); toggleBoardsPanel(); return; }
   // preventDefault: opening a drawer focuses its input, and the key that opened it typed itself there
   if (evt.code === 'Comma') { evt.preventDefault(); drawerFor('left').toggle(); return; }
   if (evt.code === 'Period') { evt.preventDefault(); drawerFor('right').toggle(); return; }
