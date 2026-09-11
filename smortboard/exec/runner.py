@@ -207,6 +207,35 @@ def build_command(
     return cmd
 
 
+@dataclass
+class ProcessHandle:
+    """a child process this run is inside right now, and how to stop it stopping.
+
+    `process` is anything Popen-shaped (`.terminate`, `.kill`, `.wait`) - tests hand in a fake so
+    stop() never touches a real process or a real docker. `container_name` is set whenever the
+    process is a `docker run ...` wrapper: SIGTERM only kills the docker client, not the container
+    underneath it, so `docker rm -f` is what actually stops the work.
+    """
+
+    process: Any
+    container_name: str | None = None
+
+    def terminate(self, timeout: float = 10.0) -> None:
+        with contextlib.suppress(ProcessLookupError):
+            self.process.terminate()
+        try:
+            self.process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                self.process.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                self.process.wait(timeout=timeout)
+        if self.container_name:
+            subprocess.run(
+                ["docker", "rm", "-f", self.container_name], capture_output=True, check=False
+            )
+
+
 @dataclass(frozen=True)
 class RunResult:
     subtype: str | None
@@ -385,8 +414,14 @@ def run_process(
     token_line: str | None = None,
     stream_prompt: str | None = None,
     pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
+    container_name: str | None = None,
+    on_process: Callable[[ProcessHandle], None] | None = None,
 ) -> RunResult:
     """launches `cmd`, recording every stream-json line into the store as it arrives
+
+    `on_process`, if given, is handed a `ProcessHandle` the moment the process starts - this is how
+    RunRegistry.stop() finds the exact process (and container, via `container_name`) a running card
+    is inside right now.
 
     shared by the card runtime and by tests: the container runtime runs `docker run` with the
     worktree; a `ContainerBackend` runs `docker run ...` wrapping the same `claude` invocation, and
@@ -417,6 +452,8 @@ def run_process(
         stderr=subprocess.PIPE,
         text=True,
     )
+    if on_process is not None:
+        on_process(ProcessHandle(process, container_name=container_name))
 
     feeder: _NoteFeeder | None = None
     if live and process.stdin is not None:
@@ -496,6 +533,7 @@ def run_card(
     model: str = "sonnet",
     repo: dict[str, Any] | None = None,
     pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
+    on_process: Callable[[ProcessHandle], None] | None = None,
 ) -> RunResult:
     """runs one card headlessly in the current host process.
 
@@ -514,5 +552,11 @@ def run_card(
         stream_input=True,
     )
     return run_process(
-        store, card_id, cmd, cwd=worktree_path, stream_prompt=prompt, pending_notes=pending_notes
+        store,
+        card_id,
+        cmd,
+        cwd=worktree_path,
+        stream_prompt=prompt,
+        pending_notes=pending_notes,
+        on_process=on_process,
     )

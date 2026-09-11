@@ -21,6 +21,7 @@ from smortboard.exec.backends import (
     CardTokenMissing,
     ContainerBackend,
     card_token_path,
+    container_name,
     docker_available,
     read_card_token,
     require_card_runtime,
@@ -478,3 +479,100 @@ def test_docker_available_true_when_the_daemon_answers(monkeypatch):
 
     monkeypatch.setattr("subprocess.run", lambda *a, **k: _Completed())
     assert docker_available() is True
+
+
+# -- container naming: a deterministic handle stop() can `docker rm -f` -------
+
+
+def test_container_name_is_unique_per_call():
+    """two runs of the same card must never collide on one container name"""
+    a, b = container_name("worker", "card-1"), container_name("worker", "card-1")
+    assert a != b
+    assert a.startswith("smortboard-worker-card-1-")
+
+
+def test_container_name_carries_the_role_and_card():
+    name = container_name("reviewer", "abcdef1234567890")
+    assert name.startswith("smortboard-reviewer-abcdef12-")
+
+
+def test_the_worker_container_is_named_so_stop_can_find_it(tmp_path):
+    backend = ContainerBackend(image="img")
+    cmd = backend._docker_command(
+        tmp_path / "clone", "p", tmp_path / "s.json", "sonnet", None, name="smortboard-worker-x-y"
+    )
+    assert "--name" in cmd
+    assert cmd[cmd.index("--name") + 1] == "smortboard-worker-x-y"
+
+
+def test_the_worker_container_has_no_name_when_none_is_given(tmp_path):
+    """existing callers (most of the test suite) never pass a name - must stay valid docker"""
+    backend = ContainerBackend(image="img")
+    cmd = backend._docker_command(tmp_path / "clone", "p", tmp_path / "s.json", "sonnet", None)
+    assert "--name" not in cmd
+
+
+def test_the_worker_container_is_named_end_to_end(tmp_path, monkeypatch):
+    """run_card names its own container, and hands run_process that exact name"""
+    seen = {}
+
+    def _fake_run_process(store, card_id, cmd, cwd=None, env=None, **kwargs):
+        seen["cmd"] = cmd
+        seen["container_name"] = kwargs.get("container_name")
+        from smortboard.exec.runner import RunResult
+
+        return RunResult(
+            subtype="success",
+            is_error=False,
+            blocked_reason_code=None,
+            session_id="s",
+            total_cost_usd=0.0,
+            num_turns=1,
+            result_text="done",
+        )
+
+    monkeypatch.setattr("smortboard.exec.backends.run_process", _fake_run_process)
+    monkeypatch.setattr("smortboard.exec.backends.read_card_token", lambda p=None: "s3cret")
+    monkeypatch.setattr("smortboard.exec.backends.repo_root_of_worktree", lambda p: tmp_path)
+    monkeypatch.setattr("smortboard.exec.backends.current_branch", lambda p: "card/x")
+    monkeypatch.setattr(ContainerBackend, "_clone", lambda self, w, c, b: c.mkdir(exist_ok=True))
+    monkeypatch.setattr(ContainerBackend, "_fetch_back", lambda self, r, c, b, w: None)
+
+    ContainerBackend(image="img").run_card(None, "card-9", tmp_path, "prompt", tmp_path / "s.json")
+
+    assert seen["container_name"].startswith("smortboard-worker-card-9-")
+    assert "--name" in seen["cmd"]
+    assert seen["cmd"][seen["cmd"].index("--name") + 1] == seen["container_name"]
+
+
+def test_on_process_reaches_run_card(tmp_path, monkeypatch):
+    """the caller's on_process callback (RunRegistry, in production) must reach run_process
+    unchanged - that is the only way a stop() finds the live process"""
+    received = []
+
+    def _fake_run_process(store, card_id, cmd, cwd=None, env=None, **kwargs):
+        received.append(kwargs.get("on_process"))
+        from smortboard.exec.runner import RunResult
+
+        return RunResult(
+            subtype="success",
+            is_error=False,
+            blocked_reason_code=None,
+            session_id="s",
+            total_cost_usd=0.0,
+            num_turns=1,
+            result_text="done",
+        )
+
+    monkeypatch.setattr("smortboard.exec.backends.run_process", _fake_run_process)
+    monkeypatch.setattr("smortboard.exec.backends.read_card_token", lambda p=None: "s3cret")
+    monkeypatch.setattr("smortboard.exec.backends.repo_root_of_worktree", lambda p: tmp_path)
+    monkeypatch.setattr("smortboard.exec.backends.current_branch", lambda p: "card/x")
+    monkeypatch.setattr(ContainerBackend, "_clone", lambda self, w, c, b: c.mkdir(exist_ok=True))
+    monkeypatch.setattr(ContainerBackend, "_fetch_back", lambda self, r, c, b, w: None)
+
+    sentinel = object()
+    ContainerBackend(image="img").run_card(
+        None, "card", tmp_path, "prompt", tmp_path / "s.json", on_process=sentinel
+    )
+    assert received == [sentinel]

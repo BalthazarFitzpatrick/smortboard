@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from smortboard.exec.backends import card_image, docker_available
+from smortboard.exec.backends import card_image, container_name, docker_available
 
 # a test suite that has not finished in ten minutes is not going to; the card is stuck rather than
 # slow, and a gate that waits forever is a card that never reaches the board
@@ -78,6 +78,8 @@ def run_test_gate(
         "docker",
         "run",
         "--rm",
+        "--name",
+        container_name("gate", card_id),
         "--network",
         "none",
         "-v",
