@@ -113,13 +113,19 @@ function replayDiffLines(oldText, newText) {
   return {removed, added};
 }
 
+// the clock time a step happened, local - the date is the same for every step of one run
+function replayStepTime(iso) {
+  const at = Date.parse(iso);
+  return Number.isNaN(at) ? (iso || '') : new Date(at).toLocaleTimeString([], {hour12: false});
+}
+
 function renderReplayDetail() {
   const step = rp.steps[rp.index];
   if (!step) { rp.detail.innerHTML = '<div class="empty">no steps</div>'; return; }
   const d = step.detail || {};
   const parts = [];
   parts.push(`<div class="replay-detail-head"><span class="replay-detail-kind">${escapeHtml(step.kind)}</span>` +
-    `<span class="replay-detail-time">${escapeHtml(step.created_at || '')}</span></div>`);
+    `<span class="replay-detail-time">${escapeHtml(replayStepTime(step.created_at))}</span></div>`);
 
   if (step.kind === 'edit') {
     const {removed, added} = replayDiffLines(d.old_text || '', d.new_text || '');
