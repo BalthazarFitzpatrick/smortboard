@@ -220,11 +220,17 @@ The board runs with nothing else installed. Running cards needs three more thing
 # 1. docker, running
 # 2. the card image: claude cli, git, uv - no credentials, no code
 docker build -f docker/card.Dockerfile -t smortboard-card:latest .
-# 3. a card token, model-only, kept in a mode-600 file
-claude setup-token
+# 3. a card token, model-only, kept in a file only you can read
+claude setup-token                      # prints the token - copy it to the clipboard
 mkdir -p ~/.config/smortboard
+# umask 077 creates the file as mode 600; tr strips the newline pbpaste keeps
 (umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
+chmod 600 ~/.config/smortboard/card_token      # already 600 - this makes it explicit
+wc -c ~/.config/smortboard/card_token           # a full token is 108 bytes
 ```
+
+`pbpaste` is macOS. On Linux, paste into `cat > ~/.config/smortboard/card_token` instead and press
+Ctrl-D.
 
 Register a repo on the board with its path, default branch and test command. Its image must already
 contain its toolchain, because the test gate is offline. smortboard's own image is
