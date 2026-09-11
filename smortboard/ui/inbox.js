@@ -11,6 +11,16 @@ const INDICATOR_POLL_MS = 10000;
 const ib = {backdrop: null, panel: null, listEl: null, rows: []};
 let indicatorEl = null;
 
+// "3h ago" rather than an iso stamp - how long it has waited is the part worth reading
+function sinceLabel(iso, now = Date.now()) {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return iso || '';
+  const minutes = Math.max(0, Math.round((now - then) / 60000));
+  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 48 * 60) return `${Math.round(minutes / 60)}h ago`;
+  return `${Math.round(minutes / 1440)}d ago`;
+}
+
 // ---- top-right indicator, polled independently of the panel being open ------------------------
 
 function buildIndicator() {
@@ -111,7 +121,7 @@ function buildInboxRow(row) {
   reason.textContent = row.reason;
   const since = document.createElement('span');
   since.className = 'field-label inbox-since';
-  since.textContent = row.since;
+  since.textContent = sinceLabel(row.since);
   head.append(title, board, reason, since);
 
   const question = document.createElement('div');

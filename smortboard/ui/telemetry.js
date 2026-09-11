@@ -147,6 +147,7 @@ function openTelemetryPanel() {
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyI') openOverlay = null; },
     });
     menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    menu.el?.classList.add('menu-centered');
     if (cardId) loadCardTelemetry(menu, cardId);
     else if (currentBoardId) loadBoardCosts(menu, currentBoardId);
     else menu.refresh([{kind: 'list', items: [], empty: 'no board selected'}]);

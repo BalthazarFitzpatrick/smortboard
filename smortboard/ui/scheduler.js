@@ -192,6 +192,7 @@ function openDigestPanel() {
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyD') openOverlay = null; },
     });
     menu.openAt({x: window.innerWidth / 2 - 220, y: 80});
+    menu.el?.classList.add('menu-centered');
     loadDigest(menu);
     return menu;
   });
