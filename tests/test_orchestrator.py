@@ -77,6 +77,29 @@ def test_a_turn_creates_cards_resolves_repo_and_deps_and_flags_the_unknown_repo(
     assert store.get_plan(board["id"]) == "p"
 
 
+def test_a_card_carries_the_model_proposed_and_a_non_name_is_refused(store, board):
+    # the model reaches `claude --model`, so only plain aliases and ids get through
+    base = TWO_CARDS["cards"][0]
+    payload = {
+        "reply": "ok",
+        "plan": "p",
+        "cards": [
+            {**base, "title": "fast", "model": "Haiku"},
+            {**base, "title": "odd", "model": "opus; rm -rf /"},
+            {**base, "title": "plain", "model": None},
+        ],
+    }
+    run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
+    by_title = {c["title"]: c for c in store.list_cards(board["id"])}
+    assert by_title["fast"]["model"] == "haiku"
+    assert by_title["odd"]["model"] is None
+    assert by_title["plain"]["model"] is None
+    notes = [
+        m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
+    ]
+    assert any("is not a model name" in note for note in notes)
+
+
 def test_a_failing_runner_stores_a_board_error_and_leaves_no_plan(store, board):
     def _boom(prompt, model, budget_usd):
         raise RuntimeError("no docker")

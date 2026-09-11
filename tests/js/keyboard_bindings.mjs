@@ -56,7 +56,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
-  'KeyG', 'KeyU', 'KeyA', 'KeyR', 'KeyY', 'KeyX', 'KeyS', 'KeyP', 'Slash', 'Comma', 'Period',
+  'KeyG', 'KeyU', 'KeyA', 'KeyR', 'KeyY', 'KeyX', 'KeyM', 'KeyS', 'KeyP', 'Slash', 'Comma', 'Period',
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
 const boundCodes = mod.BINDINGS.map(b => b.code);
 CONTRACT_KEYS.forEach(code => assert.ok(boundCodes.includes(code), `${code} must be in BINDINGS`));
@@ -94,7 +94,9 @@ assert.equal(drawerToggles[0].toggles, 2, 'the left drawer toggled twice');
 
 // ---- the shortcut overlay's rows are literally the binding table, so they cannot drift apart
 const overlay = openedMenus[openedMenus.length - 1];
-const overlayItems = overlay.sections[0].items;
+// two columns now, one section each - read together they must still be the whole table, in order
+assert.equal(overlay.sections.length, 2, 'the overlay has two columns');
+const overlayItems = overlay.sections.flatMap(s => s.items);
 assert.deepEqual(overlayItems.map(i => i.id), boundCodes, 'the overlay must list exactly the bound codes, in order');
 mod.BINDINGS.forEach((b, i) => {
   assert.ok(overlayItems[i].label.startsWith(b.label), `overlay row ${i} should show binding label "${b.label}"`);

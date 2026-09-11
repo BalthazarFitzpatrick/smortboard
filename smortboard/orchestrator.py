@@ -11,6 +11,7 @@ instead of a silent card. See docs/PLAN.md Phase 4 and the API contract in the p
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import threading
 from dataclasses import dataclass
@@ -34,6 +35,9 @@ ORCHESTRATOR_PROMPT = (
     "- see 'a card is a feature, not an edit' in the plan. Return an updated `plan`: your own ledger "
     "of what the board is working toward, reconciled against the cards that exist, not a copy of "
     "them.\n\n"
+    "Give each card a `model` for its worker: `sonnet` for ordinary work, `opus` only where the card "
+    "needs real design judgement, `haiku` for mechanical edits, or null to use the board's default. "
+    "operator can change it on the card.\n\n"
     "Return JSON matching the given schema. `cards` may be empty - most turns are just "
     "conversation."
 )
@@ -55,6 +59,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "tasks": {"type": "array", "items": {"type": "string"}},
                     "leases": {"type": "array", "items": {"type": "string"}},
                     "depends_on": {"type": "array", "items": {"type": "string"}},
+                    "model": {"type": ["string", "null"]},
                 },
                 "required": [
                     "title",
@@ -64,6 +69,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "tasks",
                     "leases",
                     "depends_on",
+                    "model",
                 ],
             },
         },
@@ -74,6 +80,21 @@ ORCHESTRATOR_JSON_SCHEMA = {
 # a turn is a conversation, not a build - it should cost far less than a card run
 DEFAULT_TURN_BUDGET_USD = 1.00
 DEFAULT_ORCHESTRATOR_MODEL = "opus"
+
+# a model name reaches the card's `claude --model`, so anything but a plain alias or id is refused
+_MODEL_NAME = re.compile(r"^[a-z0-9][a-z0-9.\-]{0,63}$")
+
+
+def _clean_model(raw: Any) -> tuple[str | None, str | None]:
+    """the card's model as the orchestrator proposed it, or None with a note when it is not a name"""
+    if raw is None or raw == "":
+        return None, None
+    name = str(raw).strip().lower()
+    if _MODEL_NAME.match(name):
+        return name, None
+    return None, f'model "{raw}" is not a model name, so that card uses the board default'
+
+
 _MESSAGE_HISTORY = 20
 # operator's actual comment length is unbounded, but the snapshot's cards list stays short - see
 # _snapshot_card
@@ -244,6 +265,9 @@ def run_orchestrator_turn(
         repo_id, warning = _resolve_repo(store, board_id, spec.get("repo"))
         if warning:
             warnings.append(warning)
+        model, warning = _clean_model(spec.get("model"))
+        if warning:
+            warnings.append(warning)
         card = store.create_card(
             board_id,
             repo_id,
@@ -253,6 +277,7 @@ def run_orchestrator_turn(
             criteria=list(spec.get("criteria") or []),
             tasks=list(spec.get("tasks") or []),
             leases=list(spec.get("leases") or []),
+            model=model,
         )
         created_by_title[title] = card["id"]
         created_summaries.append({"id": card["id"], "title": title})

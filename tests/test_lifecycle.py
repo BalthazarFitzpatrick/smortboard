@@ -311,3 +311,49 @@ def test_the_card_runs_on_its_own_branch_never_on_main(board, monkeypatch):
     ).stdout.strip()
     assert on == f"card/{card_id}"
     assert on != "main"
+
+
+class _ModelBackend(_Backend):
+    """records which model each worker run was started on"""
+
+    def __init__(self):
+        super().__init__()
+        self.models = []
+
+    def run_card(self, store, card_id, worktree_path, prompt, settings_path, **kwargs):
+        self.models.append(kwargs.get("model"))
+        return self.result
+
+
+def _capture_reviewer_model(monkeypatch):
+    reviewed = []
+
+    def review(*args, **kwargs):
+        reviewed.append(kwargs.get("model"))
+        return ReviewResult(approved=True, findings=[])
+
+    monkeypatch.setattr(lifecycle, "run_review", review)
+    return reviewed
+
+
+def test_the_card_model_wins_and_the_reviewer_keeps_its_own(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    reviewed = _capture_reviewer_model(monkeypatch)
+    store.set_setting("worker_model", "haiku")
+    store.set_setting("reviewer_model", "opus")
+    store.update_card(card_id, model="sonnet")
+    backend = _ModelBackend()
+    lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert backend.models == ["sonnet"]
+    assert reviewed == ["opus"]
+
+
+def test_without_a_card_model_the_board_setting_then_sonnet_apply(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    reviewed = _capture_reviewer_model(monkeypatch)
+    backend = _ModelBackend()
+    lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert backend.models == [lifecycle.DEFAULT_WORKER_MODEL]
+    assert reviewed == [lifecycle.DEFAULT_REVIEWER_MODEL]
