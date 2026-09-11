@@ -46,7 +46,7 @@ export function queryAll(root, sel) {
 export function element(tag, className = '') {
   const el = Object.assign(new Element(), {
     tag, className, id: '', dataset: {}, style: {}, tabIndex: -1, children: [], parentNode: null,
-    innerHTML: '', textContent: '', value: '', placeholder: '', title: '', onclick: null, onkeydown: null,
+    textContent: '', value: '', placeholder: '', title: '', onclick: null, onkeydown: null,
     _listeners: {},
     addEventListener(type, fn) { (el._listeners[type] ||= []).push(fn); },
     removeEventListener(type, fn) { el._listeners[type] = (el._listeners[type] || []).filter(f => f !== fn); },
@@ -80,6 +80,16 @@ export function element(tag, className = '') {
         if (on) this.add(name); else this.remove(name);
         return on;
       },
+    },
+  });
+  // like a browser: `el.innerHTML = ''` empties the element, which is how a column is redrawn.
+  // other markup is kept as a string only - nothing here parses it
+  let html = '';
+  Object.defineProperty(el, 'innerHTML', {
+    get: () => html,
+    set(value) {
+      html = String(value);
+      if (html === '') { el.children.forEach(c => { c.parentNode = null; }); el.children = []; }
     },
   });
   return el;
