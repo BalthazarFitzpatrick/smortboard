@@ -19,7 +19,8 @@ It never merges. Anything that needs you waits in one inbox.
 ## Three rules
 
 1. **The agent never decides it is finished.** Its claim that the tests pass counts for nothing. The
-   board re-runs them offline, and a separate read-only reviewer judges the diff.
+   board re-runs them offline. A separate read-only reviewer then reads the code itself for
+   vulnerabilities, leaked credentials, bad practice and waste.
 2. **The board never merges.** Every card ends at an open pull request or a stated reason it
    stopped, and merging is always done by a person.
 3. **Every card runs sealed.** It gets its own throwaway container, a clone of its repo, a write
@@ -38,7 +39,7 @@ It never merges. Anything that needs you waits in one inbox.
 | **preparing** | A worktree and branch per card. A resumed card reuses its worktree and commits. A card with dependencies is cut from a fresh fetch of the base branch. |
 | **running** | `claude -p` streams JSON both ways in a named container. The token is the first stdin line, the brief follows, and stdin stays open for live notes. Every line becomes an event. |
 | **testing** | The repo's own test command runs in the repo's image with no network. |
-| **reviewing** | A second agent with Read, Grep and Glob only returns a structured verdict on the diff. |
+| **reviewing** | A second agent with Read, Grep and Glob only reviews the diff in its surrounding code and answers four questions: vulnerabilities (injection, path traversal, unchecked input), leaked credentials, best practices (the project's conventions and the language's), and efficiency. It never sees the test results and doesn't judge the criteria; the test gate does that. A leaked credential at any severity, any high or critical finding, or no usable verdict blocks the card. |
 | **opening** | The board pushes the branch and runs `gh pr create`. Its `gh` wrapper allows three subcommands, and merge isn't one of them. |
 
 ![An open card: sections headed like board columns, the run as a timeline](docs/images/card.jpg)
@@ -57,7 +58,7 @@ It never merges. Anything that needs you waits in one inbox.
 | **Reason code** | Why a card waits on you, recorded alongside its status: `AGENT_QUESTION`, `TESTS_FAILED`, `REVIEW_REJECTED`, `LEASE_CONFLICT`, `USAGE_LIMIT`, `CRASH`, `DEPENDENCY_REJECTED`. |
 | **Findings route** | Where reviewer findings go: back to the worker (`fix`), or to you (`attention`, the default). |
 | **Decision** | `y` accepts a card and keeps its branch for the pull request. `x` rejects it and deletes the branch. Both can be reversed. |
-| **Roles** | The **orchestrator** plans cards and has no tools. The **worker** works a card. The **reviewer** judges the worker's diff. Each role has its own prompt and model. |
+| **Roles** | The **orchestrator** plans cards and has no tools. The **worker** works a card. The **reviewer** checks the worker's code for vulnerabilities, leaked credentials, bad practice and waste. Each role has its own prompt and model. |
 | **Note** | A message to a running agent, delivered at its next step with a fixed marker it is taught to trust. Any other text claiming authority is treated as a prompt injection. |
 | **Resume briefing** | When a card runs again, its brief summarises the last attempt: how it ended, gate verdicts, findings, files touched, and commands run or refused. |
 | **Event log** | Every stream line, gate, decision and note, append-only. Cost, replay, the roster and the briefing are all projections of it. |
