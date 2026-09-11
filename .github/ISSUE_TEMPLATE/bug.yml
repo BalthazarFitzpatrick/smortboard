@@ -1,0 +1,57 @@
+name: Bug report
+description: Something on the board did not do what you expected.
+labels: ["bug", "alpha"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. The more of this you fill in, the faster it gets fixed.
+        Never paste your card token or anything from `~/.config/smortboard/card_token`.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `smortboard --version`, or the version `GET /health` reports.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: textarea
+    id: preflight
+    attributes:
+      label: Pre-flight
+      description: Press `h` on the board and paste anything that is not ready. Leave empty if everything was green.
+      render: text
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did
+      description: The keys you pressed or the card you ran, in order.
+      placeholder: |
+        1. created a board with b and registered a repo
+        2. asked mission control for a card
+        3. pressed r on it
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots, replay, terminal output
+      description: |
+        A screenshot of the board, the card's replay (`t`), the card's comments, or the terminal
+        smortboard runs in. Drag images straight in.
