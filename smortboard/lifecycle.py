@@ -108,8 +108,7 @@ def build_card_prompt(card: dict[str, Any]) -> str:
         lines += [f"- {t['text']}" for t in tasks]
         lines.append("")
 
-    # a running headless session cannot take input, so a note fabian leaves mid-run only reaches
-    # the agent on the card's NEXT run - the conversation endpoint says so explicitly (delivery)
+    # every note so far, even ones already delivered live: a fresh session remembers none of them
     notes = [c["body"] for c in card.get("comments") or [] if c.get("author") == "fabian"]
     if notes:
         lines.append("Notes from Fabian, oldest first:")
@@ -207,8 +206,8 @@ def run_card_lifecycle(
     runtime, which refuses rather than falling back.
 
     `pending_notes` is live steering: passed straight through to every worker run (the initial run
-    and any fix rounds) so a note Fabian leaves mid-run can be delivered when the agent finishes its
-    current turn, rather than waiting for the card's next run. None outside RunRegistry (e.g. in
+    and any fix rounds) so a note Fabian leaves mid-run reaches the agent at its next step, rather
+    than waiting for the card's next run. None outside RunRegistry (e.g. in
     tests) means notes fall back to arriving next run only, same as before.
     """
 
