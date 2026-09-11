@@ -130,6 +130,10 @@ class BoardScheduler:
         self._db_path = Path(db_path)
         self._runs = runs
         self._lock = threading.Lock()
+        # held for a whole tick and for every queue write: a tick snapshots the queue, starts cards
+        # outside _lock, then writes its leftovers back - unguarded, a stop() in between came back
+        # to life. reentrant because a test's fake runner fires on_finish, and so _tick, inline
+        self._tick_lock = threading.RLock()
         self._queue: list[str] = []
         self._running: set[str] = set()
         self._waiting: dict[str, str] = {}
@@ -168,17 +172,18 @@ class BoardScheduler:
             ]
         finally:
             store.close()
-        with self._lock:
-            for card_id in todo:
-                if card_id not in self._queue and card_id not in self._running:
-                    self._queue.append(card_id)
-        self._tick()
+        with self._tick_lock:
+            with self._lock:
+                for card_id in todo:
+                    if card_id not in self._queue and card_id not in self._running:
+                        self._queue.append(card_id)
+            self._tick()
         return self.schedule_view()
 
     def stop(self) -> dict[str, Any]:
         """clears the queue. running cards are left to finish - stopping mid-worktree would lose
         their commit, not just their turn."""
-        with self._lock:
+        with self._tick_lock, self._lock:
             self._queue = []
             self._waiting = {}
         return self.schedule_view()
@@ -186,6 +191,10 @@ class BoardScheduler:
     # -- the loop --------------------------------------------------------------------
 
     def _tick(self) -> None:
+        with self._tick_lock:
+            self._tick_locked()
+
+    def _tick_locked(self) -> None:
         with self._lock:
             if self._paused_until is not None and time.time() < self._paused_until:
                 return  # parked for USAGE_LIMIT; schedule_view resumes this once the window rolls
