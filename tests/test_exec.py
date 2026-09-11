@@ -464,6 +464,20 @@ def test_terminate_removes_the_named_container_too(monkeypatch):
     assert calls == [["docker", "rm", "-f", "smortboard-worker-abc123-def456"]]
 
 
+def test_terminate_removes_the_container_before_signalling_the_client(monkeypatch):
+    # the docker client ignored sigterm in a real stop; removing the container is what ends it
+    order = []
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **k: order.append("rm") or subprocess.CompletedProcess(cmd, 0),
+    )
+    process = _FakeProcess()
+    process.terminate = lambda: order.append("sigterm")
+    ProcessHandle(process, container_name="smortboard-worker-abc123-def456").terminate()
+    assert order == ["rm", "sigterm"]
+
+
 def test_terminate_with_no_container_name_never_touches_docker(monkeypatch):
     calls = []
     monkeypatch.setattr(subprocess, "run", lambda cmd, **k: calls.append(cmd))
