@@ -122,6 +122,12 @@ becomes a comment and the card resumes in its existing worktree, commits and all
 a rate limit, the inbox tells you where that gets handled instead. The counter in the top-right
 corner shows how many cards are waiting, even while the inbox is closed.
 
+A resumed run's brief also carries a resume briefing: a compact summary of the latest attempt that
+reached the worker - how it ended, files it touched, commands it ran and any that were refused, its
+final summary - plus one line per older attempt, read straight off the event log. This is what lets
+the agent skip re-reading the worktree to rediscover what it already did. Turn it off board-wide
+with the `resume_briefing` setting.
+
 **Run the board (`w`) and the digest (`d`).** `w` works through every todo card on the board, two
 at a time by default (`max_parallel`). A card waits until all its dependencies are accepted, and
 two cards whose leases might touch the same file never run together. A usage limit pauses new starts
@@ -219,8 +225,9 @@ it shouldn't, and limits the damage it could do.
 | | `SMORTBOARD_CARD_TOKEN_PATH` | `~/.config/smortboard/card_token` |
 
 A flag wins over its env var, which wins over the default. The board-wide settings
-(`findings_route`, `orchestrator_model`, `worker_model`, `reviewer_model`, `max_parallel`) are set
-with `PATCH /api/settings`.
+(`findings_route`, `orchestrator_model`, `worker_model`, `reviewer_model`, `max_parallel`,
+`resume_briefing`) are set with `PATCH /api/settings`. `resume_briefing` set to `"off"` turns off
+the resume briefing (see below); unset means on.
 
 ## Development
 

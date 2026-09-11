@@ -34,12 +34,14 @@ CARD_WRITABLE_FIELDS = {
 # orchestrator, sonnet for workers and the reviewer), so a changed default reaches unset boards.
 # max_parallel is the scheduler's cap on cards run-all starts at once - unset means 2, see
 # smortboard.scheduler.DEFAULT_MAX_PARALLEL
+# resume_briefing gates lifecycle.py's resume briefing - "off" disables it, unset means on
 _SETTING_KEYS = (
     "findings_route",
     "orchestrator_model",
     "worker_model",
     "reviewer_model",
     "max_parallel",
+    "resume_briefing",
 )
 
 
