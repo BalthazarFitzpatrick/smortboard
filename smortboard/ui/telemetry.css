@@ -1,0 +1,8 @@
+/* cost telemetry (i): rides the usage panel's language - .usage-card / .usage-section / .stat -
+   these are the two shapes specific to it: a card's attempt list, and the board's cost table. */
+
+.telemetry-card, .cost-table { display: flex; flex-direction: column; gap: 10px; width: min(480px, 86vw); }
+.telemetry-attempt + .telemetry-attempt, .cost-row + .cost-row { margin-top: 8px; }
+
+.telemetry-refusals { margin: 4px 0 0; padding-left: 18px; color: var(--fill-warn); }
+.telemetry-refusals li { word-break: break-all; }

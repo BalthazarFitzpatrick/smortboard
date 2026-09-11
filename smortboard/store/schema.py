@@ -170,6 +170,19 @@ _MIGRATIONS: list[str] = [
     """
     ALTER TABLE cards ADD COLUMN model TEXT;
     """,
+    # 8: indexes for every lookup by card or board. only events had one (its unique card_id, seq),
+    # so every card's tasks, comments and leases were a scan of the whole table
+    """
+    CREATE INDEX IF NOT EXISTS idx_cards_board ON cards (board_id, position);
+    CREATE INDEX IF NOT EXISTS idx_card_tasks_card ON card_tasks (card_id, position);
+    CREATE INDEX IF NOT EXISTS idx_card_criteria_card ON card_criteria (card_id, position);
+    CREATE INDEX IF NOT EXISTS idx_card_leases_card ON card_leases (card_id);
+    CREATE INDEX IF NOT EXISTS idx_card_deps_dependent ON card_deps (depends_on_card_id);
+    CREATE INDEX IF NOT EXISTS idx_attachments_card ON attachments (card_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_comments_card ON comments (card_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_orchestrator_messages_board
+        ON orchestrator_messages (board_id, created_at);
+    """,
 ]
 
 

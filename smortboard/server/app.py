@@ -5,7 +5,10 @@ import re
 import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
+from urllib.parse import parse_qs
 
+from smortboard.attention import AnswerRefused, answer_card, attention_rows
+from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
@@ -16,13 +19,15 @@ from smortboard.prompts import ROLES
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
+from smortboard.scheduler import SchedulerRegistry
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import Readiness, RunRegistry
 from smortboard.store import Store
 from smortboard.store.api import CARD_WRITABLE_FIELDS
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
-from smortboard.telemetry import roster_rows, usage_projection
+from smortboard.telemetry import board_costs, card_telemetry, roster_rows, usage_projection
+from smortboard.timeline import card_timeline
 
 _ROUTES = [
     (re.compile(r"^/health$"), "GET"),
@@ -58,7 +63,16 @@ _ROUTES = [
     (re.compile(r"^/api/usage$"), "GET"),
     (re.compile(r"^/api/prompts$"), "GET"),
     (re.compile(r"^/api/prompts/(?P<role>[^/]+)$"), "PATCH"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/telemetry$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/costs$"), "GET"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/timeline$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/run-all$"), "POST"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/run-all/stop$"), "POST"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/schedule$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/digest$"), "GET"),
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
+    (re.compile(r"^/api/attention$"), "GET"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/answer$"), "POST"),
 ]
 
 _ROLE_DEFAULTS = {
@@ -76,7 +90,11 @@ def _version() -> str:
 
 
 def _make_handler(
-    store: Store, runs: RunRegistry, readiness: Readiness, orchestrator: OrchestratorRegistry
+    store: Store,
+    runs: RunRegistry,
+    readiness: Readiness,
+    orchestrator: OrchestratorRegistry,
+    scheduler: SchedulerRegistry,
 ) -> type[BaseHTTPRequestHandler]:
     """closes over the store instance; http.server wants a class, not an instance"""
 
@@ -194,6 +212,8 @@ def _make_handler(
                 self._send_json(200, store.get_settings())
             elif path.endswith("/events"):
                 self._send_json(200, store.list_events(params["card_id"]))
+            elif "card_id" in params and path.endswith("/timeline"):
+                self._handle_timeline(params["card_id"])
             elif "board_id" in params and path.endswith("/orchestrator") and method == "GET":
                 self._send_json(200, self._orchestrator_view(params["board_id"]))
             elif "board_id" in params and path.endswith("/orchestrator") and method == "POST":
@@ -211,6 +231,16 @@ def _make_handler(
                 self._send_json(200, self._prompts_view())
             elif "role" in params and method == "PATCH":
                 self._handle_patch_prompt(params["role"])
+            elif "card_id" in params and path.endswith("/telemetry"):
+                store.get_card(params["card_id"])  # a 404 for a missing card, not empty telemetry
+                self._send_json(200, card_telemetry(store, params["card_id"]))
+            elif "board_id" in params and path.endswith("/costs"):
+                store.get_board(params["board_id"])  # a 404 for a missing board, not an empty table
+                self._send_json(200, board_costs(store, params["board_id"]))
+            elif path == "/api/attention":
+                self._send_json(200, attention_rows(store))
+            elif "card_id" in params and path.endswith("/answer"):
+                self._handle_answer(params["card_id"])
             elif "card_id" in params and method == "GET":
                 self._send_json(200, store.get_card(params["card_id"]))
             elif "card_id" in params and method == "PATCH":
@@ -223,10 +253,32 @@ def _make_handler(
                 self._send_status(204)
             elif "task_id" in params and method == "PATCH":
                 self._handle_patch_task(params["task_id"])
+            elif "board_id" in params and path.endswith("/run-all") and method == "POST":
+                store.get_board(params["board_id"])
+                self._send_json(202, scheduler.get(params["board_id"]).start_all())
+            elif "board_id" in params and path.endswith("/run-all/stop") and method == "POST":
+                store.get_board(params["board_id"])
+                self._send_json(200, scheduler.get(params["board_id"]).stop())
+            elif "board_id" in params and path.endswith("/schedule") and method == "GET":
+                store.get_board(params["board_id"])
+                self._send_json(200, scheduler.get(params["board_id"]).schedule_view())
+            elif "board_id" in params and path.endswith("/digest") and method == "GET":
+                since = float(self._query().get("since", ["0"])[0])
+                self._send_json(200, board_digest(store, params["board_id"], since))
             elif "name" in params:
                 self._handle_asset(params["name"])
             else:
                 self._send_json(404, {"error": f"no route for {method} {path}"})
+
+        def _handle_timeline(self, card_id: str) -> None:
+            """run replay: GET /api/cards/{id}/timeline?attempt=N - see smortboard/timeline.py"""
+            store.get_card(card_id)  # raises NotFoundError on a bad id
+            raw_attempt = self._query().get("attempt", [None])[0]
+            attempt = int(raw_attempt) if raw_attempt else None
+            self._send_json(200, card_timeline(store, card_id, attempt=attempt))
+
+        def _query(self) -> dict[str, list[str]]:
+            return parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
 
         def _handle_run(self, card_id: str) -> None:
             """starts a card, or reports the run already going for it.
@@ -251,6 +303,23 @@ def _make_handler(
                 self._send_json(409, {"error": str(exc)})
                 return
             self._send_json(200, card)
+
+        def _handle_answer(self, card_id: str) -> None:
+            """the attention inbox's reply: stores it as operator's comment and resumes the card.
+
+            404 for an unknown card (get_card inside answer_card raises), 409 for a card already
+            running or blocked on something an answer cannot fix - see attention.answer_card.
+            """
+            message = (self._read_json().get("message") or "").strip()
+            if not message:
+                self._send_json(400, {"error": "message must not be empty"})
+                return
+            try:
+                state = answer_card(store, runs, card_id, message)
+            except AnswerRefused as exc:
+                self._send_json(409, {"error": str(exc)})
+                return
+            self._send_json(202, state)
 
         def _handle_patch_card(self, card_id: str) -> None:
             body = self._read_json()
@@ -342,6 +411,17 @@ def _make_handler(
                     timeline.append(
                         (event["created_at"], self._board_line(payload.get("decision", "")))
                     )
+                elif kind == "note_delivered":
+                    count = len(payload.get("comment_ids") or [])
+                    plural = "s" if count != 1 else ""
+                    timeline.append(
+                        (
+                            event["created_at"],
+                            self._board_line(
+                                f"delivered {count} note{plural} to the running agent"
+                            ),
+                        )
+                    )
 
             for comment in store.list_comments(card_id):
                 author = "operator" if comment["author"] == "operator" else "board"
@@ -359,9 +439,9 @@ def _make_handler(
                 "title": card["title"],
                 "running": running,
                 "phase": phase,
-                # a running headless session cannot take input - a note left now reaches the
-                # agent only on this card's NEXT run, never mid-run
-                "delivery": "next_run",
+                # what a note sent RIGHT NOW would get: "live" while this card's run is going and
+                # accepting stdin, "next_run" otherwise. matches the per-comment answer POST gives
+                "delivery": "live" if running else "next_run",
                 "messages": messages,
             }
 
@@ -376,9 +456,17 @@ def _make_handler(
                 self._send_json(400, {"error": "message must not be empty"})
                 return
             comment = store.add_comment(card_id, author="operator", body=message)
+            # queue AFTER the comment is durable: a live delivery that then crashed before the
+            # comment was ever saved would leave nothing for the card's next run to fall back on
+            delivered_live = runs.queue_note(card_id, comment)
             self._send_json(
                 201,
-                {"author": "operator", "body": comment["body"], "created_at": comment["created_at"]},
+                {
+                    "author": "operator",
+                    "body": comment["body"],
+                    "created_at": comment["created_at"],
+                    "delivery": "live" if delivered_live else "next_run",
+                },
             )
 
         def _prompts_view(self) -> list[dict]:
@@ -492,15 +580,17 @@ def _make_handler(
 def build_server(
     store: Store,
     port: int,
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     token_path: str | None = None,
 ) -> HTTPServer:
     # single-threaded: the store's sqlite3 connection is bound to the thread that opened it. card
     # runs are the exception and get their own thread and their own connection - see runs.py
     runs = RunRegistry(store.path, token_path=token_path)
     orchestrator = OrchestratorRegistry(store.path, token_path=token_path)
-    handler_cls = _make_handler(store, runs, Readiness(token_path), orchestrator)
+    scheduler = SchedulerRegistry(store.path, runs)
+    handler_cls = _make_handler(store, runs, Readiness(token_path), orchestrator, scheduler)
     server = HTTPServer((host, port), handler_cls)
     server.runs = runs  # the cli and the tests reach the registry through the server
     server.orchestrator = orchestrator
+    server.scheduler = scheduler
     return server

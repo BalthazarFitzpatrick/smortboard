@@ -18,6 +18,8 @@ from smortboard.store import Store
 
 _APP_NAME = "smortboard"
 _DEFAULT_PORT = 8000
+# loopback only: the api has no auth and can start runs that spend the card token
+_DEFAULT_HOST = "127.0.0.1"
 
 
 def _version() -> str:
@@ -41,6 +43,12 @@ def _resolve_db(cli_value: str | None) -> Path:
     return _default_db_path()
 
 
+def _resolve_host(cli_value: str | None) -> str:
+    if cli_value is not None:
+        return cli_value
+    return os.environ.get("SMORTBOARD_HOST") or _DEFAULT_HOST
+
+
 def _resolve_port(cli_value: int | None) -> int:
     if cli_value is not None:
         return cli_value
@@ -61,6 +69,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="port to serve on (env: SMORTBOARD_PORT, default: 8000)",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=None,
+        help="interface to bind (env: SMORTBOARD_HOST, default: 127.0.0.1 - this machine only)",
     )
     parser.add_argument(
         "--db",
@@ -87,7 +101,7 @@ def main(argv: list[str] | None = None) -> None:
     port = _resolve_port(args.port)
 
     with Store(db_path) as store:
-        server = build_server(store, port)
+        server = build_server(store, port, host=_resolve_host(args.host))
         actual_port = server.server_address[1]
         url = f"http://127.0.0.1:{actual_port}/ui/index.html"
         print(f"smortboard serving on {url} (db={db_path})")

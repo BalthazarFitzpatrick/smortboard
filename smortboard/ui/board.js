@@ -19,12 +19,17 @@ const BINDINGS = [
   {code: 'KeyY', label: 'y', action: 'accept the focused card', group: 'cards'},
   {code: 'KeyX', label: 'x', action: 'reject the focused card', group: 'cards'},
   {code: 'KeyM', label: 'm', action: "cycle the card's model", group: 'cards'},
+  {code: 'KeyT', label: 't', action: "run replay: scrub the focused card's run step by step", group: 'cards'},
   {code: 'Slash', label: '/', action: "focus the open card's comment input", group: 'cards'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
+  {code: 'KeyW', label: 'w', action: 'run the board: start / stop the queue', group: 'cards'},
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
+  {code: 'KeyI', label: 'i', action: 'cost telemetry: card attempts, or the board cost table', group: 'panels'},
   {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card', group: 'panels'},
+  {code: 'KeyD', label: 'd', action: 'morning digest: pull requests and open questions', group: 'panels'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
   {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts', group: 'panels'},
+  {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
   {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent', group: 'panels'},
   {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator', group: 'panels'},
   ...Array.from({length: 9}, (_, i) => ({
@@ -349,6 +354,7 @@ function reportNotReady(missing) {
     missing.map(m => `<span class="hazard-note">${escapeHtml(m)}</span>`).join('');
   const menu = new Menu({title: 'card runtime', sections: [{kind: 'node', node: box}]});
   menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
 }
 
 async function runFocusedCard() {
@@ -696,13 +702,21 @@ function cycleWorkforce(delta) {
   renderWorkforceConversation();
 }
 
+// what each delivery mode reads as. a second spike (after the first) sent an unmarked mid-turn
+// message between two tool calls and it reached the model there, inside the same turn - so "live"
+// really does mean the agent's next step, not only after it finishes the whole turn
+const DELIVERY_LABEL = {
+  live: "delivered at the agent's next step",
+  next_run: 'reaches the agent on its next run',
+};
+
 async function renderWorkforceConversation() {
   clearTimeout(wf.poll);
   wf.subheader.hidden = false;
-  wf.subheader.textContent = 'notes reach the agent on its next run';
   updateWorkforceCycle();
   try {
     const data = await api(`/api/cards/${wf.cardId}/conversation`);
+    wf.subheader.textContent = DELIVERY_LABEL[data.delivery] || DELIVERY_LABEL.next_run;
     wf.header.textContent = `${data.title} - ${data.running ? `running - ${data.phase || '...'}` : 'idle'}`;
     wf.log.innerHTML = '';
     (data.messages || []).forEach(m => appendLine(wf.log, m.author, m.body));
@@ -722,9 +736,14 @@ async function sendWorkforce(text) {
     const res = await fetch(`/api/cards/${wf.cardId}/conversation`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
     });
+    const body = await res.json().catch(() => null);
     if (!res.ok) {
-      const body = await res.json().catch(() => null);
       appendLine(wf.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error');
+      return;
+    }
+    if (body && body.delivery) {
+      wf.subheader.hidden = false;
+      wf.subheader.textContent = DELIVERY_LABEL[body.delivery] || DELIVERY_LABEL.next_run;
     }
   } catch (err) {
     appendLine(wf.log, 'board', `could not reach the agent: ${err.message}`, 'error');
@@ -802,6 +821,7 @@ function openRosterPanel() {
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyA') openOverlay = null; },
     });
     menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    menu.el?.classList.add('menu-centered');
     loadRoster(menu);
     return menu;
   });
@@ -955,13 +975,14 @@ function usageSection(label, className) {
 // A CARD'S LANGUAGE: ruled sections with dim labels, and a foot carrying the total - built with
 // createElement so every line is its own element, which is also what the node tests read
 function usageCard(data) {
-  const parts = (data.windows || []).map(w => {
+  const windowParts = (data.windows || []).map(w => {
     const section = usageSection(windowLabel(w.type), 'usage-window');
     const {fraction} = windowMeasure(w);
     if (fraction != null) section.appendChild(fillBar(fraction, w.status === 'allowed' ? '' : 'warn'));
     section.appendChild(textLine(windowStats(w), 'stat'));
     return section;
   });
+  const modelParts = [];
   const models = data.models || [];
   if (models.length) {
     const section = usageSection('spend by model', 'usage-models');
@@ -977,14 +998,23 @@ function usageCard(data) {
         `cache ${formatTokenCount((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))}`, 'stat'));
       section.appendChild(row);
     });
-    parts.push(section);
+    modelParts.push(section);
   }
   const card = document.createElement('div');
-  card.className = 'usage-card';
-  parts.forEach((part, i) => {
-    if (i) card.appendChild(textLine('', 'h-divider'));
-    card.appendChild(part);
+  card.className = 'usage-card usage-wide';
+  // wide, not tall: the rate-limit windows in one column, the spend by model in the other
+  const columns = document.createElement('div');
+  columns.className = 'usage-columns';
+  [windowParts, modelParts].filter(group => group.length).forEach(group => {
+    const column = document.createElement('div');
+    column.className = 'usage-column';
+    group.forEach((part, i) => {
+      if (i) column.appendChild(textLine('', 'h-divider'));
+      column.appendChild(part);
+    });
+    columns.appendChild(column);
   });
+  card.appendChild(columns);
   card.appendChild(textLine('', 'h-divider'));
   const foot = document.createElement('div');
   foot.className = 'card-foot usage-foot';
@@ -1013,6 +1043,7 @@ function openUsagePanel() {
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyU') openOverlay = null; },
     });
     menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    menu.el?.classList.add('menu-centered');
     loadUsage(menu);
     return menu;
   });
@@ -1209,7 +1240,7 @@ function openShortcutOverlay() {
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyS') openOverlay = null; },
     });
     menu.openAt({x: Math.max(16, window.innerWidth / 2 - 500), y: 60});
-    menu.el?.classList.add('shortcut-overlay');
+    menu.el?.classList.add('shortcut-overlay', 'menu-centered');
     return menu;
   });
 }
@@ -1249,14 +1280,19 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'Space' && openCard) { evt.preventDefault(); openCard.expander.close(); return; }
 
   if (evt.code === 'KeyG') { grouped = !grouped; return; }
+  if (evt.code === 'KeyW') { toggleRunAll(); return; }
   if (evt.code === 'KeyU') { openUsagePanel(); return; }
+  if (evt.code === 'KeyI') { openTelemetryPanel(); return; }
   if (evt.code === 'KeyA') { openRosterPanel(); return; }
+  if (evt.code === 'KeyD') { openDigestPanel(); return; }
   if (evt.code === 'KeyR') { runFocusedCard(); return; }
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
   if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
   if (evt.code === 'KeyM') { cycleCardModel(); return; }
+  if (evt.code === 'KeyT') { toggleReplay(); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
+  if (evt.code === 'KeyN') { toggleInboxPanel(); return; }
   // preventDefault: opening a drawer focuses its input, and the key that opened it typed itself there
   if (evt.code === 'Comma') { evt.preventDefault(); drawerFor('left').toggle(); return; }
   if (evt.code === 'Period') { evt.preventDefault(); drawerFor('right').toggle(); return; }

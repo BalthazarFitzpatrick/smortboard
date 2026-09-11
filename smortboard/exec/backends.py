@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -37,7 +38,6 @@ from smortboard.store.api import Store
 
 # defaults, overridable per deployment - never the credential itself, which is never an env var
 DEFAULT_CARD_IMAGE = "smortboard-card:latest"
-DEFAULT_TOKEN_PATH = Path.home() / ".config" / "smortboard" / "card_token"
 
 CARD_IMAGE_ENV = "SMORTBOARD_CARD_IMAGE"
 CARD_TOKEN_PATH_ENV = "SMORTBOARD_CARD_TOKEN_PATH"
@@ -240,6 +240,7 @@ class RunnerBackend(Protocol):
         model: str = "sonnet",
         repo: dict[str, Any] | None = None,
         token_path: str | Path | None = None,
+        pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
     ) -> RunResult: ...
 
 
@@ -269,6 +270,7 @@ class ContainerBackend:
         model: str = "sonnet",
         repo: dict[str, Any] | None = None,
         token_path: str | Path | None = None,
+        pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
     ) -> RunResult:
         token = read_card_token(token_path)
         clone_path = Path(tempfile.mkdtemp(prefix=f"smortboard-card-{uuid.uuid4().hex[:8]}-"))
@@ -284,8 +286,17 @@ class ContainerBackend:
             leases = [row["path_glob"] for row in lease_rows or []]
             brief = lease_preamble(leases) + commands_preamble(repo) + prompt
             cmd = self._docker_command(clone_path, brief, settings_path, model, repo, store)
-            # the token goes straight down the container's stdin and is not kept anywhere
-            result = run_process(store, card_id, cmd, cwd=clone_path, stdin_text=token + "\n")
+            # the token is a plain first line the container's shell consumes with `read -r`; the
+            # brief follows as the first stream-json turn, and stdin stays open for live steering
+            result = run_process(
+                store,
+                card_id,
+                cmd,
+                cwd=clone_path,
+                token_line=token + "\n",
+                stream_prompt=brief,
+                pending_notes=pending_notes,
+            )
             self._fetch_back(repo_root, clone_path, branch, worktree_path)
             return result
         finally:
@@ -334,17 +345,18 @@ class ContainerBackend:
             model=model,
             allowed_tools=allowed_tools_for_repo(repo),
             system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT),
+            stream_input=True,
         )
         # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK INSIDE THE CONTAINER. the host's token
         # file, if there is one, is never mounted - read from stdin the token exists only in the
         # container's memory.
-        # `read` consumes exactly the first line, then stdin is redirected from /dev/null for the
-        # run itself - without that redirect `claude -p` waits 3s for input it will never get (S1).
-        # still never `-e`/`--env`, so `docker inspect` shows nothing either.
+        # `read` consumes exactly the first line; everything after it is still the same stdin fd,
+        # so it passes straight through to `claude` - which is what live steering needs. NO
+        # `< /dev/null` HERE ANY MORE: that redirect would close off the stream-json turns that
+        # follow the token. still never `-e`/`--env`, so `docker inspect` shows nothing either.
         inner = (
             "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN && "
             + shlex.join(claude_cmd)
-            + " < /dev/null"
         )
         return [
             "docker",

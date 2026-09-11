@@ -78,7 +78,15 @@ body {
    which edge, and the panel an opened card fills */
 .card-strip.card-working { border-color: var(--fill-good); }
 .card-strip.card-rejected { border-color: var(--fill-warn); }
-.card-strip.card-attention { border-color: var(--fill-attention); }
+/* vanilla is the palest edge, so attention is also the only one that glows: rings stepping down to
+   nothing, outside the border so the card's content does not move */
+.card-strip.card-attention, .expand-panel.card-attention {
+  border-color: var(--fill-attention);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--fill-attention) 60%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--fill-attention) 28%, transparent),
+    0 0 0 7px color-mix(in srgb, var(--fill-attention) 9%, transparent);
+}
 /* done is lichen, an edge like every other state: the fills are too flat at card size. measured
    under simulated deuteranopia it stays delta-e 54 from the rejected red, and 2.6x brighter */
 .card-strip.card-accepted { border-color: var(--status-good); }
@@ -185,7 +193,6 @@ body {
 
 /* an expanded card keeps its state as an edge rather than a fill - see the onOpen comment */
 .expand-panel.card-working { border-color: var(--fill-good); }
-.expand-panel.card-attention { border-color: var(--fill-attention); }
 .expand-panel.card-rejected { border-color: var(--fill-warn); }
 .expand-panel.card-accepted { border-color: var(--status-good); }
 
@@ -259,6 +266,31 @@ body {
 /* ---- usage (u): a card's language - ruled sections, dim labels, a foot - with ui_base's fill bar
    for how far through a window we are and each model's share of the spend */
 .usage-card { display: flex; flex-direction: column; gap: 10px; width: min(460px, 86vw); }
+/* usage is wide rather than tall: the windows on the left, the spend by model on the right */
+.usage-card.usage-wide { width: min(860px, 88vw); }
+.menu-panel:has(.usage-wide) { max-width: none; }
+.usage-columns { display: flex; align-items: stretch; }
+.usage-column { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.usage-column + .usage-column {
+  border-left: 2px solid var(--grey-border); margin-left: 16px; padding-left: 16px;
+}
+@media (max-width: 700px) {
+  .usage-columns { flex-direction: column; }
+  .usage-column + .usage-column {
+    border-left: 0; margin: 10px 0 0; padding: 10px 0 0; border-top: 2px solid var(--grey-border);
+  }
+}
+
+/* ---- every panel a key opens sits in the middle of the screen ------------------------------
+   over the board dimmed well past ui_base's 55%, which left the lichen and red card edges reading
+   through. for a menu the dim is a spread shadow, so a click outside still reaches its dismiss */
+.modal-backdrop { background: rgba(0, 0, 0, 0.8); }
+.menu-panel.menu-centered, .menu-panel.menu-centered:focus {
+  left: 0 !important; top: 0 !important; right: 0; bottom: 0; margin: auto;
+  width: fit-content; height: fit-content;
+  z-index: 80;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 0 100vmax rgba(0, 0, 0, 0.8);
+}
 .usage-section { display: flex; flex-direction: column; gap: 6px; }
 .usage-model { display: flex; flex-direction: column; gap: 4px; }
 .usage-model + .usage-model { margin-top: 8px; }

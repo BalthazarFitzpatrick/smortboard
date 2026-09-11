@@ -17,6 +17,7 @@ which a human takes over. There is no step after this one.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,15 @@ from smortboard.exec.backends import (
     require_card_runtime,
     write_container_guards,
 )
-from smortboard.exec.worktrees import WorktreeError, branch_diff, create_worktree
+from smortboard.exec.worktrees import (
+    WorktreeError,
+    add_worktree,
+    branch_diff,
+    branch_exists,
+    create_worktree,
+    existing_worktree,
+    worktree_path,
+)
 from smortboard.review.gates import GateUnavailable, run_test_gate
 from smortboard.review.merge_request import MergeRequestUnavailable, open_merge_request
 from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
@@ -99,8 +108,7 @@ def build_card_prompt(card: dict[str, Any]) -> str:
         lines += [f"- {t['text']}" for t in tasks]
         lines.append("")
 
-    # a running headless session cannot take input, so a note operator leaves mid-run only reaches
-    # the agent on the card's NEXT run - the conversation endpoint says so explicitly (delivery)
+    # every note so far, even ones already delivered live: a fresh session remembers none of them
     notes = [c["body"] for c in card.get("comments") or [] if c.get("author") == "operator"]
     if notes:
         lines.append("Notes from operator, oldest first:")
@@ -189,12 +197,18 @@ def run_card_lifecycle(
     token_path: str | Path | None = None,
     backend: Any | None = None,
     on_phase: Any | None = None,
+    pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> LifecycleResult:
     """runs one card the whole way, and returns where it stopped.
 
     `on_phase` is called with each phase name as it starts, so a caller can show progress without
     polling the event log. `backend` is for tests; production always takes the one container
     runtime, which refuses rather than falling back.
+
+    `pending_notes` is live steering: passed straight through to every worker run (the initial run
+    and any fix rounds) so a note operator leaves mid-run reaches the agent at its next step, rather
+    than waiting for the card's next run. None outside RunRegistry (e.g. in
+    tests) means notes fall back to arriving next run only, same as before.
     """
 
     def phase(name: str) -> None:
@@ -229,7 +243,16 @@ def run_card_lifecycle(
         return _refuse(store, state, f"The card runtime is not ready:\n{exc}")
 
     try:
-        tree = create_worktree(repo["path"], card_id, base=base)
+        # a blocked card resuming is not a fresh start - create_worktree raises on an existing
+        # path, so the worktree from its first run reuses it (commits and all) rather than being
+        # refused. only reached for a non-accepted card: accepted already returned above, and a
+        # rejected card's decide.py step deletes the branch, so it always falls to the fresh cut
+        if worktree_path(repo["path"], card_id).exists():
+            tree = existing_worktree(repo["path"], card_id)
+        elif branch_exists(repo["path"], card_id):
+            tree = add_worktree(repo["path"], card_id)
+        else:
+            tree = create_worktree(repo["path"], card_id, base=base)
     except WorktreeError as exc:
         return _refuse(store, state, f"Could not cut a worktree for this card: {exc}")
     state.branch, state.worktree = tree.branch, str(tree.path)
@@ -254,6 +277,7 @@ def run_card_lifecycle(
             repo=repo,
             token_path=token_path,
             model=worker_model,
+            pending_notes=pending_notes,
         )
         if run.blocked_reason_code:
             return _block(
