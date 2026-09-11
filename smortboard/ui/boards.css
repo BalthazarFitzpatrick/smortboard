@@ -1,0 +1,76 @@
+/* boards and repos (b): rides .modal-backdrop / .panel-floating, same as the prompt editor and
+   inbox - see board.js for why this is not a Menu (arrow/enter/escape would fight the inputs).
+   every visual primitive - toggle, h-divider, field-label, text-field, hazard stripes - comes
+   from base.css; this file only positions and sizes them. */
+
+.boards-panel {
+  width: min(640px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+
+.boards-list, .repos-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.board-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+}
+.board-row.on .board-name { color: var(--cream); font-weight: 600; }
+.board-name { flex: 1 1 auto; }
+.board-delete { color: var(--text-dim); }
+.board-delete-confirm {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--fill-warn);
+}
+
+.boards-create-row, .repos-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.board-name-input { flex: 1 1 auto; }
+.boards-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.boards-status.boards-error { color: var(--status-warn); }
+
+.repos-label { margin-top: 2px; }
+.repos-hint { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+
+.repo-row {
+  border: 2px solid var(--grey-border);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.repo-row-head { display: flex; justify-content: space-between; gap: 10px; }
+.repo-name { color: var(--cream); font-weight: 600; }
+.repo-path { word-break: break-all; }
+.repo-edit-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.repo-edit-test, .repo-edit-image { flex: 1 1 160px; }
+.repo-edit-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.repo-edit-status.repo-edit-ok { color: var(--lichen-milk); }
+.repo-edit-status.repo-edit-error { color: var(--status-warn); }
+
+.repo-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 2px solid var(--grey-border);
+  padding-top: 10px;
+}
+.repo-form-submit-row { display: flex; align-items: center; gap: 12px; }
+.repo-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.repo-status.repo-error { color: var(--status-warn); }

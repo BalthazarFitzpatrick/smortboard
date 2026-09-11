@@ -1,6 +1,7 @@
 """server tests: run a real http server in a thread against a tmp_path database"""
 
 import json
+import subprocess
 import threading
 import urllib.error
 import urllib.request
@@ -325,4 +326,141 @@ def test_asset_falls_back_to_ui_base(running_server):
 
 def test_unknown_asset_is_404(running_server):
     status, _ = _request(f"{running_server}/ui/does-not-exist.css")
+    assert status == 404
+
+
+def _init_repo(path, branch="main"):
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
+    (path / "README.md").write_text("hello\n")
+    subprocess.run(["git", "-C", str(path), "add", "README.md"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(path),
+            "-c",
+            "user.email=t@t.com",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ],
+        check=True,
+    )
+
+
+def test_register_repo_round_trips(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    status, repo = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "smortboard", "path": str(repo_path), "default_branch": "main"},
+    )
+    assert status == 201
+    assert repo["name"] == "smortboard"
+    assert repo["path"] == str(repo_path)
+
+    status, repos = _request(f"{running_server}/api/boards/{board['id']}/repos")
+    assert status == 200
+    assert len(repos) == 1
+
+
+def test_register_repo_missing_path_is_400_with_actionable_message(running_server, tmp_path):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    status, body = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "smortboard", "path": str(tmp_path / "nope"), "default_branch": "main"},
+    )
+    assert status == 400
+    assert "does not exist" in body["error"]
+
+
+def test_register_repo_not_a_git_repo_is_400(running_server, tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    status, body = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "smortboard", "path": str(plain), "default_branch": "main"},
+    )
+    assert status == 400
+    assert "not a git repository" in body["error"]
+
+
+def test_register_repo_missing_branch_is_400(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path, branch="main")
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    status, body = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "smortboard", "path": str(repo_path), "default_branch": "release"},
+    )
+    assert status == 400
+    assert "release" in body["error"]
+
+
+def test_register_repo_empty_name_is_400(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    status, body = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "", "path": str(repo_path), "default_branch": "main"},
+    )
+    assert status == 400
+    assert "name" in body["error"]
+
+
+def test_patch_repo_test_command_and_image(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, repo = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "smortboard", "path": str(repo_path), "default_branch": "main"},
+    )
+    status, updated = _request(
+        f"{running_server}/api/repos/{repo['id']}",
+        "PATCH",
+        {"test_command": "uv run pytest", "image": "card-python:latest"},
+    )
+    assert status == 200
+    assert updated["test_command"] == "uv run pytest"
+    assert updated["image"] == "card-python:latest"
+
+
+def test_patch_repo_unknown_field_is_400(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, repo = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "smortboard", "path": str(repo_path), "default_branch": "main"},
+    )
+    status, body = _request(
+        f"{running_server}/api/repos/{repo['id']}", "PATCH", {"path": "/somewhere/else"}
+    )
+    assert status == 400
+    assert "error" in body
+
+
+def test_register_repo_on_missing_board_is_404(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    status, body = _request(
+        f"{running_server}/api/boards/does-not-exist/repos",
+        "POST",
+        {"name": "smortboard", "path": str(repo_path), "default_branch": "main"},
+    )
     assert status == 404
