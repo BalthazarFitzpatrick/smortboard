@@ -140,7 +140,7 @@ function digestPrRow(pr) {
   row.appendChild(link);
   if (pr.dependency_not_in_batch) {
     row.appendChild(dLine(
-      'a dependency has not shown up merged in this window - check merge order before this one',
+      'a dependency did not open its own pull request in this window (merged earlier, or not run yet)',
       'stat digest-warn',
     ));
   }

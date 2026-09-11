@@ -16,6 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from smortboard import scheduler as scheduler_module
+from smortboard.review.merge_request import PullRequestState
 from smortboard.scheduler import (
     DEFAULT_MAX_PARALLEL,
     BoardScheduler,
@@ -59,6 +61,29 @@ def board_and_repo(store):
     board = store.create_board("b")
     repo = store.create_repo(board["id"], "r", "/tmp/r", "main")
     return board["id"], repo["id"]
+
+
+@pytest.fixture(autouse=True)
+def _clear_pr_state_cache():
+    # the cache is module-level (it must survive across scheduler ticks) - a stale answer from a
+    # previous test's url would otherwise never expire within a single test run
+    scheduler_module._pr_state_cache.clear()
+    yield
+    scheduler_module._pr_state_cache.clear()
+
+
+def _fake_pr_view(monkeypatch, **states):
+    """states maps a url to a PullRequestState - the merge_request module's real gh call is never
+    reached, matching the suite-wide rule that gh is faked, never invoked for real"""
+
+    def _pr_view(repo_path, url):
+        return states[url]
+
+    monkeypatch.setattr(scheduler_module, "pr_view", _pr_view)
+
+
+def _merge(store, card_id, url):
+    store.append_event(card_id, "merge_request", {"opened": True, "branch": "b", "url": url})
 
 
 # -- lease overlap ------------------------------------------------------------------
@@ -106,12 +131,88 @@ def test_a_card_waits_for_its_dependency_to_be_accepted(store, board_and_repo):
     assert "dependency" in view["waiting"][card["id"]]
 
 
-def test_a_dependent_starts_once_its_dependency_is_accepted(store, board_and_repo):
+def test_an_accepted_dependency_with_no_pull_request_still_waits(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    dep = store.create_card(board_id, repo_id, "base card")
+    card = store.create_card(board_id, repo_id, "dependent card")
+    store.add_dependency(card["id"], dep["id"])
+    store.update_card(dep["id"], status="accepted")  # accepted, but no merge_request event
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert card["id"] not in runs.started
+    assert "no pull request" in scheduler.schedule_view()["waiting"][card["id"]]
+
+
+def test_an_accepted_dependency_with_an_open_pull_request_still_waits(
+    store, board_and_repo, monkeypatch
+):
     board_id, repo_id = board_and_repo
     dep = store.create_card(board_id, repo_id, "base card")
     card = store.create_card(board_id, repo_id, "dependent card")
     store.add_dependency(card["id"], dep["id"])
     store.update_card(dep["id"], status="accepted")
+    url = "https://github.com/o/r/pull/1"
+    _merge(store, dep["id"], url)
+    _fake_pr_view(monkeypatch, **{url: PullRequestState(merged=False, state="OPEN")})
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert card["id"] not in runs.started
+    assert "still open" in scheduler.schedule_view()["waiting"][card["id"]]
+
+
+def test_a_pull_request_closed_without_merging_still_waits(store, board_and_repo, monkeypatch):
+    board_id, repo_id = board_and_repo
+    dep = store.create_card(board_id, repo_id, "base card")
+    card = store.create_card(board_id, repo_id, "dependent card")
+    store.add_dependency(card["id"], dep["id"])
+    store.update_card(dep["id"], status="accepted")
+    url = "https://github.com/o/r/pull/2"
+    _merge(store, dep["id"], url)
+    _fake_pr_view(monkeypatch, **{url: PullRequestState(merged=False, state="CLOSED")})
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert card["id"] not in runs.started
+    assert "closed without merging" in scheduler.schedule_view()["waiting"][card["id"]]
+
+
+def test_github_unreachable_waits_rather_than_guesses(store, board_and_repo, monkeypatch):
+    board_id, repo_id = board_and_repo
+    dep = store.create_card(board_id, repo_id, "base card")
+    card = store.create_card(board_id, repo_id, "dependent card")
+    store.add_dependency(card["id"], dep["id"])
+    store.update_card(dep["id"], status="accepted")
+    url = "https://github.com/o/r/pull/3"
+    _merge(store, dep["id"], url)
+    _fake_pr_view(monkeypatch, **{url: PullRequestState(merged=False, error="gh is not installed")})
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert card["id"] not in runs.started
+    assert "could not ask GitHub" in scheduler.schedule_view()["waiting"][card["id"]]
+
+
+def test_a_dependent_starts_once_its_dependencys_pull_request_is_merged(
+    store, board_and_repo, monkeypatch
+):
+    board_id, repo_id = board_and_repo
+    dep = store.create_card(board_id, repo_id, "base card")
+    card = store.create_card(board_id, repo_id, "dependent card")
+    store.add_dependency(card["id"], dep["id"])
+    store.update_card(dep["id"], status="accepted")
+    url = "https://github.com/o/r/pull/4"
+    _merge(store, dep["id"], url)
+    _fake_pr_view(monkeypatch, **{url: PullRequestState(merged=True, state="MERGED")})
 
     runs = FakeRuns()
     scheduler = BoardScheduler(board_id, store.path, runs)
@@ -119,6 +220,30 @@ def test_a_dependent_starts_once_its_dependency_is_accepted(store, board_and_rep
 
     assert card["id"] in runs.started
     assert card["id"] not in scheduler.schedule_view()["waiting"]
+
+
+def test_the_pull_request_answer_is_cached_for_a_minute(store, board_and_repo, monkeypatch):
+    board_id, repo_id = board_and_repo
+    dep = store.create_card(board_id, repo_id, "base card")
+    card = store.create_card(board_id, repo_id, "dependent card")
+    store.add_dependency(card["id"], dep["id"])
+    store.update_card(dep["id"], status="accepted")
+    url = "https://github.com/o/r/pull/5"
+    _merge(store, dep["id"], url)
+    calls: list[str] = []
+
+    def _pr_view(repo_path, u):
+        calls.append(u)
+        return PullRequestState(merged=False, state="OPEN")
+
+    monkeypatch.setattr(scheduler_module, "pr_view", _pr_view)
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    scheduler.schedule_view()
+    scheduler._tick()
+    assert calls == [url]  # a second tick within the ttl reused the cached answer
 
 
 def test_a_deleted_dependency_blocks_nothing(store, board_and_repo):
