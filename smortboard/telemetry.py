@@ -255,11 +255,22 @@ def _attempt_outcome(segment: list[dict[str, Any]]) -> str:
     return "in progress"
 
 
+def _add_model_spend(spend: dict[str, float], payload: dict[str, Any]) -> None:
+    for model, usage in (payload.get("modelUsage") or {}).items():
+        spend[model] = spend.get(model, 0.0) + float((usage or {}).get("costUSD") or 0)
+
+
+def _main_model(spend: dict[str, float]) -> str | None:
+    """the model that did the work - the costliest one, not the helper billed alongside it"""
+    return max(spend, key=spend.__getitem__) if spend else None
+
+
 def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
     worker_cost = reviewer_cost = 0.0
     worker_turns = reviewer_turns = 0
-    worker_models: set[str] = set()
-    reviewer_models: set[str] = set()
+    # cost per model name - claude code bills a small helper model on the side of every run
+    worker_spend: dict[str, float] = {}
+    reviewer_spend: dict[str, float] = {}
     denials: list[dict[str, str]] = []
     fix_rounds = 0
 
@@ -269,15 +280,14 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
             role = _result_role(segment, i)
             cost = float(payload.get("total_cost_usd") or 0)
             turns = int(payload.get("num_turns") or 0)
-            used_models = set((payload.get("modelUsage") or {}).keys())
             if role == "reviewer":
                 reviewer_cost += cost
                 reviewer_turns += turns
-                reviewer_models |= used_models
+                _add_model_spend(reviewer_spend, payload)
             elif role == "worker":
                 worker_cost += cost
                 worker_turns += turns
-                worker_models |= used_models
+                _add_model_spend(worker_spend, payload)
             for denial in payload.get("permission_denials") or []:
                 denials.append(
                     {"tool": denial.get("tool_name") or "", "target": _denial_target(denial)}
@@ -288,8 +298,8 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "started_at": segment[0]["created_at"] if segment else None,
         "outcome": _attempt_outcome(segment),
-        "worker_model": next(iter(worker_models), None),
-        "reviewer_model": next(iter(reviewer_models), None),
+        "worker_model": _main_model(worker_spend),
+        "reviewer_model": _main_model(reviewer_spend),
         "worker_cost_usd": round(worker_cost, 6),
         "reviewer_cost_usd": round(reviewer_cost, 6),
         "cost_usd": round(worker_cost + reviewer_cost, 6),
