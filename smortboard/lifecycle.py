@@ -35,6 +35,8 @@ from smortboard.exec.worktrees import (
     branch_exists,
     create_worktree,
     existing_worktree,
+    fetch_base,
+    has_remote,
     worktree_path,
 )
 from smortboard.review.gates import GateUnavailable, run_test_gate
@@ -195,6 +197,27 @@ def _block(store: Store, state: LifecycleResult, reason_code: str, note: str) ->
     return state
 
 
+def _base_for_fresh_cut(store: Store, state: LifecycleResult, repo_path: str, base: str) -> str:
+    """the ref a fresh worktree is cut from, for a card that depends on another.
+
+    scheduler._dependency_wait only starts such a card once its dependency's pull request is
+    merged on GitHub - but the local `base` branch does not update itself, so a worktree cut from
+    it can still miss that merge. Fetching `origin/<base>` first closes that gap. A card with no
+    dependencies never reaches this function, so its worktree is cut exactly as before.
+    """
+    if not has_remote(repo_path):
+        return base
+    if fetch_base(repo_path, base):
+        return f"origin/{base}"
+    _note(
+        store,
+        state.card_id,
+        f"could not fetch '{base}' from origin before cutting this card's worktree, so its "
+        "dependency's merge may not be visible yet. cutting from the local branch instead.",
+    )
+    return base
+
+
 def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
     """the board could not run this card at all - a missing repo, image or credential.
 
@@ -272,7 +295,10 @@ def run_card_lifecycle(
         elif branch_exists(repo["path"], card_id):
             tree = add_worktree(repo["path"], card_id)
         else:
-            tree = create_worktree(repo["path"], card_id, base=base)
+            cut_base = base
+            if card.get("depends_on"):
+                cut_base = _base_for_fresh_cut(store, state, repo["path"], base)
+            tree = create_worktree(repo["path"], card_id, base=cut_base)
     except WorktreeError as exc:
         return _refuse(store, state, f"Could not cut a worktree for this card: {exc}")
     state.branch, state.worktree = tree.branch, str(tree.path)

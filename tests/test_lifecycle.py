@@ -11,6 +11,7 @@ import pytest
 
 from smortboard import lifecycle
 from smortboard.exec.runner import RunResult
+from smortboard.exec.worktrees import WorktreeInfo
 from smortboard.review.gates import GateResult, GateUnavailable
 from smortboard.review.merge_request import MergeRequestResult
 from smortboard.review.reviewer import ReviewFinding, ReviewResult
@@ -295,6 +296,89 @@ def test_the_lease_reaches_the_run_as_globs_not_as_rows(board):
     globs = lifecycle._lease_globs(store.get_card(card_id))
     assert globs == ["thing.py"]
     assert all(isinstance(g, str) for g in globs)
+
+
+# -- fresh worktrees for dependent cards fetch origin first --------------------------------------
+
+
+def _with_origin(repo, tmp_path):
+    """gives `repo` a real origin remote - a bare clone of itself - so fetch_base has somewhere
+    to fetch from without reaching the network."""
+    bare = tmp_path / "origin.git"
+    _git(repo, "clone", "-q", "--bare", str(repo), str(bare))
+    _git(repo, "remote", "add", "origin", str(bare))
+    return bare
+
+
+def _spy_create_worktree(monkeypatch, tree_path):
+    seen = {}
+
+    def _create(repo_path, card_id, base="main"):
+        seen["base"] = base
+        return WorktreeInfo(card_id=card_id, path=tree_path, branch=f"card/{card_id}")
+
+    monkeypatch.setattr(lifecycle, "create_worktree", _create)
+    return seen
+
+
+def test_a_card_with_no_dependencies_is_cut_from_the_local_base_as_before(
+    board, tmp_path, monkeypatch
+):
+    """no depends_on - _base_for_fresh_cut is never reached, so behaviour is unchanged"""
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    fetched = []
+    monkeypatch.setattr(lifecycle, "fetch_base", lambda *a, **k: fetched.append(1) or True)
+    seen = _spy_create_worktree(monkeypatch, tmp_path / "tree")
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert fetched == []
+    assert seen["base"] == "main"
+
+
+def test_a_dependent_cards_worktree_is_cut_from_a_freshly_fetched_origin(
+    board, tmp_path, monkeypatch
+):
+    store, card_id = board
+    repo_id = store.get_card(card_id)["repo_id"]
+    board_id = store.get_card(card_id)["board_id"]
+    repo_path = store.get_repo(repo_id)["path"]
+    _with_origin(repo_path, tmp_path)
+    dep = store.create_card(board_id, None, "dep card")
+    store.add_dependency(card_id, dep["id"])
+    _stub_gates(monkeypatch)
+    seen = _spy_create_worktree(monkeypatch, tmp_path / "tree")
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert seen["base"] == "origin/main"
+
+
+def test_a_dependent_card_falls_back_to_the_local_base_with_no_origin(board, tmp_path, monkeypatch):
+    store, card_id = board
+    board_id = store.get_card(card_id)["board_id"]
+    dep = store.create_card(board_id, None, "dep card")
+    store.add_dependency(card_id, dep["id"])
+    _stub_gates(monkeypatch)
+    seen = _spy_create_worktree(monkeypatch, tmp_path / "tree")
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert seen["base"] == "main"
+    assert not any(
+        "could not fetch" in c["body"] for c in store.list_comments(card_id)
+    )  # no remote at all is not a failure worth a comment
+
+
+def test_a_failed_fetch_falls_back_and_leaves_a_comment(board, tmp_path, monkeypatch):
+    store, card_id = board
+    repo_id = store.get_card(card_id)["repo_id"]
+    board_id = store.get_card(card_id)["board_id"]
+    repo_path = store.get_repo(repo_id)["path"]
+    _with_origin(repo_path, tmp_path)
+    dep = store.create_card(board_id, None, "dep card")
+    store.add_dependency(card_id, dep["id"])
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "fetch_base", lambda *a, **k: False)
+    seen = _spy_create_worktree(monkeypatch, tmp_path / "tree")
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert seen["base"] == "main"
+    assert any("could not fetch" in c["body"] for c in store.list_comments(card_id))
 
 
 def test_the_card_runs_on_its_own_branch_never_on_main(board, monkeypatch):
