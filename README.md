@@ -6,7 +6,13 @@ You write a card and press a key. An agent picks it up in a sealed container and
 The board then re-runs the tests itself, has a second agent read the diff, and opens a pull request.
 It never merges. Anything that needs you waits in one inbox.
 
-![The board: five columns, cards edged by state, drawers folded at both sides](docs/images/board.jpg)
+![A payments service mid-sprint: cards in every state across five columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
+
+![A card opened over the board: its criteria, tasks, dependencies and the run as a timeline - tests passed, reviewer approved, pull request open](docs/images/hero-card.jpg)
+
+![Both side panels open: a working agent's transcript with a live note on the left, the orchestrator planning cards on the right](docs/images/hero-agents.jpg)
+
+<sub>The board, an open card, and the two agent panels. Example content, from a demo database.</sub>
 
 ---
 
@@ -266,3 +272,7 @@ uv run ruff check . && uv run ruff format --check .
 Neither suite calls a model or Docker. `docs/PLAN.md` has the plan and the containment reasoning,
 `docs/PHASE1-CONTRACTS.md` the schema and API, `docs/PROMPTS.md` the prompt layering, and
 `docs/spikes/` what was proven before it was built on.
+
+## License
+
+[MIT](LICENSE). Use it, change it, ship it; keep the copyright notice.
