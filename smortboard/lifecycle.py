@@ -66,6 +66,13 @@ DEFAULT_REVIEWER_MODEL = "sonnet"
 # where a human is already looking rather than needing a column of its own
 BOARD_AUTHOR = "smortboard"
 
+# what the card says when the model api refused its token - it lasts a year from setup-token
+TOKEN_REFUSED_NOTE = (
+    "The card token was refused (HTTP 401): it has expired or been revoked. Run "
+    "`claude setup-token` in your own terminal, write the new token to "
+    "~/.config/smortboard/card_token (mode 600), then run this card again."
+)
+
 
 @dataclass
 class LifecycleResult:
@@ -279,6 +286,8 @@ def run_card_lifecycle(
             model=worker_model,
             pending_notes=pending_notes,
         )
+        if run.auth_failed:
+            return _refuse(store, state, TOKEN_REFUSED_NOTE)
         if run.blocked_reason_code:
             return _block(
                 store,
