@@ -56,7 +56,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
-  'KeyG', 'KeyU', 'KeyA', 'KeyR', 'KeyY', 'KeyX', 'KeyS', 'Slash', 'Comma', 'Period',
+  'KeyG', 'KeyU', 'KeyA', 'KeyR', 'KeyY', 'KeyX', 'KeyS', 'KeyP', 'Slash', 'Comma', 'Period',
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
 const boundCodes = mod.BINDINGS.map(b => b.code);
 CONTRACT_KEYS.forEach(code => assert.ok(boundCodes.includes(code), `${code} must be in BINDINGS`));
@@ -110,5 +110,10 @@ press('KeyY');
 press('KeyX');
 assert.ok(fetchCalls.includes('/api/cards/c9/accept'), 'y should post accept for the focused card');
 assert.ok(fetchCalls.includes('/api/cards/c9/reject'), 'x should post reject for the focused card');
+
+// ---- p opens the prompt editor (not a Menu, so it never shows up in openedMenus) and p again closes it
+press('KeyP');
+assert.ok(fetchCalls.includes('/api/prompts'), 'p should load the three role prompts');
+press('KeyP');
 
 console.log('ok');

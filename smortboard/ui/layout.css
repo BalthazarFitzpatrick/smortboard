@@ -229,6 +229,26 @@ body {
   font-family: inherit; font-size: inherit;
 }
 
+/* ---- prompt editor (p) - orchestrator/worker/reviewer role prompts -----------------------------
+   rides .modal-backdrop / .panel-floating, the same pair expand.js and the menus use - see board.js
+   for why this is not a Menu (arrow/enter/escape would fight the textarea) */
+.prompt-panel { width: min(720px, 92vw); max-height: 84vh; display: flex; flex-direction: column; gap: 10px; }
+.prompt-roles { display: flex; gap: 8px; flex: 0 0 auto; }
+.prompt-role { flex: 1 1 0; display: flex; justify-content: space-between; gap: 8px; }
+.prompt-role .prompt-role-version { color: var(--text-dim); }
+.prompt-role.on { background: var(--accent-on); color: var(--accent-on-text); border-color: var(--cream); }
+.prompt-role.on .prompt-role-version { color: inherit; }
+/* the board's own monospace, our font our look - inherited rather than restated */
+.prompt-body {
+  flex: 1 1 auto; min-height: 280px; resize: vertical; box-sizing: border-box;
+  font-family: inherit; font-size: inherit; line-height: 1.5;
+  background: var(--bg); color: var(--text); border: 2px solid var(--grey-border); padding: 10px;
+}
+.prompt-body:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cream); }
+.prompt-footer { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+.prompt-status { color: var(--text-dim); }
+.prompt-status.prompt-error { color: var(--fill-warn); }
+
 /* ---- the run badge -------------------------------------------------------------------------
    A card that is running says so where its status already is, rather than somewhere new. The
    workstream takes the slack so status and run sit together on the right and the status does not
