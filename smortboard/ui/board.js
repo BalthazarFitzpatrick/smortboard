@@ -701,13 +701,21 @@ function cycleWorkforce(delta) {
   renderWorkforceConversation();
 }
 
+// what each delivery mode reads as. a second spike (after the first) sent an unmarked mid-turn
+// message between two tool calls and it reached the model there, inside the same turn - so "live"
+// really does mean the agent's next step, not only after it finishes the whole turn
+const DELIVERY_LABEL = {
+  live: "delivered at the agent's next step",
+  next_run: 'reaches the agent on its next run',
+};
+
 async function renderWorkforceConversation() {
   clearTimeout(wf.poll);
   wf.subheader.hidden = false;
-  wf.subheader.textContent = 'notes reach the agent on its next run';
   updateWorkforceCycle();
   try {
     const data = await api(`/api/cards/${wf.cardId}/conversation`);
+    wf.subheader.textContent = DELIVERY_LABEL[data.delivery] || DELIVERY_LABEL.next_run;
     wf.header.textContent = `${data.title} - ${data.running ? `running - ${data.phase || '...'}` : 'idle'}`;
     wf.log.innerHTML = '';
     (data.messages || []).forEach(m => appendLine(wf.log, m.author, m.body));
@@ -727,9 +735,14 @@ async function sendWorkforce(text) {
     const res = await fetch(`/api/cards/${wf.cardId}/conversation`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
     });
+    const body = await res.json().catch(() => null);
     if (!res.ok) {
-      const body = await res.json().catch(() => null);
       appendLine(wf.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error');
+      return;
+    }
+    if (body && body.delivery) {
+      wf.subheader.hidden = false;
+      wf.subheader.textContent = DELIVERY_LABEL[body.delivery] || DELIVERY_LABEL.next_run;
     }
   } catch (err) {
     appendLine(wf.log, 'board', `could not reach the agent: ${err.message}`, 'error');

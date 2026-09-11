@@ -59,6 +59,9 @@ class RunRegistry:
         self._db_path = Path(db_path)
         self._token_path = token_path
         self._runs: dict[str, RunState] = {}
+        # notes queued for LIVE delivery: a card's run pops these itself, between turns, once the
+        # agent it belongs to finishes its current turn - see runner.run_process
+        self._pending: dict[str, list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
     def get(self, card_id: str) -> RunState | None:
@@ -68,6 +71,25 @@ class RunRegistry:
     def active(self) -> list[RunState]:
         with self._lock:
             return [state for state in self._runs.values() if state.running]
+
+    def queue_note(self, card_id: str, comment: dict[str, Any]) -> bool:
+        """queues a comment for live delivery if this card's run is currently going.
+
+        returns whether it was queued - the conversation endpoint uses this to answer `delivery`
+        as "live" or "next_run". a card with no run, or a run that has already finished, cannot
+        accept it live even if the comment was written a second before the run ended.
+        """
+        with self._lock:
+            state = self._runs.get(card_id)
+            if state is None or not state.running:
+                return False
+            self._pending.setdefault(card_id, []).append(comment)
+            return True
+
+    def pop_pending(self, card_id: str) -> list[dict[str, Any]]:
+        """drains the notes queued for one card - called by the runner between turns"""
+        with self._lock:
+            return self._pending.pop(card_id, [])
 
     def start(
         self,
@@ -111,6 +133,7 @@ class RunRegistry:
                 state.card_id,
                 token_path=self._token_path,
                 on_phase=lambda phase: setattr(state, "phase", phase),
+                pending_notes=lambda: self.pop_pending(state.card_id),
             )
             state.phase = result.phase
             state.pr_url = result.pr_url
