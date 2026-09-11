@@ -47,6 +47,11 @@ CARD_TOKEN_PATH_ENV = "SMORTBOARD_CARD_TOKEN_PATH"
 _KEYCHAIN_SERVICE = "smortboard-card-token"
 _KEYCHAIN_USER = "smortboard"
 _CONTAINER_WORKDIR = "/workspace"
+# told up front: a real run spent two tool calls looking for its files under /home/user/repo
+WORKSPACE_PREAMBLE = (
+    f"Your working directory is {_CONTAINER_WORKDIR}, the repository root. "
+    f"Give file tools absolute paths under {_CONTAINER_WORKDIR}.\n\n"
+)
 # a card's guards (settings, lease, hooks) are mounted read-only here, outside /workspace, so the
 # agent can neither edit its own guard nor sweep it into a commit
 CONTAINER_GUARD_DIR = "/smortboard"
@@ -284,7 +289,7 @@ class ContainerBackend:
             # lease_preamble listed python dicts at the agent instead of paths
             lease_rows = store.get_card(card_id).get("leases") if store else None
             leases = [row["path_glob"] for row in lease_rows or []]
-            brief = lease_preamble(leases) + commands_preamble(repo) + prompt
+            brief = WORKSPACE_PREAMBLE + lease_preamble(leases) + commands_preamble(repo) + prompt
             cmd = self._docker_command(clone_path, brief, settings_path, model, repo, store)
             # the token is a plain first line the container's shell consumes with `read -r`; the
             # brief follows as the first stream-json turn, and stdin stays open for live steering

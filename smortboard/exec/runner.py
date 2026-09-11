@@ -216,6 +216,9 @@ class RunResult:
     total_cost_usd: float | None
     num_turns: int | None
     result_text: str | None
+    # the api refused the token (http 401: expired or revoked) - not the card's fault, so the
+    # lifecycle refuses the card with how to renew it rather than blocking it as a crash
+    auth_failed: bool = False
 
 
 # the exact marker a live note carries - the system prompt below tells the agent to expect lines
@@ -308,6 +311,9 @@ def result_to_run_result(result_event: dict[str, Any]) -> RunResult:
         total_cost_usd=result_event.get("total_cost_usd"),
         num_turns=result_event.get("num_turns"),
         result_text=result_event.get("result"),
+        # measured on claude 2.1.197 with a bogus token: is_error, api_error_status 401,
+        # "Failed to authenticate. API Error: 401 OAuth access token is invalid."
+        auth_failed=result_event.get("api_error_status") == 401,
     )
 
 
@@ -463,10 +469,16 @@ def run_process(
             result_text=process.stderr.read() if process.stderr else None,
         )
 
-    # the LAST result event, not summed: the CLI's own total_cost_usd/num_turns are session-scoped
-    # counters, so the final turn already carries the whole session's total - UNVERIFIED against a
-    # real multi-turn run, but summing would double-count if that assumption holds
-    run_result = result_to_run_result(result_events[-1])
+    # cost and turns are PER TURN, so a session with a note turn is the sum. measured 2026-09-11 on
+    # 2.1.197: one session, two results - $0.0087 then $0.0129, each reporting num_turns 1
+    last = result_to_run_result(result_events[-1])
+    run_result = RunResult(
+        **{
+            **last.__dict__,
+            "total_cost_usd": sum(float(e.get("total_cost_usd") or 0) for e in result_events),
+            "num_turns": sum(int(e.get("num_turns") or 0) for e in result_events),
+        }
+    )
     # a rate-limit block takes priority over whatever the result event alone would classify
     if blocked_reason_code and run_result.blocked_reason_code is None:
         run_result = RunResult(

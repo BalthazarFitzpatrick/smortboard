@@ -16,6 +16,7 @@ import pytest
 
 from smortboard.exec import backends
 from smortboard.exec.backends import (
+    WORKSPACE_PREAMBLE,
     CardRuntimeUnavailable,
     CardTokenMissing,
     ContainerBackend,
@@ -136,7 +137,9 @@ def test_the_credential_reaches_the_container_only_through_stdin(tmp_path, monke
     ContainerBackend(image="img").run_card(None, "card", tmp_path, "prompt", tmp_path / "s.json")
 
     assert seen["token_line"] == "s3cret\n"
-    assert seen["stream_prompt"] == "prompt"
+    # the working directory is told first, so the agent does not go looking for its files
+    assert seen["stream_prompt"] == WORKSPACE_PREAMBLE + "prompt"
+    assert seen["stream_prompt"].startswith("Your working directory is /workspace")
     assert "s3cret" not in seen["cmd"]
 
 
