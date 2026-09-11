@@ -40,7 +40,7 @@ It never merges. Anything that needs you waits in one inbox.
 | **running** | `claude -p` streams JSON both ways in a named container. The token is the first stdin line, the brief follows, and stdin stays open for live notes. Every line becomes an event. |
 | **testing** | The repo's own test command runs in the repo's image with no network. |
 | **reviewing** | A second agent with Read, Grep and Glob only reviews the diff in its surrounding code and answers four questions: vulnerabilities (injection, path traversal, unchecked input), leaked credentials, best practices (the project's conventions and the language's), and efficiency. It never sees the test results and doesn't judge the criteria; the test gate does that. A leaked credential at any severity, any high or critical finding, or no usable verdict blocks the card. |
-| **opening** | The board pushes the branch and runs `gh pr create`. Its `gh` wrapper allows three subcommands, and merge isn't one of them. |
+| **opening** | The board pushes the branch and runs `gh pr create`. A re-run of a card whose pull request is already open pushes to that one instead, never forced. Its `gh` wrapper allows four subcommands - `pr create`, `list`, `view` and `close` - and merge isn't one of them. |
 
 ![An open card: sections headed like board columns, the run as a timeline](docs/images/card.jpg)
 
@@ -78,7 +78,8 @@ under red-green colour blindness.
 <img src="docs/images/mission-control.jpg" alt="Mission control drawer" width="100%"><br>
 <b>Mission control</b> <code>.</code><br>
 Chat with the board's orchestrator. It answers with a plan and cards, each with a proposed model, and
-it sees what each model has cost and passed on this board.
+it sees what each model has cost and passed on this board. Both drawers open without taking focus,
+so the key that opened one closes it: <code>/</code> types into it, <code>Esc</code> hands focus back.
 </td>
 <td width="50%" valign="top">
 <img src="docs/images/workforce.jpg" alt="Workforce drawer pinned to one card" width="100%"><br>
@@ -99,7 +100,8 @@ worktree. Rows an answer can't help say where to act instead.
 <img src="docs/images/digest.jpg" alt="Morning digest" width="100%"><br>
 <b>Run the board</b> <code>w</code> · <b>digest</b> <code>d</code><br>
 Bounded parallel runs, two at a time by default. A card starts only once its dependencies' pull
-requests are merged, and two cards whose leases may overlap never run at once.
+requests are merged, and two cards whose leases may overlap never run at once. The board redraws as
+runs start and finish, whoever started them.
 </td>
 </tr>
 <tr>
@@ -120,7 +122,9 @@ Every attempt: cost, turns, fix rounds, refusals, and the model that did the wor
 <td width="50%" valign="top">
 <img src="docs/images/usage.jpg" alt="Usage panel" width="100%"><br>
 <b>Usage</b> <code>u</code><br>
-Rate-limit windows and spend per model. A usage limit pauses new runs until its window resets.
+Rate-limit windows and spend per model. Where the stream reports only a reset time, a window shows
+how far through it you are - as time, never as usage. A usage limit pauses new runs until its window
+resets.
 </td>
 <td width="50%" valign="top">
 <img src="docs/images/replay.jpg" alt="Run replay" width="100%"><br>
@@ -184,6 +188,8 @@ orchestrator turns and scheduler ticks each open their own SQLite connection on 
   never means a cheap review.
 - Each worker run is capped at $5 (`--max-budget-usd`). Findings go back to the worker at most twice,
   and by default they go to you instead.
+- A card's pull request states what the tests and the reviewer said, and what the branch cost: every
+  run on the card summed - worker, reviewer, fix rounds and earlier attempts.
 - Costs come from each run's own stream (`total_cost_usd`, `modelUsage`), per turn, summed per
   session. The model credited is the one with the highest spend, not the small helper Claude Code
   bills alongside it:
@@ -209,7 +215,7 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `t` | replay | `.` | mission control |
 | `w` | run the board | `,` | workforce |
 | `g` | kanban / workstreams | `s` | shortcuts |
-| `/` | comment input | `b` | boards and repos |
+| `/` | type: the open card's comment, or the open chat | `b` | boards and repos |
 | | | `h` | pre-flight checklist |
 | | | `1`-`9` | jump to a board |
 
@@ -246,6 +252,15 @@ Press `b` to create a board and register a repo on it: its path, default branch 
 The repo itself has to exist on GitHub and have its default branch pushed already - smortboard only
 registers it, it doesn't create it. Its image must already contain its toolchain, because the test
 gate is offline. smortboard's own image is `docker/repo.Dockerfile`.
+
+The test command is the gate, so give it everything your CI checks - for a Python repo, something
+like `uv run --no-sync ruff format --check --extend-exclude .claude . && uv run --no-sync pytest -q`.
+A gate that runs less than CI lets a card open a pull request that fails CI. `--extend-exclude
+.claude` skips the board's own hooks inside the card's worktree.
+
+Docker Desktop keeps the memory its containers have used until it restarts, so give it a limit in
+Settings → Resources. A repo image with a large toolchain (torch, say) grows it quickly; lower
+`max_parallel` if a small limit is tight.
 
 | Flag | Env | Default |
 |---|---|---|
@@ -284,6 +299,9 @@ Everyone runs their own board on their own machine; nothing is shared.
 - A stop that lands while the test gate is running waits for the gate to finish.
 - Mission-control turns carry no cost in the log, so they're not counted.
 - The HTTP server handles one request at a time. That's fine for one person on one machine.
+- A card's pull request lists its tasks as checkboxes, and nothing ticks them during a run.
+- The `b` panel edits a repo's test command and image; its lint command and default branch are set
+  when it's registered.
 - Windows code paths exist but have never been run.
 
 ## Development
