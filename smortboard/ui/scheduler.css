@@ -1,0 +1,40 @@
+/* overnight throughput: the board-bar status while a schedule runs, and the digest popup.
+   every visual primitive still comes from ui_base - this only positions and colours them with
+   the same tokens layout.css uses. square corners throughout, no border-radius, per the board's
+   own look. */
+
+.schedule-status {
+  margin-left: auto;
+  align-self: center;
+  font-size: var(--font-size, 13px);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.digest-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 360px;
+  max-width: 480px;
+}
+
+.digest-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.digest-pr-link {
+  color: var(--cream);
+}
+
+.digest-warn {
+  color: var(--fill-warn, var(--text-dim));
+}
+
+.digest-foot {
+  display: flex;
+  justify-content: flex-end;
+}

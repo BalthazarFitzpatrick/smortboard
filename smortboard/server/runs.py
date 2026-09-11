@@ -69,12 +69,21 @@ class RunRegistry:
         with self._lock:
             return [state for state in self._runs.values() if state.running]
 
-    def start(self, card_id: str, runner: Callable[..., Any] | None = None) -> RunState:
+    def start(
+        self,
+        card_id: str,
+        runner: Callable[..., Any] | None = None,
+        on_finish: Callable[[RunState], None] | None = None,
+    ) -> RunState:
         """starts the card, or returns the run already going for it.
 
         ONE RUN PER CARD. Two agents on one card would race each other in the same worktree, and
         the second `git worktree add` would fail anyway - so this refuses to start a second one
         rather than producing a confusing error a minute later.
+
+        `on_finish`, if given, is called with the finished RunState from the run's own thread once
+        it is done - additive for smortboard.scheduler, which uses it to learn a slot freed up
+        without polling every card.
         """
         with self._lock:
             existing = self._runs.get(card_id)
@@ -84,12 +93,17 @@ class RunRegistry:
             self._runs[card_id] = state
 
         thread = threading.Thread(
-            target=self._run, args=(state, runner or run_card_lifecycle), daemon=True
+            target=self._run, args=(state, runner or run_card_lifecycle, on_finish), daemon=True
         )
         thread.start()
         return state
 
-    def _run(self, state: RunState, runner: Callable[..., Any]) -> None:
+    def _run(
+        self,
+        state: RunState,
+        runner: Callable[..., Any],
+        on_finish: Callable[[RunState], None] | None = None,
+    ) -> None:
         store = Store(self._db_path)  # this thread's own connection, never the server's
         try:
             result = runner(
@@ -110,6 +124,8 @@ class RunRegistry:
         finally:
             state.finished_at = time.time()
             store.close()
+        if on_finish is not None:
+            on_finish(state)
 
 
 class Readiness:

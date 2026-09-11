@@ -163,8 +163,10 @@ use and so cannot drift.
 | Space | open the focused card, or close the open one |
 | Escape | one level back: input, then panel, then closed |
 | `g` | switch kanban / workstream grouping |
+| `w` | run the board: start the queue, press again to stop it (running cards finish) |
 | `u` | usage: rate-limit windows and per-model spend |
 | `a` | agent roster: pick a row to jump to that card |
+| `d` | morning digest: pull requests to merge and what is waiting on you |
 | `r` | run the focused card |
 | `m` | change the focused card's model: board default, haiku, sonnet, opus |
 | `s` | this list |

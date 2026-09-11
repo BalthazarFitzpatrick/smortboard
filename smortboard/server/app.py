@@ -5,7 +5,9 @@ import re
 import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
+from urllib.parse import parse_qs
 
+from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
@@ -16,6 +18,7 @@ from smortboard.prompts import ROLES
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
+from smortboard.scheduler import SchedulerRegistry
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import Readiness, RunRegistry
@@ -58,6 +61,10 @@ _ROUTES = [
     (re.compile(r"^/api/usage$"), "GET"),
     (re.compile(r"^/api/prompts$"), "GET"),
     (re.compile(r"^/api/prompts/(?P<role>[^/]+)$"), "PATCH"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/run-all$"), "POST"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/run-all/stop$"), "POST"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/schedule$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/digest$"), "GET"),
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
 ]
 
@@ -76,7 +83,11 @@ def _version() -> str:
 
 
 def _make_handler(
-    store: Store, runs: RunRegistry, readiness: Readiness, orchestrator: OrchestratorRegistry
+    store: Store,
+    runs: RunRegistry,
+    readiness: Readiness,
+    orchestrator: OrchestratorRegistry,
+    scheduler: SchedulerRegistry,
 ) -> type[BaseHTTPRequestHandler]:
     """closes over the store instance; http.server wants a class, not an instance"""
 
@@ -223,10 +234,25 @@ def _make_handler(
                 self._send_status(204)
             elif "task_id" in params and method == "PATCH":
                 self._handle_patch_task(params["task_id"])
+            elif "board_id" in params and path.endswith("/run-all") and method == "POST":
+                store.get_board(params["board_id"])
+                self._send_json(202, scheduler.get(params["board_id"]).start_all())
+            elif "board_id" in params and path.endswith("/run-all/stop") and method == "POST":
+                store.get_board(params["board_id"])
+                self._send_json(200, scheduler.get(params["board_id"]).stop())
+            elif "board_id" in params and path.endswith("/schedule") and method == "GET":
+                store.get_board(params["board_id"])
+                self._send_json(200, scheduler.get(params["board_id"]).schedule_view())
+            elif "board_id" in params and path.endswith("/digest") and method == "GET":
+                since = float(self._query().get("since", ["0"])[0])
+                self._send_json(200, board_digest(store, params["board_id"], since))
             elif "name" in params:
                 self._handle_asset(params["name"])
             else:
                 self._send_json(404, {"error": f"no route for {method} {path}"})
+
+        def _query(self) -> dict[str, list[str]]:
+            return parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
 
         def _handle_run(self, card_id: str) -> None:
             """starts a card, or reports the run already going for it.
@@ -499,8 +525,10 @@ def build_server(
     # runs are the exception and get their own thread and their own connection - see runs.py
     runs = RunRegistry(store.path, token_path=token_path)
     orchestrator = OrchestratorRegistry(store.path, token_path=token_path)
-    handler_cls = _make_handler(store, runs, Readiness(token_path), orchestrator)
+    scheduler = SchedulerRegistry(store.path, runs)
+    handler_cls = _make_handler(store, runs, Readiness(token_path), orchestrator, scheduler)
     server = HTTPServer((host, port), handler_cls)
     server.runs = runs  # the cli and the tests reach the registry through the server
     server.orchestrator = orchestrator
+    server.scheduler = scheduler
     return server
