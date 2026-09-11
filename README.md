@@ -65,11 +65,12 @@ flowchart LR
 | **Resume briefing** | When a card runs again, its brief summarises the last attempt: how it ended, gate verdicts, findings, files touched, and commands run or refused. |
 | **Event log** | Every stream line, gate, decision and note, append-only. Cost, replay, the roster and the briefing are all projections of it. |
 
-<img src="docs/images/card-states.jpg" alt="Card edges by state: vanilla attention with a stepped glow, lichen accepted, red rejected" width="100%">
+<img src="docs/images/card-states.jpg" alt="Card edges by state: blue working, vanilla attention with a stepped glow, lichen accepted, red rejected" width="100%">
 
-A card's state shows as its edge, not a fill: **vanilla** with a stepped glow means it needs you,
-**lichen** means accepted and **red** means rejected. Lichen and red stay distinguishable under
-red-green colour blindness.
+A card's state shows as its edge, not a fill: **blue** means an agent is working it, **vanilla**
+with a stepped glow means it needs you, **lichen** means accepted and **red** means rejected. The
+working blue is cold on purpose, and lichen and red stay distinguishable, so no pair collapses
+under red-green colour blindness.
 
 ## Features
 
