@@ -221,6 +221,12 @@ class ProcessHandle:
     container_name: str | None = None
 
     def terminate(self, timeout: float = 10.0) -> None:
+        # the container first: removing it ends the docker client with it, where a sigterm to the
+        # client alone was ignored and a real stop waited out the whole timeout (10.4 s)
+        if self.container_name:
+            subprocess.run(
+                ["docker", "rm", "-f", self.container_name], capture_output=True, check=False
+            )
         with contextlib.suppress(ProcessLookupError):
             self.process.terminate()
         try:
@@ -230,10 +236,6 @@ class ProcessHandle:
                 self.process.kill()
             with contextlib.suppress(subprocess.TimeoutExpired):
                 self.process.wait(timeout=timeout)
-        if self.container_name:
-            subprocess.run(
-                ["docker", "rm", "-f", self.container_name], capture_output=True, check=False
-            )
 
 
 @dataclass(frozen=True)
