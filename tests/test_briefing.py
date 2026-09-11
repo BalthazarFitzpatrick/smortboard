@@ -133,6 +133,26 @@ def test_older_attempts_get_one_line_each_and_only_the_latest_worker_attempt_is_
     assert "Ended: pull request" in briefing
 
 
+def test_the_run_asking_for_the_briefing_is_not_an_earlier_attempt(store, card_id):
+    # the lifecycle records this run's own lifecycle_started before it builds the brief
+    store.append_event(card_id, "lifecycle_started", {})
+    store.append_event(card_id, "worker_summary", {"text": "first pass"})
+    store.append_event(card_id, "lifecycle_started", {})
+
+    briefing = resume_briefing(store, card_id)
+    assert "attempt 1 of 1" in briefing.lower()
+    assert "Earlier attempts" not in briefing
+
+
+def test_a_fresh_cut_after_a_reject_does_not_claim_the_old_commits(store, card_id):
+    store.append_event(card_id, "lifecycle_started", {})
+    store.append_event(card_id, "worker_summary", {"text": "first pass"})
+
+    briefing = resume_briefing(store, card_id, worktree_reused=False)
+    assert "already on this branch" not in briefing
+    assert "starts fresh from the base branch" in briefing
+
+
 def test_a_long_briefing_is_truncated_to_the_cap(store, card_id):
     store.append_event(card_id, "lifecycle_started", {})
     store.append_event(card_id, "worker_summary", {"text": "x" * 5000})
