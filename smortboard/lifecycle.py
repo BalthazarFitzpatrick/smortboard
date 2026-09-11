@@ -26,7 +26,15 @@ from smortboard.exec.backends import (
     require_card_runtime,
     write_container_guards,
 )
-from smortboard.exec.worktrees import WorktreeError, branch_diff, create_worktree
+from smortboard.exec.worktrees import (
+    WorktreeError,
+    add_worktree,
+    branch_diff,
+    branch_exists,
+    create_worktree,
+    existing_worktree,
+    worktree_path,
+)
 from smortboard.review.gates import GateUnavailable, run_test_gate
 from smortboard.review.merge_request import MergeRequestUnavailable, open_merge_request
 from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
@@ -229,7 +237,16 @@ def run_card_lifecycle(
         return _refuse(store, state, f"The card runtime is not ready:\n{exc}")
 
     try:
-        tree = create_worktree(repo["path"], card_id, base=base)
+        # a blocked card resuming is not a fresh start - create_worktree raises on an existing
+        # path, so the worktree from its first run reuses it (commits and all) rather than being
+        # refused. only reached for a non-accepted card: accepted already returned above, and a
+        # rejected card's decide.py step deletes the branch, so it always falls to the fresh cut
+        if worktree_path(repo["path"], card_id).exists():
+            tree = existing_worktree(repo["path"], card_id)
+        elif branch_exists(repo["path"], card_id):
+            tree = add_worktree(repo["path"], card_id)
+        else:
+            tree = create_worktree(repo["path"], card_id, base=base)
     except WorktreeError as exc:
         return _refuse(store, state, f"Could not cut a worktree for this card: {exc}")
     state.branch, state.worktree = tree.branch, str(tree.path)

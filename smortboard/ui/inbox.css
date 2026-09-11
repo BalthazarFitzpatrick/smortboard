@@ -1,0 +1,77 @@
+/* attention inbox (n): the top-right indicator on the board bar, and the panel it opens.
+   every visual primitive - toggle, panel-floating, h-divider, field-label, text-field, hazard
+   stripes - comes from base.css; this file only positions and sizes them for the inbox. */
+
+.attention-indicator {
+  position: fixed;
+  z-index: 5;
+  top: 6px;
+  right: var(--inset-x, 15px);
+  min-width: 20px;
+  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--attention);
+  color: var(--attention);
+  background: var(--panel-row);
+  font-size: var(--font-size, 13px);
+  cursor: pointer;
+}
+.attention-indicator.dim {
+  border-color: var(--grey-border);
+  color: var(--text-dim);
+}
+
+.inbox-panel {
+  width: min(720px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+
+.inbox-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.inbox-row {
+  padding: var(--gap, 8px) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.inbox-row:first-child .h-divider { display: none; }
+
+.inbox-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.inbox-title {
+  font-weight: 600;
+  color: var(--cream);
+}
+.inbox-reason { color: var(--fill-attention, var(--attention)); }
+.inbox-since { margin-left: auto; }
+
+.inbox-question {
+  white-space: pre-wrap;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.inbox-answer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.inbox-answer { flex: 1 1 auto; }
+
+.inbox-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.inbox-status.inbox-ok { color: var(--status-good); }
+.inbox-status.inbox-error { color: var(--status-warn); }

@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from urllib.parse import parse_qs, urlsplit
 
+from smortboard.attention import AnswerRefused, answer_card, attention_rows
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
@@ -64,6 +65,8 @@ _ROUTES = [
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/costs$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/timeline$"), "GET"),
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
+    (re.compile(r"^/api/attention$"), "GET"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/answer$"), "POST"),
 ]
 
 _ROLE_DEFAULTS = {
@@ -224,6 +227,10 @@ def _make_handler(
             elif "board_id" in params and path.endswith("/costs"):
                 store.get_board(params["board_id"])  # a 404 for a missing board, not an empty table
                 self._send_json(200, board_costs(store, params["board_id"]))
+            elif path == "/api/attention":
+                self._send_json(200, attention_rows(store))
+            elif "card_id" in params and path.endswith("/answer"):
+                self._handle_answer(params["card_id"])
             elif "card_id" in params and method == "GET":
                 self._send_json(200, store.get_card(params["card_id"]))
             elif "card_id" in params and method == "PATCH":
@@ -272,6 +279,23 @@ def _make_handler(
                 self._send_json(409, {"error": str(exc)})
                 return
             self._send_json(200, card)
+
+        def _handle_answer(self, card_id: str) -> None:
+            """the attention inbox's reply: stores it as operator's comment and resumes the card.
+
+            404 for an unknown card (get_card inside answer_card raises), 409 for a card already
+            running or blocked on something an answer cannot fix - see attention.answer_card.
+            """
+            message = (self._read_json().get("message") or "").strip()
+            if not message:
+                self._send_json(400, {"error": "message must not be empty"})
+                return
+            try:
+                state = answer_card(store, runs, card_id, message)
+            except AnswerRefused as exc:
+                self._send_json(409, {"error": str(exc)})
+                return
+            self._send_json(202, state)
 
         def _handle_patch_card(self, card_id: str) -> None:
             body = self._read_json()
