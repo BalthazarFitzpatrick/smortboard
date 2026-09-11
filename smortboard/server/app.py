@@ -342,6 +342,17 @@ def _make_handler(
                     timeline.append(
                         (event["created_at"], self._board_line(payload.get("decision", "")))
                     )
+                elif kind == "note_delivered":
+                    count = len(payload.get("comment_ids") or [])
+                    plural = "s" if count != 1 else ""
+                    timeline.append(
+                        (
+                            event["created_at"],
+                            self._board_line(
+                                f"delivered {count} note{plural} - agent had just finished its turn"
+                            ),
+                        )
+                    )
 
             for comment in store.list_comments(card_id):
                 author = "operator" if comment["author"] == "operator" else "board"
@@ -359,9 +370,9 @@ def _make_handler(
                 "title": card["title"],
                 "running": running,
                 "phase": phase,
-                # a running headless session cannot take input - a note left now reaches the
-                # agent only on this card's NEXT run, never mid-run
-                "delivery": "next_run",
+                # what a note sent RIGHT NOW would get: "live" while this card's run is going and
+                # accepting stdin, "next_run" otherwise. matches the per-comment answer POST gives
+                "delivery": "live" if running else "next_run",
                 "messages": messages,
             }
 
@@ -376,9 +387,17 @@ def _make_handler(
                 self._send_json(400, {"error": "message must not be empty"})
                 return
             comment = store.add_comment(card_id, author="operator", body=message)
+            # queue AFTER the comment is durable: a live delivery that then crashed before the
+            # comment was ever saved would leave nothing for the card's next run to fall back on
+            delivered_live = runs.queue_note(card_id, comment)
             self._send_json(
                 201,
-                {"author": "operator", "body": comment["body"], "created_at": comment["created_at"]},
+                {
+                    "author": "operator",
+                    "body": comment["body"],
+                    "created_at": comment["created_at"],
+                    "delivery": "live" if delivered_live else "next_run",
+                },
             )
 
         def _prompts_view(self) -> list[dict]:
