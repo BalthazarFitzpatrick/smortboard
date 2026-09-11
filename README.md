@@ -222,6 +222,9 @@ uv sync
 uv run smortboard            # http://127.0.0.1:8000/ui/index.html
 ```
 
+Or run the board without a checkout: `uvx --from git+https://github.com/BalthazarFitzpatrick/smortboard smortboard`.
+You still need the clone once, to build the Docker images below.
+
 The board runs with nothing else installed. Running cards needs three more things:
 
 ```bash
@@ -259,6 +262,22 @@ told to trust: a live note starts `Note from <name>, via the board:`.
 
 Board-wide settings are set with `PATCH /api/settings`: `findings_route`, `orchestrator_model`,
 `worker_model`, `reviewer_model`, `max_parallel`, and `resume_briefing` (`"off"` disables it).
+
+## Testing the alpha
+
+Everyone runs their own board on their own machine; nothing is shared.
+
+1. **Install and start** the board as above, then open it in the browser.
+2. **Press `h`** for the pre-flight checklist: Docker, the card image, the token, `gh`, and every
+   repo you register. Fix what it lists; each line says how.
+3. **Create the GitHub repo** you want cards to work on, clone it, and push its default branch. The
+   board opens pull requests there, so it has to exist on GitHub first.
+4. **Press `b`** to create a board and register that repo: its path, default branch, test command
+   and image. Press `h` again until everything is green.
+5. **Press `.`** and describe some work. Mission control proposes cards; focus one and press `r`.
+6. **Something wrong?** [Open a bug report](https://github.com/BalthazarFitzpatrick/smortboard/issues/new?template=bug.yml).
+   Paste what `h` shows and, if a card misbehaved, a screenshot of its replay (`t`). Never paste
+   your token.
 
 ## Limits
 
