@@ -38,7 +38,6 @@ from smortboard.store.api import Store
 
 # defaults, overridable per deployment - never the credential itself, which is never an env var
 DEFAULT_CARD_IMAGE = "smortboard-card:latest"
-DEFAULT_TOKEN_PATH = Path.home() / ".config" / "smortboard" / "card_token"
 
 CARD_IMAGE_ENV = "SMORTBOARD_CARD_IMAGE"
 CARD_TOKEN_PATH_ENV = "SMORTBOARD_CARD_TOKEN_PATH"

@@ -389,7 +389,7 @@ def run_process(
 
     subprocess is managed directly rather than via `claude --bg` + `claude stop`: we need to record
     each line into the event log as it streams, and a plain Popen gives us that plus a straightforward
-    kill path (see stop_card) without a second process to poll for logs.
+    kill path without a second process to poll for logs.
 
     TWO STDIN SHAPES. `stdin_text` is the old one-shot handoff (reviewer, orchestrator): write it,
     close stdin, `claude` reads the prompt from argv. `stream_prompt` is live steering (worker
@@ -504,13 +504,3 @@ def run_card(
     return run_process(
         store, card_id, cmd, cwd=worktree_path, stream_prompt=prompt, pending_notes=pending_notes
     )
-
-
-def stop_card(process: subprocess.Popen) -> None:
-    """stops a running card's subprocess. terminate() sends SIGTERM first so `claude` can exit
-    cleanly rather than being killed mid-write; callers needing a hard stop can kill() directly"""
-    process.terminate()
-    try:
-        process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        process.kill()
