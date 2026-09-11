@@ -29,7 +29,22 @@ _WHY_NOT_ANSWERABLE = {
     "review": "a decision, not a question - open the card and press y to accept or x to reject",
     "USAGE_LIMIT": "clears itself once the rate-limit window resets",
     "DEPENDENCY_REJECTED": "waiting on a rejected dependency - clears once that card is accepted",
+    "stopped": "you stopped it - press r to run it again; its worktree and commits are kept",
+    "refused": "the board could not run it - fix what the note says, then press r",
 }
+
+
+def _flag_reason(store: Store, card_id: str) -> str:
+    """why a card with no reason code is flagged: its latest run was stopped or refused, or else
+    it is a checking card waiting on a decision"""
+    for event in reversed(store.list_events(card_id)):
+        if event["kind"] == "run_stopped":
+            return "stopped"
+        if event["kind"] == "run_refused":
+            return "refused"
+        if event["kind"] == "lifecycle_started":
+            break
+    return "review"
 
 
 def _trim(text: str | None, limit: int = 4000) -> str:
@@ -102,7 +117,7 @@ def attention_rows(store: Store) -> list[dict[str, Any]]:
         for card in store.list_cards(board["id"]):
             if not _needs_attention(card):
                 continue
-            reason = card.get("blocked_reason_code") or "review"
+            reason = card.get("blocked_reason_code") or _flag_reason(store, card["id"])
             rows.append(
                 {
                     "card_id": card["id"],
