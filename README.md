@@ -1,225 +1,233 @@
 # smortboard
 
-A keyboard-first kanban board whose cards are worked by coding agents. You write a card, press a
-key, and an agent picks it up in a sealed container. The board then re-runs the tests itself, has a
-second agent review the diff, and opens a pull request. It never merges. When a card needs you, it
-waits in one inbox. You can steer an agent while it runs, and replay every step afterwards.
+**A keyboard-first kanban board whose cards are worked by coding agents.**
 
+You write a card and press a key. An agent picks it up in a sealed container and commits its work.
+The board then re-runs the tests itself, has a second agent read the diff, and opens a pull request.
+It never merges. Anything that needs you waits in one inbox.
+
+![The board: five columns, cards edged by state, drawers folded at both sides](docs/images/board.jpg)
+
+---
+
+## Three rules
+
+1. **The agent never decides it is finished.** Its claim that the tests pass counts for nothing. The
+   board re-runs them offline, and a separate read-only reviewer judges the diff.
+2. **The board never merges.** Every card ends at an open pull request or a stated reason it
+   stopped, and merging is always done by a person.
+3. **Every card runs sealed.** It gets its own throwaway container, a clone of its repo, a write
+   lease and a command allowlist. If Docker isn't available, the card refuses to run rather than
+   running outside a container.
+
+## How a card runs
+
+```mermaid
+flowchart LR
+  A[card] --> B[worktree + branch]
+  B --> C[worker<br/>own container]
+  C -->|commits| D[test gate<br/>--network none]
+  D -->|pass| E[reviewer<br/>read-only]
+  E -->|approves| F[pull request]
+  F --> G((you merge))
+  D -->|fail| X[blocked<br/>TESTS_FAILED]
+  E -->|findings| R{findings route}
+  R -->|fix, max 2 rounds| C
+  R -->|attention| Y[blocked<br/>REVIEW_REJECTED]
 ```
- you write a card ─► agent works it ─► board re-runs tests ─► reviewer reads diff ─► pull request
-                     (own container)    (offline container)    (read-only tools)       you merge
+
+| Phase | What happens |
+|---|---|
+| **preparing** | A worktree and branch per card. A resumed card reuses its worktree and commits. A card with dependencies is cut from a fresh fetch of the base branch. |
+| **running** | `claude -p` streams JSON both ways in a named container. The token is the first stdin line, the brief follows, and stdin stays open for live notes. Every line becomes an event. |
+| **testing** | The repo's own test command runs in the repo's image with no network. |
+| **reviewing** | A second agent with Read, Grep and Glob only returns a structured verdict on the diff. |
+| **opening** | The board pushes the branch and runs `gh pr create`. Its `gh` wrapper allows three subcommands, and merge isn't one of them. |
+
+![An open card: sections headed like board columns, the run as a timeline](docs/images/card.jpg)
+
+## Concepts
+
+| | |
+|---|---|
+| **Board** | A named set of cards and repos. `1`-`9` jump between boards. |
+| **Card** | One unit of work: a title, a description, acceptance criteria, tasks, dependencies, a lease, and optionally a model. |
+| **Repo** | Where cards work: a path, a default branch, a test command, an optional lint command and an optional image. |
+| **Lease** | The path globs a card may Edit or Write. An empty lease allows no writes at all. |
+| **Worktree** | One git worktree and branch per card. The container works on a clone, and its commits are fetched back. |
+| **Attempt** | One run of a card, from its `lifecycle_started` event to where it stopped. Cost, replay and the resume briefing all work per attempt. |
+| **Status** | Five columns: todo, doing, checking, accepted, rejected. There is no "blocked" column. |
+| **Reason code** | Why a card waits on you, recorded alongside its status: `AGENT_QUESTION`, `TESTS_FAILED`, `REVIEW_REJECTED`, `LEASE_CONFLICT`, `USAGE_LIMIT`, `CRASH`, `DEPENDENCY_REJECTED`. |
+| **Findings route** | Where reviewer findings go: back to the worker (`fix`), or to you (`attention`, the default). |
+| **Decision** | `y` accepts a card and keeps its branch for the pull request. `x` rejects it and deletes the branch. Both can be reversed. |
+| **Roles** | The **orchestrator** plans cards and has no tools. The **worker** works a card. The **reviewer** judges the worker's diff. Each role has its own prompt and model. |
+| **Note** | A message to a running agent, delivered at its next step with a fixed marker it is taught to trust. Any other text claiming authority is treated as a prompt injection. |
+| **Resume briefing** | When a card runs again, its brief summarises the last attempt: how it ended, gate verdicts, findings, files touched, and commands run or refused. |
+| **Event log** | Every stream line, gate, decision and note, append-only. Cost, replay, the roster and the briefing are all projections of it. |
+
+<img src="docs/images/card-states.jpg" alt="Card edges by state: vanilla attention with a stepped glow, lichen accepted, red rejected" width="100%">
+
+A card's state shows as its edge, not a fill: **vanilla** with a stepped glow means it needs you,
+**lichen** means accepted and **red** means rejected. Lichen and red stay distinguishable under
+red-green colour blindness.
+
+## Features
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/mission-control.jpg" alt="Mission control drawer" width="100%"><br>
+<b>Mission control</b> <code>.</code><br>
+Chat with the board's orchestrator. It answers with a plan and cards, each with a proposed model, and
+it sees what each model has cost and passed on this board.
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/workforce.jpg" alt="Workforce drawer beside mission control" width="100%"><br>
+<b>Workforce</b> <code>,</code><br>
+A terminal with the focused card's agent: its narration and the board's gate lines. A note sent
+here reaches a running agent at its next step.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/inbox.jpg" alt="Attention inbox" width="100%"><br>
+<b>Attention inbox</b> <code>n</code><br>
+Every card waiting on you, across every board, oldest first. An answer resumes the card in its own
+worktree. Rows an answer can't help say where to act instead.
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/digest.jpg" alt="Morning digest" width="100%"><br>
+<b>Run the board</b> <code>w</code> · <b>digest</b> <code>d</code><br>
+Bounded parallel runs, two at a time by default. A card starts only once its dependencies' pull
+requests are merged, and two cards whose leases may overlap never run at once.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/costs.jpg" alt="Cost overview across boards" width="100%"><br>
+<b>Cost per board</b> <code>c</code><br>
+Spend and share per board, runs, accepted cards, pull requests, cost per pull request, worker vs
+reviewer spend, and money spent on runs that hit a refusal.
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/telemetry.jpg" alt="Card telemetry" width="100%"><br>
+<b>Card cost</b> <code>i</code><br>
+Every attempt: cost, turns, fix rounds, refusals, and the model that did the work for each role.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/usage.jpg" alt="Usage panel" width="100%"><br>
+<b>Usage</b> <code>u</code><br>
+Rate-limit windows and spend per model. A usage limit pauses new runs until its window resets.
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/replay.jpg" alt="Run replay" width="100%"><br>
+<b>Replay</b> <code>t</code><br>
+Step through a run: reads, edits as diffs, commands, refused calls, gates, verdicts. Any attempt.
+</td>
+</tr>
+</table>
+
+**Stop** `k` asks once, then removes a running card's container. The card keeps its worktree and
+commits, and nothing after the worker runs. **Prompts** `p` edits the three role prompts; every save
+is a new version. **Model** `m` cycles a card through board default, haiku, sonnet and opus.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph host["smortboard, native, 127.0.0.1"]
+    HTTP[http server + ui]
+    DB[(sqlite<br/>event log)]
+    RUNS[run registry<br/>thread per card]
+    SCHED[scheduler]
+    ORCH[orchestrator]
+  end
+  subgraph containers["one container each, thrown away"]
+    W[worker<br/>clone, guards ro, stdin token]
+    T[test gate<br/>--network none]
+    V[reviewer<br/>Read Grep Glob]
+  end
+  RUNS -- "token, brief, notes" --> W
+  W -- "stream-json events" --> RUNS
+  RUNS --> T
+  RUNS -- diff --> V
+  W -- "commits fetched back" --> REPO[(repo worktree)]
+  REPO -- "push, gh pr create" --> GH[GitHub]
 ```
 
-## Contents
+The board is a plain Python process: a stdlib HTTP server, SQLite and plain JavaScript on
+[ui_base](https://github.com/BalthazarFitzpatrick/ui_base). Only the agents are contained, because
+a containerised board would need the Docker socket, which amounts to root on the host. Card runs,
+orchestrator turns and scheduler ticks each open their own SQLite connection on their own thread.
 
-- [Start](#start)
-- [One-time setup for running cards](#one-time-setup-for-running-cards)
-- [How a card runs](#how-a-card-runs)
-- [Working the board](#working-the-board)
-- [Keys](#keys)
-- [Security](#security)
-- [Cost](#cost)
-- [Configuration](#configuration)
-- [Development](#development)
+## Security
 
-## Start
+- **Local only.** The API has no authentication, so the board binds `127.0.0.1`. `--host` is an
+  explicit opt-in; only use it behind something that authenticates.
+- **The token travels on stdin.** It is a model-only `claude setup-token`. It is never an env var or
+  a mounted file, and never visible to `docker inspect`. On the host it lives in a mode-600 file.
+- **Guards are read-only.** A lease hook covers Edit and Write. A bash guard allows only git plus the
+  repo's test and lint commands. Both are mounted read-only outside the working tree, so the agent
+  can neither edit nor commit them.
+- **Proof comes from outside the agent.** The tests re-run offline, and the reviewer can only read.
+  Only a note carrying the fixed marker counts as the operator.
+- **An expired or revoked token** (HTTP 401) refuses the card with the steps to renew it.
+- **No merge path exists** in the code.
+
+## Cost
+
+- Workers and the reviewer default to sonnet, and the orchestrator to opus. A card's model overrides
+  the board setting, which overrides the default. The reviewer has its own setting, so a cheap worker
+  never means a cheap review.
+- Each worker run is capped at $5 (`--max-budget-usd`). Findings go back to the worker at most twice,
+  and by default they go to you instead.
+- Costs come from each run's own stream (`total_cost_usd`, `modelUsage`), per turn, summed per
+  session. The model credited is the one with the highest spend, not the small helper Claude Code
+  bills alongside it.
+
+## Keys
+
+Bindings follow the physical key, so a non-US layout doesn't move them. `s` shows them in the app.
+
+| Cards | | Panels | |
+|---|---|---|---|
+| arrows | move | `n` | attention inbox |
+| `Space` `Enter` | open / close | `d` | morning digest |
+| `Esc` | one level back | `c` | cost per board |
+| `r` | run | `i` | card cost |
+| `k` | stop | `u` | usage |
+| `y` `x` | accept / reject | `a` | agent roster |
+| `m` | model | `p` | prompts |
+| `t` | replay | `.` | mission control |
+| `w` | run the board | `,` | workforce |
+| `g` | kanban / workstreams | `s` | shortcuts |
+| `/` | comment input | `1`-`9` | jump to a board |
+
+## Setup
 
 ```bash
 git clone https://github.com/BalthazarFitzpatrick/smortboard && cd smortboard
 uv sync
-uv run smortboard
+uv run smortboard            # http://127.0.0.1:8000/ui/index.html
 ```
 
-This serves the board on `http://127.0.0.1:8000/ui/index.html` and opens a browser tab. The database lives in your user data directory, so running the command from any folder never
-leaves a stray `.db` file behind. The board only listens on this machine. See [Security](#security)
-before you pass `--host`.
-
-## One-time setup for running cards
-
-The board opens with nothing else installed. To run cards it needs the three things below. If one
-is missing, the board refuses to run the card and says which one. It never falls back to running
-the agent outside a container.
-
-**1. Docker, running.** Each card runs in its own throwaway container, with a clone of its repo and
-nothing else of yours.
-
-**2. The card image**, built once:
+The board runs with nothing else installed. Running cards needs three more things:
 
 ```bash
+# 1. docker, running
+# 2. the card image: claude cli, git, uv - no credentials, no code
 docker build -f docker/card.Dockerfile -t smortboard-card:latest .
-```
-
-It holds the `claude` CLI, git and uv. It does not hold any credential or any copy of your code.
-
-**3. A card token.** This is a model-only token, separate from your own login:
-
-```bash
-claude setup-token                                    # prints a one-year token
+# 3. a card token, model-only, kept in a mode-600 file
+claude setup-token
 mkdir -p ~/.config/smortboard
-(umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)   # copy it first
+(umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
 ```
 
-The file is mode 600 and the board reads it first. `SMORTBOARD_CARD_TOKEN_PATH` moves it
-somewhere else. Without the file, the board falls back to the OS credential store, but on macOS
-every read from there raises a Keychain prompt.
-
-**Per repo:** a card runs against a repo you register on its board: a path, a default branch, a
-test command, and optionally a lint command and an image. The test and lint commands are the only
-shell commands a card may run besides git. The test gate runs offline, so the repo's image has to
-contain its toolchain already. For smortboard itself that image is `docker/repo.Dockerfile`:
-
-```bash
-docker build -f docker/repo.Dockerfile -t smortboard-repo:latest .
-```
-
-## How a card runs
-
-Focus a card and press `r`. The foot of the card shows each phase as it happens. The same steps run
-in the same order every time:
-
-```mermaid
-flowchart LR
-  A[card] --> B[worktree + branch<br/>off the default branch]
-  B --> C[agent in its own container<br/>clone, lease, allowlist]
-  C -->|commits| D[test gate<br/>repo image, --network none]
-  D -->|pass| E[reviewer<br/>reads the diff, read-only]
-  E -->|approves| F[pull request]
-  D -->|fail| X[blocked: TESTS_FAILED]
-  E -->|findings| G{findings route}
-  G -->|fix, up to 2 rounds| C
-  G -->|attention| Y[blocked: REVIEW_REJECTED]
-  F --> H[you merge]
-```
-
-- **The agent does not get to decide it is finished.** The board re-runs the tests itself, in a
-  second container with no network, and a separate reviewer reads the diff. The reviewer checks for
-  vulnerabilities, leaked credentials, best practices and efficiency, and returns a structured
-  verdict.
-- **A blocked card stays in its column.** It carries a reason code instead: `AGENT_QUESTION`,
-  `TESTS_FAILED`, `REVIEW_REJECTED`, `LEASE_CONFLICT`, `USAGE_LIMIT`, `CRASH` or
-  `DEPENDENCY_REJECTED`. It glows vanilla until someone deals with it.
-- **You decide the outcome.** On a card in checking, `y` accepts it (lichen edge) and `x` rejects
-  it (red edge). Both flip back if you change your mind. Rejecting a card deletes its branch, so its
-  next run starts clean.
-
-## Working the board
-
-**Mission control (`.`).** A chat with the board's orchestrator. Describe what you want and it
-answers with a plan and proposed cards, each with a model it thinks fits. The cards appear on the
-board, and you still start them yourself. The orchestrator also sees the board's own history: what
-each finished card cost, how often each model got a clean pull request, and what it cost on
-average. It uses that when it proposes the next plan.
-
-**Workforce and live steering (`,`).** A terminal-style chat with the focused card's agent. A note
-you send while the card runs reaches the agent at its next step, typically between two tool calls.
-Each note carries a fixed marker, and the agent's system prompt teaches it to trust that marker and
-to treat any other text that claims authority as a prompt injection. Every note is also saved as a
-comment, so the next run's brief includes it.
-
-**Attention inbox (`n`).** Every card waiting on you, across every board, oldest first. For a card
-blocked on a question, a failed test, a rejected review, a crash or a lease conflict, your answer
-becomes a comment and the card resumes in its existing worktree, commits and all. For a decision or
-a rate limit, the inbox tells you where that gets handled instead. The counter in the top-right
-corner shows how many cards are waiting, even while the inbox is closed.
-
-A resumed run's brief also carries a resume briefing: a compact summary of the latest attempt that
-reached the worker - how it ended, files it touched, commands it ran and any that were refused, its
-final summary - plus one line per older attempt, read straight off the event log. This is what lets
-the agent skip re-reading the worktree to rediscover what it already did. Turn it off board-wide
-with the `resume_briefing` setting.
-
-**Run the board (`w`) and the digest (`d`).** `w` works through every todo card on the board, two
-at a time by default (`max_parallel`). A card waits until each of its dependencies has its pull
-request **merged** on GitHub, not just accepted, and it is then cut from a fresh fetch of the base
-branch so the merged work is really in its checkout. Two cards whose leases might touch the same
-file never run together. A usage limit pauses new starts until the window resets. Press `w` again
-to empty the queue; cards already running finish. The morning digest lists the pull requests opened
-since you last looked, in dependency order, plus whatever is waiting on you.
-
-**Stop a run (`k`).** On a running card, `k` asks once, then kills its container. The card keeps
-its worktree and commits and goes to the inbox; nothing after the worker runs - no gates, no review,
-no pull request. Press `r` to run it again, and the resume briefing tells it where it left off.
-
-**Cost (`i`) and usage (`u`).** `i` on a card shows every attempt with its cost, turns, fix rounds,
-refusals and the model that did the work. Without a focused card, `i` shows the board's cost table,
-including how much went to runs that hit a refusal. `u` shows your rate-limit windows and spend per
-model.
-
-**Replay (`t`).** Step through a card's run: every narration, read, edit (as a diff), command,
-refused call, test gate, verdict and pull request, in order. Use the switcher to pick an earlier
-attempt.
-
-**Prompts (`p`).** Edit the orchestrator, worker and reviewer prompts. Every save becomes a new
-version, and the older versions are kept.
-
-**Models (`m`).** Cycle the focused card through the board default, haiku, sonnet and opus.
-
-## Keys
-
-Every binding follows the physical key, so a non-US layout doesn't move them. `s` opens this table,
-built from the same list the key handlers use.
-
-| Key | Action |
-|---|---|
-| arrows | move between cards and columns |
-| Enter | open the focused card |
-| Space | open the focused card, or close the open one |
-| Escape | one level back: input, then panel, then closed |
-| `y` / `x` | accept / reject the card |
-| `r` | run the focused card |
-| `k` | stop the focused card's run (confirm first) |
-| `m` | change the focused card's model |
-| `t` | replay the focused card's run |
-| `w` | run the board / stop the queue |
-| `g` | switch kanban / workstream grouping |
-| `n` | attention inbox |
-| `d` | morning digest |
-| `i` | cost telemetry |
-| `c` | cost overview: spend across every board |
-| `u` | usage |
-| `a` | agent roster |
-| `p` | prompts |
-| `s` | this table |
-| `/` | focus a panel's input |
-| `,` | workforce: the focused card's agent |
-| `.` | mission control: the board's orchestrator |
-| `1`-`9` | jump to a board |
-
-## Security
-
-The board runs agents that read untrusted input, so the design assumes an agent may try something
-it shouldn't, and limits the damage it could do.
-
-- **The board only listens on this machine.** The API has no authentication, and one request can
-  start a run that spends your token. `--host` or `SMORTBOARD_HOST` opens it to other machines, but
-  only do that behind something that authenticates.
-- **Only the cards run in containers.** The board itself runs natively. Letting a containerised
-  board start containers would mean giving it the Docker socket, which amounts to root on the host.
-- **The token arrives on stdin.** It is never an env var, never a mounted file and never visible to
-  `docker inspect`. The token file on the host is never mounted into a container.
-- **Guards are read-only.** A lease hook limits Edit and Write to the card's path globs, and an
-  empty lease allows no writes at all. A bash guard limits the shell to git plus the repo's own test
-  and lint commands. Both are mounted read-only outside the working tree, so an agent can neither
-  edit them nor commit them.
-- **Nothing an agent says counts as proof.** The tests run again offline, and the reviewer can only
-  read (Read, Grep, Glob) and return its verdict. A mid-run note is only trusted when it carries
-  the fixed marker.
-- **The board never merges.** No code path can: the pull request is where the board stops. Only a
-  person merges.
-
-## Cost
-
-- Workers and the reviewer default to sonnet and the orchestrator to opus. A card's own model
-  overrides the board setting, which overrides the default. The reviewer has its own setting, so
-  choosing a cheap worker doesn't make the review cheap.
-- Each worker run has a $5 ceiling (`--max-budget-usd`), and review findings go back to the worker
-  at most twice before the card goes to you. By default findings go straight to you, since a card
-  fixing its own findings unattended spends tokens nobody asked for.
-- The cost figures come from the run's own stream: `total_cost_usd`, `num_turns` and `modelUsage`
-  per result. The "model that did the work" is the one with the highest spend. Claude Code also
-  bills a small haiku helper on every run, and that doesn't count.
-
-## Configuration
+Register a repo on the board with its path, default branch and test command. Its image must already
+contain its toolchain, because the test gate is offline. smortboard's own image is
+`docker/repo.Dockerfile`.
 
 | Flag | Env | Default |
 |---|---|---|
@@ -230,24 +238,24 @@ it shouldn't, and limits the damage it could do.
 | | `SMORTBOARD_CARD_IMAGE` | `smortboard-card:latest` |
 | | `SMORTBOARD_CARD_TOKEN_PATH` | `~/.config/smortboard/card_token` |
 
-A flag wins over its env var, which wins over the default. The board-wide settings
-(`findings_route`, `orchestrator_model`, `worker_model`, `reviewer_model`, `max_parallel`,
-`resume_briefing`) are set with `PATCH /api/settings`. `resume_briefing` set to `"off"` turns off
-the resume briefing (see below); unset means on.
+Board-wide settings are set with `PATCH /api/settings`: `findings_route`, `orchestrator_model`,
+`worker_model`, `reviewer_model`, `max_parallel`, and `resume_briefing` (`"off"` disables it).
+
+## Limits
+
+- A stop that lands while the test gate is running waits for the gate to finish.
+- Mission-control turns carry no cost in the log, so they're not counted.
+- The HTTP server handles one request at a time. That's fine for one person on one machine.
+- Windows code paths exist but have never been run.
 
 ## Development
 
 ```bash
-uv run pytest                               # the python suite
-for f in tests/js/*.mjs; do node "$f"; done # the ui, against a stub DOM
+uv run pytest
+for f in tests/js/*.mjs; do node "$f"; done
 uv run ruff check . && uv run ruff format --check .
 ```
 
-Neither suite calls a model or Docker. Card runs are exercised with a fake process and scripted
-stream-json. State lives in SQLite and is gitignored, and `Store.export()` writes a portable bundle
-you can move between machines.
-
-The interface is built on [ui_base](https://github.com/BalthazarFitzpatrick/ui_base), pinned by
-commit sha. `docs/PLAN.md` holds the phased plan and the reasoning behind containment,
+Neither suite calls a model or Docker. `docs/PLAN.md` has the plan and the containment reasoning,
 `docs/PHASE1-CONTRACTS.md` the schema and API, `docs/PROMPTS.md` the prompt layering, and
-`docs/spikes/` what each spike proved or disproved before anything was built on it.
+`docs/spikes/` what was proven before it was built on.
