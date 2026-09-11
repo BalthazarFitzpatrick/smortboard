@@ -217,6 +217,46 @@ def test_a_repo_with_no_test_command_is_refused_rather_than_passed(board, monkey
     assert opened == []
 
 
+def test_an_accepted_card_is_refused_without_touching_its_outcome(board, monkeypatch):
+    from smortboard.review.decide import accept_card
+    from smortboard.review.outcome import card_outcome
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    store.update_card(card_id, status="checking")
+    accept_card(store, card_id)
+    before = card_outcome(store, card_id)
+
+    events_before = len(store.list_events(card_id))
+    cut = []
+    monkeypatch.setattr(lifecycle, "create_worktree", lambda *a, **k: cut.append(1))
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+
+    assert result.phase == "refused"
+    assert "accepted" in result.refusal
+    assert cut == []  # no worktree was cut for the refused rerun
+    assert card_outcome(store, card_id) == before
+    # the refusal must not have recorded a new attempt that would bury the real one
+    kinds = [e["kind"] for e in store.list_events(card_id)[events_before:]]
+    assert "lifecycle_started" not in kinds
+
+
+def test_a_rejected_card_can_be_run_again(board, monkeypatch):
+    from smortboard.review.decide import reject_card
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    store.update_card(card_id, status="checking")
+    reject_card(store, card_id, close_pr=lambda *a, **k: None)
+    assert store.get_card(card_id)["status"] == "rejected"
+
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.phase == "opened"
+    assert result.pr_url == "https://x/pull/1"
+
+
 def test_the_prompt_carries_the_card_and_only_the_card(board, monkeypatch):
     store, card_id = board
     _stub_gates(monkeypatch)
