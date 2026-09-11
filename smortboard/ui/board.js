@@ -22,6 +22,7 @@ const BINDINGS = [
   {code: 'Slash', label: '/', action: "focus the open card's comment input", group: 'cards'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
+  {code: 'KeyI', label: 'i', action: 'cost telemetry: card attempts, or the board cost table', group: 'panels'},
   {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card', group: 'panels'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
   {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts', group: 'panels'},
@@ -1250,6 +1251,7 @@ document.addEventListener('keydown', evt => {
 
   if (evt.code === 'KeyG') { grouped = !grouped; return; }
   if (evt.code === 'KeyU') { openUsagePanel(); return; }
+  if (evt.code === 'KeyI') { openTelemetryPanel(); return; }
   if (evt.code === 'KeyA') { openRosterPanel(); return; }
   if (evt.code === 'KeyR') { runFocusedCard(); return; }
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }

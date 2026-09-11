@@ -22,6 +22,7 @@ from smortboard.exec.backends import card_image, docker_available, read_card_tok
 from smortboard.exec.runner import build_command, run_process
 from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
+from smortboard.telemetry import board_evidence
 
 ORCHESTRATOR_PROMPT = (
     "You are Fabian's mission control partner for one smortboard board. You talk with him and plan "
@@ -37,7 +38,9 @@ ORCHESTRATOR_PROMPT = (
     "them.\n\n"
     "Give each card a `model` for its worker: `sonnet` for ordinary work, `opus` only where the card "
     "needs real design judgement, `haiku` for mechanical edits, or null to use the board's default. "
-    "Fabian can change it on the card.\n\n"
+    "Fabian can change it on the card. The snapshot's `evidence` shows this board's own run history "
+    "- prefer the cheapest model that has been reaching pull requests cleanly (no fix rounds) on "
+    "cards like this one; if you pick opus, say in your reply why this card needs it.\n\n"
     "Return JSON matching the given schema. `cards` may be empty - most turns are just "
     "conversation."
 )
@@ -172,7 +175,12 @@ def _snapshot_cards(store: Store, board_id: str) -> list[dict[str, Any]]:
 
 
 def build_board_snapshot(store: Store, board_id: str) -> dict[str, Any]:
-    """everything the orchestrator sees of this board - no host paths, ever"""
+    """everything the orchestrator sees of this board - no host paths, ever.
+
+    `evidence` is this board's own run history (smortboard.telemetry.board_evidence): each
+    finished card's model, cost, turns and outcome, plus a per-model scorecard - short ids and
+    rounded numbers only, so it stays small in every turn's prompt.
+    """
     return {
         "repos": _snapshot_repos(store, board_id),
         "cards": _snapshot_cards(store, board_id),
@@ -181,6 +189,7 @@ def build_board_snapshot(store: Store, board_id: str) -> dict[str, Any]:
             {"author": m["author"], "body": m["body"]}
             for m in store.list_orchestrator_messages(board_id, limit=_MESSAGE_HISTORY)
         ],
+        "evidence": board_evidence(store, board_id),
     }
 
 
