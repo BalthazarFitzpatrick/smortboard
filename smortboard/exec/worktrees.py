@@ -59,6 +59,28 @@ def create_worktree(repo_path: str | Path, card_id: str, base: str = "main") -> 
     return WorktreeInfo(card_id=card_id, path=path, branch=branch)
 
 
+def existing_worktree(repo_path: str | Path, card_id: str) -> WorktreeInfo:
+    """the worktree already cut for this card, as-is - the resume path when a blocked card's
+    earlier worktree is still on disk, prior commits and all"""
+    repo_path = Path(repo_path).resolve()
+    return WorktreeInfo(
+        card_id=card_id, path=worktree_path(repo_path, card_id), branch=branch_name(card_id)
+    )
+
+
+def add_worktree(repo_path: str | Path, card_id: str) -> WorktreeInfo:
+    """adds a worktree onto the card's branch, which already exists but has no worktree checked
+    out on it - the resume path for a blocked card whose earlier worktree was cleaned up"""
+    repo_path = Path(repo_path).resolve()
+    branch = branch_name(card_id)
+    path = worktree_path(repo_path, card_id)
+    if path.exists():
+        raise WorktreeError(f"worktree already exists at {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _run_git(repo_path, "worktree", "add", str(path), branch)
+    return WorktreeInfo(card_id=card_id, path=path, branch=branch)
+
+
 def destroy_worktree(repo_path: str | Path, card_id: str, force: bool = False) -> None:
     """removes the card's worktree; the branch itself is left for review/rejection to handle"""
     repo_path = Path(repo_path).resolve()

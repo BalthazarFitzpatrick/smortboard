@@ -27,6 +27,7 @@ const BINDINGS = [
   {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card', group: 'panels'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
   {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts', group: 'panels'},
+  {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
   {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent', group: 'panels'},
   {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator', group: 'panels'},
   ...Array.from({length: 9}, (_, i) => ({
@@ -1261,6 +1262,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyT') { toggleReplay(); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
+  if (evt.code === 'KeyN') { toggleInboxPanel(); return; }
   // preventDefault: opening a drawer focuses its input, and the key that opened it typed itself there
   if (evt.code === 'Comma') { evt.preventDefault(); drawerFor('left').toggle(); return; }
   if (evt.code === 'Period') { evt.preventDefault(); drawerFor('right').toggle(); return; }
