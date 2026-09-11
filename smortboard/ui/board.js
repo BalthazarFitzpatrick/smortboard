@@ -32,6 +32,7 @@ const BINDINGS = [
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
   {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts', group: 'panels'},
   {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
+  {code: 'KeyH', label: 'h', action: 'pre-flight checklist: what is missing before a card can run', group: 'panels'},
   {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent', group: 'panels'},
   {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator', group: 'panels'},
   ...Array.from({length: 9}, (_, i) => ({
@@ -93,7 +94,8 @@ function renderEmptyState() {
   const box = document.createElement('div');
   box.className = 'hazard-stripes hazard-placeholder';
   box.innerHTML = `<span class="hazard-label">no boards yet</span>
-    <span class="hazard-note">POST /api/boards to create one</span>`;
+    <span class="hazard-note">POST /api/boards to create one, or press b to manage boards and repos.
+    Press h any time for the pre-flight checklist - what is missing before a card can run.</span>`;
   row.appendChild(box);
 }
 
@@ -1372,6 +1374,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
   if (evt.code === 'KeyN') { toggleInboxPanel(); return; }
+  if (evt.code === 'KeyH') { togglePreflightPanel(); return; }
   // preventDefault: opening a drawer focuses its input, and the key that opened it typed itself there
   if (evt.code === 'Comma') { evt.preventDefault(); drawerFor('left').toggle(); return; }
   if (evt.code === 'Period') { evt.preventDefault(); drawerFor('right').toggle(); return; }

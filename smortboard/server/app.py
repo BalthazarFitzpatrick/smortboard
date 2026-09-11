@@ -16,6 +16,7 @@ from smortboard.orchestrator import (
     ORCHESTRATOR_PROMPT,
     OrchestratorRegistry,
 )
+from smortboard.preflight import run_preflight
 from smortboard.prompts import ROLES
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
@@ -60,6 +61,7 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/reject$"), "POST"),
     (re.compile(r"^/api/runs$"), "GET"),
     (re.compile(r"^/api/runtime$"), "GET"),
+    (re.compile(r"^/api/preflight$"), "GET"),
     (re.compile(r"^/api/settings$"), "GET"),
     (re.compile(r"^/api/settings$"), "PATCH"),
     (re.compile(r"^/api/tasks/(?P<task_id>[^/]+)$"), "PATCH"),
@@ -104,6 +106,7 @@ def _make_handler(
     readiness: Readiness,
     orchestrator: OrchestratorRegistry,
     scheduler: SchedulerRegistry,
+    token_path: str | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """closes over the store instance; http.server wants a class, not an instance"""
 
@@ -215,6 +218,8 @@ def _make_handler(
                 self._send_json(200, [state.as_dict() for state in runs.active()])
             elif path == "/api/runtime":
                 self._send_json(200, readiness.check())
+            elif path == "/api/preflight":
+                self._send_json(200, run_preflight(store, token_path=token_path))
             elif path == "/api/settings" and method == "GET":
                 self._send_json(200, store.get_settings())
             elif path == "/api/settings" and method == "PATCH":
@@ -611,7 +616,9 @@ def build_server(
     runs = RunRegistry(store.path, token_path=token_path)
     orchestrator = OrchestratorRegistry(store.path, token_path=token_path)
     scheduler = SchedulerRegistry(store.path, runs)
-    handler_cls = _make_handler(store, runs, Readiness(token_path), orchestrator, scheduler)
+    handler_cls = _make_handler(
+        store, runs, Readiness(token_path), orchestrator, scheduler, token_path=token_path
+    )
     server = HTTPServer((host, port), handler_cls)
     server.runs = runs  # the cli and the tests reach the registry through the server
     server.orchestrator = orchestrator
