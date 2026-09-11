@@ -129,12 +129,16 @@ the agent skip re-reading the worktree to rediscover what it already did. Turn i
 with the `resume_briefing` setting.
 
 **Run the board (`w`) and the digest (`d`).** `w` works through every todo card on the board, two
-at a time by default (`max_parallel`). A card waits until all its dependencies are accepted, and
-two cards whose leases might touch the same file never run together. A usage limit pauses new starts
-until the window resets. Press `w` again to empty the queue; cards already running finish. The
-morning digest lists the pull requests opened since you last looked, in dependency order, plus
-whatever is waiting on you. It flags any pull request whose dependency has no pull request yet in
-the same batch.
+at a time by default (`max_parallel`). A card waits until each of its dependencies has its pull
+request **merged** on GitHub, not just accepted, and it is then cut from a fresh fetch of the base
+branch so the merged work is really in its checkout. Two cards whose leases might touch the same
+file never run together. A usage limit pauses new starts until the window resets. Press `w` again
+to empty the queue; cards already running finish. The morning digest lists the pull requests opened
+since you last looked, in dependency order, plus whatever is waiting on you.
+
+**Stop a run (`k`).** On a running card, `k` asks once, then kills its container. The card keeps
+its worktree and commits and goes to the inbox; nothing after the worker runs - no gates, no review,
+no pull request. Press `r` to run it again, and the resume briefing tells it where it left off.
 
 **Cost (`i`) and usage (`u`).** `i` on a card shows every attempt with its cost, turns, fix rounds,
 refusals and the model that did the work. Without a focused card, `i` shows the board's cost table,
