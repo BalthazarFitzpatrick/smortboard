@@ -128,6 +128,15 @@ function buildInboxRow(row) {
   question.className = 'inbox-question';
   question.textContent = row.question || '(no question text)';
 
+  // an answer cannot move a decision or a rate limit, so those say what will instead
+  if (row.answerable === false) {
+    const hint = document.createElement('div');
+    hint.className = 'field-label inbox-hint';
+    hint.textContent = row.hint || 'an answer will not move this one';
+    rowEl.append(head, question, hint);
+    return rowEl;
+  }
+
   const answerRow = document.createElement('div');
   answerRow.className = 'inbox-answer-row';
   const input = document.createElement('input');
