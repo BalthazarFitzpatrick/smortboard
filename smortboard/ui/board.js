@@ -1321,13 +1321,22 @@ function togglePromptEditor() {
 
 // TWO COLUMNS, one per binding group, each a list section - Menu's column mode lays sections side
 // by side with a divider between. the class widens this one menu to hold both
+// THE NINE BOARD KEYS ARE ONE ROW here: listed one by one they ran the column off the screen.
+// BINDINGS keeps all nine, since the keyboard handler looks each one up
+function overlayRows(bindings) {
+  return bindings
+    .filter(b => !/^Digit[2-9]$/.test(b.code))
+    .map(b => (b.code === 'Digit1'
+      ? {id: 'boards', label: '1 .. 9 - jump to board 1 .. 9', disabled: true}
+      : {id: b.code, label: `${b.label} - ${b.action}`, disabled: true}));
+}
+
 function openShortcutOverlay() {
   toggleOverlay('KeyS', () => {
     const sections = BINDING_GROUPS.map(([group, label]) => ({
       kind: 'list',
       label,
-      items: BINDINGS.filter(b => b.group === group)
-        .map(b => ({id: b.code, label: `${b.label} - ${b.action}`, disabled: true})),
+      items: overlayRows(BINDINGS.filter(b => b.group === group)),
     }));
     const menu = new Menu({
       title: 'keyboard shortcuts',
