@@ -73,5 +73,5 @@
 .inbox-answer { flex: 1 1 auto; }
 
 .inbox-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
-.inbox-status.inbox-ok { color: var(--status-good); }
+.inbox-status.inbox-ok { color: var(--lichen-milk); }
 .inbox-status.inbox-error { color: var(--status-warn); }

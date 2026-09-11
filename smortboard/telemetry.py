@@ -198,8 +198,8 @@ def usage_projection(store: Store) -> dict[str, Any]:
 # a `result` stream event carries no field saying whether it was the worker or the reviewer - both
 # run through the same container runtime. it is tagged by what immediately follows it in the log:
 # a `worker_summary` (appended right after a worker run) or a `review_gate` (right after a review),
-# whichever comes first, before the next `result`. anything unmatched (a run that never reported
-# back) counts nowhere rather than being guessed at.
+# whichever comes first, before the next `result`. a run that never reported back (blocked or
+# crashed) is placed by what came before it instead - see _result_role.
 _ROLE_AFTER_RESULT = {"worker_summary": "worker", "review_gate": "reviewer"}
 
 
@@ -216,11 +216,19 @@ def _attempts(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
 def _result_role(segment: list[dict[str, Any]], index: int) -> str | None:
     for event in segment[index + 1 :]:
         if event["kind"] == "result":
-            return None  # another result arrived first - this one's outcome was never recorded
+            break  # another result arrived first - read the role off what came before instead
         role = _ROLE_AFTER_RESULT.get(event["kind"])
         if role:
             return role
-    return None
+    # a run that blocked or crashed reports nothing after it, but its money was still spent: the
+    # lifecycle's own order says whose it was - the reviewer runs straight after the test gate, the
+    # worker after the attempt's start or a fix round
+    for event in reversed(segment[:index]):
+        if event["kind"] == "test_gate":
+            return "reviewer"
+        if event["kind"] in ("lifecycle_started", "fix_round"):
+            return "worker"
+    return "worker"
 
 
 def _denial_target(denial: dict[str, Any]) -> str:

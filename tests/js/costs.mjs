@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {installStubDom, element} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../ui_base/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 const responses = new Map();
@@ -93,25 +93,24 @@ await new Promise(r => setTimeout(r, 0));
 const menu = mod.overlayRef().menu;
 assert.equal(menu.title, 'cost overview');
 const text = flatText({children: menu.sections.map(s => s.node || {children: []})}).join(' | ');
-// the detail card: one ruled section per board, costliest first
-assert.match(text, /pricey board \| \$0\.88 - 87% of spend/);
-assert.match(text, /cheap board/);
-assert.match(text, /\$0\.13 \/ pr/);
-assert.match(text, /reviewer \$0\.00 - \$0\.88 on runs with refusals/);
-// the jump list underneath: one compact row per board, in the same order
-const listSection = menu.sections.find(s => s.kind === 'list');
-assert.deepEqual(listSection.items.map(i => i.label), ['pricey board', 'cheap board']);
-assert.equal(listSection.items[0].stats, '$0.88');
-assert.equal(listSection.items[0].id, 'b1', 'costliest board leads');
+// one row per board, costliest first, the figures in column order under a header row
+assert.equal(menu.sections.length, 1, 'a single card, no separate jump list');
+assert.match(text, /board \| share \| spend \| runs \| accepted \| prs \| per pr \| on refusals/);
+assert.match(text, /pricey board \| \$0\.88 \| 1 \| 0\/1 \| 0 \| - \| \$0\.88/);
+assert.match(text, /cheap board \| \$0\.13 \| 1 \| 1\/1 \| 1 \| \$0\.13 \| -/);
+assert.ok(text.indexOf('pricey board') < text.indexOf('cheap board'), 'costliest board leads');
 assert.match(text, /mission-control turns are not counted/);
 assert.match(text, /2 boards - 2 cards - 2 runs - \$1\.01/);
 assert.match(text, /\$0\.88 on runs with refusals/);
+assert.match(text, /worker \$0\.98 - reviewer \$0\.03 - opus \$0\.88, claude-sonnet-4 \$0\.13/);
 
-// ---- picking a board row jumps to it: same switch-and-render a tab click does -------------------
+// ---- clicking a board's name jumps to it: same switch-and-render a tab click does ---------------
 
+const walk = (node, out = []) => { out.push(node); (node.children || []).forEach(c => walk(c, out)); return out; };
+const nameCell = walk(menu.sections[0].node).find(n => n.className === 'cost-name' && n.textContent === 'pricey board');
 mod.setCurrentBoardId('b2');
 responses.set('/api/boards/b1/cards', stubJson(200, []));
-listSection.onPick({id: 'b1'});
+nameCell.onclick();
 await new Promise(r => setTimeout(r, 0));
 assert.equal(mod.currentBoardIdRef(), 'b1', 'picking a row switches to that board');
 

@@ -20,15 +20,17 @@ from typing import Any, Protocol
 
 from smortboard.exec.backends import card_image, docker_available, read_card_token
 from smortboard.exec.runner import build_command, run_process
+from smortboard.operator import OPERATOR_NAME
 from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
 from smortboard.telemetry import board_evidence
 
 ORCHESTRATOR_PROMPT = (
-    "You are Fabian's mission control partner for one smortboard board. You talk with him and plan "
+    f"You are {OPERATOR_NAME}'s mission control partner for one smortboard board. You talk with "
+    "them and plan "
     "work; you never touch code and never run a tool - none are available to you.\n\n"
     "You will be shown this board's repos, its cards, its current plan, and recent conversation. "
-    "Reply conversationally to Fabian's message, then propose cards for the work you agree belongs "
+    f"Reply conversationally to {OPERATOR_NAME}'s message, then propose cards for the work you agree belongs "
     "on the board. YOU DO NOT CREATE CARDS - the board does, from the `cards` you return: it "
     "resolves each `repo` by name against this board's own repos (an unknown name gets no repo and "
     "a note, rather than being guessed at) and resolves `depends_on` against titles you proposed in "
@@ -38,7 +40,7 @@ ORCHESTRATOR_PROMPT = (
     "them.\n\n"
     "Give each card a `model` for its worker: `sonnet` for ordinary work, `opus` only where the card "
     "needs real design judgement, `haiku` for mechanical edits, or null to use the board's default. "
-    "Fabian can change it on the card. The snapshot's `evidence` shows this board's own run history "
+    f"{OPERATOR_NAME} can change it on the card. The snapshot's `evidence` shows this board's own run history "
     "- prefer the cheapest model that has been reaching pull requests cleanly (no fix rounds) on "
     "cards like this one; if you pick opus, say in your reply why this card needs it.\n\n"
     "Return JSON matching the given schema. `cards` may be empty - most turns are just "
@@ -197,7 +199,7 @@ def build_turn_prompt(snapshot: dict[str, Any], message: str) -> str:
     return (
         "Board snapshot:\n"
         + json.dumps(snapshot, indent=2)
-        + "\n\nFabian's new message:\n"
+        + f"\n\n{OPERATOR_NAME}'s new message:\n"
         + message
     )
 

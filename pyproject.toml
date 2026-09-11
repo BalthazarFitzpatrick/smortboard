@@ -8,7 +8,7 @@ requires-python = ">=3.11"
 dependencies = [
     "keyring>=25.7.0",
     # pinned to a sha, not a tag: ui_base and smortboard are co-developed in lockstep
-    "ui_base @ git+https://github.com/BalthazarFitzpatrick/ui_base.git@1c6e19849445be7984e02fed0f014688e63846f3",
+    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@02de59730017ffb3b5e53d462e92f0f83b7ab69b",
     # os-correct data dir for the default db location — not the cwd, not a hand-rolled path
     "platformdirs>=4.0",
 ]

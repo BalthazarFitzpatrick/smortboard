@@ -146,9 +146,7 @@ def test_a_note_between_two_result_events_is_delivered_and_stdin_stays_open(tmp_
     assert fake.stdin.writes[0] == "tok3n\n"
     assert json.loads(fake.stdin.writes[1].strip())["message"]["content"] == "the brief"
     note_turn = json.loads(fake.stdin.writes[2].strip())
-    assert note_turn["message"]["content"] == (
-        "Note from Fabian, via the board: check the edge case"
-    )
+    assert note_turn["message"]["content"] == (runner.NOTE_PREFIX + "check the edge case")
     assert len(fake.stdin.writes) == 3
     assert fake.stdin.closed  # no notes on the second result -> stdin closes -> process exits
 
@@ -203,7 +201,7 @@ def test_a_note_queued_mid_turn_is_written_before_the_turn_ends(tmp_path, monkey
         delivered = [e for e in store.list_events(card["id"]) if e["kind"] == "note_delivered"]
 
     assert json.loads(fake.stdin.writes[1])["message"]["content"] == (
-        "Note from Fabian, via the board: use the other file"
+        runner.NOTE_PREFIX + "use the other file"
     )
     assert len(fake.stdin.writes) == 2  # the brief and the note, nothing at the result
     assert [e["payload"]["comment_ids"] for e in delivered] == [["c1"]]
