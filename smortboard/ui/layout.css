@@ -226,6 +226,8 @@ body {
 /* the display rules above outrank the browser's own [hidden], so the cycle buttons stayed up with
    no card to cycle through */
 .terminal-cycle[hidden], .terminal-subheader[hidden] { display: none; }
+/* the arrows hide on their own when the workforce is pinned, the same way */
+.terminal-cycle .toggle[hidden] { display: none; }
 .terminal-log {
   flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
   border: 2px solid var(--grey-border); padding: 8px; min-height: 0;

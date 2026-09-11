@@ -89,10 +89,11 @@ Chat with the board's orchestrator. It answers with a plan and cards, each with 
 it sees what each model has cost and passed on this board.
 </td>
 <td width="50%" valign="top">
-<img src="docs/images/workforce.jpg" alt="Workforce drawer beside mission control" width="100%"><br>
+<img src="docs/images/workforce.jpg" alt="Workforce drawer pinned to one card" width="100%"><br>
 <b>Workforce</b> <code>,</code><br>
-A terminal with the focused card's agent: its narration and the board's gate lines. A note sent
-here reaches a running agent at its next step.
+A terminal with a card's agent: its narration and the board's gate lines. It is <b>pinned</b> to the
+card you're on; with none focused it is a <b>mall cam</b>, rotating through every working card. A
+note sent here reaches a running agent at its next step.
 </td>
 </tr>
 <tr>
@@ -113,8 +114,9 @@ requests are merged, and two cards whose leases may overlap never run at once.
 <td width="50%" valign="top">
 <img src="docs/images/costs.jpg" alt="Cost overview across boards" width="100%"><br>
 <b>Cost per board</b> <code>c</code><br>
-Spend and share per board, runs, accepted cards, pull requests, cost per pull request, worker vs
-reviewer spend, and money spent on runs that hit a refusal.
+One row per board: its share of all spend, runs, accepted cards, pull requests, cost per pull
+request, and money spent on runs that hit a refusal. Worker vs reviewer and spend by model sit in
+the totals.
 </td>
 <td width="50%" valign="top">
 <img src="docs/images/telemetry.jpg" alt="Card telemetry" width="100%"><br>
@@ -250,6 +252,10 @@ contain its toolchain, because the test gate is offline. smortboard's own image 
 | `--no-browser` | | opens a tab |
 | | `SMORTBOARD_CARD_IMAGE` | `smortboard-card:latest` |
 | | `SMORTBOARD_CARD_TOKEN_PATH` | `~/.config/smortboard/card_token` |
+| | `SMORTBOARD_OPERATOR_NAME` | your `git config user.name` |
+
+The operator name is who the board shows on your own notes and chat lines, and who the agents are
+told to trust: a live note starts `Note from <name>, via the board:`.
 
 Board-wide settings are set with `PATCH /api/settings`: `findings_route`, `orchestrator_model`,
 `worker_model`, `reviewer_model`, `max_parallel`, and `resume_briefing` (`"off"` disables it).
