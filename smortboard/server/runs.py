@@ -17,12 +17,17 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from smortboard.exec.runner import ProcessHandle
 from smortboard.lifecycle import run_card_lifecycle
 from smortboard.store.api import Store
 
 # how long a readiness answer is trusted before it is measured again. `docker info` takes seconds
 # to answer, and the board asks on every render
 READINESS_TTL_SECONDS = 30
+
+
+class RunNotActiveError(RuntimeError):
+    """stop() was asked for a card with no run going - nothing to terminate"""
 
 
 @dataclass
@@ -62,6 +67,11 @@ class RunRegistry:
         # notes queued for LIVE delivery: a card's run pops these itself, between turns, once the
         # agent it belongs to finishes its current turn - see runner.run_process
         self._pending: dict[str, list[dict[str, Any]]] = {}
+        # the process/container a card's run is inside right now, and which cards a stop was asked
+        # for - both keyed by card_id, both read and written from the request thread AND the run's
+        # own thread, so both live under the same lock as everything else here
+        self._handles: dict[str, ProcessHandle] = {}
+        self._stopping: set[str] = set()
         self._lock = threading.Lock()
 
     def get(self, card_id: str) -> RunState | None:
@@ -120,6 +130,35 @@ class RunRegistry:
         thread.start()
         return state
 
+    def stop(self, card_id: str) -> RunState:
+        """terminates whatever this card's run is inside right now: SIGTERM, wait up to 10s, then
+        kill - and `docker rm -f` the container too, since killing the docker client does not
+        reliably stop the container underneath it.
+
+        Marks the card as stopping BEFORE terminating, so the run's own thread (reading
+        `stop_requested` in lifecycle.py) knows a killed process was a deliberate stop rather than a
+        crash, and ends the chain at "stopped" instead of interpreting whatever the dead process
+        reports. Terminating blocks the request thread up to the 10s ceiling - deliberately: the
+        caller gets to know the process is actually gone, not just that a flag was set.
+        """
+        with self._lock:
+            state = self._runs.get(card_id)
+            if state is None or not state.running:
+                raise RunNotActiveError(f"card {card_id} has no run going")
+            self._stopping.add(card_id)
+            handle = self._handles.get(card_id)
+        if handle is not None:
+            handle.terminate()
+        return state
+
+    def _is_stopping(self, card_id: str) -> bool:
+        with self._lock:
+            return card_id in self._stopping
+
+    def _register_handle(self, card_id: str, handle: ProcessHandle) -> None:
+        with self._lock:
+            self._handles[card_id] = handle
+
     def _run(
         self,
         state: RunState,
@@ -134,6 +173,8 @@ class RunRegistry:
                 token_path=self._token_path,
                 on_phase=lambda phase: setattr(state, "phase", phase),
                 pending_notes=lambda: self.pop_pending(state.card_id),
+                stop_requested=lambda: self._is_stopping(state.card_id),
+                on_process=lambda handle: self._register_handle(state.card_id, handle),
             )
             state.phase = result.phase
             state.pr_url = result.pr_url
@@ -147,6 +188,9 @@ class RunRegistry:
         finally:
             state.finished_at = time.time()
             store.close()
+            with self._lock:
+                self._handles.pop(state.card_id, None)
+                self._stopping.discard(state.card_id)
         if on_finish is not None:
             on_finish(state)
 

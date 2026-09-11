@@ -17,12 +17,19 @@ from __future__ import annotations
 
 import json
 import shlex
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from smortboard.exec.backends import card_image, docker_available, guard_mount, read_card_token
-from smortboard.exec.runner import RunResult, build_command, run_process
+from smortboard.exec.backends import (
+    card_image,
+    container_name,
+    docker_available,
+    guard_mount,
+    read_card_token,
+)
+from smortboard.exec.runner import ProcessHandle, RunResult, build_command, run_process
 from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
 
@@ -128,6 +135,7 @@ def _docker_command(
     model: str,
     repo: dict[str, Any] | None,
     budget_usd: float | None,
+    name: str | None = None,
 ) -> list[str]:
     mount, inner_settings = guard_mount(settings_path)
     claude_cmd = build_command(
@@ -150,6 +158,7 @@ def _docker_command(
         "run",
         "--rm",
         "-i",
+        *(["--name", name] if name else []),
         "-v",
         f"{Path(work_path)}:/workspace:ro",  # the reviewer inspects, it never writes
         *mount,
@@ -248,6 +257,7 @@ def run_review(
     model: str = "sonnet",
     budget_usd: float | None = DEFAULT_REVIEW_BUDGET_USD,
     token_path: str | Path | None = None,
+    on_process: Callable[[ProcessHandle], None] | None = None,
 ) -> ReviewResult:
     """runs the reviewer over `diff` in a throwaway container, and records the verdict.
 
@@ -264,10 +274,19 @@ def run_review(
         _record(store, card_id, result)
         return result
 
+    name = container_name("reviewer", card_id)
     cmd = _docker_command(
-        work_path, _build_prompt(store, diff), settings_path, model, repo, budget_usd
+        work_path, _build_prompt(store, diff), settings_path, model, repo, budget_usd, name
     )
-    run_result = run_process(store, card_id, cmd, cwd=work_path, stdin_text=token + "\n")
+    run_result = run_process(
+        store,
+        card_id,
+        cmd,
+        cwd=work_path,
+        stdin_text=token + "\n",
+        container_name=name,
+        on_process=on_process,
+    )
     result = _parse(run_result)
     _record(store, card_id, result)
     return result

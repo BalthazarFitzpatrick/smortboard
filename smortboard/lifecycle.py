@@ -27,6 +27,7 @@ from smortboard.exec.backends import (
     require_card_runtime,
     write_container_guards,
 )
+from smortboard.exec.runner import ProcessHandle
 from smortboard.exec.worktrees import (
     WorktreeError,
     add_worktree,
@@ -41,7 +42,7 @@ from smortboard.review.merge_request import MergeRequestUnavailable, open_merge_
 from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
 from smortboard.store.api import Store
 
-# the phases a card passes through, in order. the last three are terminal
+# the phases a card passes through, in order. the last four are terminal
 PHASES = (
     "preparing",
     "running",
@@ -52,6 +53,7 @@ PHASES = (
     "opened",
     "blocked",
     "refused",
+    "stopped",
 )
 
 # how often a card on the fix route gets its findings back before it goes to a human. fabian chose
@@ -82,7 +84,7 @@ class LifecycleResult:
 
     @property
     def finished(self) -> bool:
-        return self.phase in ("opened", "blocked", "refused")
+        return self.phase in ("opened", "blocked", "refused", "stopped")
 
 
 def build_card_prompt(card: dict[str, Any]) -> str:
@@ -191,6 +193,20 @@ def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
     return state
 
 
+def _stopped(store: Store, state: LifecycleResult) -> LifecycleResult:
+    """fabian pulled the run. the card keeps its worktree and commits for a later run to resume -
+    this only records that it stopped short, deliberately, of gates/reviewer/pull request.
+
+    NOT a blocked_reason_code: the schema's CHECK constraint enumerates those, and "stopped" is not
+    a claim about the work - it is Fabian's own decision, not something that went wrong.
+    """
+    store.update_card(state.card_id, review_flag=True)
+    _note(store, state.card_id, "Stopped by Fabian.")
+    store.append_event(state.card_id, "run_stopped", {})
+    state.phase = "stopped"
+    return state
+
+
 def run_card_lifecycle(
     store: Store,
     card_id: str,
@@ -198,6 +214,8 @@ def run_card_lifecycle(
     backend: Any | None = None,
     on_phase: Any | None = None,
     pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+    on_process: Callable[[ProcessHandle], None] | None = None,
 ) -> LifecycleResult:
     """runs one card the whole way, and returns where it stopped.
 
@@ -209,12 +227,20 @@ def run_card_lifecycle(
     and any fix rounds) so a note Fabian leaves mid-run reaches the agent at its next step, rather
     than waiting for the card's next run. None outside RunRegistry (e.g. in
     tests) means notes fall back to arriving next run only, same as before.
+
+    `stop_requested`, checked after every step that can take a while, is what makes a stop actually
+    stop the chain rather than merely killing the process underneath one step: the very next check
+    ends the run at "stopped" instead of continuing to the next gate. `on_process` is handed the
+    live process/container handle for whichever step is running, so RunRegistry.stop() can reach it.
     """
 
     def phase(name: str) -> None:
         state.phase = name
         if on_phase is not None:
             on_phase(name)
+
+    def stopped_now() -> bool:
+        return stop_requested is not None and stop_requested()
 
     state = LifecycleResult(card_id=card_id, phase="preparing")
     phase("preparing")
@@ -267,7 +293,8 @@ def run_card_lifecycle(
     reviewer_model = configured.get("reviewer_model") or DEFAULT_REVIEWER_MODEL
 
     def work(prompt: str) -> LifecycleResult | None:
-        """one agent run in the card's worktree; returns the blocked state if it stopped short"""
+        """one agent run in the card's worktree; returns the blocked/stopped state if it stopped
+        short"""
         run = runtime.run_card(
             store,
             card_id,
@@ -278,7 +305,13 @@ def run_card_lifecycle(
             token_path=token_path,
             model=worker_model,
             pending_notes=pending_notes,
+            on_process=on_process,
         )
+        # a stop kills the process underneath run_card, which then reports some ordinary-looking
+        # blocked_reason_code (CRASH, most likely) - checked BEFORE that interpretation, so a
+        # deliberate stop is never mistaken for the work having gone wrong
+        if stopped_now():
+            return _stopped(store, state)
         if run.blocked_reason_code:
             return _block(
                 store,
@@ -301,6 +334,8 @@ def run_card_lifecycle(
             gate = run_test_gate(store, card_id, tree.path, repo)
         except GateUnavailable as exc:
             return _refuse(store, state, f"The test gate could not run: {exc}")
+        if stopped_now():
+            return _stopped(store, state)
         if not gate.passed:
             return _block(
                 store,
@@ -320,9 +355,12 @@ def run_card_lifecycle(
                 repo=repo,
                 token_path=token_path,
                 model=reviewer_model,
+                on_process=on_process,
             )
         except ReviewUnavailable as exc:
             return _refuse(store, state, f"The reviewer could not run: {exc}")
+        if stopped_now():
+            return _stopped(store, state)
         if review.approved:
             break
 
@@ -346,6 +384,9 @@ def run_card_lifecycle(
         store.append_event(card_id, "fix_round", {"round": state.fix_rounds})
         if (stopped := work(build_fix_prompt(card, review))) is not None:
             return stopped
+
+    if stopped_now():
+        return _stopped(store, state)
 
     # only now is the card work waiting on a human: checking requires both gates, not either
     store.update_card(card_id, status="checking")
