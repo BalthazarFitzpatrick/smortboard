@@ -318,8 +318,11 @@ def card_telemetry(store: Store, card_id: str) -> dict[str, Any]:
     a fresh run of a card that went through review/accept/reject before does not erase the earlier
     attempts here - unlike card_outcome, which only cares about the most recent one.
     """
-    card = store.get_card(card_id)
-    attempts = [_summarize_attempt(segment) for segment in _attempts(store.list_events(card_id))]
+    return _telemetry_for(store, store.get_card(card_id))
+
+
+def _telemetry_for(store: Store, card: dict[str, Any]) -> dict[str, Any]:
+    attempts = [_summarize_attempt(s) for s in _attempts(store.list_events(card["id"]))]
     total_cost = sum(a["cost_usd"] for a in attempts)
     refusal_cost = sum(a["cost_usd"] for a in attempts if a["refusal_count"])
     return {
@@ -345,7 +348,7 @@ def board_costs(store: Store, board_id: str) -> list[dict[str, Any]]:
     actually cost, and how much of that rode along with a refused command or file edit."""
     rows = []
     for card in store.list_cards(board_id):
-        telemetry = card_telemetry(store, card["id"])
+        telemetry = _telemetry_for(store, card)
         attempts = telemetry["attempts"]
         last_outcome = attempts[-1]["outcome"] if attempts else "no attempts yet"
         rows.append(

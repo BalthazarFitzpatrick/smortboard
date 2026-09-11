@@ -5,7 +5,7 @@ import re
 import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs
 
 from smortboard.attention import AnswerRefused, answer_card, attention_rows
 from smortboard.digest import board_digest
@@ -271,10 +271,9 @@ def _make_handler(
                 self._send_json(404, {"error": f"no route for {method} {path}"})
 
         def _handle_timeline(self, card_id: str) -> None:
-            """RUN REPLAY: GET /api/cards/{id}/timeline?attempt=N - see smortboard/timeline.py"""
+            """run replay: GET /api/cards/{id}/timeline?attempt=N - see smortboard/timeline.py"""
             store.get_card(card_id)  # raises NotFoundError on a bad id
-            query = parse_qs(urlsplit(self.path).query)
-            raw_attempt = query.get("attempt", [None])[0]
+            raw_attempt = self._query().get("attempt", [None])[0]
             attempt = int(raw_attempt) if raw_attempt else None
             self._send_json(200, card_timeline(store, card_id, attempt=attempt))
 
@@ -419,7 +418,7 @@ def _make_handler(
                         (
                             event["created_at"],
                             self._board_line(
-                                f"delivered {count} note{plural} - agent had just finished its turn"
+                                f"delivered {count} note{plural} to the running agent"
                             ),
                         )
                     )
@@ -581,7 +580,7 @@ def _make_handler(
 def build_server(
     store: Store,
     port: int,
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     token_path: str | None = None,
 ) -> HTTPServer:
     # single-threaded: the store's sqlite3 connection is bound to the thread that opened it. card
