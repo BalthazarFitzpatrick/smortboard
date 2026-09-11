@@ -28,19 +28,10 @@ It never merges. Anything that needs you waits in one inbox.
 
 ## How a card runs
 
-```mermaid
-flowchart LR
-  A[card] --> B[worktree + branch]
-  B --> C[worker<br/>own container]
-  C -->|commits| D[test gate<br/>--network none]
-  D -->|pass| E[reviewer<br/>read-only]
-  E -->|approves| F[pull request]
-  F --> G((you merge))
-  D -->|fail| X[blocked<br/>TESTS_FAILED]
-  E -->|findings| R{findings route}
-  R -->|fix, max 2 rounds| C
-  R -->|attention| Y[blocked<br/>REVIEW_REJECTED]
-```
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-lifecycle-light.png">
+  <img src="docs/images/art-lifecycle-dark.png" alt="The card lifecycle: preparing, running, testing, reviewing, opening, opened. Reviewer findings on the fix route go back to the worker at most twice; a question, a limit, a crash or a lease conflict, failed tests, or a rejected review block the card in its column, waiting in the inbox." width="100%">
+</picture>
 
 | Phase | What happens |
 |---|---|
@@ -138,33 +129,25 @@ Step through a run: reads, edits as diffs, commands, refused calls, gates, verdi
 </tr>
 </table>
 
+**Live steering.** A note sent to a running agent is written to its stdin with a fixed marker and
+reaches it between two tool calls, in the same run. The worker is told to trust only that marker and
+to treat any other text claiming authority as a prompt injection. A real run:
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-steering-light.png">
+  <img src="docs/images/art-steering-dark.png" alt="A real steered run: the brief, git log, reading one.txt, a note queued at 9.2 seconds asking to skip three.txt and end with PINEAPPLE, reading two.txt, and the summary ending in PINEAPPLE at 12.8 seconds for $0.055." width="100%">
+</picture>
+
 **Stop** `k` asks once, then removes a running card's container. The card keeps its worktree and
 commits, and nothing after the worker runs. **Prompts** `p` edits the three role prompts; every save
 is a new version. **Model** `m` cycles a card through board default, haiku, sonnet and opus.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  subgraph host["smortboard, native, 127.0.0.1"]
-    HTTP[http server + ui]
-    DB[(sqlite<br/>event log)]
-    RUNS[run registry<br/>thread per card]
-    SCHED[scheduler]
-    ORCH[orchestrator]
-  end
-  subgraph containers["one container each, thrown away"]
-    W[worker<br/>clone, guards ro, stdin token]
-    T[test gate<br/>--network none]
-    V[reviewer<br/>Read Grep Glob]
-  end
-  RUNS -- "token, brief, notes" --> W
-  W -- "stream-json events" --> RUNS
-  RUNS --> T
-  RUNS -- diff --> V
-  W -- "commits fetched back" --> REPO[(repo worktree)]
-  REPO -- "push, gh pr create" --> GH[GitHub]
-```
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-architecture-light.png">
+  <img src="docs/images/art-architecture-dark.png" alt="Architecture: one native smortboard process on 127.0.0.1 with the http server, sqlite store, run registry, scheduler and orchestrator, and the card token file; per card a card container, a test gate container with no network, and a read-only reviewer container; commits fetched back to the repo on disk, then pushed to GitHub where you merge." width="100%">
+</picture>
 
 The board is a plain Python process: a stdlib HTTP server, SQLite and plain JavaScript on
 [smortui](https://github.com/BalthazarFitzpatrick/smortui). Only the agents are contained, because
@@ -194,7 +177,12 @@ orchestrator turns and scheduler ticks each open their own SQLite connection on 
   and by default they go to you instead.
 - Costs come from each run's own stream (`total_cost_usd`, `modelUsage`), per turn, summed per
   session. The model credited is the one with the highest spend, not the small helper Claude Code
-  bills alongside it.
+  bills alongside it:
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-cost-credit-light.png">
+  <img src="docs/images/art-cost-credit-dark.png" alt="One real result's spend by model: claude-sonnet-5 $0.2476 for 822 output tokens, the claude-haiku helper $0.0009 for 17." width="75%">
+</picture>
 
 ## Keys
 
