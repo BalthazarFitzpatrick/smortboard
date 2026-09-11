@@ -369,6 +369,94 @@ def board_costs(store: Store, board_id: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _board_overview_row(store: Store, board: dict[str, Any]) -> dict[str, Any]:
+    """one board's spend rolled up across all its cards - same attempt data board_costs reads,
+    just summed rather than listed per card."""
+    cost_usd = 0.0
+    runs = 0
+    accepted = 0
+    prs_opened = 0
+    refusal_cost_usd = 0.0
+    worker_cost_usd = 0.0
+    reviewer_cost_usd = 0.0
+    spend_by_model: dict[str, float] = {}
+
+    cards = store.list_cards(board["id"])
+    for card in cards:
+        telemetry = _telemetry_for(store, card)
+        attempts = telemetry["attempts"]
+        cost_usd += telemetry["totals"]["cost_usd"]
+        runs += telemetry["totals"]["attempts"]
+        refusal_cost_usd += telemetry["totals"]["refusal_cost_usd"]
+        if card.get("status") == "accepted":
+            accepted += 1
+        for attempt in attempts:
+            if attempt["outcome"] == "pull request":
+                prs_opened += 1
+            worker_cost_usd += attempt["worker_cost_usd"]
+            reviewer_cost_usd += attempt["reviewer_cost_usd"]
+            if attempt["worker_model"]:
+                spend_by_model[attempt["worker_model"]] = (
+                    spend_by_model.get(attempt["worker_model"], 0.0) + attempt["worker_cost_usd"]
+                )
+            if attempt["reviewer_model"]:
+                spend_by_model[attempt["reviewer_model"]] = (
+                    spend_by_model.get(attempt["reviewer_model"], 0.0)
+                    + attempt["reviewer_cost_usd"]
+                )
+
+    return {
+        "board_id": board["id"],
+        "board_name": board["name"],
+        "cost_usd": round(cost_usd, 6),
+        "runs": runs,
+        "cards": len(cards),
+        "cards_accepted": accepted,
+        "pull_requests_opened": prs_opened,
+        "refusal_cost_usd": round(refusal_cost_usd, 6),
+        "worker_cost_usd": round(worker_cost_usd, 6),
+        "reviewer_cost_usd": round(reviewer_cost_usd, 6),
+        "spend_by_model": [
+            {"model": model, "cost_usd": round(cost, 6)} for model, cost in spend_by_model.items()
+        ],
+        "cost_per_pr_usd": round(cost_usd / prs_opened, 6) if prs_opened else None,
+    }
+
+
+def _sum_spend_by_model(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    totals: dict[str, float] = {}
+    for row in rows:
+        for entry in row["spend_by_model"]:
+            totals[entry["model"]] = totals.get(entry["model"], 0.0) + entry["cost_usd"]
+    return [{"model": model, "cost_usd": round(cost, 6)} for model, cost in totals.items()]
+
+
+def boards_overview(store: Store) -> dict[str, Any]:
+    """one row per board, costliest first, plus a totals row across every board - the c panel's
+    data. orchestrator (mission-control) turns are never counted here: build_board_snapshot's
+    turns cost nothing the event log records, so the panel says so rather than guessing a number."""
+    rows = [_board_overview_row(store, board) for board in store.list_boards()]
+    rows.sort(key=lambda r: r["cost_usd"], reverse=True)
+
+    totals = {
+        "board_id": None,
+        "board_name": "all boards",
+        "cost_usd": round(sum(r["cost_usd"] for r in rows), 6),
+        "runs": sum(r["runs"] for r in rows),
+        "cards": sum(r["cards"] for r in rows),
+        "cards_accepted": sum(r["cards_accepted"] for r in rows),
+        "pull_requests_opened": sum(r["pull_requests_opened"] for r in rows),
+        "refusal_cost_usd": round(sum(r["refusal_cost_usd"] for r in rows), 6),
+        "worker_cost_usd": round(sum(r["worker_cost_usd"] for r in rows), 6),
+        "reviewer_cost_usd": round(sum(r["reviewer_cost_usd"] for r in rows), 6),
+        "spend_by_model": _sum_spend_by_model(rows),
+    }
+    total_prs = totals["pull_requests_opened"]
+    totals["cost_per_pr_usd"] = round(totals["cost_usd"] / total_prs, 6) if total_prs else None
+
+    return {"boards": rows, "totals": totals, "orchestrator_turns_counted": False}
+
+
 def _finished_card_evidence(store: Store, card: dict[str, Any]) -> dict[str, Any] | None:
     """this card's latest attempt, as evidence for the orchestrator - None while it is still
     running or has never been run, so an in-progress card never counts toward a model's record"""

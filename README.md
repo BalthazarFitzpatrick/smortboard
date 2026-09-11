@@ -170,6 +170,7 @@ built from the same list the key handlers use.
 | `n` | attention inbox |
 | `d` | morning digest |
 | `i` | cost telemetry |
+| `c` | cost overview: spend across every board |
 | `u` | usage |
 | `a` | agent roster |
 | `p` | prompts |

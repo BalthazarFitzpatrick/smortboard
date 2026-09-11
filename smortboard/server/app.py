@@ -26,7 +26,13 @@ from smortboard.server.runs import Readiness, RunRegistry
 from smortboard.store import Store
 from smortboard.store.api import CARD_WRITABLE_FIELDS
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
-from smortboard.telemetry import board_costs, card_telemetry, roster_rows, usage_projection
+from smortboard.telemetry import (
+    board_costs,
+    boards_overview,
+    card_telemetry,
+    roster_rows,
+    usage_projection,
+)
 from smortboard.timeline import card_timeline
 
 _ROUTES = [
@@ -61,6 +67,7 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/conversation$"), "POST"),
     (re.compile(r"^/api/roster$"), "GET"),
     (re.compile(r"^/api/usage$"), "GET"),
+    (re.compile(r"^/api/costs$"), "GET"),
     (re.compile(r"^/api/prompts$"), "GET"),
     (re.compile(r"^/api/prompts/(?P<role>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/telemetry$"), "GET"),
@@ -227,6 +234,8 @@ def _make_handler(
                 self._send_json(200, roster_rows(store, active))
             elif path == "/api/usage":
                 self._send_json(200, usage_projection(store))
+            elif path == "/api/costs":
+                self._send_json(200, boards_overview(store))
             elif path == "/api/prompts" and method == "GET":
                 self._send_json(200, self._prompts_view())
             elif "role" in params and method == "PATCH":
