@@ -22,11 +22,17 @@ from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
 from smortboard.scheduler import SchedulerRegistry
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
-from smortboard.server.runs import Readiness, RunRegistry
+from smortboard.server.runs import Readiness, RunNotActiveError, RunRegistry
 from smortboard.store import Store
 from smortboard.store.api import CARD_WRITABLE_FIELDS
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
-from smortboard.telemetry import board_costs, card_telemetry, roster_rows, usage_projection
+from smortboard.telemetry import (
+    board_costs,
+    boards_overview,
+    card_telemetry,
+    roster_rows,
+    usage_projection,
+)
 from smortboard.timeline import card_timeline
 
 _ROUTES = [
@@ -48,6 +54,7 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/outcome$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/run$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/run$"), "GET"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/stop$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/accept$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/reject$"), "POST"),
     (re.compile(r"^/api/runs$"), "GET"),
@@ -61,6 +68,7 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/conversation$"), "POST"),
     (re.compile(r"^/api/roster$"), "GET"),
     (re.compile(r"^/api/usage$"), "GET"),
+    (re.compile(r"^/api/costs$"), "GET"),
     (re.compile(r"^/api/prompts$"), "GET"),
     (re.compile(r"^/api/prompts/(?P<role>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/telemetry$"), "GET"),
@@ -185,6 +193,8 @@ def _make_handler(
                 self._handle_upload(params["card_id"])
             elif path.endswith("/run") and method == "POST":
                 self._handle_run(params["card_id"])
+            elif "card_id" in params and path.endswith("/stop") and method == "POST":
+                self._handle_stop(params["card_id"])
             elif path.endswith("/run") and method == "GET":
                 state = runs.get(params["card_id"])
                 self._send_json(
@@ -227,6 +237,8 @@ def _make_handler(
                 self._send_json(200, roster_rows(store, active))
             elif path == "/api/usage":
                 self._send_json(200, usage_projection(store))
+            elif path == "/api/costs":
+                self._send_json(200, boards_overview(store))
             elif path == "/api/prompts" and method == "GET":
                 self._send_json(200, self._prompts_view())
             elif "role" in params and method == "PATCH":
@@ -289,6 +301,16 @@ def _make_handler(
             store.get_card(card_id)  # raises NotFoundError before a thread is ever started
             state = runs.start(card_id)
             self._send_json(202, state.as_dict())
+
+        def _handle_stop(self, card_id: str) -> None:
+            """stops a running card. 409 if there is nothing running to stop."""
+            store.get_card(card_id)  # raises NotFoundError for an unknown card
+            try:
+                state = runs.stop(card_id)
+            except RunNotActiveError as exc:
+                self._send_json(409, {"error": str(exc)})
+                return
+            self._send_json(200, state.as_dict())
 
         def _handle_decision(self, card_id: str, decide) -> None:
             """accept or reject. 409 while a run holds the card: deciding under a live agent

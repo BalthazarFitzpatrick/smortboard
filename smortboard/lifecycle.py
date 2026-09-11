@@ -22,11 +22,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from smortboard.briefing import resume_briefing
 from smortboard.exec.backends import (
     CardRuntimeUnavailable,
     require_card_runtime,
     write_container_guards,
 )
+from smortboard.exec.runner import ProcessHandle
 from smortboard.exec.worktrees import (
     WorktreeError,
     add_worktree,
@@ -34,6 +36,8 @@ from smortboard.exec.worktrees import (
     branch_exists,
     create_worktree,
     existing_worktree,
+    fetch_base,
+    has_remote,
     worktree_path,
 )
 from smortboard.review.gates import GateUnavailable, run_test_gate
@@ -41,7 +45,7 @@ from smortboard.review.merge_request import MergeRequestUnavailable, open_merge_
 from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
 from smortboard.store.api import Store
 
-# the phases a card passes through, in order. the last three are terminal
+# the phases a card passes through, in order. the last four are terminal
 PHASES = (
     "preparing",
     "running",
@@ -52,6 +56,7 @@ PHASES = (
     "opened",
     "blocked",
     "refused",
+    "stopped",
 )
 
 # how often a card on the fix route gets its findings back before it goes to a human. fabian chose
@@ -65,6 +70,13 @@ DEFAULT_REVIEWER_MODEL = "sonnet"
 # who a board-written comment is from. cards already carry comments, so the pull request link lands
 # where a human is already looking rather than needing a column of its own
 BOARD_AUTHOR = "smortboard"
+
+# what the card says when the model api refused its token - it lasts a year from setup-token
+TOKEN_REFUSED_NOTE = (
+    "The card token was refused (HTTP 401): it has expired or been revoked. Run "
+    "`claude setup-token` in your own terminal, write the new token to "
+    "~/.config/smortboard/card_token (mode 600), then run this card again."
+)
 
 
 @dataclass
@@ -82,15 +94,19 @@ class LifecycleResult:
 
     @property
     def finished(self) -> bool:
-        return self.phase in ("opened", "blocked", "refused")
+        return self.phase in ("opened", "blocked", "refused", "stopped")
 
 
-def build_card_prompt(card: dict[str, Any]) -> str:
+def build_card_prompt(card: dict[str, Any], briefing: str | None = None) -> str:
     """the card, as the brief the agent is handed.
 
     Deliberately the whole card and nothing more: title, description, acceptance criteria, tasks.
     The lease and the house conventions arrive separately (runner.SYSTEM_PROMPT and
     runner.lease_preamble), so this stays the part a human actually wrote.
+
+    `briefing` is resume_briefing's output for a card that already ran - None (the default) leaves
+    the prompt exactly as it was before resume briefings existed, which is what the fresh-card tests
+    assert byte-for-byte.
     """
     lines = [f"CARD: {card['title']}", ""]
     if card.get("description"):
@@ -113,6 +129,11 @@ def build_card_prompt(card: dict[str, Any]) -> str:
     if notes:
         lines.append("Notes from Fabian, oldest first:")
         lines += [f"- {text}" for text in notes]
+        lines.append("")
+
+    if briefing:
+        lines.append("What already happened - this card ran before:")
+        lines.append(briefing)
         lines.append("")
 
     lines += [
@@ -178,6 +199,27 @@ def _block(store: Store, state: LifecycleResult, reason_code: str, note: str) ->
     return state
 
 
+def _base_for_fresh_cut(store: Store, state: LifecycleResult, repo_path: str, base: str) -> str:
+    """the ref a fresh worktree is cut from, for a card that depends on another.
+
+    scheduler._dependency_wait only starts such a card once its dependency's pull request is
+    merged on GitHub - but the local `base` branch does not update itself, so a worktree cut from
+    it can still miss that merge. Fetching `origin/<base>` first closes that gap. A card with no
+    dependencies never reaches this function, so its worktree is cut exactly as before.
+    """
+    if not has_remote(repo_path):
+        return base
+    if fetch_base(repo_path, base):
+        return f"origin/{base}"
+    _note(
+        store,
+        state.card_id,
+        f"could not fetch '{base}' from origin before cutting this card's worktree, so its "
+        "dependency's merge may not be visible yet. cutting from the local branch instead.",
+    )
+    return base
+
+
 def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
     """the board could not run this card at all - a missing repo, image or credential.
 
@@ -186,8 +228,25 @@ def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
     """
     store.update_card(state.card_id, review_flag=True)
     _note(store, state.card_id, note)
+    # the attempt's own record of how it ended - a refusal after both gates otherwise read as
+    # still in progress to telemetry, which only sees events
+    store.append_event(state.card_id, "run_refused", {"note": note})
     state.phase = "refused"
     state.refusal = note
+    return state
+
+
+def _stopped(store: Store, state: LifecycleResult) -> LifecycleResult:
+    """fabian pulled the run. the card keeps its worktree and commits for a later run to resume -
+    this only records that it stopped short, deliberately, of gates/reviewer/pull request.
+
+    NOT a blocked_reason_code: the schema's CHECK constraint enumerates those, and "stopped" is not
+    a claim about the work - it is Fabian's own decision, not something that went wrong.
+    """
+    store.update_card(state.card_id, review_flag=True)
+    _note(store, state.card_id, "Stopped by Fabian.")
+    store.append_event(state.card_id, "run_stopped", {})
+    state.phase = "stopped"
     return state
 
 
@@ -198,6 +257,8 @@ def run_card_lifecycle(
     backend: Any | None = None,
     on_phase: Any | None = None,
     pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+    on_process: Callable[[ProcessHandle], None] | None = None,
 ) -> LifecycleResult:
     """runs one card the whole way, and returns where it stopped.
 
@@ -209,12 +270,20 @@ def run_card_lifecycle(
     and any fix rounds) so a note Fabian leaves mid-run reaches the agent at its next step, rather
     than waiting for the card's next run. None outside RunRegistry (e.g. in
     tests) means notes fall back to arriving next run only, same as before.
+
+    `stop_requested`, checked after every step that can take a while, is what makes a stop actually
+    stop the chain rather than merely killing the process underneath one step: the very next check
+    ends the run at "stopped" instead of continuing to the next gate. `on_process` is handed the
+    live process/container handle for whichever step is running, so RunRegistry.stop() can reach it.
     """
 
     def phase(name: str) -> None:
         state.phase = name
         if on_phase is not None:
             on_phase(name)
+
+    def stopped_now() -> bool:
+        return stop_requested is not None and stop_requested()
 
     state = LifecycleResult(card_id=card_id, phase="preparing")
     phase("preparing")
@@ -247,12 +316,17 @@ def run_card_lifecycle(
         # path, so the worktree from its first run reuses it (commits and all) rather than being
         # refused. only reached for a non-accepted card: accepted already returned above, and a
         # rejected card's decide.py step deletes the branch, so it always falls to the fresh cut
+        worktree_reused = True
         if worktree_path(repo["path"], card_id).exists():
             tree = existing_worktree(repo["path"], card_id)
         elif branch_exists(repo["path"], card_id):
             tree = add_worktree(repo["path"], card_id)
         else:
-            tree = create_worktree(repo["path"], card_id, base=base)
+            worktree_reused = False
+            cut_base = base
+            if card.get("depends_on"):
+                cut_base = _base_for_fresh_cut(store, state, repo["path"], base)
+            tree = create_worktree(repo["path"], card_id, base=cut_base)
     except WorktreeError as exc:
         return _refuse(store, state, f"Could not cut a worktree for this card: {exc}")
     state.branch, state.worktree = tree.branch, str(tree.path)
@@ -267,7 +341,8 @@ def run_card_lifecycle(
     reviewer_model = configured.get("reviewer_model") or DEFAULT_REVIEWER_MODEL
 
     def work(prompt: str) -> LifecycleResult | None:
-        """one agent run in the card's worktree; returns the blocked state if it stopped short"""
+        """one agent run in the card's worktree; returns the blocked/stopped state if it stopped
+        short"""
         run = runtime.run_card(
             store,
             card_id,
@@ -278,7 +353,15 @@ def run_card_lifecycle(
             token_path=token_path,
             model=worker_model,
             pending_notes=pending_notes,
+            on_process=on_process,
         )
+        # a stop kills the process underneath run_card, which then reports some ordinary-looking
+        # blocked_reason_code (CRASH, most likely) - checked BEFORE that interpretation, so a
+        # deliberate stop is never mistaken for the work having gone wrong
+        if stopped_now():
+            return _stopped(store, state)
+        if run.auth_failed:
+            return _refuse(store, state, TOKEN_REFUSED_NOTE)
         if run.blocked_reason_code:
             return _block(
                 store,
@@ -289,8 +372,15 @@ def run_card_lifecycle(
         store.append_event(card_id, "worker_summary", {"text": run.result_text})
         return None
 
+    # a resumed card (an inbox answer, or a re-run after a block) keeps this worktree and its
+    # commits - the briefing is what lets the agent skip re-reading them to find out what it
+    # already did. "off" turns it off board-wide; unset means on.
+    briefing = None
+    if configured.get("resume_briefing") != "off":
+        briefing = resume_briefing(store, card_id, worktree_reused=worktree_reused)
+
     phase("running")
-    if (stopped := work(build_card_prompt(card))) is not None:
+    if (stopped := work(build_card_prompt(card, briefing))) is not None:
         return stopped
 
     # both gates, and on the fix route the findings go back to the worker until the reviewer
@@ -301,6 +391,8 @@ def run_card_lifecycle(
             gate = run_test_gate(store, card_id, tree.path, repo)
         except GateUnavailable as exc:
             return _refuse(store, state, f"The test gate could not run: {exc}")
+        if stopped_now():
+            return _stopped(store, state)
         if not gate.passed:
             return _block(
                 store,
@@ -320,9 +412,12 @@ def run_card_lifecycle(
                 repo=repo,
                 token_path=token_path,
                 model=reviewer_model,
+                on_process=on_process,
             )
         except ReviewUnavailable as exc:
             return _refuse(store, state, f"The reviewer could not run: {exc}")
+        if stopped_now():
+            return _stopped(store, state)
         if review.approved:
             break
 
@@ -346,6 +441,9 @@ def run_card_lifecycle(
         store.append_event(card_id, "fix_round", {"round": state.fix_rounds})
         if (stopped := work(build_fix_prompt(card, review))) is not None:
             return stopped
+
+    if stopped_now():
+        return _stopped(store, state)
 
     # only now is the card work waiting on a human: checking requires both gates, not either
     store.update_card(card_id, status="checking")

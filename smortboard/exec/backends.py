@@ -25,6 +25,7 @@ from typing import Any, Protocol
 from smortboard.exec.leases import write_lease_settings
 from smortboard.exec.runner import (
     SYSTEM_PROMPT,
+    ProcessHandle,
     RunResult,
     allowed_tools_for_repo,
     build_command,
@@ -47,6 +48,11 @@ CARD_TOKEN_PATH_ENV = "SMORTBOARD_CARD_TOKEN_PATH"
 _KEYCHAIN_SERVICE = "smortboard-card-token"
 _KEYCHAIN_USER = "smortboard"
 _CONTAINER_WORKDIR = "/workspace"
+# told up front: a real run spent two tool calls looking for its files under /home/user/repo
+WORKSPACE_PREAMBLE = (
+    f"Your working directory is {_CONTAINER_WORKDIR}, the repository root. "
+    f"Give file tools absolute paths under {_CONTAINER_WORKDIR}.\n\n"
+)
 # a card's guards (settings, lease, hooks) are mounted read-only here, outside /workspace, so the
 # agent can neither edit its own guard nor sweep it into a commit
 CONTAINER_GUARD_DIR = "/smortboard"
@@ -59,6 +65,16 @@ CARD_GIT_EMAIL = "smortboard@localhost"
 
 def card_image() -> str:
     return os.environ.get(CARD_IMAGE_ENV, DEFAULT_CARD_IMAGE)
+
+
+def container_name(role: str, card_id: str) -> str:
+    """a deterministic, unique name for one container this run starts.
+
+    Stop needs an exact handle on the container, not just its docker client process - SIGTERM on
+    the client does not reliably stop what it launched. Named per run so `docker rm -f <name>`
+    always targets exactly one container, never guesses.
+    """
+    return f"smortboard-{role}-{card_id[:8]}-{uuid.uuid4().hex[:8]}"
 
 
 def write_container_guards(worktree_path: str | Path, path_globs: list[str]) -> Path:
@@ -241,6 +257,7 @@ class RunnerBackend(Protocol):
         repo: dict[str, Any] | None = None,
         token_path: str | Path | None = None,
         pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
+        on_process: Callable[[ProcessHandle], None] | None = None,
     ) -> RunResult: ...
 
 
@@ -271,6 +288,7 @@ class ContainerBackend:
         repo: dict[str, Any] | None = None,
         token_path: str | Path | None = None,
         pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
+        on_process: Callable[[ProcessHandle], None] | None = None,
     ) -> RunResult:
         token = read_card_token(token_path)
         clone_path = Path(tempfile.mkdtemp(prefix=f"smortboard-card-{uuid.uuid4().hex[:8]}-"))
@@ -284,8 +302,9 @@ class ContainerBackend:
             # lease_preamble listed python dicts at the agent instead of paths
             lease_rows = store.get_card(card_id).get("leases") if store else None
             leases = [row["path_glob"] for row in lease_rows or []]
-            brief = lease_preamble(leases) + commands_preamble(repo) + prompt
-            cmd = self._docker_command(clone_path, brief, settings_path, model, repo, store)
+            brief = WORKSPACE_PREAMBLE + lease_preamble(leases) + commands_preamble(repo) + prompt
+            name = container_name("worker", card_id)
+            cmd = self._docker_command(clone_path, brief, settings_path, model, repo, store, name)
             # the token is a plain first line the container's shell consumes with `read -r`; the
             # brief follows as the first stream-json turn, and stdin stays open for live steering
             result = run_process(
@@ -296,6 +315,8 @@ class ContainerBackend:
                 token_line=token + "\n",
                 stream_prompt=brief,
                 pending_notes=pending_notes,
+                container_name=name,
+                on_process=on_process,
             )
             self._fetch_back(repo_root, clone_path, branch, worktree_path)
             return result
@@ -337,6 +358,7 @@ class ContainerBackend:
         model: str,
         repo: dict[str, Any] | None,
         store: Store | None = None,
+        name: str | None = None,
     ) -> list[str]:
         mount, inner_settings = guard_mount(settings_path)
         claude_cmd = build_command(
@@ -363,6 +385,7 @@ class ContainerBackend:
             "run",
             "--rm",
             "-i",  # stdin stays open exactly long enough to hand the token over
+            *(["--name", name] if name else []),
             "-v",
             f"{clone_path}:{_CONTAINER_WORKDIR}:rw",
             *mount,

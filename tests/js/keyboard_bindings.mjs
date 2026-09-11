@@ -50,13 +50,15 @@ function SpyDrawer(opts) {
   };
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('board.js')].join('\n;\n');
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+  smort('board.js'), smort('telemetry.js'), smort('costs.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {BINDINGS, buildDrawers, boardsRef: () => boards};`)(SpyMenu, SpyDrawer);
 
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
-  'KeyG', 'KeyW', 'KeyU', 'KeyI', 'KeyA', 'KeyD', 'KeyR', 'KeyY', 'KeyX', 'KeyM', 'KeyT', 'KeyS',
+  'KeyG', 'KeyW', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
+  'KeyT', 'KeyS',
   'KeyP', 'KeyN', 'Slash', 'Comma', 'Period',
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
 const boundCodes = mod.BINDINGS.map(b => b.code);

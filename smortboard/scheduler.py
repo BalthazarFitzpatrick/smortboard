@@ -4,7 +4,8 @@
 It does not run a card itself - it decides WHEN a card may start and hands it to RunRegistry.start,
 the same entry point a manual run uses. Three rules gate a start, each documented at its check:
 
-DEPENDENCIES - a card starts only once every card it depends on has reached `accepted`.
+DEPENDENCIES - a card starts only once every card it depends on has a pull request MERGED on
+  GitHub, not merely `accepted` on the board.
 LEASES - two cards in the same repo whose lease globs could touch the same file never run together.
 USAGE_LIMIT - a run that blocks on it pauses new starts until the window resets; already-running
   cards are left alone, and the blocked card itself stays blocked for a human, not retried here.
@@ -24,6 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from smortboard.review.merge_request import PullRequestState, pr_view
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
 
@@ -33,6 +35,29 @@ DEFAULT_MAX_PARALLEL = 2
 # a run that blocks USAGE_LIMIT but carries no readable resetsAt (never happened in the spikes,
 # but a stream is someone else's format) parks for this long rather than never resuming
 _FALLBACK_PARK_SECONDS = 5 * 60
+
+# schedule_view is polled by the UI every couple seconds - asking GitHub every poll would hammer
+# it for no benefit, so one answer per PR url is good for this long
+_PR_STATE_TTL_SECONDS = 60
+_pr_state_cache: dict[str, tuple[float, PullRequestState]] = {}
+
+
+def _cached_pr_view(repo_path: str | Path, url: str) -> PullRequestState:
+    now = time.time()
+    cached = _pr_state_cache.get(url)
+    if cached is not None and now - cached[0] < _PR_STATE_TTL_SECONDS:
+        return cached[1]
+    state = pr_view(repo_path, url)
+    _pr_state_cache[url] = (now, state)
+    return state
+
+
+def _latest_merge_request_url(store: Store, card_id: str) -> str | None:
+    events = [e for e in store.list_events(card_id) if e["kind"] == "merge_request"]
+    if not events:
+        return None
+    url = events[-1]["payload"].get("url")
+    return url or None
 
 
 def _lease_globs(card: dict[str, Any]) -> list[str]:
@@ -91,17 +116,14 @@ def _max_parallel(store: Store) -> int:
     return value if value > 0 else DEFAULT_MAX_PARALLEL
 
 
-def _dependency_wait(store: Store, card: dict[str, Any]) -> str | None:
-    """None once every dependency has reached `accepted` - the closest the board has to "merged".
+def _dependency_wait(store: Store, card: dict[str, Any], repo_path: str | Path) -> str | None:
+    """None once every dependency's pull request is actually MERGED on GitHub.
 
-    THE BOARD NEVER MERGES, so `accepted` is not proof the base branch actually carries the
-    dependency's work yet - only that Fabian signed off and a PR is open. A dependent's worktree is
-    cut fresh from the repo's base branch (lifecycle.create_worktree), so if the dependency's PR is
-    still unmerged when the dependent starts, the dependent will not see that code. Waiting for
-    `accepted` is still the right gate: it is the only signal the board has that is not "the agent
-    says so", and the alternative - waiting for a merge the board is never told about - would park
-    every dependent forever. The gap is real, so the digest (digest.py) flags it explicitly for
-    every dependent whose PR opened before its dependency shows up merged.
+    `accepted` alone used to be enough - it no longer is. THE BOARD NEVER MERGES, so `accepted`
+    only means Fabian signed off and a PR is open; a dependent's worktree is cut fresh from the
+    repo's base branch, so it sees the dependency's code only once that PR landed there. `repo_path`
+    is any local checkout with `gh` available - `gh pr view <url>` resolves from the url itself, so
+    it does not need to be the dependency's own repo.
     """
     for dep_id in card.get("depends_on") or []:
         try:
@@ -109,7 +131,21 @@ def _dependency_wait(store: Store, card: dict[str, Any]) -> str | None:
         except NotFoundError:
             continue  # a deleted dependency blocks nothing that still exists
         if dep["status"] != "accepted":
-            return f"waiting on dependency ‘{dep['title']}’ ({dep['status']})"
+            return f"waiting on dependency ‘{dep['title']}’ - not accepted yet ({dep['status']})"
+        url = _latest_merge_request_url(store, dep_id)
+        if url is None:
+            return f"dependency ‘{dep['title']}’ is accepted but has no pull request recorded"
+        state = _cached_pr_view(repo_path, url)
+        if state.error:
+            return (
+                f"could not ask GitHub about dependency ‘{dep['title']}’s pull request: "
+                f"{state.error}"
+            )
+        if state.merged:
+            continue
+        if state.state == "OPEN":
+            return f"dependency ‘{dep['title']}’s pull request is still open"
+        return f"dependency ‘{dep['title']}’s pull request was closed without merging"
     return None
 
 
@@ -223,7 +259,15 @@ class BoardScheduler:
                 if slots <= 0:
                     remaining.append(card_id)
                     continue
-                reason = _dependency_wait(store, card) or _lease_wait(card, pending)
+                reason = None
+                if card.get("depends_on"):
+                    try:
+                        repo_path = store.get_repo(card["repo_id"])["path"]
+                    except NotFoundError:
+                        reason = "this card's repo is gone, so its dependencies cannot be checked"
+                    else:
+                        reason = _dependency_wait(store, card, repo_path)
+                reason = reason or _lease_wait(card, pending)
                 if reason:
                     waiting[card_id] = reason
                     remaining.append(card_id)
