@@ -208,8 +208,9 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `t` | replay | `.` | mission control |
 | `w` | run the board | `,` | workforce |
 | `g` | kanban / workstreams | `s` | shortcuts |
-| `/` | comment input | `1`-`9` | jump to a board |
+| `/` | comment input | `b` | boards and repos |
 | | | `h` | pre-flight checklist |
+| | | `1`-`9` | jump to a board |
 
 ## Setup
 
@@ -240,9 +241,10 @@ wc -c ~/.config/smortboard/card_token           # a full token is 108 bytes
 `pbpaste` is macOS. On Linux, paste into `cat > ~/.config/smortboard/card_token` instead and press
 Ctrl-D.
 
-Register a repo on the board with its path, default branch and test command. Its image must already
-contain its toolchain, because the test gate is offline. smortboard's own image is
-`docker/repo.Dockerfile`.
+Press `b` to create a board and register a repo on it: its path, default branch and test command.
+The repo itself has to exist on GitHub and have its default branch pushed already - smortboard only
+registers it, it doesn't create it. Its image must already contain its toolchain, because the test
+gate is offline. smortboard's own image is `docker/repo.Dockerfile`.
 
 | Flag | Env | Default |
 |---|---|---|
