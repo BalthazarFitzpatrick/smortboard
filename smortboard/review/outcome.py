@@ -14,10 +14,23 @@ from typing import Any
 
 from smortboard.store.api import Store
 
+# what makes an attempt "real" - it reached something past the worktree cut. an attempt with none
+# of these never reached the worker (a refusal before work started) and must not hide the last one
+# that did
+_OUTCOME_KINDS = frozenset({"worker_summary", "test_gate", "review_gate", "merge_request"})
+
 
 def _latest_attempt(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     starts = [i for i, event in enumerate(events) if event["kind"] == "lifecycle_started"]
-    return events[starts[-1] :] if starts else events
+    if not starts:
+        return events
+    bounds = list(zip(starts, starts[1:] + [len(events)], strict=True))
+    # walk back from the most recent attempt to the first one that produced an outcome
+    for start, end in reversed(bounds):
+        segment = events[start:end]
+        if any(event["kind"] in _OUTCOME_KINDS for event in segment):
+            return segment
+    return events[starts[-1] :]
 
 
 def card_outcome(store: Store, card_id: str) -> dict[str, Any]:

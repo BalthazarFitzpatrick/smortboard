@@ -78,6 +78,17 @@ def test_the_outcome_only_reads_the_latest_attempt(store, card_id):
     assert outcome["tests"] is None and outcome["review"] is None
 
 
+def test_the_outcome_falls_back_past_an_attempt_that_never_reached_the_worker(store, card_id):
+    store.append_event(card_id, "lifecycle_started", {})
+    store.append_event(card_id, "worker_summary", {"text": "first try"})
+    store.append_event(card_id, "merge_request", {"url": "https://x/pull/1"})
+    # a refused rerun: lifecycle_started fires, then nothing - no worker_summary, no gates, no pr
+    store.append_event(card_id, "lifecycle_started", {})
+    outcome = card_outcome(store, card_id)
+    assert outcome["summary"] == "first try"
+    assert outcome["pr_url"] == "https://x/pull/1"
+
+
 def test_only_an_unblocked_checking_card_can_be_accepted(store, card_id):
     with pytest.raises(DecisionRefused):
         accept_card(store, card_id)
