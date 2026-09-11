@@ -182,8 +182,13 @@ def _gather(store: Any, card_id: str) -> _CardEvidence:
         elif kind == "review_gate":
             evidence.review = payload
         elif kind == "result":
-            evidence.cost_usd = payload.get("total_cost_usd", evidence.cost_usd)
-            evidence.turns = payload.get("num_turns", evidence.turns)
+            # EVERY RUN ON THE CARD, SUMMED: worker, reviewer, fix rounds and earlier attempts all
+            # spent money on this branch. keeping the last one reported the reviewer's $0.30 for a
+            # branch that cost $5.11
+            if payload.get("total_cost_usd") is not None:
+                evidence.cost_usd = (evidence.cost_usd or 0.0) + payload["total_cost_usd"]
+            if payload.get("num_turns") is not None:
+                evidence.turns = (evidence.turns or 0) + payload["num_turns"]
     card = store.get_card(card_id)
     evidence.criteria = [c["text"] for c in card.get("criteria") or []]
     evidence.tasks = list(card.get("tasks") or [])
@@ -276,13 +281,12 @@ def open_merge_request(
 
     existing = _existing_pr(repo_path, branch)
     if existing:
-        result = MergeRequestResult(
-            opened=False,
-            branch=branch,
-            url=existing,
-            already_existed=True,
-            refusal=f"a pull request for {branch} is already open",
-        )
+        # A RE-RUN'S COMMITS STILL HAVE TO REACH THE OPEN PR. this used to return before pushing,
+        # so a second attempt that fixed a review finding passed both gates and was never delivered
+        # - the PR kept the unfixed commit. same guarded push as below: never forced, so a branch
+        # someone else moved is a refusal the board shows, not an overwrite
+        _push(repo_path, branch, remote=remote)
+        result = MergeRequestResult(opened=False, branch=branch, url=existing, already_existed=True)
         _record(store, card_id, result)
         return result
 
