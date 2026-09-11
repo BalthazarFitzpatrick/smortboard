@@ -357,6 +357,34 @@ def _record(store: Any, card_id: str, result: MergeRequestResult) -> None:
     )
 
 
+@dataclass
+class PullRequestState:
+    """what GitHub says about one pull request, or why it could not say.
+
+    `error` set means GitHub could not be asked - the caller (scheduler._dependency_wait) must
+    treat that as a reason to keep waiting, never as evidence the PR is merged.
+    """
+
+    merged: bool
+    state: str | None = None  # "OPEN", "CLOSED", "MERGED"
+    error: str | None = None
+
+
+def pr_view(repo_path: str | Path, url: str) -> PullRequestState:
+    """asks GitHub whether a pull request merged. never raises - a failure to ask is reported in
+    the result so a scheduler can wait rather than crash when GitHub is unreachable."""
+    if shutil.which("gh") is None:
+        return PullRequestState(merged=False, error="gh is not installed")
+    result = _gh(["pr", "view", url, "--json", "state,mergedAt"], cwd=repo_path)
+    if result.returncode != 0:
+        return PullRequestState(merged=False, error=result.stderr.strip() or "gh pr view failed")
+    try:
+        data = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return PullRequestState(merged=False, error="gh pr view returned unreadable json")
+    return PullRequestState(merged=bool(data.get("mergedAt")), state=data.get("state"))
+
+
 def close_merge_request(repo_path: str | Path, url: str) -> str | None:
     """closes a rejected card's pull request, keeping its branch. returns a refusal, or None.
 

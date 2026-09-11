@@ -91,6 +91,30 @@ def destroy_worktree(repo_path: str | Path, card_id: str, force: bool = False) -
     _run_git(repo_path, *args)
 
 
+def has_remote(repo_path: str | Path, remote: str = "origin") -> bool:
+    """whether this repo has the named remote at all - a local-only repo has nowhere to fetch a
+    merged dependency from, so the caller falls back to the local base without trying."""
+    result = subprocess.run(
+        ["git", "-C", str(Path(repo_path).resolve()), "remote"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return remote in result.stdout.split()
+
+
+def fetch_base(repo_path: str | Path, base: str, remote: str = "origin") -> bool:
+    """fetches `base` from `remote`. True on success - never raises, so a network hiccup is the
+    caller's decision (fall back to the local base) rather than a card-stopping error."""
+    result = subprocess.run(
+        ["git", "-C", str(Path(repo_path).resolve()), "fetch", remote, base],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def branch_exists(repo_path: str | Path, card_id: str) -> bool:
     result = subprocess.run(
         ["git", "-C", str(repo_path), "rev-parse", "--verify", "--quiet", branch_name(card_id)],
