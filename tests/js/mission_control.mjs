@@ -212,8 +212,8 @@ responses.set('/api/roster', stubJson(200, []));
   assert.equal(target.cardId, null);
 }
 
-// ---- , reads the focused card BEFORE its input takes focus, and does not type itself there -------
-// the first real render showed a stray "," in the input and "no card is focused" over a focused card
+// ---- , opens the workforce on the focused card and LEAVES FOCUS ON THE BOARD, so , closes it again.
+// / is the way into the chat input, and escape hands focus back to the board
 responses.set('/api/cards/c7/conversation', stubJson(200, {
   card_id: 'c7', title: 'focused card', running: false, phase: null, delivery: 'next_run', messages: [],
 }));
@@ -221,8 +221,18 @@ strip.focus();
 let prevented = false;
 document._dispatch('keydown', {code: 'Comma', key: ',', target: strip, preventDefault() { prevented = true; }});
 await new Promise(resolve => setTimeout(resolve, 0));
-assert.ok(prevented, 'the comma must not type itself into the input it focuses');
-assert.equal(mod.wf.cardId, 'c7', 'the focused card is still the target after the input takes focus');
-mod.drawers.left.close();
+assert.ok(prevented, 'the comma is swallowed');
+assert.equal(mod.wf.cardId, 'c7', 'the focused card is the target');
+assert.equal(document.activeElement, strip, 'opening the drawer leaves focus on the card');
+assert.ok(!mod.wf.input.focused, 'opening the drawer does not focus its input');
+
+document._dispatch('keydown', {code: 'Slash', key: '/', target: strip, preventDefault() {}});
+assert.equal(document.activeElement, mod.wf.input, '/ focuses the open chat input');
+mod.wf.input._listeners.keydown.forEach(fn => fn({code: 'Escape', key: 'Escape', stopPropagation() {}, preventDefault() {}}));
+assert.notEqual(document.activeElement, mod.wf.input, 'escape leaves the input');
+
+strip.focus();
+document._dispatch('keydown', {code: 'Comma', key: ',', target: strip, preventDefault() {}});
+assert.ok(!mod.drawers.left.isOpen(), 'the same , closes the drawer it opened');
 
 console.log('ok');

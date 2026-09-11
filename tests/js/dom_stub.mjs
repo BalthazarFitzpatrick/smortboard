@@ -57,7 +57,11 @@ export function element(tag, className = '') {
       el.parentNode = null; el.removed = true;
     },
     focus() { el.focused = true; globalThis.document.activeElement = el; },
-    blur() { el.focused = false; },
+    // like a browser: blurring the focused element hands activeElement back to <body>
+    blur() {
+      el.focused = false;
+      if (globalThis.document.activeElement === el) globalThis.document.activeElement = globalThis.document.body;
+    },
     matches(sel) { return sel.split(',').some(s => compoundMatch(el, s.trim())); },
     closest(sel) { let cur = el; while (cur) { if (cur.matches && cur.matches(sel)) return cur; cur = cur.parentNode; } return null; },
     contains(other) { let cur = other; while (cur) { if (cur === el) return true; cur = cur.parentNode; } return false; },
