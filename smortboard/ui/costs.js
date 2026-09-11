@@ -1,59 +1,56 @@
-// board cost overview (c): every board's spend in one panel, costliest first, with a totals row.
-// reuses telemetry.js's formatUsd/refusalLabel and board.js's globals - api, escapeHtml, fillBar,
-// textLine, toggleOverlay, Menu, activateTab, onBoardEnter - rather than redeclaring any of them.
-
-// ui_base's fill bar rendered as a markup string, since a list item's label/stats are innerHTML -
-// same classes fillBar() builds as a node, .progress-row > .bar > .bar-fill
-function fillBarHtml(fraction, tone = '') {
-  const pct = Math.round(fraction * 1000) / 10;
-  const fillClass = tone ? `bar-fill ${tone}` : 'bar-fill';
-  return `<div class="progress-row"><div class="bar"><div class="${fillClass}" style="width:${pct}%"></div></div></div>`;
-}
+// board cost overview (c): every board's spend in one panel, costliest first, with a totals foot.
+// the usage panel's language - a wide card of ruled sections with fill bars - plus a compact list
+// underneath so arrows and enter still jump to a board. reuses board.js and telemetry.js globals:
+// api, escapeHtml, fillBar, textLine, usageSection, formatUsd, refusalLabel, toggleOverlay, Menu.
 
 function costPerPrLabel(row) {
   return row.cost_per_pr_usd == null ? null : `${formatUsd(row.cost_per_pr_usd)} / pr`;
 }
 
-// one board's row: title line, fill bar for its share of total spend, then the figures - same
-// ruled-section language as the cost table, but as a list item so enter/arrows and onPick work
-function boardRowLabel(row, share) {
-  const modelBits = row.spend_by_model
-    .slice()
-    .sort((a, b) => b.cost_usd - a.cost_usd)
-    .map(m => `${escapeHtml(m.model)} ${formatUsd(m.cost_usd)}`)
-    .join(', ');
-  const lines = [
-    `<span class="field-label">${escapeHtml(row.board_name)}</span>`,
-    `<span class="usage-model-name">${formatUsd(row.cost_usd)}</span>`,
-    fillBarHtml(share, row.refusal_cost_usd ? 'warn' : ''),
-  ];
+function plural(count, word) {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+// one board: name as the section label, spend and its share, a neutral fill bar, then the figures
+function boardCostSection(row, share) {
+  const section = usageSection(row.board_name, 'cost-board');
+  section.appendChild(textLine(`${formatUsd(row.cost_usd)} - ${Math.round(share * 100)}% of spend`, 'usage-model-name'));
+  section.appendChild(fillBar(share));
   const statBits = [
-    `${row.runs} run${row.runs === 1 ? '' : 's'}`,
+    plural(row.runs, 'run'),
     `${row.cards_accepted}/${row.cards} accepted`,
-    `${row.pull_requests_opened} pr${row.pull_requests_opened === 1 ? '' : 's'}`,
-    `worker ${formatUsd(row.worker_cost_usd)} - reviewer ${formatUsd(row.reviewer_cost_usd)}`,
-    refusalLabel(row.refusal_count),
+    plural(row.pull_requests_opened, 'pr'),
     costPerPrLabel(row),
   ].filter(Boolean);
-  lines.push(`<span class="stat">${statBits.join(' - ')}</span>`);
-  if (modelBits) lines.push(`<span class="stat cost-models">${modelBits}</span>`);
-  return lines.join('');
+  section.appendChild(textLine(statBits.join(' - '), 'stat'));
+  const roleBits = [`worker ${formatUsd(row.worker_cost_usd)}`, `reviewer ${formatUsd(row.reviewer_cost_usd)}`];
+  // the row carries the spend, not a count - the waste is what matters at board level
+  if (row.refusal_cost_usd) roleBits.push(`${formatUsd(row.refusal_cost_usd)} on runs with refusals`);
+  section.appendChild(textLine(roleBits.join(' - '), 'stat'));
+  const models = row.spend_by_model
+    .slice()
+    .sort((a, b) => b.cost_usd - a.cost_usd)
+    .map(m => `${m.model} ${formatUsd(m.cost_usd)}`)
+    .join(', ');
+  if (models) section.appendChild(textLine(models, 'stat'));
+  return section;
 }
 
 function totalsFoot(totals) {
   const foot = document.createElement('div');
-  foot.className = 'card-foot usage-foot';
+  foot.className = 'card-foot usage-foot cost-foot';
   const wasteNote = totals.refusal_cost_usd
     ? ` - ${formatUsd(totals.refusal_cost_usd)} on runs with refusals`
     : '';
   const prNote = totals.cost_per_pr_usd == null ? '' : ` - ${costPerPrLabel(totals)}`;
   foot.appendChild(
     textLine(
-      `${totals.boards} boards - ${totals.cards} cards - ${totals.runs} runs - ` +
+      `${plural(totals.boards, 'board')} - ${plural(totals.cards, 'card')} - ${plural(totals.runs, 'run')} - ` +
         `${formatUsd(totals.cost_usd)}${prNote}${wasteNote}`,
       'stat'
     )
   );
+  foot.appendChild(textLine('mission-control turns are not counted - the log carries no cost for them', 'stat cost-note'));
   return foot;
 }
 
@@ -72,16 +69,22 @@ function costsOverviewSections(data) {
     return [{kind: 'node', node: box}];
   }
   const total = data.totals.cost_usd || 0;
+  const card = document.createElement('div');
+  card.className = 'usage-card usage-wide cost-card';
+  const grid = document.createElement('div');
+  grid.className = 'cost-boards';
+  data.boards.forEach(row => grid.appendChild(boardCostSection(row, total > 0 ? row.cost_usd / total : 0)));
+  card.appendChild(grid);
+  card.appendChild(textLine('', 'h-divider'));
+  card.appendChild(totalsFoot({...data.totals, boards: data.boards.length}));
   const items = data.boards.map(row => ({
     id: row.board_id,
-    label: boardRowLabel(row, total > 0 ? row.cost_usd / total : 0),
-    stats: '',
+    label: escapeHtml(row.board_name),
+    stats: formatUsd(row.cost_usd),
   }));
-  const note = textLine('mission-control turns are not counted - the log carries no cost for them', 'stat');
   return [
-    {kind: 'node', node: note},
-    {kind: 'list', items, onPick: item => jumpToBoard(item.id)},
-    {kind: 'node', node: totalsFoot({...data.totals, boards: data.boards.length})},
+    {kind: 'node', node: card},
+    {kind: 'list', label: 'jump to a board', items, onPick: item => jumpToBoard(item.id)},
   ];
 }
 
