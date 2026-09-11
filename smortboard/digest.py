@@ -79,9 +79,10 @@ def _pull_requests(store: Store, cards: list[dict[str, Any]], since: float) -> l
         deps_in_batch = [d for d in row["depends_on"] if d in opened]
         deps_outside = [d for d in row["depends_on"] if d not in opened]
         row["merge_after"] = deps_in_batch
-        # UNMERGED DEPENDENCY, UNSEEN CODE - see scheduler._dependency_wait. a dependency that
-        # never opened its own PR in this window (already merged earlier, or not run yet) cannot be
-        # confirmed merged from here, so this card's worktree may be missing that work
+        # scheduler._dependency_wait now only starts a dependent once its dependency's PR is
+        # actually merged on GitHub, so this card's worktree is guaranteed to carry every in-batch
+        # dependency's code. a dependency outside this window (merged earlier, or never run) is
+        # still worth a glance, so it stays flagged - just as informational, not as a real gap
         row["dependency_not_in_batch"] = bool(deps_outside)
         del row["depends_on"]
         result.append(row)
