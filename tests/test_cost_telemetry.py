@@ -69,6 +69,23 @@ def test_card_telemetry_splits_attempts_and_totals_cost(store):
     assert telemetry["totals"]["refusal_cost_usd"] == 0
 
 
+def test_card_telemetry_names_the_working_model_not_the_helper(store):
+    # the real shape: claude code bills a haiku helper next to the model doing the work
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "a card")
+    store.append_event(card["id"], "lifecycle_started", {})
+    result = _worker_result(cost=0.2485)
+    result["modelUsage"] = {
+        "claude-haiku-4-5-20251001": {"outputTokens": 17, "costUSD": 0.0009},
+        "claude-sonnet-5": {"outputTokens": 822, "costUSD": 0.2476},
+    }
+    store.append_event(card["id"], "result", result)
+    store.append_event(card["id"], "worker_summary", {"text": "did the thing"})
+
+    attempt = card_telemetry(store, card["id"])["attempts"][0]
+    assert attempt["worker_model"] == "claude-sonnet-5"
+
+
 def test_card_telemetry_counts_refusals_and_their_cost(store):
     board = store.create_board("b")
     card = store.create_card(board["id"], None, "a card")
