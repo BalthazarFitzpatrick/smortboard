@@ -24,6 +24,13 @@ RESUMABLE_REASONS = frozenset(
 # DEPENDENCY_REJECTED is not this card's fault - a message to it cannot un-reject the dependency;
 # accept_card already clears it automatically once the dependency comes back (see review/decide.py)
 
+# what the inbox says in place of an answer box, for the rows an answer cannot move
+_WHY_NOT_ANSWERABLE = {
+    "review": "a decision, not a question - open the card and press y to accept or x to reject",
+    "USAGE_LIMIT": "clears itself once the rate-limit window resets",
+    "DEPENDENCY_REJECTED": "waiting on a rejected dependency - clears once that card is accepted",
+}
+
 
 def _trim(text: str | None, limit: int = 4000) -> str:
     text = (text or "").strip()
@@ -105,6 +112,8 @@ def attention_rows(store: Store) -> list[dict[str, Any]]:
                     "reason": reason,
                     "question": _question_for(store, card),
                     "since": card["updated_at"],
+                    "answerable": reason in RESUMABLE_REASONS,
+                    "hint": _WHY_NOT_ANSWERABLE.get(reason, ""),
                 }
             )
     rows.sort(key=lambda r: r["since"])

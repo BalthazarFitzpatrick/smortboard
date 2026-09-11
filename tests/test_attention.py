@@ -104,6 +104,8 @@ def test_other_reasons_pull_the_latest_board_comment(store, repo):
 
     rows = attention_rows(store)
     assert rows[0]["question"] == "`pytest` exited 1.\n\n```\nboom\n```"
+    assert rows[0]["answerable"] is True
+    assert rows[0]["hint"] == ""
 
 
 def test_accepted_and_rejected_cards_never_surface(store, repo):
@@ -119,6 +121,9 @@ def test_a_checking_card_awaiting_decision_surfaces_too(store, repo):
     rows = attention_rows(store)
     assert len(rows) == 1
     assert rows[0]["reason"] == "review"
+    # a decision, so the inbox shows where to make it instead of an answer box
+    assert rows[0]["answerable"] is False
+    assert "press y to accept or x to reject" in rows[0]["hint"]
 
 
 def test_oldest_first(store, repo):
