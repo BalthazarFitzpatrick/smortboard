@@ -27,6 +27,7 @@ from smortboard.server.runs import Readiness, RunNotActiveError, RunRegistry
 from smortboard.store import Store
 from smortboard.store.api import CARD_WRITABLE_FIELDS
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
+from smortboard.store.repo_validation import validate_repo
 from smortboard.telemetry import (
     board_costs,
     boards_overview,
@@ -43,6 +44,7 @@ _ROUTES = [
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/cards$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "POST"),
+    (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/cards$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "PATCH"),
@@ -165,19 +167,9 @@ def _make_handler(
             elif "board_id" in params and path.endswith("/repos") and method == "GET":
                 self._send_json(200, store.list_repos(params["board_id"]))
             elif "board_id" in params and path.endswith("/repos") and method == "POST":
-                body = self._read_json()
-                # a card cannot run without one of these, and there was no way to make one from the
-                # board at all - the run button was unusable on a board created through the api
-                repo = store.create_repo(
-                    params["board_id"],
-                    name=body["name"],
-                    path=body["path"],
-                    default_branch=body.get("default_branch", "main"),
-                    test_command=body.get("test_command"),
-                    image=body.get("image"),
-                    lint_command=body.get("lint_command"),
-                )
-                self._send_json(201, repo)
+                self._handle_create_repo(params["board_id"])
+            elif "repo_id" in params and method == "PATCH":
+                self._handle_patch_repo(params["repo_id"])
             elif path == "/api/cards" and method == "POST":
                 body = self._read_json()
                 card = store.create_card(**body)
@@ -353,6 +345,48 @@ def _make_handler(
                 return
             card = store.update_card(card_id, **body)
             self._send_json(200, card)
+
+        def _handle_create_repo(self, board_id: str) -> None:
+            """registers a repo on a board - the only way to make a card runnable.
+
+            validated here, not in the store: path exists, is a git repo, and default_branch
+            exists in it - a message a person can act on, rather than a runner failing minutes
+            later inside a container.
+            """
+            store.get_board(board_id)  # raises NotFoundError on a bad board id
+            body = self._read_json()
+            name = body.get("name", "")
+            default_branch = body.get("default_branch") or "main"
+            try:
+                expanded_path = validate_repo(name, body.get("path", ""), default_branch)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            repo = store.create_repo(
+                board_id,
+                name=name,
+                path=expanded_path,
+                default_branch=default_branch,
+                test_command=body.get("test_command"),
+                image=body.get("image"),
+                lint_command=body.get("lint_command"),
+            )
+            self._send_json(201, repo)
+
+        def _handle_patch_repo(self, repo_id: str) -> None:
+            # only these two are worth editing after registration - path/branch changes mean
+            # re-registering, since they are what validate_repo checked at creation
+            body = self._read_json()
+            unknown = set(body) - {"test_command", "image"}
+            if unknown:
+                self._send_json(400, {"error": f"not writable: {sorted(unknown)}"})
+                return
+            repo = store.get_repo(repo_id)
+            if "test_command" in body:
+                repo = store.set_repo_test_command(repo_id, body["test_command"])
+            if "image" in body:
+                repo = store.set_repo_image(repo_id, body["image"])
+            self._send_json(200, repo)
 
         def _handle_patch_task(self, task_id: str) -> None:
             # only "done" is exposed here - add_task/remove_task stay store-only, for a human

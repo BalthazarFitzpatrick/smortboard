@@ -378,14 +378,44 @@ def test_readiness_is_cached_because_the_probes_are_not_free(monkeypatch):
     assert len(calls) == 1
 
 
-def test_a_repo_can_be_created_from_the_board(server):
+def test_a_repo_can_be_created_from_the_board(server, tmp_path):
     """without this there was no way to give a card a repo, so the run button could never work"""
+    import subprocess
+
     base, card_id = server
     boards = _call(f"{base}/api/boards")[1]
     board_id = boards[0]["id"]
+
+    # registration validates the path - a real git repo, not a placeholder, or it 400s
+    repo_path = tmp_path / "r"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo_path)], check=True)
+    (repo_path / "README.md").write_text("hi\n")
+    subprocess.run(["git", "-C", str(repo_path), "add", "README.md"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_path),
+            "-c",
+            "user.email=t@t.com",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ],
+        check=True,
+    )
+
     status, repo = _call_json(
         f"{base}/api/boards/{board_id}/repos",
-        {"name": "r", "path": "/tmp/r", "default_branch": "main", "test_command": "uv run pytest"},
+        {
+            "name": "r",
+            "path": str(repo_path),
+            "default_branch": "main",
+            "test_command": "uv run pytest",
+        },
     )
     assert status == 201
     assert repo["test_command"] == "uv run pytest"
