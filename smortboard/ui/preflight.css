@@ -1,0 +1,80 @@
+/* pre-flight checklist (h): the panel it opens. every visual primitive - toggle, panel-floating,
+   h-divider, field-label, hazard stripes - comes from base.css; this file only positions and
+   colors them for the checklist. */
+
+.preflight-panel {
+  width: min(720px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+
+.preflight-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.preflight-summary { color: var(--text-dim); }
+.preflight-summary.preflight-summary-ok { color: var(--lichen-milk); }
+
+.preflight-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+
+.preflight-group-label {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: calc(var(--font-size, 13px) - 2px);
+  letter-spacing: 0.04em;
+  margin-top: 6px;
+}
+.preflight-group:first-child .preflight-group-label { margin-top: 0; }
+
+.preflight-row {
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.preflight-row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.preflight-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+.preflight-dot-ok { background: var(--lichen-milk); }
+.preflight-dot-warn { background: var(--fill-attention); }
+.preflight-dot-fail { background: var(--fill-warn); }
+
+.preflight-label { color: var(--cream); font-weight: 600; }
+
+.preflight-detail {
+  padding-left: 19px;
+  color: var(--text);
+}
+
+/* the board's own monospace, so a fix line can be copied verbatim */
+.preflight-fix {
+  margin-left: 19px;
+  padding: 6px 8px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: calc(var(--font-size, 13px) - 1px);
+  color: var(--cream);
+  background: var(--bg);
+  border: 2px solid var(--grey-border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: all;
+}

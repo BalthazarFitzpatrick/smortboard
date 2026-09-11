@@ -142,6 +142,14 @@ to treat any other text claiming authority as a prompt injection. A real run:
 commits, and nothing after the worker runs. **Prompts** `p` edits the three role prompts; every save
 is a new version. **Model** `m` cycles a card through board default, haiku, sonnet and opus.
 
+**Pre-flight checklist** `h` — what has to be true before a card can run, and the exact fix for
+whatever isn't: docker, the card image, the card token file, `gh`, `git`, and, for every repo
+registered on any board, its path, branches, `origin` remote, whether `gh` can see it on GitHub,
+its test command, and its image. Each row that isn't ready shows the command to fix it, in the
+board's monospace so it can be copied straight into a terminal - including telling you when the
+matching GitHub repo hasn't been created yet. A summary line at the top says how many of the checks
+are ready; re-check without leaving the panel.
+
 ## Architecture
 
 <picture>
@@ -201,6 +209,7 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `w` | run the board | `,` | workforce |
 | `g` | kanban / workstreams | `s` | shortcuts |
 | `/` | comment input | `1`-`9` | jump to a board |
+| | | `h` | pre-flight checklist |
 
 ## Setup
 
