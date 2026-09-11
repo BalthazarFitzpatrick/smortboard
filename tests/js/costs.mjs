@@ -93,13 +93,15 @@ await new Promise(r => setTimeout(r, 0));
 const menu = mod.overlayRef().menu;
 assert.equal(menu.title, 'cost overview');
 const text = flatText({children: menu.sections.map(s => s.node || {children: []})}).join(' | ');
-// the list section's items are not DOM nodes in this stub, so read them directly for the row content
+// the detail card: one ruled section per board, costliest first
+assert.match(text, /pricey board \| \$0\.88 - 87% of spend/);
+assert.match(text, /cheap board/);
+assert.match(text, /\$0\.13 \/ pr/);
+assert.match(text, /reviewer \$0\.00 - \$0\.88 on runs with refusals/);
+// the jump list underneath: one compact row per board, in the same order
 const listSection = menu.sections.find(s => s.kind === 'list');
-const rowsText = listSection.items.map(i => i.label).join(' | ');
-assert.match(rowsText, /pricey board/);
-assert.match(rowsText, /\$0\.88/);
-assert.match(rowsText, /cheap board/);
-assert.match(rowsText, /\$0\.13 \/ pr/);
+assert.deepEqual(listSection.items.map(i => i.label), ['pricey board', 'cheap board']);
+assert.equal(listSection.items[0].stats, '$0.88');
 assert.equal(listSection.items[0].id, 'b1', 'costliest board leads');
 assert.match(text, /mission-control turns are not counted/);
 assert.match(text, /2 boards - 2 cards - 2 runs - \$1\.01/);
