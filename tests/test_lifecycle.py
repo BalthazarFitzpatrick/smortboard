@@ -12,6 +12,7 @@ import pytest
 from smortboard import lifecycle
 from smortboard.exec.runner import RunResult
 from smortboard.exec.worktrees import WorktreeInfo
+from smortboard.operator import OPERATOR_NAME
 from smortboard.review.gates import GateResult, GateUnavailable
 from smortboard.review.merge_request import MergeRequestResult
 from smortboard.review.reviewer import ReviewFinding, ReviewResult
@@ -285,7 +286,7 @@ def test_operator_notes_reach_the_prompt_since_a_running_agent_cannot_take_input
     store.add_comment(card_id, "operator", "use the other endpoint instead")
     store.add_comment(card_id, "someone-else", "not from operator")
     prompt = lifecycle.build_card_prompt(store.get_card(card_id))
-    assert "Notes from operator, oldest first:" in prompt
+    assert f"Notes from {OPERATOR_NAME}, oldest first:" in prompt
     assert "- use the other endpoint instead" in prompt
     assert "not from operator" not in prompt
 
@@ -471,7 +472,7 @@ def test_a_stop_leaves_the_card_flagged_with_a_comment_and_an_event(board, monke
     assert card["review_flag"] == 1
     assert card["blocked_reason_code"] is None  # never a CHECK-constraint value
     bodies = [c["body"] for c in store.list_comments(card_id)]
-    assert any("operator" in b for b in bodies)
+    assert any(f"Stopped by {OPERATOR_NAME}." in b for b in bodies)
     kinds = [e["kind"] for e in store.list_events(card_id)]
     assert "run_stopped" in kinds
 

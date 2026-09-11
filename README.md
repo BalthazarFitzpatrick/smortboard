@@ -165,7 +165,7 @@ flowchart LR
 ```
 
 The board is a plain Python process: a stdlib HTTP server, SQLite and plain JavaScript on
-[ui_base](https://github.com/BalthazarFitzpatrick/ui_base). Only the agents are contained, because
+[smortui](https://github.com/BalthazarFitzpatrick/smortui). Only the agents are contained, because
 a containerised board would need the Docker socket, which amounts to root on the host. Card runs,
 orchestrator turns and scheduler ticks each open their own SQLite connection on their own thread.
 
