@@ -277,12 +277,17 @@ function listHtml(items) {
   return items.length ? `<ul>${items.join('')}</ul>` : '<span class="empty">none</span>';
 }
 
+// a dependency's title, read off its strip on the board; a card on another board has no strip here
+function dependencyLabel(cardId) {
+  const title = document.querySelector(`.card-strip[data-card-id="${cardId}"] .card-title`);
+  return (title && title.textContent) || `card ${String(cardId).slice(0, 8)}`;
+}
+
 function cardPanelHtml(card, outcome) {
   const tasks = (card.tasks || []).map(t => `<li>${t.done ? '[x]' : '[ ]'} ${escapeHtml(t.text)}</li>`);
   const criteria = (card.criteria || []).map(c => `<li>${escapeHtml(c.text)}</li>`);
-  // depends_on is the store's key - this read card.deps, which never existed, so the section was
-  // always empty
-  const deps = (card.depends_on || []).map(d => `<li>${escapeHtml(d)}</li>`);
+  // depends_on holds ids only - shown by title when that card is on this board, a short id otherwise
+  const deps = (card.depends_on || []).map(d => `<li>${escapeHtml(dependencyLabel(d))}</li>`);
   const attachments = (card.attachments || []).map(a => `<li>${escapeHtml(a.filename)}</li>`);
   const comments = (card.comments || [])
     .map(c => `<li><span class="field-label">${escapeHtml(c.author)}</span> ${escapeHtml(c.body)}</li>`);
