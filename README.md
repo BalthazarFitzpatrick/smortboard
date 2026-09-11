@@ -164,6 +164,7 @@ use and so cannot drift.
 | Escape | one level back: input, then panel, then closed |
 | `g` | switch kanban / workstream grouping |
 | `u` | usage: rate-limit windows and per-model spend |
+| `i` | cost telemetry: the focused/open card's attempts, or the board's cost table |
 | `a` | agent roster: pick a row to jump to that card |
 | `r` | run the focused card |
 | `m` | change the focused card's model: board default, haiku, sonnet, opus |

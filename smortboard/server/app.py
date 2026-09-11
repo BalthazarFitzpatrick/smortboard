@@ -22,7 +22,7 @@ from smortboard.server.runs import Readiness, RunRegistry
 from smortboard.store import Store
 from smortboard.store.api import CARD_WRITABLE_FIELDS
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
-from smortboard.telemetry import roster_rows, usage_projection
+from smortboard.telemetry import board_costs, card_telemetry, roster_rows, usage_projection
 
 _ROUTES = [
     (re.compile(r"^/health$"), "GET"),
@@ -58,6 +58,8 @@ _ROUTES = [
     (re.compile(r"^/api/usage$"), "GET"),
     (re.compile(r"^/api/prompts$"), "GET"),
     (re.compile(r"^/api/prompts/(?P<role>[^/]+)$"), "PATCH"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/telemetry$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/costs$"), "GET"),
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
 ]
 
@@ -211,6 +213,12 @@ def _make_handler(
                 self._send_json(200, self._prompts_view())
             elif "role" in params and method == "PATCH":
                 self._handle_patch_prompt(params["role"])
+            elif "card_id" in params and path.endswith("/telemetry"):
+                store.get_card(params["card_id"])  # a 404 for a missing card, not empty telemetry
+                self._send_json(200, card_telemetry(store, params["card_id"]))
+            elif "board_id" in params and path.endswith("/costs"):
+                store.get_board(params["board_id"])  # a 404 for a missing board, not an empty table
+                self._send_json(200, board_costs(store, params["board_id"]))
             elif "card_id" in params and method == "GET":
                 self._send_json(200, store.get_card(params["card_id"]))
             elif "card_id" in params and method == "PATCH":
