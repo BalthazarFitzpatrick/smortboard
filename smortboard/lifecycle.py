@@ -17,6 +17,7 @@ which a human takes over. There is no step after this one.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -189,12 +190,18 @@ def run_card_lifecycle(
     token_path: str | Path | None = None,
     backend: Any | None = None,
     on_phase: Any | None = None,
+    pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> LifecycleResult:
     """runs one card the whole way, and returns where it stopped.
 
     `on_phase` is called with each phase name as it starts, so a caller can show progress without
     polling the event log. `backend` is for tests; production always takes the one container
     runtime, which refuses rather than falling back.
+
+    `pending_notes` is live steering: passed straight through to every worker run (the initial run
+    and any fix rounds) so a note Fabian leaves mid-run can be delivered when the agent finishes its
+    current turn, rather than waiting for the card's next run. None outside RunRegistry (e.g. in
+    tests) means notes fall back to arriving next run only, same as before.
     """
 
     def phase(name: str) -> None:
@@ -254,6 +261,7 @@ def run_card_lifecycle(
             repo=repo,
             token_path=token_path,
             model=worker_model,
+            pending_notes=pending_notes,
         )
         if run.blocked_reason_code:
             return _block(

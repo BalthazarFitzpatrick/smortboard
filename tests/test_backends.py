@@ -107,6 +107,9 @@ def test_the_token_is_never_on_the_command_line_or_a_mount(tmp_path):
     assert "/run/secrets" not in joined
     assert "CLAUDE_CODE_OAUTH_TOKEN" in joined  # read from stdin, never assigned a literal
     assert "read -r CLAUDE_CODE_OAUTH_TOKEN" in joined
+    # live steering: stdin stays open past the token line for the stream-json turns that follow
+    assert "< /dev/null" not in joined
+    assert "'prompt'" not in joined  # the brief travels as the first stdin turn, not argv
     # only the clone and the read-only guards are mounted - the list, not the string: a temp path
     # can contain "-v"
     mounts = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-v"]
@@ -117,8 +120,9 @@ def test_the_token_is_never_on_the_command_line_or_a_mount(tmp_path):
 def test_the_credential_reaches_the_container_only_through_stdin(tmp_path, monkeypatch):
     seen = {}
 
-    def _fake_run_process(store, card_id, cmd, cwd=None, env=None, stdin_text=None):
-        seen["stdin"] = stdin_text
+    def _fake_run_process(store, card_id, cmd, cwd=None, env=None, **kwargs):
+        seen["token_line"] = kwargs.get("token_line")
+        seen["stream_prompt"] = kwargs.get("stream_prompt")
         seen["cmd"] = shlex.join(cmd)
         return "result"
 
@@ -131,7 +135,8 @@ def test_the_credential_reaches_the_container_only_through_stdin(tmp_path, monke
 
     ContainerBackend(image="img").run_card(None, "card", tmp_path, "prompt", tmp_path / "s.json")
 
-    assert seen["stdin"] == "s3cret\n"
+    assert seen["token_line"] == "s3cret\n"
+    assert seen["stream_prompt"] == "prompt"
     assert "s3cret" not in seen["cmd"]
 
 
@@ -276,7 +281,7 @@ def test_container_run_card_cleans_up_clone_on_success(tmp_path, monkeypatch):
 
     seen = {}
 
-    def _fake_run_process(store, card_id, cmd, cwd=None, env=None, stdin_text=None):
+    def _fake_run_process(store, card_id, cmd, cwd=None, env=None, **kwargs):
         seen["cmd"] = cmd
         return _fake_result()
 
