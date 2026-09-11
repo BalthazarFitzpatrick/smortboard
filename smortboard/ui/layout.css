@@ -228,18 +228,21 @@ body {
 .terminal-cycle[hidden], .terminal-subheader[hidden] { display: none; }
 /* the arrows hide on their own when the workforce is pinned, the same way */
 .terminal-cycle .toggle[hidden] { display: none; }
+/* NO BOX AROUND THE LOG: the divider under the title, the dots and each author's colour already
+   separate one message from the next, and a frame inside the drawer's own frame was one too many */
 .terminal-log {
   flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
-  border: 2px solid var(--grey-border); padding: 8px; min-height: 0;
+  padding-block: 8px; min-height: 0;
 }
 .terminal-log:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cream); }
-/* the name on its own line behind a short left rule, the words a little in underneath it */
+/* the name on its own line behind a dot in its own colour, the words two spaces in underneath it */
 .terminal-line { display: flex; flex-direction: column; gap: 3px; }
-.terminal-author {
-  color: var(--text); border-left: 2px solid var(--grey-border); padding-left: 8px; line-height: 1.25;
+.terminal-author { color: var(--text); line-height: 1.25; display: flex; align-items: center; gap: 1ch; }
+.terminal-author::before {
+  content: ''; flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
 }
-.terminal-body { padding-left: 10px; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.terminal-line.author-operator .terminal-author { color: var(--cream); border-left-color: var(--cream); }
+.terminal-body { padding-left: 2ch; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.terminal-line.author-operator .terminal-author { color: var(--cream); }
 .terminal-line.author-board .terminal-author,
 .terminal-line.author-board .terminal-body,
 .terminal-line.author-thinking .terminal-author,
