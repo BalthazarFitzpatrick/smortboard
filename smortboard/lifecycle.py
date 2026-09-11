@@ -40,6 +40,7 @@ from smortboard.exec.worktrees import (
     has_remote,
     worktree_path,
 )
+from smortboard.operator import OPERATOR_NAME
 from smortboard.review.gates import GateUnavailable, run_test_gate
 from smortboard.review.merge_request import MergeRequestUnavailable, open_merge_request
 from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
@@ -127,7 +128,7 @@ def build_card_prompt(card: dict[str, Any], briefing: str | None = None) -> str:
     # every note so far, even ones already delivered live: a fresh session remembers none of them
     notes = [c["body"] for c in card.get("comments") or [] if c.get("author") == "fabian"]
     if notes:
-        lines.append("Notes from Fabian, oldest first:")
+        lines.append(f"Notes from {OPERATOR_NAME}, oldest first:")
         lines += [f"- {text}" for text in notes]
         lines.append("")
 
@@ -244,7 +245,7 @@ def _stopped(store: Store, state: LifecycleResult) -> LifecycleResult:
     a claim about the work - it is Fabian's own decision, not something that went wrong.
     """
     store.update_card(state.card_id, review_flag=True)
-    _note(store, state.card_id, "Stopped by Fabian.")
+    _note(store, state.card_id, f"Stopped by {OPERATOR_NAME}.")
     store.append_event(state.card_id, "run_stopped", {})
     state.phase = "stopped"
     return state

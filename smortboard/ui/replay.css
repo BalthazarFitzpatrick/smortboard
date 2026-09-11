@@ -33,8 +33,10 @@
   flex: 0 0 auto; width: 9px; height: 9px; border: 2px solid var(--grey-border);
   background: var(--panel-row);
 }
-.replay-marker-ok { border-color: var(--status-good); background: var(--status-good); }
+.replay-marker-ok { border-color: var(--lichen-milk); background: var(--lichen-milk); }
 .replay-marker-fail { border-color: var(--fill-warn); background: var(--fill-warn); }
+/* the same small round dot as the card's own run timeline */
+.replay-marker { width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%; border-width: 1.5px; }
 .replay-step-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .replay-detail { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding-left: 14px; }
@@ -59,7 +61,7 @@
 .replay-diff { background: var(--bg); border: 2px solid var(--grey-border); padding: 8px; margin: 0 0 10px; }
 .replay-diff-line { display: block; white-space: pre-wrap; word-break: break-word; }
 .replay-diff-removed { color: var(--fill-warn); }
-.replay-diff-added { color: var(--status-good); }
+.replay-diff-added { color: var(--lichen-milk); }
 
 .replay-footer { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
 .replay-play.on { background: var(--accent-on); color: var(--accent-on-text); border-color: var(--cream); }

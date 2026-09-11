@@ -10,6 +10,7 @@ from urllib.parse import parse_qs
 from smortboard.attention import AnswerRefused, answer_card, attention_rows
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
+from smortboard.operator import OPERATOR_NAME
 from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
     ORCHESTRATOR_PROMPT,
@@ -152,7 +153,7 @@ def _make_handler(
 
         def _handle(self, method: str, path: str, **params: str) -> None:
             if path == "/health":
-                self._send_json(200, {"ok": True, "version": _version()})
+                self._send_json(200, {"ok": True, "version": _version(), "operator": OPERATOR_NAME})
             elif path == "/api/boards" and method == "GET":
                 self._send_json(200, store.list_boards())
             elif path == "/api/boards" and method == "POST":

@@ -172,16 +172,22 @@ body {
 }
 /* the last step ends the rail - the route line after it is not a step */
 .card-panel .outcome-part:not(:has(~ .outcome-part)) { border-left-color: transparent; padding-bottom: 0; }
-/* a round dot centred on the 2px rail, level with the step's first line */
+/* a small round dot on the 2px rail, level with the step's first line, pale so the words lead.
+   lichen milk done, stone red a problem, vanilla waiting on the operator, blue still going */
 .card-panel .outcome-part::before {
-  content: ""; position: absolute; left: -6px; top: 6px; width: 6px; height: 6px;
-  border-radius: 50%; background: var(--panel-row); border: 2px solid var(--grey-border);
+  content: ""; position: absolute; left: -4px; top: 7px; width: 6px; height: 6px;
+  box-sizing: border-box; border-radius: 50%;
+  background: var(--panel-row); border: 1.5px solid var(--grey-border);
 }
-.card-panel .outcome-part[data-ok="true"]::before { border-color: var(--status-good); background: var(--status-good); }
-.card-panel .outcome-part[data-ok="false"]::before { border-color: var(--fill-warn); background: var(--fill-warn); }
-/* the verdicts carry their state in words as well as in the marker's colour */
-.card-panel .outcome-part[data-ok="true"] .verdict { color: var(--status-good); }
-.card-panel .outcome-part[data-ok="false"] .verdict { color: var(--fill-warn); }
+.card-panel .outcome-part[data-state="ok"]::before { border-color: var(--lichen-milk); background: var(--lichen-milk); }
+.card-panel .outcome-part[data-state="problem"]::before { border-color: var(--fill-warn); background: var(--fill-warn); }
+.card-panel .outcome-part[data-state="attention"]::before { border-color: var(--fill-attention); background: var(--fill-attention); }
+.card-panel .outcome-part[data-state="doing"]::before { border-color: var(--fill-good); background: var(--fill-good); }
+/* the verdicts carry their state in words as well as in the dot's colour */
+.card-panel .outcome-part[data-state="ok"] .verdict { color: var(--lichen-milk); }
+.card-panel .outcome-part[data-state="problem"] .verdict { color: var(--fill-warn); }
+.card-panel .outcome-part[data-state="attention"] .verdict { color: var(--fill-attention); }
+.card-panel .outcome-part[data-state="doing"] .verdict { color: var(--fill-good); }
 .card-panel .outcome-route { margin-top: 10px; }
 .card-panel .outcome-route, .card-panel .empty { color: var(--text-dim); }
 /* the browser's default link blue sat near-invisible on the panel ground */
@@ -221,15 +227,17 @@ body {
    no card to cycle through */
 .terminal-cycle[hidden], .terminal-subheader[hidden] { display: none; }
 .terminal-log {
-  flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+  flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
   border: 2px solid var(--grey-border); padding: 8px; min-height: 0;
 }
 .terminal-log:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cream); }
-.terminal-line { display: flex; gap: 10px; align-items: baseline; }
-/* 12ch: "orchestrator" is the longest author, and at 9ch it ran into its own message */
-.terminal-author { flex: 0 0 auto; width: 12ch; color: var(--text); text-align: right; }
-.terminal-body { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.terminal-line.author-fabian .terminal-author { color: var(--cream); }
+/* the name on its own line behind a short left rule, the words a little in underneath it */
+.terminal-line { display: flex; flex-direction: column; gap: 3px; }
+.terminal-author {
+  color: var(--text); border-left: 2px solid var(--grey-border); padding-left: 8px; line-height: 1.25;
+}
+.terminal-body { padding-left: 10px; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.terminal-line.author-fabian .terminal-author { color: var(--cream); border-left-color: var(--cream); }
 .terminal-line.author-board .terminal-author,
 .terminal-line.author-board .terminal-body,
 .terminal-line.author-thinking .terminal-author,
