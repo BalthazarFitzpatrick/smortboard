@@ -5,29 +5,35 @@ const STATUSES = ['todo', 'doing', 'checking', 'accepted', 'rejected'];
 
 // the binding table IS the shortcut overlay's source and the handler dispatch's source, so the
 // two cannot drift apart - see openShortcutOverlay and the keydown handler below
+// ORDERED BY GROUP: the overlay shows one column per group in this order, so the columns read
+// together are still exactly this table
 const BINDINGS = [
-  {code: 'ArrowUp', label: 'up', action: 'move focus up / exit to board bar'},
-  {code: 'ArrowDown', label: 'down', action: 'move focus down'},
-  {code: 'ArrowLeft', label: 'left', action: 'move focus left'},
-  {code: 'ArrowRight', label: 'right', action: 'move focus right'},
-  {code: 'Enter', label: 'enter', action: 'open the focused card'},
-  {code: 'Space', label: 'space', action: 'open the focused card, or close the open one'},
-  {code: 'Escape', label: 'esc', action: 'one level back: input -> panel -> closed'},
-  {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping'},
-  {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend'},
-  {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card'},
-  {code: 'KeyR', label: 'r', action: 'run the focused card'},
-  {code: 'KeyY', label: 'y', action: 'accept the focused card'},
-  {code: 'KeyX', label: 'x', action: 'reject the focused card'},
-  {code: 'KeyS', label: 's', action: 'this shortcut overlay'},
-  {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts'},
-  {code: 'Slash', label: '/', action: "focus the open card's comment input"},
-  {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent'},
-  {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator'},
+  {code: 'ArrowUp', label: 'up', action: 'move focus up / exit to board bar', group: 'cards'},
+  {code: 'ArrowDown', label: 'down', action: 'move focus down', group: 'cards'},
+  {code: 'ArrowLeft', label: 'left', action: 'move focus left', group: 'cards'},
+  {code: 'ArrowRight', label: 'right', action: 'move focus right', group: 'cards'},
+  {code: 'Enter', label: 'enter', action: 'open the focused card', group: 'cards'},
+  {code: 'Space', label: 'space', action: 'open the focused card, or close the open one', group: 'cards'},
+  {code: 'Escape', label: 'esc', action: 'one level back: input -> panel -> closed', group: 'cards'},
+  {code: 'KeyR', label: 'r', action: 'run the focused card', group: 'cards'},
+  {code: 'KeyY', label: 'y', action: 'accept the focused card', group: 'cards'},
+  {code: 'KeyX', label: 'x', action: 'reject the focused card', group: 'cards'},
+  {code: 'KeyM', label: 'm', action: "cycle the card's model", group: 'cards'},
+  {code: 'Slash', label: '/', action: "focus the open card's comment input", group: 'cards'},
+  {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
+  {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
+  {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card', group: 'panels'},
+  {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
+  {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts', group: 'panels'},
+  {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent', group: 'panels'},
+  {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator', group: 'panels'},
   ...Array.from({length: 9}, (_, i) => ({
-    code: `Digit${i + 1}`, label: String(i + 1), action: `jump to board ${i + 1}`,
+    code: `Digit${i + 1}`, label: String(i + 1), action: `jump to board ${i + 1}`, group: 'panels',
   })),
 ];
+
+// the overlay's two columns, left to right
+const BINDING_GROUPS = [['cards', 'cards and the board'], ['panels', 'panels and boards']];
 
 let boards = [];
 let currentBoardId = null;
@@ -278,7 +284,7 @@ function cardPanelHtml(card, outcome) {
     <div class="card-sections">
       ${sectionHtml('title', 'title', escapeHtml(card.title))}
       ${sectionHtml('workstream', 'workstream', escapeHtml(card.workstream || '') || '<span class="empty">none</span>')}
-      ${sectionHtml('status', 'status', status)}
+      ${sectionHtml('status', 'status', `${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div>`)}
       ${outcomeSectionHtml(outcome)}
       ${sectionHtml('description', 'description', escapeHtml(card.description || ''))}
       ${sectionHtml('tasks', 'tasks', listHtml(tasks))}
@@ -838,6 +844,35 @@ async function jumpToCard(cardId, roster) {
   strip._expander?.open();
 }
 
+// ---- model (m) - which model the focused card's worker runs on ------------------------------------
+
+// null is the board default (the worker_model setting, else sonnet); the rest are claude aliases
+const CARD_MODELS = [null, 'haiku', 'sonnet', 'opus'];
+
+function modelLabel(model) {
+  return model || 'board default';
+}
+
+// cycles default -> haiku -> sonnet -> opus -> default. a model set outside the cycle (a full id)
+// steps back to the default, so the key always lands somewhere the next press can leave
+async function cycleCardModel() {
+  const cardId = actionableCardId();
+  if (!cardId) return;
+  try {
+    const card = await api(`/api/cards/${cardId}`);
+    const next = CARD_MODELS[(CARD_MODELS.indexOf(card.model ?? null) + 1) % CARD_MODELS.length];
+    const updated = await api(`/api/cards/${cardId}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: next}),
+    });
+    const label = `model: ${modelLabel(updated.model)}`;
+    showRun(cardId, label);
+    const shown = document.querySelector('.card-panel [data-section="status"] .card-model');
+    if (shown && openCard && openCard.cardId === cardId) shown.textContent = label;
+  } catch (err) {
+    showRun(cardId, "can't change model", null, err.message);
+  }
+}
+
 // ---- usage (u) --------------------------------------------------------------------------------
 
 function windowLabel(type) {
@@ -860,13 +895,102 @@ function formatTokenCount(n) {
   return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
 }
 
-function windowStats(w) {
-  const parts = [w.status];
-  const resets = formatResetTime(w.resets_at);
-  if (resets) parts.push(resets);
-  // NEVER INVENT A PERCENTAGE. null means the server has none to give, not zero
-  if (w.utilization != null) parts.push(`${(w.utilization * 100).toFixed(1)}%`);
-  return parts.join(' - ');
+// each rate-limit window's length, for how far through it we are when no utilisation is reported
+const WINDOW_SECONDS = {five_hour: 5 * 3600, seven_day: 7 * 86400};
+
+function formatDuration(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d) return `${d}d ${h}h`;
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+// WHAT THE BAR MEASURES IS NAMED BESIDE IT. utilisation when the server reports one; otherwise how
+// far through its window we are - never a guess at usage, and the stat line says which it is
+function windowMeasure(w, now = Date.now() / 1000) {
+  if (w.utilization != null) return {fraction: w.utilization, note: `${(w.utilization * 100).toFixed(1)}% used`};
+  const length = WINDOW_SECONDS[String(w.type).replace('-', '_')];
+  if (w.resets_at == null || !length) return {fraction: null, note: null};
+  const left = w.resets_at - now;
+  // A PAST RESET MEANS THE DATA IS OLD: the window rolled over after the last run reported it, so
+  // there is nothing current to draw - a full bar reading "0m left" said the opposite
+  if (left <= 0) return {fraction: null, note: 'reset since the last run reported it'};
+  return {fraction: Math.min(1, Math.max(0, 1 - left / length)), note: `${formatDuration(left)} left in the window`};
+}
+
+function windowStats(w, now = Date.now() / 1000) {
+  const when = formatResetTime(w.resets_at);
+  const reset = when && w.resets_at <= now ? when.replace('resets', 'reset at') : when;
+  return [w.status, reset, windowMeasure(w, now).note].filter(Boolean).join(' - ');
+}
+
+// ui_base's fill bar: .progress-row > .bar > .bar-fill, the fill's width the fraction
+function fillBar(fraction, tone = '') {
+  const row = document.createElement('div');
+  row.className = 'progress-row';
+  const bar = document.createElement('div');
+  bar.className = 'bar';
+  const fill = document.createElement('div');
+  fill.className = tone ? `bar-fill ${tone}` : 'bar-fill';
+  fill.style.width = `${Math.round(fraction * 1000) / 10}%`;
+  bar.appendChild(fill);
+  row.appendChild(bar);
+  return row;
+}
+
+function textLine(text, className) {
+  const el = document.createElement('div');
+  el.className = className;
+  el.textContent = text;
+  return el;
+}
+
+function usageSection(label, className) {
+  const section = document.createElement('div');
+  section.className = `usage-section ${className}`;
+  section.appendChild(textLine(label, 'field-label'));
+  return section;
+}
+
+// A CARD'S LANGUAGE: ruled sections with dim labels, and a foot carrying the total - built with
+// createElement so every line is its own element, which is also what the node tests read
+function usageCard(data) {
+  const parts = (data.windows || []).map(w => {
+    const section = usageSection(windowLabel(w.type), 'usage-window');
+    const {fraction} = windowMeasure(w);
+    if (fraction != null) section.appendChild(fillBar(fraction, w.status === 'allowed' ? '' : 'warn'));
+    section.appendChild(textLine(windowStats(w), 'stat'));
+    return section;
+  });
+  const models = data.models || [];
+  if (models.length) {
+    const section = usageSection('spend by model', 'usage-models');
+    const total = data.total_cost_usd || 0;
+    models.forEach(m => {
+      const row = document.createElement('div');
+      row.className = 'usage-model';
+      const share = total > 0 ? (m.cost_usd || 0) / total : null;
+      const shareNote = share != null ? ` - ${Math.round(share * 100)}% of spend` : '';
+      row.appendChild(textLine(`${m.model} - $${(m.cost_usd || 0).toFixed(2)}${shareNote}`, 'usage-model-name'));
+      if (share != null) row.appendChild(fillBar(share));
+      row.appendChild(textLine(`in ${formatTokenCount(m.input_tokens)} - out ${formatTokenCount(m.output_tokens)} - ` +
+        `cache ${formatTokenCount((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))}`, 'stat'));
+      section.appendChild(row);
+    });
+    parts.push(section);
+  }
+  const card = document.createElement('div');
+  card.className = 'usage-card';
+  parts.forEach((part, i) => {
+    if (i) card.appendChild(textLine('', 'h-divider'));
+    card.appendChild(part);
+  });
+  card.appendChild(textLine('', 'h-divider'));
+  const foot = document.createElement('div');
+  foot.className = 'card-foot usage-foot';
+  foot.appendChild(textLine(`${data.runs || 0} runs - $${(data.total_cost_usd || 0).toFixed(2)}`, 'stat'));
+  card.appendChild(foot);
+  return card;
 }
 
 function usageSections(data) {
@@ -878,19 +1002,7 @@ function usageSections(data) {
     box.innerHTML = '<span class="hazard-label">no usage yet</span>';
     return [{kind: 'node', node: box}];
   }
-  const windowItems = windows.map(w => ({id: w.type, label: windowLabel(w.type), stats: windowStats(w)}));
-  const modelItems = models.map(m => ({
-    id: m.model, label: m.model,
-    stats: `in ${formatTokenCount(m.input_tokens)} - out ${formatTokenCount(m.output_tokens)} - ` +
-      `cache ${formatTokenCount((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))} - $${(m.cost_usd || 0).toFixed(2)}`,
-    disabled: true,
-  }));
-  const totalItem = {id: 'total', label: 'total', stats: `${data.runs || 0} runs - $${(data.total_cost_usd || 0).toFixed(2)}`, disabled: true};
-  return [
-    {kind: 'list', label: 'windows', items: windowItems, empty: 'no usage yet'},
-    {kind: 'list', label: 'by model', items: modelItems, empty: 'no usage yet'},
-    {kind: 'list', items: [totalItem]},
-  ];
+  return [{kind: 'node', node: usageCard(data)}];
 }
 
 function openUsagePanel() {
@@ -1080,15 +1192,24 @@ function togglePromptEditor() {
 
 // ---- shortcut overlay, built from BINDINGS so it cannot drift -----------------------
 
+// TWO COLUMNS, one per binding group, each a list section - Menu's column mode lays sections side
+// by side with a divider between. the class widens this one menu to hold both
 function openShortcutOverlay() {
   toggleOverlay('KeyS', () => {
-    const items = BINDINGS.map(b => ({id: b.code, label: `${b.label} - ${b.action}`, disabled: true}));
+    const sections = BINDING_GROUPS.map(([group, label]) => ({
+      kind: 'list',
+      label,
+      items: BINDINGS.filter(b => b.group === group)
+        .map(b => ({id: b.code, label: `${b.label} - ${b.action}`, disabled: true})),
+    }));
     const menu = new Menu({
       title: 'keyboard shortcuts',
-      sections: [{kind: 'list', items}],
+      columns: true,
+      sections,
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyS') openOverlay = null; },
     });
-    menu.openAt({x: window.innerWidth / 2 - 160, y: 60});
+    menu.openAt({x: Math.max(16, window.innerWidth / 2 - 500), y: 60});
+    menu.el?.classList.add('shortcut-overlay');
     return menu;
   });
 }
@@ -1133,6 +1254,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyR') { runFocusedCard(); return; }
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
   if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
+  if (evt.code === 'KeyM') { cycleCardModel(); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
   // preventDefault: opening a drawer focuses its input, and the key that opened it typed itself there

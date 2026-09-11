@@ -20,20 +20,9 @@ from smortboard.server.assets import AssetNotFound, content_type_for, resolve_as
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import Readiness, RunRegistry
 from smortboard.store import Store
+from smortboard.store.api import CARD_WRITABLE_FIELDS
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
 from smortboard.telemetry import roster_rows, usage_projection
-
-_CARD_WRITABLE_FIELDS = {
-    "title",
-    "workstream",
-    "status",
-    "blocked_reason_code",
-    "description",
-    "position",
-    "review_flag",
-    "repo_id",
-    "findings_route",
-}
 
 _ROUTES = [
     (re.compile(r"^/health$"), "GET"),
@@ -265,7 +254,8 @@ def _make_handler(
 
         def _handle_patch_card(self, card_id: str) -> None:
             body = self._read_json()
-            unknown = set(body) - _CARD_WRITABLE_FIELDS
+            # the store's own list - a second copy here went stale and refused `model` with a 400
+            unknown = set(body) - CARD_WRITABLE_FIELDS
             if unknown:
                 self._send_json(400, {"error": f"not writable: {sorted(unknown)}"})
                 return

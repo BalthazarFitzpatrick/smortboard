@@ -109,6 +109,21 @@ def test_patch_card_writable_fields(running_server):
     assert updated["status"] == "doing"
 
 
+def test_patch_card_model_over_http(running_server):
+    # the server kept its own copy of the writable fields, which went stale and answered 400 here
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "x"},
+    )
+    status, updated = _request(
+        f"{running_server}/api/cards/{card['id']}", "PATCH", {"model": "haiku"}
+    )
+    assert status == 200
+    assert updated["model"] == "haiku"
+
+
 def test_patch_card_unknown_field_is_400(running_server):
     _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
     _, card = _request(

@@ -103,14 +103,45 @@ responses.set('/api/roster', stubJson(200, []));
     ],
     total_cost_usd: 0.19, runs: 3,
   });
-  const windowItems = sections[0].items;
-  assert.ok(!windowItems[0].stats.includes('%'), 'a null utilization must not render a percentage');
-  assert.ok(windowItems[1].stats.includes('82.0%'), 'a real utilization renders as a percentage');
-  const modelItems = sections[1].items;
-  assert.ok(modelItems[0].stats.includes('12.3k'), 'token counts render abbreviated');
-  assert.ok(modelItems[0].stats.includes('$0.19'), 'model row carries its cost');
-  const total = sections[2].items[0];
-  assert.equal(total.stats, '3 runs - $0.19', 'the total row sums runs and cost');
+  // one card-like node: ruled sections, ui_base fill bars, a foot with the total
+  assert.equal(sections.length, 1, 'usage renders as one card');
+  const card = sections[0].node;
+  const windows = card.querySelectorAll('.usage-window');
+  const statOf = el => el.querySelectorAll('.stat')[0].textContent;
+  assert.ok(!statOf(windows[0]).includes('%'), 'a null utilization must not render a percentage');
+  assert.equal(windows[0].querySelectorAll('.bar-fill').length, 0, 'no utilisation and no reset draws no bar');
+  assert.ok(statOf(windows[1]).includes('82.0%'), 'a real utilization renders as a percentage');
+  assert.equal(windows[1].querySelectorAll('.bar-fill')[0].style.width, '82%', 'and fills the bar that far');
+  const model = card.querySelectorAll('.usage-model')[0];
+  assert.ok(statOf(model).includes('12.3k'), 'token counts render abbreviated');
+  assert.ok(model.querySelectorAll('.usage-model-name')[0].textContent.includes('$0.19'), 'model row carries its cost');
+  assert.equal(model.querySelectorAll('.bar-fill')[0].style.width, '100%', 'the only model is all of the spend');
+  assert.equal(card.querySelectorAll('.usage-foot .stat')[0].textContent, '3 runs - $0.19', 'the foot sums runs and cost');
+}
+
+// a window with a reset time but no utilisation shows how far through it we are, and says so
+{
+  const now = Date.now() / 1000;
+  const sections = mod.usageSections({
+    windows: [{type: 'five_hour', status: 'allowed', resets_at: now + 3600, utilization: null}],
+    models: [], total_cost_usd: 0, runs: 1,
+  });
+  const win = sections[0].node.querySelectorAll('.usage-window')[0];
+  assert.equal(win.querySelectorAll('.bar-fill')[0].style.width, '80%', 'four of five hours gone fills 80%');
+  assert.ok(statOf2(win).includes('left in the window'), 'the line names what the bar measures');
+  function statOf2(el) { return el.querySelectorAll('.stat')[0].textContent; }
+}
+
+// a reset time already in the past is old data: no bar, and the line says the window has reset
+{
+  const sections = mod.usageSections({
+    windows: [{type: 'five_hour', status: 'allowed', resets_at: Date.now() / 1000 - 600, utilization: null}],
+    models: [], total_cost_usd: 0, runs: 1,
+  });
+  const win = sections[0].node.querySelectorAll('.usage-window')[0];
+  assert.equal(win.querySelectorAll('.bar-fill').length, 0, 'a window that already reset draws no bar');
+  const line = win.querySelectorAll('.stat')[0].textContent;
+  assert.ok(line.includes('reset at') && line.includes('reset since the last run'), `the line says so: ${line}`);
 }
 
 // no usage at all says so instead of three empty sections

@@ -249,6 +249,23 @@ body {
 .prompt-status { color: var(--text-dim); }
 .prompt-status.prompt-error { color: var(--fill-warn); }
 
+/* ---- keyboard shortcuts (s): two columns, wide enough that the longest binding stays on one line.
+   ui_base already shares the width between the columns; a flex rule on every child here also
+   stretched the 2px divider into 268px of empty space */
+.menu-panel.shortcut-overlay { width: min(1000px, 94vw); max-height: 90vh; }
+/* the whole table at once - ui_base caps a menu column at 60vh, which hid boards 8 and 9 */
+.shortcut-overlay .menu-column-row > .menu-section { max-height: none; }
+
+/* ---- usage (u): a card's language - ruled sections, dim labels, a foot - with ui_base's fill bar
+   for how far through a window we are and each model's share of the spend */
+.usage-card { display: flex; flex-direction: column; gap: 10px; width: min(460px, 86vw); }
+.usage-section { display: flex; flex-direction: column; gap: 6px; }
+.usage-model { display: flex; flex-direction: column; gap: 4px; }
+.usage-model + .usage-model { margin-top: 8px; }
+.usage-model-name { color: var(--text); }
+/* these lines carry the meaning of each bar, so they wrap - ui_base's .stat is one ellipsised line */
+.usage-section .stat { color: var(--text-dim); white-space: normal; overflow: visible; }
+
 /* ---- the run badge -------------------------------------------------------------------------
    A card that is running says so where its status already is, rather than somewhere new. The
    workstream takes the slack so status and run sit together on the right and the status does not
