@@ -12,6 +12,8 @@ import json
 import subprocess
 import threading
 
+import pytest
+
 from smortboard.exec import runner
 from smortboard.exec.backends import ContainerBackend
 from smortboard.exec.runner import build_command, run_process, user_message_line
@@ -150,10 +152,10 @@ def test_a_note_between_two_result_events_is_delivered_and_stdin_stays_open(tmp_
     assert len(fake.stdin.writes) == 3
     assert fake.stdin.closed  # no notes on the second result -> stdin closes -> process exits
 
-    # the LAST result event decides the outcome, not the first
+    # the last result decides the outcome; cost and turns are per turn, so they add up
     assert result.result_text == "turn two done"
-    assert result.total_cost_usd == 0.25
-    assert result.num_turns == 5
+    assert result.total_cost_usd == pytest.approx(0.35)
+    assert result.num_turns == 8
 
 
 def test_no_pending_notes_closes_stdin_after_the_first_result(tmp_path, monkeypatch):

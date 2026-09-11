@@ -16,6 +16,7 @@ const BINDINGS = [
   {code: 'Space', label: 'space', action: 'open the focused card, or close the open one', group: 'cards'},
   {code: 'Escape', label: 'esc', action: 'one level back: input -> panel -> closed', group: 'cards'},
   {code: 'KeyR', label: 'r', action: 'run the focused card', group: 'cards'},
+  {code: 'KeyK', label: 'k', action: 'stop the focused card if it is running', group: 'cards'},
   {code: 'KeyY', label: 'y', action: 'accept the focused card', group: 'cards'},
   {code: 'KeyX', label: 'x', action: 'reject the focused card', group: 'cards'},
   {code: 'KeyM', label: 'm', action: "cycle the card's model", group: 'cards'},
@@ -25,6 +26,7 @@ const BINDINGS = [
   {code: 'KeyW', label: 'w', action: 'run the board: start / stop the queue', group: 'cards'},
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
   {code: 'KeyI', label: 'i', action: 'cost telemetry: card attempts, or the board cost table', group: 'panels'},
+  {code: 'KeyC', label: 'c', action: 'cost overview: spend across every board', group: 'panels'},
   {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card', group: 'panels'},
   {code: 'KeyD', label: 'd', action: 'morning digest: pull requests and open questions', group: 'panels'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
@@ -380,6 +382,42 @@ function pollRun(cardId) {
     }
     finishRun(cardId, state);
   }, RUN_POLL_MS);
+}
+
+// ---- stopping a running card (k) ------------------------------------------------------
+
+// same focus source y/x use: the strip under keyboard focus, or the card whose panel is open
+async function stopFocusedCard() {
+  const cardId = actionableCardId();
+  if (!cardId) return;
+  const state = await api(`/api/cards/${cardId}/run`);
+  if (!state.running) return; // nothing to stop
+  openStopConfirm(cardId);
+}
+
+function openStopConfirm(cardId) {
+  const menu = new Menu({
+    title: 'stop this run?',
+    sections: [{
+      kind: 'list',
+      items: [
+        {id: 'stop', label: 'stop the run'},
+        {id: 'keep', label: 'keep running'},
+      ],
+      onPick: item => {
+        menu.close();
+        if (item.id === 'stop') doStopCard(cardId);
+      },
+    }],
+  });
+  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
+}
+
+async function doStopCard(cardId) {
+  const {ok, body} = await apiOrError(`/api/cards/${cardId}/stop`, {method: 'POST'});
+  if (!ok) { showRun(cardId, "can't stop", null, (body && body.error) || ''); return; }
+  showRun(cardId, 'stopping');
 }
 
 // the run is over: reload the board so the card's new status, reason code and comments are what is
@@ -1283,9 +1321,11 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyW') { toggleRunAll(); return; }
   if (evt.code === 'KeyU') { openUsagePanel(); return; }
   if (evt.code === 'KeyI') { openTelemetryPanel(); return; }
+  if (evt.code === 'KeyC') { openCostsOverviewPanel(); return; }
   if (evt.code === 'KeyA') { openRosterPanel(); return; }
   if (evt.code === 'KeyD') { openDigestPanel(); return; }
   if (evt.code === 'KeyR') { runFocusedCard(); return; }
+  if (evt.code === 'KeyK') { stopFocusedCard(); return; }
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
   if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
   if (evt.code === 'KeyM') { cycleCardModel(); return; }
