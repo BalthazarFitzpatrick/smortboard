@@ -22,9 +22,11 @@ const BINDINGS = [
   {code: 'KeyT', label: 't', action: "run replay: scrub the focused card's run step by step", group: 'cards'},
   {code: 'Slash', label: '/', action: "focus the open card's comment input", group: 'cards'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
+  {code: 'KeyW', label: 'w', action: 'run the board: start / stop the queue', group: 'cards'},
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
   {code: 'KeyI', label: 'i', action: 'cost telemetry: card attempts, or the board cost table', group: 'panels'},
   {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card', group: 'panels'},
+  {code: 'KeyD', label: 'd', action: 'morning digest: pull requests and open questions', group: 'panels'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
   {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts', group: 'panels'},
   {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
@@ -1252,9 +1254,11 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'Space' && openCard) { evt.preventDefault(); openCard.expander.close(); return; }
 
   if (evt.code === 'KeyG') { grouped = !grouped; return; }
+  if (evt.code === 'KeyW') { toggleRunAll(); return; }
   if (evt.code === 'KeyU') { openUsagePanel(); return; }
   if (evt.code === 'KeyI') { openTelemetryPanel(); return; }
   if (evt.code === 'KeyA') { openRosterPanel(); return; }
+  if (evt.code === 'KeyD') { openDigestPanel(); return; }
   if (evt.code === 'KeyR') { runFocusedCard(); return; }
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
   if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
