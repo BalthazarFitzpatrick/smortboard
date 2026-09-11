@@ -481,7 +481,7 @@ dev = [
 requires-dist = [
     { name = "keyring", specifier = ">=25.7.0" },
     { name = "platformdirs", specifier = ">=4.0" },
-    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=bd2e891ca379c061c863c12a5aa7642950e00536" },
+    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=ce6c0024acf7394a39180f128ddc686f7fd8d421" },
 ]
 
 [package.metadata.requires-dev]
@@ -494,7 +494,7 @@ dev = [
 [[package]]
 name = "ui-base"
 version = "0.1.0"
-source = { git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=bd2e891ca379c061c863c12a5aa7642950e00536#bd2e891ca379c061c863c12a5aa7642950e00536" }
+source = { git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=ce6c0024acf7394a39180f128ddc686f7fd8d421#ce6c0024acf7394a39180f128ddc686f7fd8d421" }
 
 [[package]]
 name = "virtualenv"
