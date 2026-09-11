@@ -9,6 +9,7 @@ from smortboard.exec.runner import (
     DEFAULT_ALLOWED_TOOLS,
     DEFAULT_CARD_BUDGET_USD,
     SYSTEM_PROMPT,
+    ProcessHandle,
     allowed_tools_for_repo,
     build_command,
     classify_rate_limit,
@@ -411,3 +412,60 @@ def test_the_prompt_says_a_denial_is_final():
     """the prompt told the agent not to retry a refused WRITE, and said nothing about a refused
     command - so it tried four spellings of the same denied shell call."""
     assert "REFUSED COMMAND WILL NOT SUCCEED REWORDED" in SYSTEM_PROMPT
+
+
+# -- ProcessHandle: stop() terminates whatever a run is inside right now -------
+
+
+class _FakeProcess:
+    """stands in for subprocess.Popen - never a real process"""
+
+    def __init__(self, dies_on_terminate=True):
+        self.terminated = False
+        self.killed = False
+        self._dies_on_terminate = dies_on_terminate
+        self._waits = 0
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        self._waits += 1
+        if self._dies_on_terminate or self.killed:
+            return
+        raise subprocess.TimeoutExpired(cmd="x", timeout=timeout)
+
+
+def test_terminate_sends_sigterm_first():
+    process = _FakeProcess(dies_on_terminate=True)
+    ProcessHandle(process).terminate()
+    assert process.terminated
+    assert not process.killed
+
+
+def test_terminate_kills_after_the_timeout_if_sigterm_does_not_land():
+    process = _FakeProcess(dies_on_terminate=False)
+    ProcessHandle(process).terminate(timeout=0.01)
+    assert process.terminated
+    assert process.killed  # the process never exited on its own, so kill() had to follow
+
+
+def test_terminate_removes_the_named_container_too(monkeypatch):
+    """SIGTERM only kills the `docker run` client, not the container underneath it - `docker rm -f`
+    is what actually stops the work. Docker is faked; this must never shell out for real."""
+    calls = []
+    monkeypatch.setattr(
+        subprocess, "run", lambda cmd, **k: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0)
+    )
+    ProcessHandle(_FakeProcess(), container_name="smortboard-worker-abc123-def456").terminate()
+    assert calls == [["docker", "rm", "-f", "smortboard-worker-abc123-def456"]]
+
+
+def test_terminate_with_no_container_name_never_touches_docker(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **k: calls.append(cmd))
+    ProcessHandle(_FakeProcess()).terminate()
+    assert calls == []

@@ -163,6 +163,7 @@ built from the same list the key handlers use.
 | Escape | one level back: input, then panel, then closed |
 | `y` / `x` | accept / reject the card |
 | `r` | run the focused card |
+| `k` | stop the focused card's run (confirm first) |
 | `m` | change the focused card's model |
 | `t` | replay the focused card's run |
 | `w` | run the board / stop the queue |
