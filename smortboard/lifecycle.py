@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from smortboard.briefing import resume_briefing
 from smortboard.exec.backends import (
     CardRuntimeUnavailable,
     require_card_runtime,
@@ -85,12 +86,16 @@ class LifecycleResult:
         return self.phase in ("opened", "blocked", "refused")
 
 
-def build_card_prompt(card: dict[str, Any]) -> str:
+def build_card_prompt(card: dict[str, Any], briefing: str | None = None) -> str:
     """the card, as the brief the agent is handed.
 
     Deliberately the whole card and nothing more: title, description, acceptance criteria, tasks.
     The lease and the house conventions arrive separately (runner.SYSTEM_PROMPT and
     runner.lease_preamble), so this stays the part a human actually wrote.
+
+    `briefing` is resume_briefing's output for a card that already ran - None (the default) leaves
+    the prompt exactly as it was before resume briefings existed, which is what the fresh-card tests
+    assert byte-for-byte.
     """
     lines = [f"CARD: {card['title']}", ""]
     if card.get("description"):
@@ -113,6 +118,11 @@ def build_card_prompt(card: dict[str, Any]) -> str:
     if notes:
         lines.append("Notes from operator, oldest first:")
         lines += [f"- {text}" for text in notes]
+        lines.append("")
+
+    if briefing:
+        lines.append("What already happened - this card ran before, on this same branch:")
+        lines.append(briefing)
         lines.append("")
 
     lines += [
@@ -289,8 +299,15 @@ def run_card_lifecycle(
         store.append_event(card_id, "worker_summary", {"text": run.result_text})
         return None
 
+    # a resumed card (an inbox answer, or a re-run after a block) keeps this worktree and its
+    # commits - the briefing is what lets the agent skip re-reading them to find out what it
+    # already did. "off" turns it off board-wide; unset means on.
+    briefing = None
+    if configured.get("resume_briefing") != "off":
+        briefing = resume_briefing(store, card_id)
+
     phase("running")
-    if (stopped := work(build_card_prompt(card))) is not None:
+    if (stopped := work(build_card_prompt(card, briefing))) is not None:
         return stopped
 
     # both gates, and on the fix route the findings go back to the worker until the reviewer
