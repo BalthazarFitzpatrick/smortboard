@@ -16,6 +16,7 @@ const BINDINGS = [
   {code: 'Space', label: 'space', action: 'open the focused card, or close the open one', group: 'cards'},
   {code: 'Escape', label: 'esc', action: 'one level back: input -> panel -> closed', group: 'cards'},
   {code: 'KeyR', label: 'r', action: 'run the focused card', group: 'cards'},
+  {code: 'KeyK', label: 'k', action: 'stop the focused card if it is running', group: 'cards'},
   {code: 'KeyY', label: 'y', action: 'accept the focused card', group: 'cards'},
   {code: 'KeyX', label: 'x', action: 'reject the focused card', group: 'cards'},
   {code: 'KeyM', label: 'm', action: "cycle the card's model", group: 'cards'},
@@ -380,6 +381,42 @@ function pollRun(cardId) {
     }
     finishRun(cardId, state);
   }, RUN_POLL_MS);
+}
+
+// ---- stopping a running card (k) ------------------------------------------------------
+
+// same focus source y/x use: the strip under keyboard focus, or the card whose panel is open
+async function stopFocusedCard() {
+  const cardId = actionableCardId();
+  if (!cardId) return;
+  const state = await api(`/api/cards/${cardId}/run`);
+  if (!state.running) return; // nothing to stop
+  openStopConfirm(cardId);
+}
+
+function openStopConfirm(cardId) {
+  const menu = new Menu({
+    title: 'stop this run?',
+    sections: [{
+      kind: 'list',
+      items: [
+        {id: 'stop', label: 'stop the run'},
+        {id: 'keep', label: 'keep running'},
+      ],
+      onPick: item => {
+        menu.close();
+        if (item.id === 'stop') doStopCard(cardId);
+      },
+    }],
+  });
+  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
+}
+
+async function doStopCard(cardId) {
+  const {ok, body} = await apiOrError(`/api/cards/${cardId}/stop`, {method: 'POST'});
+  if (!ok) { showRun(cardId, "can't stop", null, (body && body.error) || ''); return; }
+  showRun(cardId, 'stopping');
 }
 
 // the run is over: reload the board so the card's new status, reason code and comments are what is
@@ -1286,6 +1323,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyA') { openRosterPanel(); return; }
   if (evt.code === 'KeyD') { openDigestPanel(); return; }
   if (evt.code === 'KeyR') { runFocusedCard(); return; }
+  if (evt.code === 'KeyK') { stopFocusedCard(); return; }
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
   if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
   if (evt.code === 'KeyM') { cycleCardModel(); return; }

@@ -349,6 +349,85 @@ def test_the_card_model_wins_and_the_reviewer_keeps_its_own(board, monkeypatch):
     assert reviewed == ["opus"]
 
 
+# -- stopping a run (see smortboard/server/runs.py RunRegistry.stop) ----------
+
+
+def test_a_stop_during_the_worker_run_never_reaches_the_gates(board, monkeypatch):
+    """a killed process reports some ordinary-looking blocked_reason_code (CRASH, most likely) -
+    stop_requested is checked BEFORE that is interpreted, so a deliberate stop is never read as
+    the work having gone wrong, and the chain never continues to gates/reviewer/pull request"""
+    store, card_id = board
+    gated, reviewed, opened = [], [], []
+    monkeypatch.setattr(lifecycle, "run_test_gate", lambda *a, **k: gated.append(1))
+    monkeypatch.setattr(lifecycle, "run_review", lambda *a, **k: reviewed.append(1))
+    monkeypatch.setattr(lifecycle, "open_merge_request", lambda *a, **k: opened.append(1))
+    backend = _Backend(
+        RunResult(
+            subtype=None,
+            is_error=True,
+            blocked_reason_code="CRASH",
+            session_id=None,
+            total_cost_usd=None,
+            num_turns=None,
+            result_text=None,
+        )
+    )
+    result = lifecycle.run_card_lifecycle(
+        store, card_id, backend=backend, stop_requested=lambda: True
+    )
+    assert result.phase == "stopped"
+    assert result.blocked_reason_code is None  # not a claim about the work - not a CHECK value
+    assert gated == [] and reviewed == [] and opened == []
+
+
+def test_a_stop_leaves_the_card_flagged_with_a_comment_and_an_event(board, monkeypatch):
+    store, card_id = board
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend(), stop_requested=lambda: True)
+    card = store.get_card(card_id)
+    assert card["review_flag"] == 1
+    assert card["blocked_reason_code"] is None  # never a CHECK-constraint value
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any("operator" in b for b in bodies)
+    kinds = [e["kind"] for e in store.list_events(card_id)]
+    assert "run_stopped" in kinds
+
+
+def test_a_stop_after_the_worker_but_before_the_gate_also_stops_the_chain(board, monkeypatch):
+    """stop_requested is polled between phases too, not only around the worker call"""
+    store, card_id = board
+    calls = {"n": 0}
+
+    def stop_requested():
+        calls["n"] += 1
+        return calls["n"] > 1  # the worker's own check passes; the next one (after the gate) stops
+
+    gated, reviewed = [], []
+
+    def _gate(*a, **k):
+        gated.append(1)
+        return GateResult(passed=True, command="true", exit_code=0, output="ok")
+
+    monkeypatch.setattr(lifecycle, "run_test_gate", _gate)
+    monkeypatch.setattr(lifecycle, "run_review", lambda *a, **k: reviewed.append(1))
+    result = lifecycle.run_card_lifecycle(
+        store, card_id, backend=_Backend(), stop_requested=stop_requested
+    )
+    assert result.phase == "stopped"
+    assert gated == [1]  # the gate that was already running is left to finish
+    assert reviewed == []  # but the reviewer, the next step, never starts
+
+
+def test_a_stopped_card_keeps_its_worktree_and_branch_for_a_later_run(board, monkeypatch):
+    store, card_id = board
+    result = lifecycle.run_card_lifecycle(
+        store, card_id, backend=_Backend(), stop_requested=lambda: True
+    )
+    assert result.worktree is not None
+    from pathlib import Path
+
+    assert Path(result.worktree).exists()
+
+
 def test_without_a_card_model_the_board_setting_then_sonnet_apply(board, monkeypatch):
     store, card_id = board
     _stub_gates(monkeypatch)

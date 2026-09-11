@@ -36,7 +36,7 @@ def _wire(monkeypatch, run_result=None, capture=None, docker=True, token="t0k3n"
     monkeypatch.setattr("smortboard.review.reviewer.docker_available", lambda: docker)
     monkeypatch.setattr("smortboard.review.reviewer.read_card_token", lambda p=None: token)
 
-    def _fake_run_process(store, card_id, cmd, cwd=None, env=None, stdin_text=None):
+    def _fake_run_process(store, card_id, cmd, cwd=None, env=None, stdin_text=None, **kwargs):
         if capture is not None:
             capture.append({"cmd": cmd, "stdin": stdin_text})
         return run_result if run_result is not None else _clean_result()
