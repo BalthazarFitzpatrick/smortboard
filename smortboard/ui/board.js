@@ -406,6 +406,41 @@ function pollRun(cardId) {
   }, RUN_POLL_MS);
 }
 
+// A RUN THIS PAGE DID NOT START STILL MOVES ITS CARD. pollRun only follows a run started with r on
+// this page; one started by the api, or already running when the page was reloaded, left its card
+// drawn as doing after it had finished. so the board watches which cards are running and redraws
+// whenever that set changes
+const FOLLOW_RUNS_MS = 4000;
+let followedRunIds = null;
+
+async function followRunsOnce() {
+  let active;
+  try { active = await api('/api/runs'); } catch (err) { return false; } // server restarting
+  const ids = new Set(active.map(r => r.card_id));
+  const before = followedRunIds;
+  const changed = before && (ids.size !== before.size || [...ids].some(id => !before.has(id)));
+  if (!changed) { followedRunIds = ids; return false; }
+  // never rebuild the strips under an open card or a half-typed line - try again next tick
+  if (openCard || document.activeElement?.matches?.('input, textarea')) return false;
+  followedRunIds = ids;
+  if (currentBoardId) await reloadBoardKeepingFocus();
+  return true;
+}
+
+function followRuns() {
+  followRunsOnce().finally(() => {
+    // unref where it exists: the browser has none, and a test process must not stay alive for this
+    setTimeout(followRuns, FOLLOW_RUNS_MS)?.unref?.();
+  });
+}
+
+async function reloadBoardKeepingFocus() {
+  const focusedId = focusedCardId();
+  await onBoardEnter(currentBoardId);
+  const strip = focusedId && document.querySelector(`.card-strip[data-card-id="${focusedId}"]`);
+  if (strip) { strip.focus(); indicateFocus(strip); }
+}
+
 // ---- stopping a running card (k) ------------------------------------------------------
 
 // same focus source y/x use: the strip under keyboard focus, or the card whose panel is open
@@ -1417,6 +1452,6 @@ document.addEventListener('keydown', evt => {
 
 // FOCUS STARTS ON THE BOARD BAR, per the brief. returnToBoardBar was wired only to onExitTop, so
 // nothing ever focused on load and every key was dead until the user clicked - which no test saw
-loadBoards().then(() => { buildDrawers(); returnToBoardBar(); });
+loadBoards().then(() => { buildDrawers(); returnToBoardBar(); followRuns(); });
 // who the operator is, for their own lines in the chats and comments - "you" until the board answers
 api('/health').then(h => { if (h && h.operator) operatorName = h.operator; }).catch(() => {});
