@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from smortboard.exec.worktrees import repo_lock
+
 # the branches nothing here may ever write, however it is spelled. a push whose destination is one
 # of these is a bug, and the bug it would be is the one that writes main
 PROTECTED_BRANCHES = frozenset({"main", "master", "trunk"})
@@ -112,7 +114,9 @@ def _push(repo_path: str | Path, branch: str, remote: str = "origin") -> None:
             f"refusing to push {branch!r}: that is a protected branch and the board never writes it"
         )
     refspec = f"refs/heads/{branch}:refs/heads/{branch}"
-    result = _run(["git", "-C", str(repo_path), "push", "--set-upstream", remote, refspec])
+    # --set-upstream writes .git/config, which a card cutting its worktree may hold right now
+    with repo_lock(repo_path):
+        result = _run(["git", "-C", str(repo_path), "push", "--set-upstream", remote, refspec])
     if result.returncode != 0:
         raise MergeRequestUnavailable(f"pushing {branch} failed: {result.stderr.strip()}")
 
