@@ -82,6 +82,15 @@ assert.ok(html1.includes('lease: <span class="empty">none - it will not run</spa
 const leased = mod.cardPanelHtml({...card, leases: [{path_glob: 'src/**'}, {path_glob: 'tests/**'}]}, outcome);
 assert.ok(leased.includes('lease: src/**, tests/**'), 'a lease should list its globs');
 
+// ---- a card waiting on someone leads its status with the call to action; a quiet one does not
+const waiting = mod.cardPanelHtml({...card, next_action: 'Press r to run it again.'}, outcome);
+assert.ok(waiting.includes('<div class="card-next">next: Press r to run it again.</div>'),
+  'the panel should say what to do next');
+assert.ok(!html1.includes('card-next'), 'a card with no action shows no next line');
+// comments keep their own block, so their line breaks survive
+const commented = mod.cardPanelHtml({...card, comments: [{author: 'smortboard', body: 'a\nb'}]}, outcome);
+assert.ok(commented.includes('<div class="comment-body">a\nb</div>'), 'a comment body is its own block');
+
 // ---- a 409 from accept shows a refused badge with the server's error, and does not throw
 const strip = element('div', 'card-strip');
 strip.dataset.cardId = 'c2';
