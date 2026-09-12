@@ -122,3 +122,11 @@ const refused = mod.cardClasses({status: 'todo', blocked_reason_code: null, revi
 assert.ok(refused.includes('card-attention'), 'a flagged card with no reason code still glows');
 const quiet = mod.cardClasses({status: 'todo', blocked_reason_code: null, review_flag: 0});
 assert.ok(!quiet.includes('card-attention'), 'an unflagged queued card does not');
+
+// a waiting card's strip says what to do in its footer, the reason code kept as the tooltip
+const acting = mod.renderCardStrip({id: 'w1', title: 't', status: 'doing', blocked_reason_code: 'LEASE_CONFLICT',
+  next_action_short: 'widen or answer', next_action: 'Widen its lease.'});
+assert.ok(acting.innerHTML.includes('class="stat stat-action" title="LEASE_CONFLICT">widen or answer'),
+  'the strip footer shows the short action');
+const plain = mod.renderCardStrip({id: 'w2', title: 't', status: 'todo'});
+assert.ok(plain.innerHTML.includes('<span class="stat">todo</span>'), 'a quiet card still shows its status');

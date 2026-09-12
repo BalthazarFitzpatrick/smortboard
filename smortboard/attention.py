@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from smortboard.actions import next_action, short_action
 from smortboard.lifecycle import BOARD_AUTHOR
 from smortboard.scheduler import conflicting_run
 from smortboard.store.api import Store
@@ -24,15 +25,6 @@ RESUMABLE_REASONS = frozenset(
 # the model's limit, so an answer would only be spent confusing the agent on its next run.
 # DEPENDENCY_REJECTED is not this card's fault - a message to it cannot un-reject the dependency;
 # accept_card already clears it automatically once the dependency comes back (see review/decide.py)
-
-# what the inbox says in place of an answer box, for the rows an answer cannot move
-_WHY_NOT_ANSWERABLE = {
-    "review": "a decision, not a question - open the card and press y to accept or x to reject",
-    "USAGE_LIMIT": "clears itself once the rate-limit window resets",
-    "DEPENDENCY_REJECTED": "waiting on a rejected dependency - clears once that card is accepted",
-    "stopped": "you stopped it - press r to run it again; its worktree and commits are kept",
-    "refused": "the board could not run it - fix what the note says, then press r",
-}
 
 
 def _flag_reason(store: Store, card_id: str) -> str:
@@ -79,6 +71,23 @@ def _needs_attention(card: dict[str, Any]) -> bool:
     return bool(card.get("blocked_reason_code")) or bool(card.get("review_flag"))
 
 
+def waiting_reason(store: Store, card: dict[str, Any]) -> str | None:
+    """why this card waits on a person - its reason code, or refused/stopped/review - or None"""
+    if not _needs_attention(card):
+        return None
+    return card.get("blocked_reason_code") or _flag_reason(store, card["id"])
+
+
+def with_actions(store: Store, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """each card gains next_action and next_action_short - None unless it waits on a person - so
+    the board can say what to do on the strip itself, not only in the inbox"""
+    for card in cards:
+        reason = waiting_reason(store, card)
+        card["next_action"] = next_action(reason)
+        card["next_action_short"] = short_action(reason)
+    return cards
+
+
 class AnswerRefused(Exception):
     """the store's state means this card cannot be resumed by an answer right now"""
 
@@ -123,9 +132,10 @@ def attention_rows(store: Store) -> list[dict[str, Any]]:
     rows = []
     for board in store.list_boards():
         for card in store.list_cards(board["id"]):
-            if not _needs_attention(card):
+            reason = waiting_reason(store, card)
+            if reason is None:
                 continue
-            reason = card.get("blocked_reason_code") or _flag_reason(store, card["id"])
+            answerable = reason in RESUMABLE_REASONS
             rows.append(
                 {
                     "card_id": card["id"],
@@ -135,8 +145,10 @@ def attention_rows(store: Store) -> list[dict[str, Any]]:
                     "reason": reason,
                     "question": _question_for(store, card),
                     "since": card["updated_at"],
-                    "answerable": reason in RESUMABLE_REASONS,
-                    "hint": _WHY_NOT_ANSWERABLE.get(reason, ""),
+                    "answerable": answerable,
+                    # the call to action, for every row; hint repeats it where no answer box shows
+                    "action": next_action(reason) or "",
+                    "hint": "" if answerable else (next_action(reason) or ""),
                 }
             )
     rows.sort(key=lambda r: r["since"])

@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from smortboard.actions import with_next
 from smortboard.exec.runner import ProcessHandle
 from smortboard.lifecycle import BOARD_AUTHOR, run_card_lifecycle
 from smortboard.store.api import Store
@@ -31,8 +32,7 @@ READINESS_TTL_SECONDS = 30
 ORPHANED_NOTE = (
     "The board stopped while this card was running, so the run never finished: no gate ran and no "
     "pull request was opened. Its worktree and any commits already fetched back are kept. If "
-    "`docker ps` still lists a smortboard container for it, remove that first, then answer to "
-    "resume."
+    "`docker ps` still lists a smortboard container for it, remove that first."
 )
 
 
@@ -60,7 +60,9 @@ def recover_orphaned_runs(store: Store) -> list[str]:
                 continue
             store.append_event(card["id"], "run_orphaned", {})
             store.update_card(card["id"], blocked_reason_code="CRASH", review_flag=True)
-            store.add_comment(card["id"], author=BOARD_AUTHOR, body=ORPHANED_NOTE)
+            store.add_comment(
+                card["id"], author=BOARD_AUTHOR, body=with_next(ORPHANED_NOTE, "CRASH")
+            )
             recovered.append(card["id"])
     return recovered
 

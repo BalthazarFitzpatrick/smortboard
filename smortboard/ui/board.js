@@ -150,7 +150,11 @@ function renderCardStrip(card) {
   // a card, not a strip: a title band at the top, a rule, the description with the room, and the
   // secondary facts sitting on the floor. ui_base draws the rule with .h-divider - the parent
   // spaces its children and the rule only draws the line
-  const stat = card.blocked_reason_code || card.status;
+  // a card waiting on someone says what to do, not only why - the reason code is the tooltip
+  const stat = card.next_action_short || card.blocked_reason_code || card.status;
+  const statHtml = card.next_action_short
+    ? `<span class="stat stat-action" title="${escapeHtml(card.blocked_reason_code || card.next_action || '')}">${escapeHtml(stat)}</span>`
+    : `<span class="stat">${escapeHtml(stat)}</span>`;
   strip.innerHTML = `
     <div class="card-head"><div class="card-title">${escapeHtml(card.title)}</div></div>
     <div class="h-divider"></div>
@@ -158,7 +162,7 @@ function renderCardStrip(card) {
     <div class="h-divider"></div>
     <div class="card-foot">
       <span class="card-workstream">${escapeHtml(card.workstream || '')}</span>
-      <span class="stat">${escapeHtml(stat)}</span>
+      ${statHtml}
       <span class="card-run" hidden></span>
     </div>
   `;
@@ -308,16 +312,18 @@ function cardPanelHtml(card, outcome) {
   const deps = (card.depends_on || []).map(d => `<li>${escapeHtml(dependencyLabel(d))}</li>`);
   const attachments = (card.attachments || []).map(a => `<li>${escapeHtml(a.filename)}</li>`);
   const comments = (card.comments || [])
-    .map(c => `<li><span class="field-label">${escapeHtml(authorLabel(c.author))}</span> ${escapeHtml(c.body)}</li>`);
+    .map(c => `<li><span class="field-label">${escapeHtml(authorLabel(c.author))}</span><div class="comment-body">${escapeHtml(c.body)}</div></li>`);
   const status = escapeHtml(card.status) + (card.blocked_reason_code ? ` (${escapeHtml(card.blocked_reason_code)})` : '');
   // the paths its agent may write - an empty lease is why a run gets refused, so say so here
   const globs = (card.leases || []).map(l => escapeHtml(l.path_glob));
   const lease = globs.length ? globs.join(', ') : '<span class="empty">none - it will not run</span>';
+  // the call to action leads the status, so an open card says what to do before anything else
+  const next = card.next_action ? `<div class="card-next">next: ${escapeHtml(card.next_action)}</div>` : '';
   return `
     <div class="card-sections">
       ${sectionHtml('title', 'title', escapeHtml(card.title))}
       ${sectionHtml('workstream', 'workstream', escapeHtml(card.workstream || '') || '<span class="empty">none</span>')}
-      ${sectionHtml('status', 'status', `${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div><div class="card-model">lease: ${lease}</div>`)}
+      ${sectionHtml('status', 'status', `${next}${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div><div class="card-model">lease: ${lease}</div>`)}
       ${outcomeSectionHtml(outcome, card)}
       ${sectionHtml('description', 'description', escapeHtml(card.description || ''))}
       ${sectionHtml('tasks', 'tasks', listHtml(tasks))}

@@ -59,6 +59,12 @@
 .inbox-reason { color: var(--fill-attention, var(--attention)); }
 .inbox-since { margin-left: auto; }
 
+/* what to do, before why - the one line a scan of the inbox should land on */
+.inbox-action {
+  color: var(--fill-attention, var(--attention));
+  font-weight: 600;
+}
+
 .inbox-question {
   white-space: pre-wrap;
   color: var(--text);

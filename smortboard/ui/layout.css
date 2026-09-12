@@ -327,3 +327,15 @@ body {
 /* the finished state is the one worth looking at, so the link is the only coloured thing here */
 .card-foot .card-run a { color: var(--kingfisher); text-decoration: none; }
 .card-foot .card-run a:hover { text-decoration: underline; }
+
+/* ---- what to do next -----------------------------------------------------------------------
+   A card waiting on someone says what to do on its strip and at the top of its panel, in the
+   attention colour, so a scan of the board lands on the actions. */
+.card-foot .stat-action { color: var(--fill-attention); font-weight: 600; }
+.card-next { color: var(--fill-attention); font-weight: 600; margin-bottom: 4px; }
+
+/* agents and the board write short labelled lines - keep the line breaks instead of one wall */
+.card-body, .comment-body, .card-panel [data-section="description"] .section-value {
+  white-space: pre-line;
+}
+.comment-body { line-height: 1.4; }
