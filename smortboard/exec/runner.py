@@ -56,7 +56,10 @@ SYSTEM_PROMPT = (
     "A REFUSED COMMAND WILL NOT SUCCEED REWORDED. Your available tools are fixed for this run: if a "
     "shell command is denied, no variant of it will be permitted, so record what you could not do "
     "and move on rather than trying another spelling. Use Grep and Glob to search rather than "
-    "shelling out.\n\n"
+    "shelling out.\n"
+    "YOU RUN HEADLESS AND NOTHING WAKES YOU UP. When your turn ends, the run ends. Never run a "
+    "command in the background or schedule a later check - run tests in the foreground and wait "
+    "for them. Commit your work before you finish: uncommitted changes are discarded.\n\n"
     "House conventions:\n"
     "- commit messages: lowercase, past tense, no trailing period\n"
     "- no emojis anywhere\n"
@@ -159,6 +162,11 @@ DEFAULT_ALLOWED_TOOLS = ("Bash(git *)", "Edit", "Read", "Write", "Glob", "Grep")
 # a ceiling per card, not a target - see build_command
 DEFAULT_CARD_BUDGET_USD = 5.0
 
+# NOTHING RE-INVOKES A HEADLESS RUN. a tool that waits for a later wake-up ends the turn, and the
+# turn ending is the run ending - measured, a card backgrounded pytest, set a Monitor and a
+# ScheduleWakeup, said "pausing here", and lost 12 uncommitted writes
+WAITING_TOOLS = ("Monitor", "ScheduleWakeup", "CronCreate", "TaskOutput")
+
 
 def build_command(
     prompt: str,
@@ -205,6 +213,8 @@ def build_command(
         cmd += ["--max-budget-usd", str(budget_usd)]
     for tool in allowed_tools:
         cmd += ["--allowedTools", tool]
+    for tool in WAITING_TOOLS:
+        cmd += ["--disallowedTools", tool]
     return cmd
 
 

@@ -25,7 +25,12 @@ import sys
 from pathlib import Path
 
 payload = json.load(sys.stdin)
-command = payload.get("tool_input", {}).get("command")
+tool_input = payload.get("tool_input", {})
+# a headless run ends with its turn, so a background command is abandoned work
+if tool_input.get("run_in_background"):
+    print(f"{prefix} nothing wakes a headless run - run it in the foreground", file=sys.stderr)
+    sys.exit(2)
+command = tool_input.get("command")
 if not command:
     sys.exit(0)
 
