@@ -24,7 +24,12 @@ from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
 from smortboard.scheduler import SchedulerRegistry
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
-from smortboard.server.runs import Readiness, RunNotActiveError, RunRegistry
+from smortboard.server.runs import (
+    Readiness,
+    RunNotActiveError,
+    RunRegistry,
+    recover_orphaned_runs,
+)
 from smortboard.store import Store
 from smortboard.store.api import CARD_WRITABLE_FIELDS
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
@@ -645,6 +650,8 @@ def build_server(
     host: str = "127.0.0.1",
     token_path: str | None = None,
 ) -> HTTPServer:
+    # a new board has no runs, so any card still mid-run lost the last board process under it
+    recovered = recover_orphaned_runs(store)
     # single-threaded: the store's sqlite3 connection is bound to the thread that opened it. card
     # runs are the exception and get their own thread and their own connection - see runs.py
     runs = RunRegistry(store.path, token_path=token_path)
@@ -655,6 +662,7 @@ def build_server(
     )
     server = HTTPServer((host, port), handler_cls)
     server.runs = runs  # the cli and the tests reach the registry through the server
+    server.recovered = recovered
     server.orchestrator = orchestrator
     server.scheduler = scheduler
     return server
