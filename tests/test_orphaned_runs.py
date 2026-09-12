@@ -53,7 +53,9 @@ def test_a_card_left_mid_run_is_blocked_as_a_crash(store, board_id):
     assert card["status"] == "doing"
     assert card["blocked_reason_code"] == "CRASH"
     assert card["review_flag"] == 1
-    assert card["comments"][-1]["body"] == runs_module.ORPHANED_NOTE
+    last = card["comments"][-1]["body"]
+    assert last.startswith(runs_module.ORPHANED_NOTE)
+    assert "\n\nNext: " in last  # the last comment says what to do
 
 
 def test_a_run_that_ended_is_left_alone(store, board_id):

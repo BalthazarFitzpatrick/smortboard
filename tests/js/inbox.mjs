@@ -44,7 +44,7 @@ function SpyDrawer() {
 class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; } refresh() {} close() {} }
 
 const ROWS = [
-  {card_id: 'c1', board_id: 'b1', board_name: 'alpha', title: 'widen the lease', reason: 'AGENT_QUESTION', question: 'should I widen the lease?', since: '2026-01-01T00:00:00'},
+  {card_id: 'c1', board_id: 'b1', board_name: 'alpha', title: 'widen the lease', reason: 'AGENT_QUESTION', question: 'should I widen the lease?', since: '2026-01-01T00:00:00', action: 'Answer the agent\'s question in the inbox (n) - the answer resumes it.'},
   {card_id: 'c2', board_id: 'b1', board_name: 'alpha', title: 'fix the flaky test', reason: 'TESTS_FAILED', question: '`pytest` exited 1', since: '2026-01-02T00:00:00'},
 ];
 responses.set('/api/attention', stubJson(200, ROWS));
@@ -82,6 +82,11 @@ assert.equal(rows.length, 2, 'both blocked cards render as rows');
 assert.equal(rows[0].querySelector('.inbox-title').textContent, 'widen the lease');
 assert.equal(rows[0].querySelector('.inbox-reason').textContent, 'AGENT_QUESTION');
 assert.equal(rows[0].querySelector('.inbox-question').textContent, 'should I widen the lease?');
+// the call to action leads each row, above the note it came from
+assert.equal(rows[0].querySelector('.inbox-action').textContent,
+  'next: Answer the agent\'s question in the inbox (n) - the answer resumes it.');
+assert.equal(rows[1].querySelector('.inbox-action').textContent, 'next: open the card',
+  'a row with no action text still gets a line to act on');
 
 // ---- typing in the answer input never fires a board shortcut (n does not close the panel) --------
 const input0 = rows[0].querySelector('.inbox-answer');

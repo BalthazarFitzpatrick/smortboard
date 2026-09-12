@@ -124,16 +124,19 @@ function buildInboxRow(row) {
   since.textContent = sinceLabel(row.since);
   head.append(title, board, reason, since);
 
+  // the call to action comes first, above the note it came from, so a scan of the inbox reads as a
+  // list of things to do
+  const action = document.createElement('div');
+  action.className = 'inbox-action';
+  action.textContent = `next: ${row.action || row.hint || 'open the card'}`;
+
   const question = document.createElement('div');
   question.className = 'inbox-question';
   question.textContent = row.question || '(no question text)';
 
-  // an answer cannot move a decision or a rate limit, so those say what will instead
+  // an answer cannot move a decision or a rate limit - the action line already says what will
   if (row.answerable === false) {
-    const hint = document.createElement('div');
-    hint.className = 'field-label inbox-hint';
-    hint.textContent = row.hint || 'an answer will not move this one';
-    rowEl.append(head, question, hint);
+    rowEl.append(head, action, question);
     return rowEl;
   }
 
@@ -153,7 +156,7 @@ function buildInboxRow(row) {
   });
   answerRow.append(input, status);
 
-  rowEl.append(head, question, answerRow);
+  rowEl.append(head, action, question, answerRow);
   return rowEl;
 }
 

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from smortboard.actions import with_next
 from smortboard.briefing import resume_briefing
 from smortboard.exec.backends import (
     CardRuntimeUnavailable,
@@ -212,7 +213,7 @@ def _block(store: Store, state: LifecycleResult, reason_code: str, note: str) ->
     briefing needs and what a sixth "blocked" column would have destroyed.
     """
     store.update_card(state.card_id, blocked_reason_code=reason_code, review_flag=True)
-    _note(store, state.card_id, note)
+    _note(store, state.card_id, with_next(note, reason_code))
     state.phase = "blocked"
     state.blocked_reason_code = reason_code
     return state
@@ -246,7 +247,7 @@ def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
     with the work. It is flagged for a human because only a human can fix any of these.
     """
     store.update_card(state.card_id, review_flag=True)
-    _note(store, state.card_id, note)
+    _note(store, state.card_id, with_next(note, "refused"))
     # the attempt's own record of how it ended - a refusal after both gates otherwise read as
     # still in progress to telemetry, which only sees events
     store.append_event(state.card_id, "run_refused", {"note": note})
@@ -263,7 +264,7 @@ def _stopped(store: Store, state: LifecycleResult) -> LifecycleResult:
     a claim about the work - it is Fabian's own decision, not something that went wrong.
     """
     store.update_card(state.card_id, review_flag=True)
-    _note(store, state.card_id, f"Stopped by {OPERATOR_NAME}.")
+    _note(store, state.card_id, with_next(f"Stopped by {OPERATOR_NAME}.", "stopped"))
     store.append_event(state.card_id, "run_stopped", {})
     state.phase = "stopped"
     return state
@@ -489,8 +490,11 @@ def run_card_lifecycle(
     _note(
         store,
         card_id,
-        f"Tests passed, the reviewer approved, and the pull request is open:\n{request.url}\n\n"
-        "Merging is yours - the board stops here.",
+        with_next(
+            f"Tests passed, the reviewer approved, and the pull request is open:\n{request.url}\n\n"
+            "Merging is yours - the board stops here.",
+            "review",
+        ),
     )
     store.update_card(card_id, review_flag=True)
     state.phase, state.pr_url = "opened", request.url
