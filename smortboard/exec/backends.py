@@ -33,7 +33,12 @@ from smortboard.exec.runner import (
     lease_preamble,
     run_process,
 )
-from smortboard.exec.worktrees import WorktreeError, current_branch, repo_root_of_worktree
+from smortboard.exec.worktrees import (
+    WorktreeError,
+    current_branch,
+    repo_lock,
+    repo_root_of_worktree,
+)
 from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
 
@@ -403,20 +408,21 @@ class ContainerBackend:
         # the clone is on the host, so pull the card's commits back into the repo that owns them;
         # the board pushes from there - nothing is ever pushed from inside the container
         # --update-head-ok: the branch is checked out in the card's own worktree
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo_root),
-                "fetch",
-                "--update-head-ok",
-                str(clone_path),
-                f"{branch}:{branch}",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        with repo_lock(repo_root):
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo_root),
+                    "fetch",
+                    "--update-head-ok",
+                    str(clone_path),
+                    f"{branch}:{branch}",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         if result.returncode != 0:
             raise WorktreeError(f"fetching card commits back failed: {result.stderr.strip()}")
         # the fetch moves the branch but not the worktree's files, and the test gate and reviewer

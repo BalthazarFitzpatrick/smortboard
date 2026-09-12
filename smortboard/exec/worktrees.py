@@ -6,13 +6,31 @@ deadlocks asking permission to make one, so the worktree handed back is already 
 on the card's branch — never on `base`.
 """
 
+import contextlib
 import subprocess
+import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 
 class WorktreeError(Exception):
     """a git worktree/branch operation failed"""
+
+
+_repo_locks: dict[Path, threading.Lock] = {}
+_repo_locks_guard = threading.Lock()
+
+
+@contextlib.contextmanager
+def repo_lock(repo_path: str | Path) -> Iterator[None]:
+    """one git write per repo at a time. git fails a held .git/config or ref lock instead of
+    waiting, and two cards starting together hit it - measured, 6 of 12 concurrent cuts failed"""
+    key = Path(repo_path).resolve()
+    with _repo_locks_guard:
+        lock = _repo_locks.setdefault(key, threading.Lock())
+    with lock:
+        yield
 
 
 @dataclass(frozen=True)
@@ -54,8 +72,10 @@ def create_worktree(repo_path: str | Path, card_id: str, base: str = "main") -> 
     if path.exists():
         raise WorktreeError(f"worktree already exists at {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    # -b creates the branch and checks the new worktree out onto it in one step
-    _run_git(repo_path, "worktree", "add", "-b", branch, str(path), base)
+    # -b creates the branch and checks the new worktree out onto it in one step. --no-track: a
+    # card branch cut from origin/<base> would otherwise track the base; its push sets its own
+    with repo_lock(repo_path):
+        _run_git(repo_path, "worktree", "add", "--no-track", "-b", branch, str(path), base)
     return WorktreeInfo(card_id=card_id, path=path, branch=branch)
 
 
@@ -77,7 +97,8 @@ def add_worktree(repo_path: str | Path, card_id: str) -> WorktreeInfo:
     if path.exists():
         raise WorktreeError(f"worktree already exists at {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    _run_git(repo_path, "worktree", "add", str(path), branch)
+    with repo_lock(repo_path):
+        _run_git(repo_path, "worktree", "add", str(path), branch)
     return WorktreeInfo(card_id=card_id, path=path, branch=branch)
 
 
@@ -88,7 +109,8 @@ def destroy_worktree(repo_path: str | Path, card_id: str, force: bool = False) -
     if force:
         args.append("--force")
     args.append(str(worktree_path(repo_path, card_id)))
-    _run_git(repo_path, *args)
+    with repo_lock(repo_path):
+        _run_git(repo_path, *args)
 
 
 def has_remote(repo_path: str | Path, remote: str = "origin") -> bool:
@@ -106,12 +128,13 @@ def has_remote(repo_path: str | Path, remote: str = "origin") -> bool:
 def fetch_base(repo_path: str | Path, base: str, remote: str = "origin") -> bool:
     """fetches `base` from `remote`. True on success - never raises, so a network hiccup is the
     caller's decision (fall back to the local base) rather than a card-stopping error."""
-    result = subprocess.run(
-        ["git", "-C", str(Path(repo_path).resolve()), "fetch", remote, base],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    with repo_lock(repo_path):
+        result = subprocess.run(
+            ["git", "-C", str(Path(repo_path).resolve()), "fetch", remote, base],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     return result.returncode == 0
 
 
@@ -126,7 +149,8 @@ def branch_exists(repo_path: str | Path, card_id: str) -> bool:
 
 def delete_branch(repo_path: str | Path, card_id: str) -> None:
     """drops the card's local branch. -D because a rejected attempt is never merged anywhere"""
-    _run_git(Path(repo_path).resolve(), "branch", "-D", branch_name(card_id))
+    with repo_lock(repo_path):
+        _run_git(Path(repo_path).resolve(), "branch", "-D", branch_name(card_id))
 
 
 def branch_diff(repo_path: str | Path, base: str, branch: str) -> str:
