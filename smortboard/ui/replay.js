@@ -224,6 +224,8 @@ async function loadReplay(cardId, attempt) {
 function onReplayPanelKey(evt) {
   evt.stopPropagation();
   if (evt.code === 'Escape') { closeReplay(); return; }
+  // cmd, ctrl and alt stay the browser's - copy out of a replay step must not step it
+  if (evt.metaKey || evt.ctrlKey || evt.altKey) return;
   if (evt.target.matches?.('input, textarea')) return;
   if (evt.code === 'ArrowDown' || evt.code === 'KeyJ') { evt.preventDefault(); stopReplayPlay(); setReplayIndex(rp.index + 1); return; }
   if (evt.code === 'ArrowUp' || evt.code === 'KeyK') { evt.preventDefault(); stopReplayPlay(); setReplayIndex(rp.index - 1); return; }
