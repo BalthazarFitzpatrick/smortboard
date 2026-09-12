@@ -56,10 +56,7 @@ SYSTEM_PROMPT = (
     "A REFUSED COMMAND WILL NOT SUCCEED REWORDED. Your available tools are fixed for this run: if a "
     "shell command is denied, no variant of it will be permitted, so record what you could not do "
     "and move on rather than trying another spelling. Use Grep and Glob to search rather than "
-    "shelling out.\n"
-    "YOU RUN HEADLESS AND NOTHING WAKES YOU UP. When your turn ends, the run ends. Never run a "
-    "command in the background or schedule a later check - run tests in the foreground and wait "
-    "for them. Commit your work before you finish: uncommitted changes are discarded.\n\n"
+    "shelling out.\n\n"
     "House conventions:\n"
     "- commit messages: lowercase, past tense, no trailing period\n"
     "- no emojis anywhere\n"
@@ -166,6 +163,14 @@ DEFAULT_CARD_BUDGET_USD = 5.0
 # turn ending is the run ending - measured, a card backgrounded pytest, set a Monitor and a
 # ScheduleWakeup, said "pausing here", and lost 12 uncommitted writes
 WAITING_TOOLS = ("Monitor", "ScheduleWakeup", "CronCreate", "TaskOutput")
+
+# appended to every worker prompt, stored or default - a prompt saved in the board replaces the
+# default whole, and must not be able to drop the one fact the run depends on
+HEADLESS_RULES = (
+    "\n\nYOU RUN HEADLESS AND NOTHING WAKES YOU UP. When your turn ends, the run ends. Never run a "
+    "command in the background or schedule a later check - run tests in the foreground and wait "
+    "for them. Commit your work before you finish: uncommitted changes are discarded.\n"
+)
 
 
 def build_command(
