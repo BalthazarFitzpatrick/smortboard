@@ -79,6 +79,13 @@ TOKEN_REFUSED_NOTE = (
     "~/.config/smortboard/card_token (mode 600), then run this card again."
 )
 
+# what the card says when it has no lease - an empty one lets the agent write nowhere at all
+NO_LEASE_NOTE = (
+    "This card has no lease, so its agent could not Edit or Write a single file. Set the path "
+    'globs it may write (PATCH /api/cards/<id> with {"leases": ["src/thing/**", "tests/**"]}), '
+    "then run it again."
+)
+
 
 @dataclass
 class LifecycleResult:
@@ -304,6 +311,10 @@ def run_card_lifecycle(
         return _refuse(
             store, state, "This card has no repo, so there is nowhere for an agent to work."
         )
+    # the guard refuses every Edit and Write over an empty lease - measured, a run spent $1.91 and
+    # 61 turns probing for a writable path before stopping to ask
+    if not _lease_globs(card):
+        return _refuse(store, state, NO_LEASE_NOTE)
     repo = store.get_repo(card["repo_id"])
     base = repo.get("default_branch") or "main"
 

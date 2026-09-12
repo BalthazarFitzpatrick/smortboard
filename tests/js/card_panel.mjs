@@ -76,6 +76,12 @@ const html2 = mod.cardPanelHtml(card, {
 });
 assert.ok(html2.includes('not run yet'), 'a null outcome should say not run yet');
 
+// ---- the lease shows its globs, and an empty one says the card will not run
+assert.ok(html1.includes('lease: <span class="empty">none - it will not run</span>'),
+  'a card with no lease should say it will not run');
+const leased = mod.cardPanelHtml({...card, leases: [{path_glob: 'src/**'}, {path_glob: 'tests/**'}]}, outcome);
+assert.ok(leased.includes('lease: src/**, tests/**'), 'a lease should list its globs');
+
 // ---- a 409 from accept shows a refused badge with the server's error, and does not throw
 const strip = element('div', 'card-strip');
 strip.dataset.cardId = 'c2';
