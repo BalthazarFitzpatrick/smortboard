@@ -115,8 +115,9 @@ function cardClasses(card) {
   // every card fans: the stack is the layout now, not a preview keyed off a workstream
   const classes = ['row', 'card', 'card-strip', 'fan-item'];
   // blocked wins over working: a card waiting on you is not a card making progress, and showing
-  // both reads as progress
-  if (card.blocked_reason_code) classes.push('card-attention');
+  // both reads as progress. flagged counts too - a refused or stopped card has no reason code
+  // but sits in the inbox, and without this the board drew it plain
+  if (card.blocked_reason_code || card.review_flag) classes.push('card-attention');
   else if (card.status === 'doing') classes.push('card-working');
   else if (card.status === 'rejected') classes.push('card-rejected');
   else if (card.status === 'accepted') classes.push('card-accepted');
