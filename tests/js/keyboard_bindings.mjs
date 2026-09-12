@@ -133,4 +133,23 @@ press('KeyP');
 assert.ok(fetchCalls.includes('/api/prompts'), 'p should load the three role prompts');
 press('KeyP');
 
+// ---- cmd, ctrl and alt belong to the browser: copy, paste and reload must never fire a board key
+{
+  const fetchesBefore = fetchCalls.length;
+  const menusBefore = openedMenus.length;
+  const withMod = (code, mod) =>
+    document._dispatch('keydown', {code, key: code, [mod]: true, target: strip, preventDefault() {}});
+  withMod('KeyR', 'metaKey');  // reload on mac - used to run the focused card
+  withMod('KeyC', 'ctrlKey');  // copy on windows - used to open the cost overview
+  withMod('KeyV', 'metaKey');
+  withMod('KeyY', 'metaKey');
+  withMod('KeyU', 'metaKey');
+  withMod('KeyS', 'altKey');
+  assert.equal(fetchCalls.length, fetchesBefore, 'no modified key may reach the api');
+  assert.equal(openedMenus.length, menusBefore, 'no modified key may open a panel');
+  // u opens its panel whatever has focus, so it proves the bare key still acts
+  press('KeyU');
+  assert.equal(openedMenus.length, menusBefore + 1, 'the same key without a modifier still acts');
+}
+
 console.log('ok');
