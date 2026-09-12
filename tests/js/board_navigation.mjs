@@ -117,3 +117,8 @@ assert.ok(working.includes('card-working') && !working.includes('card-rejected')
 const blocked = mod.cardClasses({status: 'doing', blocked_reason_code: 'USAGE_LIMIT'});
 assert.ok(blocked.includes('card-attention') && !blocked.includes('card-working'),
   'blocked wins over working - a card waiting on you is not a card making progress');
+// a refused card has only the flag, no reason code - the inbox counts it, so the board must mark it
+const refused = mod.cardClasses({status: 'todo', blocked_reason_code: null, review_flag: 1});
+assert.ok(refused.includes('card-attention'), 'a flagged card with no reason code still glows');
+const quiet = mod.cardClasses({status: 'todo', blocked_reason_code: null, review_flag: 0});
+assert.ok(!quiet.includes('card-attention'), 'an unflagged queued card does not');
