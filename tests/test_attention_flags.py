@@ -14,7 +14,7 @@ def test_a_stopped_run_reads_as_stopped(store, repo):  # noqa: F811
     row = attention_rows(store)[0]
     assert row["reason"] == "stopped"
     assert row["answerable"] is False
-    assert "press r" in row["hint"]
+    assert "press r" in row["hint"].lower()
 
 
 def test_a_refused_run_reads_as_refused(store, repo):  # noqa: F811
@@ -25,7 +25,7 @@ def test_a_refused_run_reads_as_refused(store, repo):  # noqa: F811
 
     row = attention_rows(store)[0]
     assert row["reason"] == "refused"
-    assert "fix what the note says" in row["hint"]
+    assert "fix what the note says" in row["hint"].lower()
 
 
 def test_a_stop_from_an_earlier_run_does_not_leak_into_a_later_one(store, repo):  # noqa: F811

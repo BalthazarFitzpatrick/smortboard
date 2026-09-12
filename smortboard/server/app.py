@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from urllib.parse import parse_qs
 
-from smortboard.attention import AnswerRefused, answer_card, attention_rows
+from smortboard.attention import AnswerRefused, answer_card, attention_rows, with_actions
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.operator import OPERATOR_NAME
@@ -171,7 +171,7 @@ def _make_handler(
                 board = store.create_board(name=body["name"])
                 self._send_json(201, board)
             elif "board_id" in params and path.endswith("/cards"):
-                self._send_json(200, store.list_cards(params["board_id"]))
+                self._send_json(200, with_actions(store, store.list_cards(params["board_id"])))
             elif "board_id" in params and path.endswith("/repos") and method == "GET":
                 self._send_json(200, store.list_repos(params["board_id"]))
             elif "board_id" in params and path.endswith("/repos") and method == "POST":
