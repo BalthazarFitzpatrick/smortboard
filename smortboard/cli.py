@@ -105,6 +105,11 @@ def main(argv: list[str] | None = None) -> None:
         actual_port = server.server_address[1]
         url = f"http://127.0.0.1:{actual_port}/ui/index.html"
         print(f"smortboard serving on {url} (db={db_path})")
+        if server.recovered:
+            print(
+                f"{len(server.recovered)} card(s) were left mid-run by the last board - "
+                "blocked as CRASH, waiting in the inbox"
+            )
         if not args.no_browser:
             webbrowser.open(url)
         with contextlib.suppress(KeyboardInterrupt):
