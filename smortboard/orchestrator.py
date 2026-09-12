@@ -43,6 +43,11 @@ ORCHESTRATOR_PROMPT = (
     f"{OPERATOR_NAME} can change it on the card. The snapshot's `evidence` shows this board's own run history "
     "- prefer the cheapest model that has been reaching pull requests cleanly (no fix rounds) on "
     "cards like this one; if you pick opus, say in your reply why this card needs it.\n\n"
+    "Give every card a `leases` list: the path globs, relative to the repo root, its worker may "
+    "Edit or Write. A guard refuses every write outside them, so an empty list means the card can "
+    "change nothing and the board will not run it. Cover every file the card must touch - its "
+    "tests, and any file it moves or deletes - and keep cards that run in parallel from sharing a "
+    "glob, since two cards whose leases overlap never run at once.\n\n"
     "Return JSON matching the given schema. `cards` may be empty - most turns are just "
     "conversation."
 )
@@ -279,6 +284,10 @@ def run_orchestrator_turn(
         model, warning = _clean_model(spec.get("model"))
         if warning:
             warnings.append(warning)
+        if not spec.get("leases"):
+            warnings.append(
+                f'"{title}" has no lease, so the board will not run it until one is set'
+            )
         card = store.create_card(
             board_id,
             repo_id,

@@ -50,6 +50,17 @@ def _check_findings_route(value: str | None) -> None:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
 
 
+def _check_lease_glob(value: Any) -> str:
+    """one lease glob, relative to the repo root - the guard matches paths made relative to it,
+    so an absolute or climbing glob could never match anything it was meant to allow"""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"a lease glob must be a non-empty string, not {value!r}")
+    glob = value.strip()
+    if glob.startswith("/") or ".." in glob.split("/"):
+        raise ValueError(f"a lease glob is relative to the repo root, not {glob!r}")
+    return glob
+
+
 # card_criteria has deliberately no entry here and no update_criteria method anywhere in this
 # file. acceptance criteria are the contract a card is judged against; a card agent that could
 # edit its own criteria could move its own goalposts. add_task/remove_task/set_task_done exist
@@ -364,6 +375,21 @@ class Store:
             f"UPDATE cards SET {assignments}, updated_at = ? WHERE id = ?",
             values,
         )
+        self._conn.commit()
+        return self.get_card(card_id)
+
+    def set_leases(self, card_id: str, globs: list[str]) -> dict[str, Any]:
+        """replaces a card's whole lease. the lease guard compiles it for the card's next run, so
+        this is how a lease is widened - a note to the agent cannot change what the hook allows"""
+        self._card_row(card_id)
+        cleaned = [_check_lease_glob(glob) for glob in globs]
+        self._conn.execute("DELETE FROM card_leases WHERE card_id = ?", (card_id,))
+        for glob in cleaned:
+            self._conn.execute(
+                "INSERT INTO card_leases (id, card_id, path_glob) VALUES (?, ?, ?)",
+                (_new_id(), card_id, glob),
+            )
+        self._conn.execute("UPDATE cards SET updated_at = ? WHERE id = ?", (_now(), card_id))
         self._conn.commit()
         return self.get_card(card_id)
 

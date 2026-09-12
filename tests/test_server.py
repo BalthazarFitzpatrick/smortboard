@@ -464,3 +464,33 @@ def test_register_repo_on_missing_board_is_404(running_server, tmp_path):
         {"name": "smortboard", "path": str(repo_path), "default_branch": "main"},
     )
     assert status == 404
+
+
+def test_patch_card_sets_its_lease(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "x"},
+    )
+    status, updated = _request(
+        f"{running_server}/api/cards/{card['id']}",
+        "PATCH",
+        {"leases": ["src/**", "tests/**"], "model": "haiku"},
+    )
+    assert status == 200
+    assert [row["path_glob"] for row in updated["leases"]] == ["src/**", "tests/**"]
+    assert updated["model"] == "haiku"
+
+
+@pytest.mark.parametrize("leases", ["src/**", ["/etc/passwd"]])
+def test_patch_card_refuses_a_malformed_lease(running_server, leases):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "x"},
+    )
+    status, body = _request(f"{running_server}/api/cards/{card['id']}", "PATCH", {"leases": leases})
+    assert status == 400
+    assert "error" in body

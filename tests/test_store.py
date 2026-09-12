@@ -443,3 +443,23 @@ def test_a_card_lists_its_attachments(store):
     card = store.create_card(board["id"], None, "c")
     store.add_attachment(card["id"], "attempt-1.diff", "text/x-diff", b"+x\n")
     assert [a["filename"] for a in store.get_card(card["id"])["attachments"]] == ["attempt-1.diff"]
+
+
+def test_set_leases_replaces_the_whole_lease(store):
+    _, card = _make_board_and_card(store, leases=["old/*"])
+    updated = store.set_leases(card["id"], ["src/**", " tests/** "])
+    assert [row["path_glob"] for row in updated["leases"]] == ["src/**", "tests/**"]
+    assert store.set_leases(card["id"], [])["leases"] == []
+
+
+@pytest.mark.parametrize("glob", ["", "/abs/path.py", "../other/**", "src/../../x", 7])
+def test_set_leases_refuses_a_glob_the_guard_could_never_match(store, glob):
+    _, card = _make_board_and_card(store, leases=["keep/*"])
+    with pytest.raises(ValueError):
+        store.set_leases(card["id"], [glob])
+    assert [row["path_glob"] for row in store.get_card(card["id"])["leases"]] == ["keep/*"]
+
+
+def test_set_leases_on_a_missing_card_is_not_found(store):
+    with pytest.raises(NotFoundError):
+        store.set_leases("nope", ["src/**"])

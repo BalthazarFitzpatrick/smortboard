@@ -521,3 +521,19 @@ def test_without_a_card_model_the_board_setting_then_sonnet_apply(board, monkeyp
     lifecycle.run_card_lifecycle(store, card_id, backend=backend)
     assert backend.models == [lifecycle.DEFAULT_WORKER_MODEL]
     assert reviewed == [lifecycle.DEFAULT_REVIEWER_MODEL]
+
+
+def test_a_card_with_no_lease_is_refused_before_a_worktree_is_cut(tmp_path, repo):
+    """an empty lease lets the agent write nowhere - a run that can only fail is not started"""
+    store = Store(tmp_path / "b.db")
+    b = store.create_board("b")
+    r = store.create_repo(b["id"], "repo", str(repo), "main", test_command="true", image="i")
+    card = store.create_card(b["id"], r["id"], "no lease")
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card["id"], backend=backend)
+    assert result.phase == "refused"
+    assert "no lease" in result.refusal
+    assert result.blocked_reason_code is None
+    assert backend.calls == []
+    assert result.worktree is None
+    store.close()
