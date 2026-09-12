@@ -181,6 +181,7 @@ function renderCardStrip(card) {
     onClose: () => { openCard = null; },
   });
   strip.addEventListener('keydown', evt => {
+    if (withModifier(evt)) return;
     if (evt.code !== 'Enter' && evt.code !== 'NumpadEnter' && evt.code !== 'Space') return;
     evt.preventDefault();
     // the document handler also closes on space, so a press handled here stops here
@@ -1402,7 +1403,14 @@ function reenterIfFocusLost() {
   return true;
 }
 
+// a held cmd, ctrl or alt belongs to the browser and the os - copy, paste, reload. without this,
+// cmd+c opened the cost panel and cmd+r ran the focused card
+function withModifier(evt) {
+  return evt.metaKey || evt.ctrlKey || evt.altKey;
+}
+
 document.addEventListener('keydown', evt => {
+  if (withModifier(evt)) return;
   const recovered = reenterIfFocusLost();
   const typing = evt.target.matches?.('input, textarea');
   const binding = BINDINGS.find(b => b.code === evt.code);
