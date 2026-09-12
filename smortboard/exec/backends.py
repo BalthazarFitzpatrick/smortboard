@@ -24,6 +24,7 @@ from typing import Any, Protocol
 
 from smortboard.exec.leases import write_lease_settings
 from smortboard.exec.runner import (
+    HEADLESS_RULES,
     SYSTEM_PROMPT,
     ProcessHandle,
     RunResult,
@@ -371,7 +372,7 @@ class ContainerBackend:
             inner_settings,
             model=model,
             allowed_tools=allowed_tools_for_repo(repo),
-            system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT),
+            system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT) + HEADLESS_RULES,
             stream_input=True,
         )
         # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK INSIDE THE CONTAINER. the host's token

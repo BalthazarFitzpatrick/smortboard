@@ -42,7 +42,11 @@ from smortboard.exec.worktrees import (
 )
 from smortboard.operator import OPERATOR_NAME
 from smortboard.review.gates import GateUnavailable, run_test_gate
-from smortboard.review.merge_request import MergeRequestUnavailable, open_merge_request
+from smortboard.review.merge_request import (
+    MergeRequestUnavailable,
+    branch_has_commits,
+    open_merge_request,
+)
 from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
 from smortboard.store.api import Store
 
@@ -77,6 +81,13 @@ TOKEN_REFUSED_NOTE = (
     "The card token was refused (HTTP 401): it has expired or been revoked. Run "
     "`claude setup-token` in your own terminal, write the new token to "
     "~/.config/smortboard/card_token (mode 600), then run this card again."
+)
+
+# what the card says when its run ended without committing - the gates would only test the base
+NO_COMMITS_NOTE = (
+    "The run ended without a commit on {branch}, so there is nothing to test or review - the gates "
+    "were skipped. Its last words are in the timeline; anything it wrote but did not commit is "
+    "gone. Run it again, with a note if it stopped early."
 )
 
 # what the card says when it has no lease - an empty one lets the agent write nowhere at all
@@ -394,6 +405,12 @@ def run_card_lifecycle(
     phase("running")
     if (stopped := work(build_card_prompt(card, briefing))) is not None:
         return stopped
+    if stopped_now():
+        return _stopped(store, state)
+    # no commit means nothing to test or review - measured, a card that ended its turn early had
+    # its unchanged tree run through the full gate and an approved review of an empty diff first
+    if not branch_has_commits(repo["path"], tree.branch, base):
+        return _refuse(store, state, NO_COMMITS_NOTE.format(branch=tree.branch, base=base))
 
     # both gates, and on the fix route the findings go back to the worker until the reviewer
     # approves or the rounds run out. the tests re-run after every fix, since a fix can break them

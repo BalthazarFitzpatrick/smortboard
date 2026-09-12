@@ -159,6 +159,19 @@ DEFAULT_ALLOWED_TOOLS = ("Bash(git *)", "Edit", "Read", "Write", "Glob", "Grep")
 # a ceiling per card, not a target - see build_command
 DEFAULT_CARD_BUDGET_USD = 5.0
 
+# NOTHING RE-INVOKES A HEADLESS RUN. a tool that waits for a later wake-up ends the turn, and the
+# turn ending is the run ending - measured, a card backgrounded pytest, set a Monitor and a
+# ScheduleWakeup, said "pausing here", and lost 12 uncommitted writes
+WAITING_TOOLS = ("Monitor", "ScheduleWakeup", "CronCreate", "TaskOutput")
+
+# appended to every worker prompt, stored or default - a prompt saved in the board replaces the
+# default whole, and must not be able to drop the one fact the run depends on
+HEADLESS_RULES = (
+    "\n\nYOU RUN HEADLESS AND NOTHING WAKES YOU UP. When your turn ends, the run ends. Never run a "
+    "command in the background or schedule a later check - run tests in the foreground and wait "
+    "for them. Commit your work before you finish: uncommitted changes are discarded.\n"
+)
+
 
 def build_command(
     prompt: str,
@@ -205,6 +218,8 @@ def build_command(
         cmd += ["--max-budget-usd", str(budget_usd)]
     for tool in allowed_tools:
         cmd += ["--allowedTools", tool]
+    for tool in WAITING_TOOLS:
+        cmd += ["--disallowedTools", tool]
     return cmd
 
 

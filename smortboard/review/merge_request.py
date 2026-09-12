@@ -121,7 +121,7 @@ def _push(repo_path: str | Path, branch: str, remote: str = "origin") -> None:
         raise MergeRequestUnavailable(f"pushing {branch} failed: {result.stderr.strip()}")
 
 
-def _branch_has_commits(repo_path: str | Path, branch: str, base: str) -> bool:
+def branch_has_commits(repo_path: str | Path, branch: str, base: str) -> bool:
     """whether the branch adds anything to base - an empty PR asks for a review of nothing"""
     result = _run(["git", "-C", str(repo_path), "rev-list", "--count", f"{base}..{branch}"])
     if result.returncode != 0:
@@ -275,7 +275,7 @@ def open_merge_request(
         )
     _gh_ready(repo_path)
 
-    if not _branch_has_commits(repo_path, branch, base):
+    if not branch_has_commits(repo_path, branch, base):
         return _refuse(
             store,
             card_id,

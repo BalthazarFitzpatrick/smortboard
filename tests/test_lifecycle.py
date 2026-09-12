@@ -80,6 +80,8 @@ class _Backend:
 
 
 def _stub_gates(monkeypatch, *, passed=True, approved=True, pr_url="https://x/pull/1", findings=()):
+    # the fake backend commits nothing, so it stands in for a run that did
+    monkeypatch.setattr(lifecycle, "branch_has_commits", lambda *a, **k: True)
     monkeypatch.setattr(
         lifecycle,
         "run_test_gate",
@@ -484,8 +486,11 @@ def test_a_stop_after_the_worker_but_before_the_gate_also_stops_the_chain(board,
 
     def stop_requested():
         calls["n"] += 1
-        return calls["n"] > 1  # the worker's own check passes; the next one (after the gate) stops
+        # the worker's own check and the one before the commit check pass; the one after the gate
+        # stops
+        return calls["n"] > 2
 
+    monkeypatch.setattr(lifecycle, "branch_has_commits", lambda *a, **k: True)
     gated, reviewed = [], []
 
     def _gate(*a, **k):
