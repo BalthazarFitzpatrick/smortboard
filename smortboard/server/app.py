@@ -21,7 +21,7 @@ from smortboard.prompts import ROLES
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
-from smortboard.scheduler import SchedulerRegistry
+from smortboard.scheduler import SchedulerRegistry, conflicting_run
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import (
@@ -301,7 +301,13 @@ def _make_handler(
             202, not 200: the card has been accepted and is running somewhere else. The response
             is where it is right now, not where it ended up - GET the same path for that.
             """
-            store.get_card(card_id)  # raises NotFoundError before a thread is ever started
+            card = store.get_card(card_id)  # raises NotFoundError before a thread is ever started
+            own = runs.get(card_id)
+            if own is None or not own.running:
+                conflict = conflicting_run(store, card, [s.card_id for s in runs.active()])
+                if conflict:
+                    self._send_json(409, {"error": f"not started: {conflict}"})
+                    return
             state = runs.start(card_id)
             self._send_json(202, state.as_dict())
 

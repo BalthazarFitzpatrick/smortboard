@@ -22,6 +22,7 @@ import contextlib
 import fnmatch
 import threading
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -157,6 +158,22 @@ def _lease_wait(card: dict[str, Any], pending: list[tuple[str, list[str], str]])
     return None
 
 
+def conflicting_run(store: Store, card: dict[str, Any], running_ids: Iterable[str]) -> str | None:
+    """why `card` may not start beside the runs going now, or None - the scheduler's lease rule for
+    the starts that never pass through _tick: a manual run and an inbox answer"""
+    for run_id in running_ids:
+        if run_id == card["id"]:
+            continue
+        try:
+            other = store.get_card(run_id)
+        except NotFoundError:
+            continue
+        same_repo = other["repo_id"] == card["repo_id"]
+        if same_repo and _leases_conflict(_lease_globs(card), _lease_globs(other)):
+            return f"its lease overlaps the running card ‘{other['title']}’"
+    return None
+
+
 class BoardScheduler:
     """one board's queue. `runs` is anything shaped like server.runs.RunRegistry - only `.start`
     is called, so a test can pass a fake that runs synchronously."""
@@ -244,6 +261,12 @@ class BoardScheduler:
                 with contextlib.suppress(NotFoundError):
                     running_cards.append(store.get_card(card_id))
             slots = _max_parallel(store) - len(running_ids)
+            # a card started by hand holds its lease too, but not one of this board's slots
+            active = getattr(self._runs, "active", None)
+            for state in active() if active else []:
+                if state.card_id not in running_ids:
+                    with contextlib.suppress(NotFoundError):
+                        running_cards.append(store.get_card(state.card_id))
             pending = [(c["repo_id"], _lease_globs(c), c["id"]) for c in running_cards]
 
             started: list[str] = []

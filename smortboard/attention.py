@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from smortboard.lifecycle import BOARD_AUTHOR
+from smortboard.scheduler import conflicting_run
 from smortboard.store.api import Store
 
 RESUMABLE_REASONS = frozenset(
@@ -106,6 +107,11 @@ def answer_card(store: Store, runs: Any, card_id: str, message: str) -> dict[str
         raise AnswerRefused("this card is not waiting on an answer")
     if reason not in RESUMABLE_REASONS:
         raise AnswerRefused(f"{reason or 'this block'} cannot be resumed by answering here")
+    # refused before the comment is stored, so a retry once the other card finishes is clean
+    active = getattr(runs, "active", None)
+    conflict = conflicting_run(store, card, [s.card_id for s in active()]) if active else None
+    if conflict:
+        raise AnswerRefused(f"not resumed: {conflict} - answer again once it finishes")
 
     store.add_comment(card_id, author="fabian", body=message)
     store.update_card(card_id, blocked_reason_code=None, review_flag=False)
