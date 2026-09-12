@@ -10,6 +10,8 @@ cards at once.
 
 from __future__ import annotations
 
+import contextlib
+import sqlite3
 import threading
 import time
 from collections.abc import Callable
@@ -18,12 +20,49 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.exec.runner import ProcessHandle
-from smortboard.lifecycle import run_card_lifecycle
+from smortboard.lifecycle import BOARD_AUTHOR, run_card_lifecycle
 from smortboard.store.api import Store
 
 # how long a readiness answer is trusted before it is measured again. `docker info` takes seconds
 # to answer, and the board asks on every render
 READINESS_TTL_SECONDS = 30
+
+# what a card says when the board process died under its run
+ORPHANED_NOTE = (
+    "The board stopped while this card was running, so the run never finished: no gate ran and no "
+    "pull request was opened. Its worktree and any commits already fetched back are kept. If "
+    "`docker ps` still lists a smortboard container for it, remove that first, then answer to "
+    "resume."
+)
+
+
+def _left_mid_run(events: list[dict[str, Any]]) -> bool:
+    """whether the card's latest attempt started and never wrote run_ended"""
+    starts = [i for i, event in enumerate(events) if event["kind"] == "lifecycle_started"]
+    if not starts:
+        return False
+    return not any(event["kind"] == "run_ended" for event in events[starts[-1] :])
+
+
+def recover_orphaned_runs(store: Store) -> list[str]:
+    """blocks every card a previous board process left mid-run as CRASH, and returns their ids.
+
+    A fresh registry holds no runs, so a card the store still shows working - doing, unflagged, no
+    reason code, no run_ended since its last start - lost its board. Left alone it sits in doing
+    forever, out of the inbox; CRASH puts it there, and an answer resumes it in its own worktree.
+    """
+    recovered = []
+    for board in store.list_boards():
+        for card in store.list_cards(board["id"]):
+            if card["status"] != "doing" or card["blocked_reason_code"] or card["review_flag"]:
+                continue
+            if not _left_mid_run(store.list_events(card["id"])):
+                continue
+            store.append_event(card["id"], "run_orphaned", {})
+            store.update_card(card["id"], blocked_reason_code="CRASH", review_flag=True)
+            store.add_comment(card["id"], author=BOARD_AUTHOR, body=ORPHANED_NOTE)
+            recovered.append(card["id"])
+    return recovered
 
 
 class RunNotActiveError(RuntimeError):
@@ -187,6 +226,9 @@ class RunRegistry:
             state.error = f"{type(exc).__name__}: {exc}"
         finally:
             state.finished_at = time.time()
+            # the mark a restarted board reads to tell a finished run from one it orphaned
+            with contextlib.suppress(sqlite3.Error):
+                store.append_event(state.card_id, "run_ended", {"phase": state.phase})
             store.close()
             with self._lock:
                 self._handles.pop(state.card_id, None)
