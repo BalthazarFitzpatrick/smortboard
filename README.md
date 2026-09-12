@@ -230,23 +230,101 @@ uv run smortboard            # http://127.0.0.1:8000/ui/index.html
 Or run the board without a checkout: `uvx --from git+https://github.com/BalthazarFitzpatrick/smortboard smortboard`.
 You still need the clone once, to build the Docker images below.
 
-The board runs with nothing else installed. Running cards needs three more things:
+### Before a card can run
+
+The board runs with nothing else installed. Running cards needs three more things.
+
+**1. Docker, running.** Docker Desktop on macOS and Windows, Docker Engine on Linux.
+
+**2. The card image, built once from the clone.** It holds the `claude` CLI, git and uv - no
+credentials, no code.
 
 ```bash
-# 1. docker, running
-# 2. the card image: claude cli, git, uv - no credentials, no code
 docker build -f docker/card.Dockerfile -t smortboard-card:latest .
-# 3. a card token, model-only, kept in a file only you can read
-claude setup-token                      # prints the token - copy it to the clipboard
-mkdir -p ~/.config/smortboard
-# umask 077 creates the file as mode 600; tr strips the newline pbpaste keeps
-(umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
-chmod 600 ~/.config/smortboard/card_token      # already 600 - this makes it explicit
-wc -c ~/.config/smortboard/card_token           # a full token is 108 bytes
 ```
 
-`pbpaste` is macOS. On Linux, paste into `cat > ~/.config/smortboard/card_token` instead and press
-Ctrl-D.
+**3. A card token.** A model-only token, separate from your own login, kept in a file only you can
+read. Generate it:
+
+```bash
+claude setup-token
+```
+
+It opens the browser, and once you approve, it prints the token in the terminal. That is the only
+copy: nothing saves it, and nothing puts it on the clipboard for you. **Select it and copy it
+yourself**, then store it with option A or option B below. The file goes here:
+
+| OS | Token file |
+|---|---|
+| macOS, Linux | `~/.config/smortboard/card_token` (`$XDG_CONFIG_HOME/smortboard/card_token` if that is set) |
+| Windows | `%APPDATA%\smortboard\card_token` |
+
+A full token is 108 bytes. The board strips surrounding whitespace, so a trailing newline is fine.
+
+**Option A - straight from the clipboard.**
+
+macOS:
+
+```bash
+mkdir -p ~/.config/smortboard
+# umask 077 creates the file as mode 600; tr strips the newline and any line-wrap breaks
+(umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
+wc -c < ~/.config/smortboard/card_token      # 108
+```
+
+Linux: the same, with `wl-paste` (Wayland) or `xclip -selection clipboard -o` (X11) in place of
+`pbpaste`.
+
+Windows (PowerShell):
+
+```powershell
+New-Item -ItemType Directory -Force "$env:APPDATA\smortboard" | Out-Null
+(Get-Clipboard -Raw) -replace '\s', '' |
+  Set-Content -NoNewline -Encoding ascii "$env:APPDATA\smortboard\card_token"
+(Get-Item "$env:APPDATA\smortboard\card_token").Length      # 108
+```
+
+**Option B - create the file first, then paste into it.**
+
+macOS, Linux:
+
+```bash
+mkdir -p ~/.config/smortboard
+touch ~/.config/smortboard/card_token
+chmod 600 ~/.config/smortboard/card_token    # lock it before the token goes in
+nano ~/.config/smortboard/card_token         # paste, save, quit - any editor works
+wc -c < ~/.config/smortboard/card_token      # 108, or 109 with the editor's newline
+```
+
+Windows (PowerShell):
+
+```powershell
+New-Item -ItemType Directory -Force "$env:APPDATA\smortboard" | Out-Null
+New-Item -ItemType File "$env:APPDATA\smortboard\card_token" | Out-Null
+notepad "$env:APPDATA\smortboard\card_token"                # paste, save
+```
+
+Windows has no `chmod 600`: a file under your user profile is already restricted to your account.
+
+**Other places the board looks.** `SMORTBOARD_CARD_TOKEN_PATH` points it at a file anywhere else.
+With no file, it falls back to the OS credential store - Keychain on macOS, Credential Manager on
+Windows, Secret Service on Linux - under service `smortboard-card-token`, account `smortboard`. The
+file comes first because macOS prompts on every Keychain read.
+
+**This is not where Claude keeps its own login.** `claude setup-token` stores nothing, so the card
+token lives only where you put it. Your own `/login` credential is separate, and Claude Code keeps
+it here:
+
+| OS | Claude Code's own login |
+|---|---|
+| macOS | the macOS Keychain (`~/.claude/.credentials.json`, mode 600, if the Keychain refuses the write) |
+| Linux | `~/.claude/.credentials.json`, mode 600 |
+| Windows | `%USERPROFILE%\.claude\.credentials.json`, restricted by your user profile |
+
+The board never reads that login and a card never sees it. Do not copy a token out of it - the
+card token is the narrower, model-only one.
+
+### A board and its repo
 
 Press `b` to create a board and register a repo on it: its path, default branch and test command.
 The repo itself has to exist on GitHub and have its default branch pushed already - smortboard only
