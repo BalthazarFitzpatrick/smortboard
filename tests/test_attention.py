@@ -226,7 +226,7 @@ def test_resume_reuses_an_existing_worktree_and_its_commits(store, repo):
     r = store.create_repo(
         board["id"], "repo", str(repo), "main", test_command="true", image="img:latest"
     )
-    card = store.create_card(board["id"], r["id"], "a card")
+    card = store.create_card(board["id"], r["id"], "a card", leases=["progress.txt"])
 
     from smortboard.exec.worktrees import create_worktree
 
@@ -269,7 +269,7 @@ def test_resume_adds_a_worktree_for_a_branch_with_none_checked_out(store, repo):
     r = store.create_repo(
         board["id"], "repo", str(repo), "main", test_command="true", image="img:latest"
     )
-    card = store.create_card(board["id"], r["id"], "a card")
+    card = store.create_card(board["id"], r["id"], "a card", leases=["progress.txt"])
 
     tree = create_worktree(str(repo), card["id"], base="main")
     (tree.path / "progress.txt").write_text("partial work\n")

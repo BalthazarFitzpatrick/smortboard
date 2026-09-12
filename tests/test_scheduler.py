@@ -293,7 +293,8 @@ def test_non_overlapping_leases_run_together(store, board_and_repo):
 
 def test_a_card_with_no_lease_touches_nothing_so_it_never_conflicts(store, board_and_repo):
     """the lease hook (exec/leases.py) refuses every write when path_globs is empty - so an
-    unleased card can write nowhere and can never step on another card's files"""
+    unleased card can write nowhere and can never step on another card's files. the lifecycle
+    refuses it before its agent runs; the scheduler just must not hold the leased card up"""
     board_id, repo_id = board_and_repo
     store.set_setting("max_parallel", "5")
     a = store.create_card(board_id, repo_id, "a")  # no leases

@@ -309,11 +309,14 @@ function cardPanelHtml(card, outcome) {
   const comments = (card.comments || [])
     .map(c => `<li><span class="field-label">${escapeHtml(authorLabel(c.author))}</span> ${escapeHtml(c.body)}</li>`);
   const status = escapeHtml(card.status) + (card.blocked_reason_code ? ` (${escapeHtml(card.blocked_reason_code)})` : '');
+  // the paths its agent may write - an empty lease is why a run gets refused, so say so here
+  const globs = (card.leases || []).map(l => escapeHtml(l.path_glob));
+  const lease = globs.length ? globs.join(', ') : '<span class="empty">none - it will not run</span>';
   return `
     <div class="card-sections">
       ${sectionHtml('title', 'title', escapeHtml(card.title))}
       ${sectionHtml('workstream', 'workstream', escapeHtml(card.workstream || '') || '<span class="empty">none</span>')}
-      ${sectionHtml('status', 'status', `${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div>`)}
+      ${sectionHtml('status', 'status', `${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div><div class="card-model">lease: ${lease}</div>`)}
       ${outcomeSectionHtml(outcome, card)}
       ${sectionHtml('description', 'description', escapeHtml(card.description || ''))}
       ${sectionHtml('tasks', 'tasks', listHtml(tasks))}
