@@ -292,7 +292,7 @@ def test_gh_pr_create_failing_is_a_refusal_not_an_exception(tmp_path, monkeypatc
 
 
 def test_a_real_repo_with_no_commits_ahead_is_seen_as_empty(tmp_path):
-    """the one test that uses real git rather than the fake, so _branch_has_commits is checked
+    """the one test that uses real git rather than the fake, so branch_has_commits is checked
     against git's actual output rather than against a string this file invented"""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -305,9 +305,9 @@ def test_a_real_repo_with_no_commits_ahead_is_seen_as_empty(tmp_path):
     run("git", "commit", "-q", "-m", "first")
     run("git", "branch", BRANCH)
 
-    assert not mr._branch_has_commits(repo, BRANCH, "main")
+    assert not mr.branch_has_commits(repo, BRANCH, "main")
 
     run("git", "checkout", "-q", BRANCH)
     (repo / "f.txt").write_text("two")
     run("git", "commit", "-qam", "second")
-    assert mr._branch_has_commits(repo, BRANCH, "main")
+    assert mr.branch_has_commits(repo, BRANCH, "main")
