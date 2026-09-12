@@ -47,7 +47,7 @@ TWO_CARDS = {
             "repo": "nope",
             "criteria": [],
             "tasks": [],
-            "leases": [],
+            "leases": ["y.py"],
             "depends_on": ["a"],
         },
     ],
@@ -194,3 +194,14 @@ def test_registry_refuses_a_second_turn_while_thinking(tmp_path):
     assert registry.thinking(board["id"])
     assert not registry.start(board["id"], "second", runner=_slow_runner)
     gate.set()
+
+
+def test_a_proposed_card_with_no_lease_is_created_but_flagged(store, board):
+    base = TWO_CARDS["cards"][0]
+    payload = {"reply": "ok", "plan": "p", "cards": [{**base, "title": "bare", "leases": []}]}
+    run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
+    assert [c["title"] for c in store.list_cards(board["id"])] == ["bare"]
+    notes = [
+        m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
+    ]
+    assert any('"bare" has no lease' in note for note in notes)

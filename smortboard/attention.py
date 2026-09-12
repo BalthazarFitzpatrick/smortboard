@@ -87,8 +87,10 @@ def answer_card(store: Store, runs: Any, card_id: str, message: str) -> dict[str
 
     Resumable reasons are the ones an answer can actually unstick: AGENT_QUESTION (he answers the
     question), TESTS_FAILED / REVIEW_REJECTED / CRASH (a note the next run reads before trying
-    again), LEASE_CONFLICT (he can widen the lease in the note). USAGE_LIMIT is not resumable here
-    - it clears itself once the rate-limit window resets, and an answer changes nothing about that.
+    again), LEASE_CONFLICT (the note says what to do instead - widening the lease itself is
+    Store.set_leases, since the guard reads the card's lease rows, never a note). USAGE_LIMIT is
+    not resumable here - it clears itself once the rate-limit window resets, and an answer changes
+    nothing about that.
     Neither is DEPENDENCY_REJECTED - the dependency, not this card, is what needs fixing, and
     accept_card already un-blocks it automatically once that dependency is accepted after all.
     A review_flag with no reason code (a checking card waiting on accept/reject) is not a resumable

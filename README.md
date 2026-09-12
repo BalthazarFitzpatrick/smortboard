@@ -51,7 +51,7 @@ It never merges. Anything that needs you waits in one inbox.
 | **Board** | A named set of cards and repos. `1`-`9` jump between boards. |
 | **Card** | One unit of work: a title, a description, acceptance criteria, tasks, dependencies, a lease, and optionally a model. |
 | **Repo** | Where cards work: a path, a default branch, a test command, an optional lint command and an optional image. |
-| **Lease** | The path globs a card may Edit or Write. An empty lease allows no writes at all. |
+| **Lease** | The path globs a card may Edit or Write, set with `PATCH /api/cards/<id>` and `{"leases": [...]}`. An empty lease allows no writes at all, so the board refuses to run a card without one. |
 | **Worktree** | One git worktree and branch per card. The container works on a clone, and its commits are fetched back. |
 | **Attempt** | One run of a card, from its `lifecycle_started` event to where it stopped. Cost, replay and the resume briefing all work per attempt. |
 | **Status** | Five columns: todo, doing, checking, accepted, rejected. There is no "blocked" column. |

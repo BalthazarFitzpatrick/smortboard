@@ -344,11 +344,17 @@ def _make_handler(
         def _handle_patch_card(self, card_id: str) -> None:
             body = self._read_json()
             # the store's own list - a second copy here went stale and refused `model` with a 400
-            unknown = set(body) - CARD_WRITABLE_FIELDS
+            unknown = set(body) - CARD_WRITABLE_FIELDS - {"leases"}
             if unknown:
                 self._send_json(400, {"error": f"not writable: {sorted(unknown)}"})
                 return
-            card = store.update_card(card_id, **body)
+            leases = body.pop("leases", None)
+            if leases is not None:
+                if not isinstance(leases, list):
+                    self._send_json(400, {"error": "leases must be a list of globs"})
+                    return
+                store.set_leases(card_id, leases)
+            card = store.update_card(card_id, **body) if body else store.get_card(card_id)
             self._send_json(200, card)
 
         def _handle_create_repo(self, board_id: str) -> None:
