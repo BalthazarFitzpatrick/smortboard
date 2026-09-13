@@ -279,12 +279,11 @@ body {
 .prompt-status { color: var(--text-dim); }
 .prompt-status.prompt-error { color: var(--fill-warn); }
 
-/* ---- keyboard shortcuts (s): two columns, wide enough that the longest binding stays on one line.
-   ui_base already shares the width between the columns; a flex rule on every child here also
-   stretched the 2px divider into 268px of empty space */
-.menu-panel.shortcut-overlay { width: min(1000px, 94vw); max-height: 90vh; }
-/* the whole table at once - ui_base caps a menu column at 60vh, which hid boards 8 and 9 */
-.shortcut-overlay .menu-column-row > .menu-section { max-height: none; }
+/* ---- keyboard shortcuts (s): one page at a time, wide enough that the longest binding stays on
+   one line. left/right swaps the page's section in place, so this only ever sizes a single list */
+.menu-panel.shortcut-overlay { width: min(560px, 94vw); max-height: 90vh; }
+/* the whole page at once - ui_base caps a menu section at 60vh, which hid boards 8 and 9 */
+.shortcut-overlay .menu-section { max-height: none; }
 
 /* ---- usage (u): a card's language - ruled sections, dim labels, a foot - with ui_base's fill bar
    for how far through a window we are and each model's share of the spend */

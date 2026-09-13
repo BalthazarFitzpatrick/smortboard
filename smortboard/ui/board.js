@@ -5,8 +5,8 @@ const STATUSES = ['todo', 'doing', 'checking', 'accepted', 'rejected'];
 
 // the binding table IS the shortcut overlay's source and the handler dispatch's source, so the
 // two cannot drift apart - see openShortcutOverlay and the keydown handler below
-// ORDERED BY GROUP: the overlay shows one column per group in this order, so the columns read
-// together are still exactly this table
+// ORDERED BY GROUP: the overlay pages through one group at a time in this order, so a binding's
+// group alone decides which page it lands on - no second list to keep in sync
 const BINDINGS = [
   {code: 'ArrowUp', label: 'up', action: 'move focus up / exit to board bar', group: 'cards'},
   {code: 'ArrowDown', label: 'down', action: 'move focus down', group: 'cards'},
@@ -41,7 +41,7 @@ const BINDINGS = [
   })),
 ];
 
-// the overlay's two columns, left to right
+// the overlay's pages, in the order left/right cycle through them
 const BINDING_GROUPS = [['cards', 'cards and the board'], ['panels', 'panels and boards']];
 
 let boards = [];
@@ -1365,9 +1365,9 @@ function togglePromptEditor() {
 
 // ---- shortcut overlay, built from BINDINGS so it cannot drift -----------------------
 
-// TWO COLUMNS, one per binding group, each a list section - Menu's column mode lays sections side
-// by side with a divider between. the class widens this one menu to hold both
-// THE NINE BOARD KEYS ARE ONE ROW here: listed one by one they ran the column off the screen.
+// ONE PAGE PER BINDING GROUP - left/right flips between them, so a new BINDINGS group needs no
+// new overlay code, and a new binding lands on whichever page its group already renders.
+// THE NINE BOARD KEYS ARE ONE ROW here: listed one by one they ran the page off the screen.
 // BINDINGS keeps all nine, since the keyboard handler looks each one up
 function overlayRows(bindings) {
   return bindings
@@ -1377,21 +1377,28 @@ function overlayRows(bindings) {
       : {id: b.code, label: `${b.label} - ${b.action}`, disabled: true}));
 }
 
+// the single section for one page - built fresh from BINDINGS each time, never cached, so paging
+// can never show a group's stale copy
+function shortcutPageSection(index) {
+  const [group, label] = BINDING_GROUPS[index];
+  return {kind: 'list', label, items: overlayRows(BINDINGS.filter(b => b.group === group))};
+}
+
 function openShortcutOverlay() {
   toggleOverlay('KeyS', () => {
-    const sections = BINDING_GROUPS.map(([group, label]) => ({
-      kind: 'list',
-      label,
-      items: overlayRows(BINDINGS.filter(b => b.group === group)),
-    }));
+    let page = 0;
     const menu = new Menu({
       title: 'keyboard shortcuts',
-      columns: true,
-      sections,
+      sections: [shortcutPageSection(page)],
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyS') openOverlay = null; },
     });
-    menu.openAt({x: Math.max(16, window.innerWidth / 2 - 500), y: 60});
+    menu.openAt({x: Math.max(16, window.innerWidth / 2 - 280), y: 60});
     menu.el?.classList.add('shortcut-overlay', 'menu-centered');
+    // left/right move here; wrapping means either direction reaches every page
+    menu.turnPage = dir => {
+      page = (page + dir + BINDING_GROUPS.length) % BINDING_GROUPS.length;
+      menu.refresh([shortcutPageSection(page)]);
+    };
     return menu;
   });
 }
@@ -1417,6 +1424,13 @@ function withModifier(evt) {
 
 document.addEventListener('keydown', evt => {
   if (withModifier(evt)) return;
+  // the shortcut overlay owns left/right while it is open, ahead of the focus-recovery below -
+  // otherwise a lost-focus reentry would eat the very same arrow press as a card move
+  if (openOverlay && openOverlay.key === 'KeyS' && (evt.code === 'ArrowLeft' || evt.code === 'ArrowRight')) {
+    evt.preventDefault();
+    openOverlay.menu.turnPage(evt.code === 'ArrowRight' ? 1 : -1);
+    return;
+  }
   const recovered = reenterIfFocusLost();
   const typing = evt.target.matches?.('input, textarea');
   const binding = BINDINGS.find(b => b.code === evt.code);
