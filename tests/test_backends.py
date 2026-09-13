@@ -8,6 +8,7 @@ which is skipped unless Docker is actually usable on the machine running the sui
 
 import json
 import shlex
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -370,6 +371,8 @@ def test_container_run_card_raises_when_token_missing(tmp_path):
 # -- subprocess backend: token becomes an env var, never for the container ----
 
 
+# the test gate runs the suite inside a container with no docker, so this test failed every card
+@pytest.mark.skipif(shutil.which("docker") is None, reason="no docker binary here")
 def test_container_backend_real_docker_smoke(tmp_path):
     """end to end: builds nothing (no image required), just proves docker itself can run a
     throwaway container against a real bind mount and this backend can shell out to it"""
