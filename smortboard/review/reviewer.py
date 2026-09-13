@@ -45,8 +45,12 @@ BLOCKING_SEVERITIES = {"high", "critical"}
 # handed in rather than letting it run git, so it never needs a shell to do its job
 REVIEWER_ALLOWED_TOOLS: tuple[str, ...] = ("Read", "Grep", "Glob")
 
-# a review reads a diff and answers four questions; it should not cost what the work cost
-DEFAULT_REVIEW_BUDGET_USD = 0.50
+# a review reads a diff and answers four questions; it should not cost what the work cost. 0.50 was
+# too tight: a 361-line port's review cost $0.503 and stopped on the budget as it answered
+DEFAULT_REVIEW_BUDGET_USD = 1.50
+
+# the result subtype of a run stopped by --max-budget-usd
+BUDGET_STOP = "error_max_budget_usd"
 
 REVIEW_JSON_SCHEMA = {
     "type": "object",
@@ -172,20 +176,29 @@ def _docker_command(
 
 
 def _parse(run_result: RunResult) -> ReviewResult:
-    if run_result.blocked_reason_code is not None:
+    if run_result.structured_output is not None:
+        # the answer the reviewer submitted is its verdict - a budget stop right after it does
+        # not unmake it
+        data: Any = run_result.structured_output
+    elif run_result.subtype == BUDGET_STOP:
+        return ReviewResult(
+            approved=False, error="the reviewer hit its budget before it gave a verdict"
+        )
+    elif run_result.blocked_reason_code is not None:
         # a crash, a lease conflict, an unanswered question - none of those is a verdict, so
         # refuse rather than treat "no findings reported" as approval
         return ReviewResult(
             approved=False,
             error=f"reviewer run did not complete cleanly: {run_result.blocked_reason_code}",
         )
-    text = run_result.result_text
-    if not text:
-        return ReviewResult(approved=False, error="reviewer produced no output")
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return ReviewResult(approved=False, error="reviewer response was not valid json")
+    else:
+        text = run_result.result_text
+        if not text:
+            return ReviewResult(approved=False, error="reviewer produced no output")
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return ReviewResult(approved=False, error="reviewer response was not valid json")
     raw_findings = data.get("findings") if isinstance(data, dict) else None
     if not isinstance(raw_findings, list):
         return ReviewResult(approved=False, error="reviewer response had no findings list")
