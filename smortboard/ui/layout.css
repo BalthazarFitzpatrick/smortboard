@@ -337,6 +337,16 @@ body {
 .card-foot .stat-action { color: var(--fill-attention); font-weight: 600; }
 .card-next { color: var(--fill-attention); font-weight: 600; margin-bottom: 4px; }
 
+/* ---- the card's short-id --------------------------------------------------------------------
+   metadata to say aloud or copy, not a heading - dim, small and monospace so it reads as
+   secondary to the title it sits beside rather than competing with it */
+.card-head { display: flex; align-items: baseline; gap: 8px; }
+.card-head .card-title { flex: 1 1 auto; min-width: 0; }
+.card-head .card-id {
+  flex: 0 0 auto; color: var(--text-dim); font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 0.85em;
+}
+
 /* agents and the board write short labelled lines - keep the line breaks instead of one wall */
 .card-body, .comment-body, .card-panel [data-section="description"] .section-value {
   white-space: pre-line;
