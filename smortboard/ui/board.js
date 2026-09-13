@@ -105,6 +105,11 @@ async function onBoardEnter(boardId) {
   currentBoardId = boardId;
   const cards = await api(`/api/boards/${boardId}/cards`);
   renderBuckets(cards);
+  // resumes this board's send queue (a reload landed here with something still unsent) whether or
+  // not mission control is open - a message keeps retrying in the background either way.
+  // guarded: messageQueue.js is a separate script (see index.html's load order) and some isolated
+  // test bundles load board.js without it - this backs off quietly rather than throwing there
+  if (typeof createMessageQueue === 'function') mcQueueFor(boardId);
   // mission control is per-board, so a board switch while it is open reloads its conversation
   if (drawers.right && drawers.right.isOpen()) loadMissionControl();
 }
@@ -655,7 +660,65 @@ function wireTerminalInput(input, log, onSend) {
 
 // ---- mission control (.) - the orchestrator's chat for the current board ------------------------
 
-const mc = {header: null, cycle: null, log: null, input: null, poll: null};
+const mc = {header: null, cycle: null, log: null, input: null, poll: null, queues: new Map()};
+
+// one send queue per board, so a reload or a board switch resumes the right backlog rather than
+// mixing boards together. lazy: the first call for a board both creates the queue and, via
+// createMessageQueue's own resume-on-construct, kicks off whatever a reload left queued
+function mcQueueFor(boardId) {
+  if (!mc.queues.has(boardId)) {
+    mc.queues.set(boardId, createMessageQueue(
+      `mission-control-${boardId}`,
+      body => sendMissionControlMessage(boardId, body),
+      {
+        onChange: () => renderMissionControlQueue(boardId),
+        // fires once the message is delivered AND already off the queue, so the confirmed
+        // transcript replaces the queued line rather than sitting next to a duplicate of it
+        onSent: body => { if (boardId === currentBoardId) renderMissionControl(body); },
+      },
+    ));
+  }
+  return mc.queues.get(boardId);
+}
+
+// the actual network call a queued message makes. rejects on a network error AND on a non-2xx
+// (409 - still thinking - included) so createMessageQueue treats both as retryable rather than
+// dropping the message
+async function sendMissionControlMessage(boardId, text) {
+  const res = await fetch(`/api/boards/${boardId}/orchestrator`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error((body && body.error) || `request failed (${res.status})`);
+  return body;
+}
+
+// the queue's own lines: one per message not yet confirmed by the server, each tagged with its
+// state so pending/sending/failed/sent are all visible rather than the message just vanishing
+// while it retries. renderMissionControl already redraws the confirmed transcript from the server,
+// so this only ever adds or updates lines for what that transcript does not have yet
+function renderMissionControlQueue(boardId) {
+  if (boardId !== currentBoardId || !mc.log) return;
+  const items = mcQueueFor(boardId).items();
+  const stale = mc.log.querySelectorAll('.terminal-line[data-queue-id]');
+  stale.forEach(line => { if (!items.some(it => it.id === line.dataset.queueId)) line.remove(); });
+  items.forEach(item => {
+    let line = mc.log.querySelector(`.terminal-line[data-queue-id="${item.id}"]`);
+    if (!line) {
+      line = appendLine(mc.log, 'fabian', item.body);
+      line.dataset.queueId = item.id;
+    }
+    line.className = `terminal-line author-fabian queue-${item.state}`;
+    let badge = line.querySelector('.terminal-state');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'terminal-state';
+      line.appendChild(badge);
+    }
+    badge.textContent = item.state;
+  });
+  mc.log.scrollTop = mc.log.scrollHeight;
+}
 
 function buildMissionControlDom(drawer) {
   const term = terminalDom('>');
@@ -703,6 +766,9 @@ function renderMissionControl(data, {justFinished = false} = {}) {
     }
   });
   if (data.error) appendLine(mc.log, 'board', data.error, 'error');
+  // the wipe above just cleared any queued-but-unconfirmed lines too - put back whatever this
+  // board's queue still has that the server transcript does not
+  if (currentBoardId) renderMissionControlQueue(currentBoardId);
   if (data.thinking) {
     appendLine(mc.log, 'orchestrator', 'orchestrator is thinking', 'thinking');
     mc.poll = setTimeout(pollMissionControl, 1500);
@@ -724,20 +790,12 @@ async function pollMissionControl() {
   }
 }
 
-async function sendMissionControl(text) {
+// hands the message to this board's send queue and returns immediately - the queue writes it to
+// localStorage before attempting anything, so a failed request (or a closed tab) never loses it.
+// the queue's onChange callback (renderMissionControlQueue) is what actually draws the line
+function sendMissionControl(text) {
   if (!currentBoardId) { appendLine(mc.log, 'board', 'no board selected', 'error'); return; }
-  appendLine(mc.log, 'fabian', text);
-  try {
-    const res = await fetch(`/api/boards/${currentBoardId}/orchestrator`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
-    });
-    const body = await res.json().catch(() => null);
-    if (res.status === 409) { appendLine(mc.log, 'board', (body && body.error) || 'already thinking', 'error'); return; }
-    if (!res.ok) { appendLine(mc.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error'); return; }
-    renderMissionControl(body);
-  } catch (err) {
-    appendLine(mc.log, 'board', `could not reach the orchestrator: ${err.message}`, 'error');
-  }
+  mcQueueFor(currentBoardId).enqueue(text);
 }
 
 // ---- workforce (,) - one card's agent chat -------------------------------------------------------

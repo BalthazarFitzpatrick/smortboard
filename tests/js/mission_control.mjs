@@ -18,7 +18,11 @@ function stubJson(status, body) {
 function fetchStub(path, opts) {
   calls.push({path, opts});
   const resp = responses.get(path);
-  return Promise.resolve(resp || stubJson(404, {error: 'no stub for ' + path}));
+  // a function stub is called fresh per request with that request's opts, so a test can fail the
+  // first POST and succeed the next one - proving a retry actually happened, without a GET (the
+  // drawer's own load) consuming the same one-shot failure
+  const resolved = typeof resp === 'function' ? resp(opts) : resp;
+  return Promise.resolve(resolved || stubJson(404, {error: 'no stub for ' + path}));
 }
 
 installStubDom({fetchImpl: fetchStub});
@@ -56,11 +60,12 @@ function SpyDrawer(opts) {
   };
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('board.js')].join('\n;\n');
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+  smort('messageQueue.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {
-  loadRoster, jumpToCard, usageSections, sendMissionControl, renderMissionControl, mc,
-  resolveWorkforceTarget, loadWorkforce, wf, buildDrawers, drawers, onBoardEnter,
+  loadRoster, jumpToCard, usageSections, sendMissionControl, renderMissionControl, mc, mcQueueFor,
+  resolveWorkforceTarget, loadWorkforce, wf, buildDrawers, drawers, onBoardEnter, createMessageQueue,
   boardIdRef: () => currentBoardId,
 };`)(SpyMenu, SpyDrawer);
 
@@ -176,7 +181,10 @@ responses.set('/api/boards/b1/orchestrator', stubJson(202, {
   plan: null, thinking: true, error: null, model: 'opus',
 }));
 mod.mc.input.value = 'build the login card';
-await mod.sendMissionControl('build the login card');
+// sendMissionControl hands off to the send queue and returns right away - the queue itself does
+// the network call, on the next microtask turn rather than inside this function
+mod.sendMissionControl('build the login card');
+await new Promise(r => setTimeout(r, 0));
 const post = calls.find(c => c.path === '/api/boards/b1/orchestrator' && c.opts?.method === 'POST');
 assert.ok(post, 'sending should POST to the board orchestrator route');
 assert.deepEqual(JSON.parse(post.opts.body), {message: 'build the login card'}, 'the post body carries the message');
@@ -184,6 +192,57 @@ const thinkingLine = mod.mc.log.children.find(c => c.className.includes('author-
 assert.ok(thinkingLine, 'a thinking reply shows the dim thinking line');
 // close before the 1500ms poll fires - closing clears mc.poll so the process can exit
 mod.drawers.right.close();
+
+// ---- mission control never loses a message: a failed send stays queued, shows its own state, and
+// is delivered once the request succeeds - without the operator resending anything by hand --------
+responses.set('/api/boards/b2/cards', stubJson(200, []));
+let b2PostAttempts = 0;
+responses.set('/api/boards/b2/orchestrator', opts => {
+  // the drawer's own GET (on open, and any poll) always succeeds - only the POST this test is
+  // exercising fails once, so opening the drawer cannot eat the one-shot failure by accident
+  if (opts?.method !== 'POST') {
+    return stubJson(200, {messages: [], plan: null, thinking: false, error: null, model: 'opus'});
+  }
+  b2PostAttempts += 1;
+  if (b2PostAttempts === 1) return stubJson(500, {error: 'boom'});
+  return stubJson(200, {
+    messages: [{id: 'm1', author: 'fabian', body: 'retry me', created_at: '', cards: []}],
+    plan: null, thinking: false, error: null, model: 'opus',
+  });
+});
+await mod.onBoardEnter('b2');
+mod.drawers.right.open();
+await new Promise(r => setTimeout(r, 0));
+
+mod.sendMissionControl('retry me');
+await new Promise(r => setTimeout(r, 0));
+const queueLine = mod.mc.log.children.find(c => c.dataset.queueId);
+assert.ok(queueLine, 'a message not yet confirmed by the server draws its own queued line');
+assert.ok(queueLine.className.includes('queue-failed'),
+  'a failed attempt is shown as failed, not silently dropped');
+const stateBadge = queueLine.children.find(c => c.className === 'terminal-state');
+assert.equal(stateBadge.textContent, 'failed', 'the line names its own state');
+
+await new Promise(r => setTimeout(r, 700)); // past the queue's backoff - the retry should have landed
+assert.equal(b2PostAttempts, 2, 'the second attempt is the queue retrying on its own, not a resend by hand');
+assert.ok(!mod.mc.log.children.some(c => c.dataset.queueId),
+  'once delivered the queued line is gone - the confirmed transcript replaced it');
+assert.ok(mod.mc.log.children.some(c => c.className.includes('author-fabian') && !c.dataset.queueId),
+  'the message now comes from the confirmed transcript, in the order it was sent');
+mod.drawers.right.close();
+
+// ---- a reload keeps an unsent message: a fresh queue against the same board id picks the
+// message straight back up, without the operator retyping it -------------------------------------
+{
+  const b2Queue = mod.mcQueueFor('b2');
+  assert.deepEqual(b2Queue.items(), [], 'nothing left queued for b2 after the retry test above');
+  const neverResolves = () => new Promise(() => {}); // stands in for "still offline"
+  const before = mod.createMessageQueue('reload-key', neverResolves, {backoffMs: [10_000]});
+  before.enqueue('still here after reload');
+  const after = mod.createMessageQueue('reload-key', neverResolves, {backoffMs: [10_000]});
+  assert.deepEqual(after.items().map(i => i.body), ['still here after reload'],
+    'a fresh queue instance against the same key - standing in for a page reload - keeps the unsent message');
+}
 
 // ---- workforce target: the focused card wins over the roster ------------------------------------
 const strip = element('div', 'card-strip');

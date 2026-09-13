@@ -252,6 +252,11 @@ body {
 .terminal-line.author-thinking .terminal-body { color: var(--text-dim); }
 .terminal-line.author-error .terminal-author,
 .terminal-line.author-error .terminal-body { color: var(--fill-warn); }
+/* a queued-but-not-yet-confirmed message: the state word sits right after the body, in the same
+   dim tone the line already uses for its lower-priority text - failed is the one state worth
+   calling out, since it is the one that looks like something went wrong until the retry lands */
+.terminal-state { padding-left: 2ch; color: var(--text-dim); font-size: 0.9em; }
+.terminal-line.queue-failed .terminal-state { color: var(--fill-warn); }
 .terminal-input-row { display: flex; gap: 8px; align-items: flex-start; flex: 0 0 auto; }
 .terminal-prompt { color: var(--text-dim); padding-top: 6px; }
 .terminal-input {
