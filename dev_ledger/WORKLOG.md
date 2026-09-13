@@ -666,3 +666,8 @@ the operator to delete or keep.
 - #73: an empty board hid its five columns with [hidden], but .bucket's display: flex outranked it, so the columns squeezed beside the hazard box. added .bucket[hidden] { display: none }.
 - the ledger moved into dev_ledger/ with root symlinks and was scrubbed for a public repo: the operator's name, home paths and consumer-project names.
 - queued card-leases-from-real-files: two cards were leased to src/**/*.tsx globs that match nothing here and stopped on LEASE_CONFLICT.
+
+## 2026-09-13T17:55Z - consumer-project-77 [cb4b0d] - board triage and the mission-control plan
+- every card on this board was stuck: 11 of 16 carried src/** leases (mission control has never seen a file), and the db purge left every repo without test_command, lint_command or image, so the gate refused cards with correct leases and the bash guard refused their test runs.
+- plan approved: mission control spans every board by default and reads read-only clones of the repos; it imports ledger tasks once, linked; dev_ledger/CARDS.jsonl and REPO.json keep cards and repo settings through a board-opened sync PR; leases are checked against real files, a conflict parks for one-key approve and is remembered per repo.
+- queued as 19 mc-* tasks, in build order; card-leases-from-real-files and lease-editor-in-ui are folded into mc-lease-check, mc-lease-approve and mc-ui-leases.

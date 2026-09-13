@@ -238,6 +238,45 @@ orchestrator turns and scheduler ticks each open their own SQLite connection on 
 - **An expired or revoked token** (HTTP 401) refuses the card with the steps to renew it.
 - **No merge path exists** in the code.
 
+## Card security: leases
+
+A lease is the list of files a card may change. It is part of the card, set when the card is
+created: mission control gives every card it proposes a `leases` list of path globs, relative to
+the repo root.
+
+**What enforces it.** Each run is wired with a `PreToolUse` hook on the agent's Edit and Write
+tools. Before a write lands, the hook resolves the file's path relative to the repo root and checks
+it against the card's globs. A path no glob matches is refused (exit 2, `LEASE_CONFLICT: <path> is
+outside this card's lease`), the write never happens, and the card stops as `LEASE_CONFLICT` for
+you to decide. The agent is also told its lease up front, so it knows where the work is before it
+starts.
+
+**How a glob matches.** Python's `fnmatch` against the path relative to the repo root. `*` also
+crosses `/`: `smortboard/ui/*` matches `smortboard/ui/board.js` and anything in folders below it.
+`?` is one character, `[abc]` one of a set. A glob that is absolute or climbs with `..` is refused
+when it is saved, since it could never match a path inside the repo.
+
+**What it guarantees:**
+
+- An empty lease allows nothing, so a card without one is refused before its agent starts.
+- Two cards on the same repo whose leases may overlap never run at the same time; the second waits
+  with `lease conflict with card <id>`. Narrow leases are what let cards run side by side.
+- Only you can widen a lease. The guard reads the card's lease as stored, never a note or an
+  answer, and the hook and its `lease.json` are mounted read-only outside the working tree, so the
+  agent cannot edit them.
+
+**What it does not cover:**
+
+- Reading. The lease limits writes; the agent can read the whole repo, which it needs to understand
+  the code it changes.
+- Shell commands. Bash goes through a separate guard that allows only git and the repo's test and
+  lint commands. That guard catches accidents - its own source says it is not a security boundary.
+  The boundary is the card's container.
+
+A card stopped on `LEASE_CONFLICT` is not a failure: its agent asked for a file outside the lease.
+Widen the lease if the work needs that file, or answer to keep the file out of it - see
+[Troubleshooting](#troubleshooting).
+
 ## Cost
 
 - Workers and the reviewer default to sonnet, and the orchestrator to opus. A card's model overrides
@@ -428,6 +467,53 @@ Everyone runs their own board on their own machine; nothing is shared.
 6. **Something wrong?** [Open a bug report](https://github.com/BalthazarFitzpatrick/smortboard/issues/new?template=bug.yml).
    Paste what `h` shows and, if a card misbehaved, a screenshot of its replay (`t`). Never paste
    your token.
+
+## Troubleshooting
+
+### A card stopped on `LEASE_CONFLICT`
+
+A card may only write the files its lease allows. The lease is a list of globs, relative to the repo
+root, set when the card is created. When the agent writes outside it, the guard refuses the write
+and the card stops with `LEASE_CONFLICT`; its note names the files it needed. The usual cause is a
+lease written for a layout the repo does not have, such as `src/**/*.tsx` in a repo with no `src/`.
+
+The board has no control for this yet, so widen the lease through the API:
+
+1. Read the card's note in the inbox (`n`) for the files it asked for.
+2. Find the card's id: `curl -s 127.0.0.1:8000/api/boards` lists the boards, and
+   `curl -s 127.0.0.1:8000/api/boards/<board-id>/cards` lists their cards with ids and titles.
+3. Replace the lease. This sets the whole list, so repeat any glob it should keep:
+
+   ```bash
+   curl -s -X PATCH 127.0.0.1:8000/api/cards/<card-id> \
+     -H 'content-type: application/json' \
+     -d '{"leases": ["smortboard/ui/board.js", "smortboard/ui/layout.css", "tests/js/**"]}'
+   ```
+
+4. Resume the card with an answer. The next run reads it:
+
+   ```bash
+   curl -s -X POST 127.0.0.1:8000/api/cards/<card-id>/answer \
+     -H 'content-type: application/json' \
+     -d '{"message": "lease widened to smortboard/ui/board.js, smortboard/ui/layout.css, tests/js/** - go ahead"}'
+   ```
+
+Answering in the inbox does step 4, but an answer alone never widens a lease: the guard reads the
+card's lease, not its notes. How globs match, and why two cards may wait on each other, is under
+[Card security: leases](#card-security-leases).
+
+Common leases for this repo:
+
+| Change | Lease |
+|---|---|
+| the board: columns, cards, drawers, keys | `smortboard/ui/board.js`, `smortboard/ui/layout.css`, `smortboard/ui/index.html`, `tests/js/**` |
+| one panel (inbox, boards, preflight, replay, scheduler, telemetry, costs) | `smortboard/ui/<panel>.*`, `tests/js/<panel>.mjs` |
+| an API route | `smortboard/server/**`, `tests/test_server.py` |
+| the store and its schema | `smortboard/store/**`, `tests/test_store.py` |
+| card runs and the lease guard | `smortboard/exec/**`, `smortboard/lifecycle.py`, `tests/test_exec.py`, `tests/test_lifecycle.py` |
+| the scheduler | `smortboard/scheduler.py`, `tests/test_scheduler*.py` |
+| the review gate | `smortboard/review/**`, `tests/test_reviewer.py`, `tests/test_gates.py` |
+| docs | `README.md`, `docs/**` |
 
 ## Limits
 
