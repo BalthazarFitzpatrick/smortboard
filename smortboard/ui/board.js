@@ -128,22 +128,24 @@ function cardClasses(card) {
 
 // a blocked card's CTA names the fix, not the bare reason code - the same instinct next_action_short
 // already applies to the strip's footer, just aimed at the one button that matters
-const CTA_BLOCKED_LABELS = {
-  CRASH: 'Investigate crash',
-  USAGE_LIMIT: 'Resume run',
-  LEASE_CONFLICT: 'Fix leases',
-  AGENT_QUESTION: 'Answer question',
-  TESTS_FAILED: 'Review failure',
-  REVIEW_REJECTED: 'Review findings',
-  DEPENDENCY_REJECTED: 'Review dependency',
-};
+// a Map, not a plain object: blocked_reason_code is a server string, and a Map has no prototype
+// chain for a stray value like "constructor" to fall through into
+const CTA_BLOCKED_LABELS = new Map([
+  ['CRASH', 'Investigate crash'],
+  ['USAGE_LIMIT', 'Resume run'],
+  ['LEASE_CONFLICT', 'Fix leases'],
+  ['AGENT_QUESTION', 'Answer question'],
+  ['TESTS_FAILED', 'Review failure'],
+  ['REVIEW_REJECTED', 'Review findings'],
+  ['DEPENDENCY_REJECTED', 'Review dependency'],
+]);
 
 // the one action a card wants next, off the same status and reason code cardClasses reads - never
 // a second source of truth for what state a card is in. action is what the CTA's click performs;
 // attention is whether it wears the waiting-on-you treatment
 function ctaFor(card) {
   if (card.blocked_reason_code) {
-    return {label: CTA_BLOCKED_LABELS[card.blocked_reason_code] || 'Needs attention', action: 'open', attention: true};
+    return {label: CTA_BLOCKED_LABELS.get(card.blocked_reason_code) || 'Needs attention', action: 'open', attention: true};
   }
   if (card.review_flag) return {label: 'Needs attention', action: 'open', attention: true};
   if (card.status === 'doing') return {label: 'Running…', action: 'stop', attention: false};
