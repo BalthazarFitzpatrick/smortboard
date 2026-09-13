@@ -279,6 +279,19 @@ class RunResult:
     # the api refused the token (http 401: expired or revoked) - not the card's fault, so the
     # lifecycle refuses the card with how to renew it rather than blocking it as a crash
     auth_failed: bool = False
+    # the last StructuredOutput call's input - a --json-schema answer the run gave before it ended,
+    # kept even when the run then stopped on its budget
+    structured_output: dict[str, Any] | None = None
+
+
+def _structured_output(event: dict[str, Any]) -> dict[str, Any] | None:
+    """the input of a StructuredOutput tool call in one assistant event, or None"""
+    for block in (event.get("message") or {}).get("content") or []:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        if block.get("name") == "StructuredOutput" and isinstance(block.get("input"), dict):
+            return block["input"]
+    return None
 
 
 # the exact marker a live note carries - the system prompt below tells the agent to expect lines
@@ -499,6 +512,7 @@ def run_process(
 
     result_events: list[dict[str, Any]] = []
     blocked_reason_code: str | None = None
+    structured_output: dict[str, Any] | None = None
     assert process.stdout is not None
     for raw_line in process.stdout:
         event = parse_line(raw_line)
@@ -517,6 +531,10 @@ def run_process(
             reason = classify_rate_limit(event)
             if reason:
                 blocked_reason_code = reason
+        elif event.get("type") == "assistant":
+            # measured: a reviewer submitted its findings, then hit its budget, and the result
+            # event carried none of them - so the answer is taken from the call itself
+            structured_output = _structured_output(event) or structured_output
         _record_deliveries(store, card_id, feeder)
 
     if feeder is not None:
@@ -535,6 +553,7 @@ def run_process(
             total_cost_usd=None,
             num_turns=None,
             result_text=process.stderr.read() if process.stderr else None,
+            structured_output=structured_output,
         )
 
     # cost and turns are PER TURN, so a session with a note turn is the sum. measured 2026-09-11 on
@@ -545,6 +564,7 @@ def run_process(
             **last.__dict__,
             "total_cost_usd": sum(float(e.get("total_cost_usd") or 0) for e in result_events),
             "num_turns": sum(int(e.get("num_turns") or 0) for e in result_events),
+            "structured_output": structured_output,
         }
     )
     # a rate-limit block takes priority over whatever the result event alone would classify

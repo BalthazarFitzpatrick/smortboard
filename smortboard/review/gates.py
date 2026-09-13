@@ -13,6 +13,7 @@ trustworthy.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shutil
 import subprocess
@@ -53,6 +54,31 @@ def _image_for(repo: dict[str, Any] | None) -> str:
     return card_image()
 
 
+def _timeout_seconds(store: Any) -> int:
+    """the board's gate_timeout_seconds setting, else GATE_TIMEOUT_SECONDS"""
+    get_settings = getattr(store, "get_settings", None)
+    raw = get_settings().get("gate_timeout_seconds") if get_settings else None
+    try:
+        value = int(raw) if raw is not None else GATE_TIMEOUT_SECONDS
+    except (TypeError, ValueError):
+        return GATE_TIMEOUT_SECONDS
+    return value if value > 0 else GATE_TIMEOUT_SECONDS
+
+
+def _as_text(data: bytes | str | None) -> str:
+    """TimeoutExpired carries bytes whatever text= said"""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", errors="replace")
+    return data or ""
+
+
+def _remove_container(name: str) -> None:
+    """a timeout kills the docker client, not the named container - which kept the suite running
+    on the machine's cpu after the gate had given up on it"""
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30, check=False)
+
+
 def run_test_gate(
     store: Any,
     card_id: str,
@@ -74,12 +100,14 @@ def run_test_gate(
         raise GateUnavailable("Docker is not running, and the gate runs the suite in a container.")
 
     work_path = Path(work_path)
+    name = container_name("gate", card_id)
+    timeout = _timeout_seconds(store)
     cmd = [
         "docker",
         "run",
         "--rm",
         "--name",
-        container_name("gate", card_id),
+        name,
         "--network",
         "none",
         "-v",
@@ -93,13 +121,18 @@ def run_test_gate(
     ]
     try:
         completed = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=GATE_TIMEOUT_SECONDS, check=False
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
         )
         exit_code, output = completed.returncode, (completed.stdout + completed.stderr)
-    except subprocess.TimeoutExpired:
-        # a timeout is a failure with a reason, not an exception the board has to interpret
+    except subprocess.TimeoutExpired as exc:
+        # a timeout is a failure with a reason, not an exception the board has to interpret.
+        # the output so far says where it stalled - measured, the message alone said nothing
         exit_code = -1
-        output = f"the suite did not finish within {GATE_TIMEOUT_SECONDS}s"
+        partial = _as_text(exc.stdout) + _as_text(exc.stderr)
+        output = (
+            f"{partial}\n\nthe suite did not finish within {timeout}s - above is as far as it got"
+        )
+        _remove_container(name)
 
     result = GateResult(
         passed=exit_code == 0,
