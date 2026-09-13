@@ -572,6 +572,78 @@ async function acceptOrRejectCard(action) {
 // monospace and 2px lines. styling lives in layout.css as configuration, same rule board.js
 // states at the top of this file
 
+// following (pinned to the newest line) is the default. scrolling up stops it - new lines then
+// leave the view alone and ui_base's count badge, sitting above the input, says how many arrived.
+// the pill, focusing the log and pressing down twice, or sending a message all jump back down and
+// resume following. keyed by the log element so mission control and workforce track independently
+const followState = new WeakMap();
+
+function nearBottom(log) {
+  // a few px of slack absorbs the sub-pixel rounding some browsers report on scrollTop
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 4;
+}
+
+// indicateBadge renders the number; the pill showing only while there is one to show is ours to
+// guarantee regardless of what indicateBadge does internally with a host at zero
+function updateBadge(state) {
+  indicateBadge(state.jump, state.count);
+  state.jump.hidden = state.count === 0;
+}
+
+// the one place "jump to the newest line and resume following" happens, so the pill, down-down
+// and sending a message all land on identical behaviour rather than three near-duplicates
+function scrollToBottom(log) {
+  log.scrollTop = log.scrollHeight;
+  const state = followState.get(log);
+  if (!state) return;
+  state.following = true;
+  state.count = 0;
+  updateBadge(state);
+}
+
+// a single new line arriving on top of what is already rendered (a send, a poll error) - as
+// opposed to a full redraw, which settles itself in redrawLog below
+function settleAfterAppend(log) {
+  const state = followState.get(log);
+  if (!state || state.following) { scrollToBottom(log); return; }
+  state.count += 1;
+  updateBadge(state);
+}
+
+// mission control and workforce both replace their whole log on every redraw instead of diffing
+// it, so the pill counts the growth across the rebuild rather than once per appended line, and the
+// scroll offset (which a real browser drops to 0 the moment the log empties) is put back by hand
+function redrawLog(log, fill) {
+  const state = followState.get(log);
+  const before = state ? state.rendered || 0 : 0;
+  const savedScrollTop = log.scrollTop;
+  log.innerHTML = '';
+  fill();
+  if (!state) return;
+  state.rendered = log.children.length;
+  if (state.following) { scrollToBottom(log); return; }
+  log.scrollTop = savedScrollTop;
+  const added = Math.max(0, state.rendered - before);
+  if (added) { state.count += added; updateBadge(state); }
+}
+
+function initFollow(log, jump) {
+  followState.set(log, {following: true, count: 0, jump, rendered: 0});
+  jump.hidden = true;
+  jump.addEventListener('click', () => scrollToBottom(log));
+  log.addEventListener('scroll', () => {
+    const state = followState.get(log);
+    if (nearBottom(log)) scrollToBottom(log);
+    else state.following = false;
+  });
+  let downStreak = 0;
+  log.addEventListener('keydown', evt => {
+    if (evt.code !== 'ArrowDown') { downStreak = 0; return; }
+    downStreak += 1;
+    if (downStreak >= 2) { downStreak = 0; scrollToBottom(log); }
+  });
+}
+
 // built with createElement/appendChild rather than innerHTML, so the refs below are live nodes -
 // the test dom stub does not parse innerHTML strings back into a tree, and a real browser doesn't
 // care either way
@@ -605,6 +677,13 @@ function terminalDom(promptGlyph) {
   log.className = 'terminal-log';
   log.tabIndex = 0;
 
+  // ui_base's count badge, reused as the new-messages pill rather than a primitive of our own
+  const jump = document.createElement('button');
+  jump.type = 'button';
+  jump.className = 'terminal-jump count-badge';
+  jump.setAttribute('aria-label', 'jump to the newest line');
+  initFollow(log, jump);
+
   const inputRow = document.createElement('div');
   inputRow.className = 'terminal-input-row';
   const prompt = document.createElement('span');
@@ -615,7 +694,7 @@ function terminalDom(promptGlyph) {
   input.rows = 1;
   inputRow.append(prompt, input);
 
-  wrap.append(header, subheader, log, inputRow);
+  wrap.append(header, subheader, log, jump, inputRow);
   return wrap;
 }
 
@@ -626,14 +705,15 @@ function authorLabel(author) {
 }
 
 // author drives the line's colour class; cls overrides it for board/error/thinking lines whose
-// author name (e.g. "orchestrator") shouldn't paint the same as an authored message would
+// author name (e.g. "orchestrator") shouldn't paint the same as an authored message would.
+// a bare append with no scroll or pill side effects - a single new line settles itself with
+// settleAfterAppend below, a full redraw settles once for the whole batch with redrawLog
 function appendLine(log, author, body, cls) {
   const line = document.createElement('div');
   line.className = `terminal-line author-${cls || author}`;
   line.innerHTML = `<div class="terminal-author">${escapeHtml(authorLabel(author))}</div>` +
     `<div class="terminal-body">${escapeHtml(body)}</div>`;
   log.appendChild(line);
-  log.scrollTop = log.scrollHeight;
   return line;
 }
 
@@ -655,13 +735,14 @@ function wireTerminalInput(input, log, onSend) {
 
 // ---- mission control (.) - the orchestrator's chat for the current board ------------------------
 
-const mc = {header: null, cycle: null, log: null, input: null, poll: null};
+const mc = {header: null, cycle: null, log: null, jump: null, input: null, poll: null};
 
 function buildMissionControlDom(drawer) {
   const term = terminalDom('>');
   drawer.body.appendChild(term);
   mc.header = term.querySelector('.terminal-title');
   mc.log = term.querySelector('.terminal-log');
+  mc.jump = term.querySelector('.terminal-jump');
   mc.input = term.querySelector('.terminal-input');
   wireTerminalInput(mc.input, mc.log, sendMissionControl);
 }
@@ -680,6 +761,7 @@ async function loadMissionControl() {
     mc.header.textContent = 'mission control';
     mc.log.innerHTML = '';
     appendLine(mc.log, 'board', 'no board selected', 'board');
+    scrollToBottom(mc.log); // a fresh panel, not a new line arriving mid-read
     return;
   }
   try {
@@ -689,22 +771,24 @@ async function loadMissionControl() {
     mc.header.textContent = 'mission control';
     mc.log.innerHTML = '';
     appendLine(mc.log, 'board', `could not reach the orchestrator: ${err.message}`, 'error');
+    scrollToBottom(mc.log);
   }
 }
 
 // justFinished marks a poll result, the only moment a newly-created card should pull the board
 function renderMissionControl(data, {justFinished = false} = {}) {
   mc.header.textContent = `mission control - ${data.model || '?'}`;
-  mc.log.innerHTML = '';
-  (data.messages || []).forEach(m => {
-    appendLine(mc.log, m.author, m.body);
-    if (m.cards && m.cards.length) {
-      appendLine(mc.log, 'board', `created: ${m.cards.map(c => c.title).join(', ')}`, 'board');
-    }
+  redrawLog(mc.log, () => {
+    (data.messages || []).forEach(m => {
+      appendLine(mc.log, m.author, m.body);
+      if (m.cards && m.cards.length) {
+        appendLine(mc.log, 'board', `created: ${m.cards.map(c => c.title).join(', ')}`, 'board');
+      }
+    });
+    if (data.error) appendLine(mc.log, 'board', data.error, 'error');
+    if (data.thinking) appendLine(mc.log, 'orchestrator', 'orchestrator is thinking', 'thinking');
   });
-  if (data.error) appendLine(mc.log, 'board', data.error, 'error');
   if (data.thinking) {
-    appendLine(mc.log, 'orchestrator', 'orchestrator is thinking', 'thinking');
     mc.poll = setTimeout(pollMissionControl, 1500);
     return;
   }
@@ -721,28 +805,31 @@ async function pollMissionControl() {
     renderMissionControl(data, {justFinished: true});
   } catch (err) {
     appendLine(mc.log, 'board', `lost contact with the orchestrator: ${err.message}`, 'error');
+    settleAfterAppend(mc.log);
   }
 }
 
 async function sendMissionControl(text) {
-  if (!currentBoardId) { appendLine(mc.log, 'board', 'no board selected', 'error'); return; }
+  if (!currentBoardId) { appendLine(mc.log, 'board', 'no board selected', 'error'); settleAfterAppend(mc.log); return; }
   appendLine(mc.log, 'operator', text);
+  scrollToBottom(mc.log); // sending always jumps to the newest line and resumes following
   try {
     const res = await fetch(`/api/boards/${currentBoardId}/orchestrator`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
     });
     const body = await res.json().catch(() => null);
-    if (res.status === 409) { appendLine(mc.log, 'board', (body && body.error) || 'already thinking', 'error'); return; }
-    if (!res.ok) { appendLine(mc.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error'); return; }
+    if (res.status === 409) { appendLine(mc.log, 'board', (body && body.error) || 'already thinking', 'error'); settleAfterAppend(mc.log); return; }
+    if (!res.ok) { appendLine(mc.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error'); settleAfterAppend(mc.log); return; }
     renderMissionControl(body);
   } catch (err) {
     appendLine(mc.log, 'board', `could not reach the orchestrator: ${err.message}`, 'error');
+    settleAfterAppend(mc.log);
   }
 }
 
 // ---- workforce (,) - one card's agent chat -------------------------------------------------------
 
-const wf = {header: null, cycle: null, count: null, subheader: null, log: null, input: null,
+const wf = {header: null, cycle: null, count: null, subheader: null, log: null, jump: null, input: null,
   poll: null, rotate: null, prev: null, next: null, cardId: null, working: [], index: 0, pinned: false};
 
 // MALL CAM: with no card focused or open, the workforce is not pinned to one - it rotates through
@@ -757,6 +844,7 @@ function buildWorkforceDom(drawer) {
   wf.count = term.querySelector('.terminal-count');
   wf.subheader = term.querySelector('.terminal-subheader');
   wf.log = term.querySelector('.terminal-log');
+  wf.jump = term.querySelector('.terminal-jump');
   wf.input = term.querySelector('.terminal-input');
   wireTerminalInput(wf.input, wf.log, sendWorkforce);
   wf.prev = term.querySelector('.terminal-prev');
@@ -801,6 +889,7 @@ async function loadWorkforce(resolved) {
     wf.cycle.hidden = true;
     wf.log.innerHTML = '';
     appendLine(wf.log, 'board', 'no card is focused and no agent is running', 'board');
+    scrollToBottom(wf.log); // a fresh panel, not a new line arriving mid-read
     return;
   }
   await renderWorkforceConversation();
@@ -843,20 +932,21 @@ async function renderWorkforceConversation() {
     const data = await api(`/api/cards/${wf.cardId}/conversation`);
     wf.subheader.textContent = DELIVERY_LABEL[data.delivery] || DELIVERY_LABEL.next_run;
     wf.header.textContent = `${data.title} - ${data.running ? `running - ${data.phase || '...'}` : 'idle'}`;
-    wf.log.innerHTML = '';
-    (data.messages || []).forEach(m => appendLine(wf.log, m.author, m.body));
+    redrawLog(wf.log, () => (data.messages || []).forEach(m => appendLine(wf.log, m.author, m.body)));
     if (data.running && drawers.left && drawers.left.isOpen()) {
       wf.poll = setTimeout(renderWorkforceConversation, 2000);
     }
   } catch (err) {
     wf.header.textContent = 'workforce';
     appendLine(wf.log, 'board', `could not load conversation: ${err.message}`, 'error');
+    settleAfterAppend(wf.log);
   }
 }
 
 async function sendWorkforce(text) {
   if (!wf.cardId) return;
   appendLine(wf.log, 'operator', text);
+  scrollToBottom(wf.log); // sending always jumps to the newest line and resumes following
   try {
     const res = await fetch(`/api/cards/${wf.cardId}/conversation`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
@@ -864,6 +954,7 @@ async function sendWorkforce(text) {
     const body = await res.json().catch(() => null);
     if (!res.ok) {
       appendLine(wf.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error');
+      settleAfterAppend(wf.log);
       return;
     }
     if (body && body.delivery) {
@@ -872,6 +963,7 @@ async function sendWorkforce(text) {
     }
   } catch (err) {
     appendLine(wf.log, 'board', `could not reach the agent: ${err.message}`, 'error');
+    settleAfterAppend(wf.log);
   }
 }
 
