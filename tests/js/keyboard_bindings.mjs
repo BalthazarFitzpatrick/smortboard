@@ -30,8 +30,10 @@ document.body.appendChild(bucketRow);
 
 let openedMenus = [];
 class SpyMenu {
-  constructor(opts) { this.opts = opts; }
-  openAt(where) { openedMenus.push({title: this.opts.title, sections: this.opts.sections, where}); return this; }
+  constructor(opts) { this.opts = opts; this.sections = opts.sections; }
+  openAt(where) { openedMenus.push({title: this.opts.title, where, menu: this}); return this; }
+  // the real Menu swaps a section's rows in place - the overlay's page turns rely on this
+  refresh(sections) { this.sections = sections; }
   close() {}
 }
 
@@ -53,7 +55,7 @@ function SpyDrawer(opts) {
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
   smort('board.js'), smort('telemetry.js'), smort('costs.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {BINDINGS, buildDrawers, boardsRef: () => boards, overlayRows};`)(SpyMenu, SpyDrawer);
+;return {BINDINGS, BINDING_GROUPS, buildDrawers, boardsRef: () => boards, overlayRows};`)(SpyMenu, SpyDrawer);
 
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
@@ -106,16 +108,38 @@ assert.equal(drawerToggles[0].toggles, 2, 'the left drawer toggled twice');
 
 // ---- the shortcut overlay's rows are literally the binding table, so they cannot drift apart
 const overlay = openedMenus[openedMenus.length - 1];
-// two columns now, one section each - read together they must still be the whole table, in order
-assert.equal(overlay.sections.length, 2, 'the overlay has two columns');
-const overlayItems = overlay.sections.flatMap(s => s.items);
-// the nine board keys fold into Digit1's row, so the panels column fits on screen
-const folded = code => /^Digit[2-9]$/.test(code);
-const expectedIds = boundCodes.filter(c => !folded(c)).map(c => (c === 'Digit1' ? 'boards' : c));
-assert.deepEqual(overlayItems.map(i => i.id), expectedIds, 'the overlay lists the bound codes in order, board keys as one row');
-mod.BINDINGS.filter(b => !folded(b.code)).forEach((b, i) => {
-  assert.ok(overlayItems[i].label.startsWith(b.label), `overlay row ${i} should show binding label "${b.label}"`);
-});
+
+// pages, not columns: one section visible at a time, one page per BINDINGS group in order
+{
+  const folded = code => /^Digit[2-9]$/.test(code);
+  const pageIds = group => mod.BINDINGS
+    .filter(b => b.group === group)
+    .filter(b => !folded(b.code))
+    .map(b => (b.code === 'Digit1' ? 'boards' : b.code));
+  const [firstGroup, secondGroup] = mod.BINDING_GROUPS.map(([group]) => group);
+
+  assert.equal(overlay.menu.sections.length, 1, 'the overlay shows one page at a time, not two columns');
+  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(firstGroup), 's opens on the first BINDINGS group');
+
+  press('ArrowRight');
+  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(secondGroup), 'right turns to the next page');
+  press('ArrowRight');
+  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(firstGroup), 'right wraps back to the first page');
+
+  press('ArrowLeft');
+  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(secondGroup), 'left wraps the other way, to the last page');
+  press('ArrowLeft');
+  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(firstGroup), 'left steps back to the first page');
+
+  // every binding lands on exactly one page - the groups partition the whole table between them
+  const allPageIds = mod.BINDING_GROUPS.flatMap(([group]) => mod.BINDINGS.filter(b => b.group === group).map(b => b.code));
+  assert.deepEqual(allPageIds.sort(), mod.BINDINGS.map(b => b.code).sort(),
+    'every binding in BINDINGS appears on exactly one page');
+
+  mod.BINDINGS.filter(b => b.group === firstGroup && !folded(b.code)).forEach((b, i) => {
+    assert.ok(overlay.menu.sections[0].items[i].label.startsWith(b.label), `page 1 row ${i} should show binding label "${b.label}"`);
+  });
+}
 
 // ---- y and x reach acceptOrRejectCard and post the right route for whatever card is focused
 const strip = element('div', 'row card card-strip');
