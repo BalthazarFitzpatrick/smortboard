@@ -79,16 +79,22 @@ body {
    box, so this is the only place that ratio lives */
 /* the card and the fan now live in ui_base. what stays here is configuration: which state paints
    which edge, and the panel an opened card fills */
+/* a vanilla border alone let two stacked strips fuse into one shape - a low, tight shadow lifts
+   every card off the column ground so the border reads as one surface's edge, not a shared line.
+   bucket-rows' own gap keeps the strips from ever touching regardless */
+.card-strip { box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35); }
 .card-strip.card-working { border-color: var(--fill-good); }
 .card-strip.card-rejected { border-color: var(--fill-warn); }
 /* vanilla is the palest edge, so attention is also the only one that glows: rings stepping down to
-   nothing, outside the border so the card's content does not move */
+   nothing, outside the border so the card's content does not move. the lift shadow rides along
+   after the rings so an attention card stays as elevated as every other one */
 .card-strip.card-attention, .expand-panel.card-attention {
   border-color: var(--fill-attention);
   box-shadow:
     0 0 0 2px color-mix(in srgb, var(--fill-attention) 60%, transparent),
     0 0 0 4px color-mix(in srgb, var(--fill-attention) 28%, transparent),
-    0 0 0 7px color-mix(in srgb, var(--fill-attention) 9%, transparent);
+    0 0 0 7px color-mix(in srgb, var(--fill-attention) 9%, transparent),
+    0 2px 5px rgba(0, 0, 0, 0.35);
 }
 /* done is lichen, an edge like every other state: the fills are too flat at card size. measured
    under simulated deuteranopia it stays delta-e 54 from the rejected red, and 2.6x brighter */
