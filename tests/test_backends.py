@@ -417,21 +417,22 @@ def test_the_credential_store_is_the_fallback_without_a_file(tmp_path, monkeypat
 
 
 def test_the_instructions_name_the_platform_actually_in_use(tmp_path, monkeypatch):
-    """the message used to tell a Windows user to run a macOS command."""
-    monkeypatch.setattr("smortboard.exec.backends._credential_store_token", lambda: None)
-    monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "absent"))
+    """the message used to tell a Windows user to run a macOS command.
+
+    tests the message builder directly: with os.name patched to "nt", python 3.11's Path() refuses
+    to build a WindowsPath on linux, so going through read_card_token blew up the gate container
+    (and pytest's own failure report with it)
+    """
+    absent = tmp_path / "absent"
 
     monkeypatch.setattr("smortboard.exec.backends.os.name", "nt")
-    with pytest.raises(CardTokenMissing) as win:
-        read_card_token()
-    assert "Credential Manager" in str(win.value)
-    assert "security add-generic-password" not in str(win.value)
+    win = backends._store_instructions(absent)
+    assert "Credential Manager" in win
+    assert "security add-generic-password" not in win
 
     monkeypatch.setattr("smortboard.exec.backends.os.name", "posix")
     monkeypatch.setattr("smortboard.exec.backends.sys.platform", "darwin")
-    with pytest.raises(CardTokenMissing) as mac:
-        read_card_token()
-    assert "security add-generic-password" in str(mac.value)
+    assert "security add-generic-password" in backends._store_instructions(absent)
 
 
 def test_a_repo_brings_its_own_image_and_a_card_still_gets_its_own_container(tmp_path):
