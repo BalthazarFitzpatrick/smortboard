@@ -668,8 +668,8 @@ function appendLine(log, author, body, cls) {
 
 // enter sends, shift+enter is left alone so the textarea's own newline behaviour handles it.
 // escape leaves typing and hands focus back to the board, with the drawer still open - , and .
-// work again from there
-function wireTerminalInput(input, log, onSend) {
+// work again from there. onClear (optional) lets a composer re-collapse once its own text is gone
+function wireTerminalInput(input, log, onSend, onClear) {
   input.addEventListener('keydown', evt => {
     if (evt.code === 'Escape') { evt.stopPropagation(); input.blur(); reenterIfFocusLost(); return; }
     if (evt.code === 'Enter' && !evt.shiftKey) {
@@ -677,9 +677,27 @@ function wireTerminalInput(input, log, onSend) {
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
+      onClear?.();
       onSend(text);
     }
   });
+}
+
+// mission control's composer line cap comes from the operator's global config (a window global
+// the server can inject before this script loads) - unset or invalid falls back to 6
+function composerMaxLines() {
+  const configured = window.smortboardConfig?.composerMaxLines;
+  return Number.isInteger(configured) && configured > 0 ? configured : 6;
+}
+
+// grows the composer by one row per wrapped or broken line, up to maxLinesFn(). resetting to one
+// row before measuring means the loop only ever adds the rows actually needed, so there is nothing
+// to snap back from after the first character - and scrollHeight still exceeding the box beyond
+// the cap is exactly what leaves the textarea's own internal scrolling to take over
+function growComposer(input, maxLinesFn) {
+  const max = maxLinesFn();
+  input.rows = 1;
+  while (input.scrollHeight > input.clientHeight && input.rows < max) input.rows += 1;
 }
 
 // ---- mission control (.) - the orchestrator's chat for the current board ------------------------
@@ -692,7 +710,9 @@ function buildMissionControlDom(drawer) {
   mc.header = term.querySelector('.terminal-title');
   mc.log = term.querySelector('.terminal-log');
   mc.input = term.querySelector('.terminal-input');
-  wireTerminalInput(mc.input, mc.log, sendMissionControl);
+  const resizeComposer = () => growComposer(mc.input, composerMaxLines);
+  mc.input.addEventListener('input', resizeComposer);
+  wireTerminalInput(mc.input, mc.log, sendMissionControl, resizeComposer);
 }
 
 async function openMissionControl() {
