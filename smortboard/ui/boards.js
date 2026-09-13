@@ -21,6 +21,25 @@ function buildBoardsDom() {
   panel.appendChild(title);
   panel.appendChild(divider());
 
+  // three ways to start a board, as the first row: a blank one by name, one made from a repo
+  // already on this disk, and one from a repo online (not built yet, see the ledger)
+  const sourceRow = document.createElement('div');
+  sourceRow.className = 'boards-source-row';
+  const fromBlank = document.createElement('div');
+  fromBlank.className = 'toggle board-source-new';
+  fromBlank.textContent = 'new board';
+  fromBlank.onclick = () => bp.boardNameInput.focus();
+  const fromLocal = document.createElement('div');
+  fromLocal.className = 'toggle board-source-local';
+  fromLocal.textContent = 'from local repo';
+  fromLocal.onclick = () => openLocalRepoPicker(fromLocal);
+  const fromOnline = document.createElement('div');
+  fromOnline.className = 'toggle board-source-online disabled';
+  fromOnline.textContent = 'from online repo';
+  fromOnline.title = 'not built yet';
+  sourceRow.append(fromBlank, fromLocal, fromOnline);
+  panel.appendChild(sourceRow);
+
   // ---- boards section ----
   const boardsLabel = document.createElement('div');
   boardsLabel.className = 'field-label';
@@ -72,7 +91,7 @@ function buildBoardsDom() {
 
   Object.assign(bp, {
     backdrop, panel, boardListEl: boardList, boardNameInput, boardStatusEl: boardStatus,
-    reposLabelEl: reposLabel, repoListEl: repoList,
+    reposLabelEl: reposLabel, repoListEl: repoList, sourceRowEl: sourceRow,
   });
   return backdrop;
 }
@@ -217,6 +236,57 @@ async function createBoardFromPanel() {
   // creating switches to it, per the brief
   activateTab(body.id);
   await onBoardEnter(body.id);
+  renderBoardsPanel();
+}
+
+function setBoardStatus(text, isError = false) {
+  bp.boardStatusEl.textContent = text;
+  bp.boardStatusEl.className = isError ? 'boards-status boards-error' : 'boards-status';
+}
+
+// the folder menu opens in place, like the review tool's save dialog: '..' and each subfolder, git
+// repos marked. the create button only appears once the folder open in it is a git repo
+async function openLocalRepoPicker(anchor) {
+  const first = await apiOrError('/api/folders');
+  if (!first.ok) { setBoardStatus((first.body && first.body.error) || 'could not list folders', true); return; }
+  let where = first.body;
+  let menu = null;
+  const open = async under => {
+    const next = await apiOrError('/api/folders?under=' + encodeURIComponent(under));
+    if (!next.ok) { setBoardStatus((next.body && next.body.error) || 'could not open that folder', true); return; }
+    where = next.body;
+    menu.refresh(build());
+  };
+  const build = () => [
+    {
+      kind: 'list',
+      label: `folder  ${where.here}`,
+      empty: 'no folders here',
+      items: [
+        ...(where.parent !== null ? [{id: where.parent, label: '..'}] : []),
+        ...where.folders.map(f => ({id: f.path, label: f.repo ? `${f.name}/  git` : `${f.name}/`})),
+      ],
+      onPick: item => open(item.id),
+    },
+    ...(where.repo ? [{kind: 'buttons', buttons: [
+      {label: 'create board from this repo', tone: 'adds', onClick: m => createBoardFromRepo(where.here, m)},
+    ]}] : []),
+  ];
+  menu = new Menu({title: 'board from local repo', persistent: true, sections: build()});
+  menu.openAt(anchor);
+}
+
+async function createBoardFromRepo(path, menu) {
+  setBoardStatus('creating...');
+  const {ok, body} = await apiOrError('/api/boards/from-repo', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path}),
+  });
+  if (!ok) { setBoardStatus((body && body.error) || 'could not create the board', true); return; }
+  menu.close();
+  setBoardStatus('');
+  await loadBoards();
+  activateTab(body.board.id);
+  await onBoardEnter(body.board.id);
   renderBoardsPanel();
 }
 

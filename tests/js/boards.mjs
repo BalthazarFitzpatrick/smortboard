@@ -53,7 +53,13 @@ document.body.appendChild(bucketRow);
 function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
-class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; } refresh() {} close() {} }
+let lastMenu = null;
+class SpyMenu {
+  constructor(opts) { this.opts = opts; lastMenu = this; }
+  openAt() { return this; }
+  refresh(sections) { this.opts.sections = sections; }
+  close() { this.closed = true; }
+}
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
   smort('board.js'), smort('boards.js')].join('\n;\n');
@@ -131,5 +137,39 @@ await flush(); await flush();
 assert.ok(mod.bp.backdrop.parentNode, 'b reopens the panel');
 press('KeyB');
 assert.equal(mod.bp.backdrop.parentNode, null, 'b again closes it');
+
+// ---- the first row offers three sources; from local repo browses folders and creates from a repo --
+press('KeyB');
+await flush(); await flush();
+const sources = [...mod.bp.sourceRowEl.children];
+assert.deepEqual(sources.map(s => s.textContent), ['new board', 'from local repo', 'from online repo']);
+assert.ok(sources[2].className.includes('disabled'), 'from online repo is not built yet');
+stub('/api/folders', 'GET', 200, {here: '/home/me', parent: '/home', repo: false,
+  folders: [{name: 'proj', path: '/home/me/proj', repo: true}]});
+sources[1].onclick();
+await flush(); await flush();
+assert.equal(lastMenu.opts.title, 'board from local repo');
+const listOf = () => lastMenu.opts.sections.find(s => s.kind === 'list');
+assert.deepEqual(listOf().items.map(i => i.label), ['..', 'proj/  git']);
+assert.ok(!lastMenu.opts.sections.some(s => s.kind === 'buttons'), 'no create button outside a repo');
+stub('/api/folders?under=%2Fhome%2Fme%2Fproj', 'GET', 200,
+  {here: '/home/me/proj', parent: '/home/me', repo: true, folders: []});
+await listOf().onPick({id: '/home/me/proj'});
+await flush();
+const create = lastMenu.opts.sections.find(s => s.kind === 'buttons');
+assert.ok(create, 'inside a repo the create button appears');
+const BOARD_C = {id: 'b3', name: 'proj', position: 2, created_at: 't3'};
+stub('/api/boards/from-repo', 'POST', 201, {board: BOARD_C, repo: {id: 'r2', board_id: 'b3', name: 'proj',
+  path: '/home/me/proj', default_branch: 'main', test_command: null, image: null, lint_command: null}});
+stub('/api/boards', 'GET', 200, [BOARD_A, BOARD_B, BOARD_C]);
+stub('/api/boards/b3/cards', 'GET', 200, []);
+stub('/api/boards/b3/repos', 'GET', 200, []);
+await create.buttons[0].onClick(lastMenu);
+await flush(); await flush();
+const fromRepoCall = calls.find(c => c.path === '/api/boards/from-repo');
+assert.deepEqual(JSON.parse(fromRepoCall.opts.body), {path: '/home/me/proj'});
+assert.ok(lastMenu.closed, 'the folder menu closes once the board exists');
+assert.equal(mod.boardsRef().length, 3, 'the new board is in the bar without a reload');
+press('KeyB');
 
 console.log('ok');
