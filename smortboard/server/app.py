@@ -5,11 +5,13 @@ import re
 import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from urllib.parse import parse_qs
 
 from smortboard.attention import AnswerRefused, answer_card, attention_rows, with_actions
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
+from smortboard.local_repos import detect_default_branch, list_folders
 from smortboard.operator import OPERATOR_NAME
 from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
@@ -47,6 +49,8 @@ _ROUTES = [
     (re.compile(r"^/health$"), "GET"),
     (re.compile(r"^/api/boards$"), "GET"),
     (re.compile(r"^/api/boards$"), "POST"),
+    (re.compile(r"^/api/boards/from-repo$"), "POST"),
+    (re.compile(r"^/api/folders$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/cards$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "POST"),
@@ -170,6 +174,11 @@ def _make_handler(
                 body = self._read_json()
                 board = store.create_board(name=body["name"])
                 self._send_json(201, board)
+            elif path == "/api/boards/from-repo" and method == "POST":
+                self._handle_board_from_repo()
+            elif path == "/api/folders":
+                query = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+                self._send_json(200, list_folders(query.get("under", [None])[0]))
             elif "board_id" in params and path.endswith("/cards"):
                 self._send_json(200, with_actions(store, store.list_cards(params["board_id"])))
             elif "board_id" in params and path.endswith("/repos") and method == "GET":
@@ -394,6 +403,28 @@ def _make_handler(
                 lint_command=body.get("lint_command"),
             )
             self._send_json(201, repo)
+
+        def _handle_board_from_repo(self) -> None:
+            """a board named after a local repo, with that repo registered on it - the boards
+            panel's "from local repo" button. every check runs before anything is written, so a
+            folder that is not a usable repo leaves no empty board behind
+            """
+            body = self._read_json()
+            path = Path(body.get("path", "")).expanduser()
+            if not path.is_dir():
+                self._send_json(400, {"error": f"not a folder: {path}"})
+                return
+            try:
+                branch = detect_default_branch(str(path))
+                expanded_path = validate_repo(path.name, str(path), branch)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            board = store.create_board(name=path.name)
+            repo = store.create_repo(
+                board["id"], name=path.name, path=expanded_path, default_branch=branch
+            )
+            self._send_json(201, {"board": board, "repo": repo})
 
         def _handle_patch_repo(self, repo_id: str) -> None:
             # path still means re-registering. default_branch is editable because a base branch

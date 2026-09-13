@@ -36,6 +36,11 @@
   color: var(--fill-warn);
 }
 
+.boards-source-row { display: flex; gap: 10px; flex-wrap: wrap; }
+/* the folder menu is a ui_base Menu (z 58) opened over this panel's backdrop (z 60); without this
+   it opens fine and sits hidden behind the panel */
+.boards-backdrop ~ .menu-panel { z-index: 61; }
+
 .boards-create-row, .repos-hint {
   display: flex;
   align-items: center;

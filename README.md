@@ -49,11 +49,13 @@ and any card that is running.
 
 **5. Board 1 and its repo:**
 
-1. Press `b`. Type a board name and press Enter.
-2. Register a repo on it: the path to a local clone of a GitHub repo, its default branch, and the
-   command that runs its tests, e.g. `uv run pytest -q`. The board runs that command itself before it
-   opens a pull request, so a repo without one can't finish a card. If the tests need more than git,
-   uv and Python, give the repo its own image (see [Setup](#setup)).
+1. Press `b`, then **from local repo**. Browse to a clone of a GitHub repo and pick **create board
+   from this repo**. The board is named after it, and the repo is registered with its default branch.
+   (**new board** makes an empty one by name instead, and you register the repo by hand.)
+2. On the repo's row, fill in the command that runs its tests, e.g. `uv run pytest -q`, and save. The
+   board runs that command itself before it opens a pull request, so a repo without one can't finish a
+   card. If the tests need more than git, uv and Python, give the repo its own image (see
+   [Setup](#setup)).
 3. Press `1` to open board 1.
 4. Press `h`. The checklist shows anything still missing, and how to fix it.
 5. Press `.` and tell the orchestrator what you want built. It answers with a plan and cards.
