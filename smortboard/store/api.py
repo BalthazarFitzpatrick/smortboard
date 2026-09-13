@@ -164,6 +164,19 @@ class Store:
         self._conn.commit()
         return self.get_repo(repo_id)
 
+    def set_repo_default_branch(self, repo_id: str, default_branch: str) -> dict[str, Any]:
+        """moves the branch cards on this repo base on and open their PRs into.
+
+        unvalidated here like create_repo - the http layer checks the branch exists first. the case
+        it exists for: a base branch that merged into main keeps collecting card PRs that never land
+        """
+        self.get_repo(repo_id)  # raises NotFoundError on a bad id
+        self._conn.execute(
+            "UPDATE repos SET default_branch = ? WHERE id = ?", (default_branch, repo_id)
+        )
+        self._conn.commit()
+        return self.get_repo(repo_id)
+
     def set_repo_test_command(self, repo_id: str, test_command: str | None) -> dict[str, Any]:
         """sets (or clears, with None) the shell invocation the runner may add to a card's Bash
         allowlist for this repo - see allowed_tools_for_repo in smortboard.exec.runner"""
