@@ -10,7 +10,7 @@ need a decision. Single user, local-first, browser-based, distributed via Docker
 
 **It is not a harness.** It does not reimplement the agent loop - it schedules and observes one.
 
-The design test for every feature: does it help operator define work and then walk away? Anything
+The design test for every feature: does it help the operator define work and then walk away? Anything
 that rewards hovering is wrong, and should be argued against rather than built.
 
 mode: outcome-defined - the target is a stated vision to be checked and then implemented, not an
