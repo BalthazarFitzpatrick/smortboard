@@ -396,14 +396,22 @@ def _make_handler(
             self._send_json(201, repo)
 
         def _handle_patch_repo(self, repo_id: str) -> None:
-            # only these two are worth editing after registration - path/branch changes mean
-            # re-registering, since they are what validate_repo checked at creation
+            # path still means re-registering. default_branch is editable because a base branch
+            # can merge into main, and it goes through the same validate_repo check as creation
             body = self._read_json()
-            unknown = set(body) - {"test_command", "image"}
+            unknown = set(body) - {"test_command", "image", "default_branch"}
             if unknown:
                 self._send_json(400, {"error": f"not writable: {sorted(unknown)}"})
                 return
             repo = store.get_repo(repo_id)
+            if "default_branch" in body:
+                # checked before any write, so a bad branch leaves the whole row as it was
+                try:
+                    validate_repo(repo["name"], repo["path"], body["default_branch"] or "")
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                repo = store.set_repo_default_branch(repo_id, body["default_branch"])
             if "test_command" in body:
                 repo = store.set_repo_test_command(repo_id, body["test_command"])
             if "image" in body:

@@ -439,6 +439,45 @@ def test_patch_repo_test_command_and_image(running_server, tmp_path):
     assert updated["image"] == "card-python:latest"
 
 
+def test_patch_repo_default_branch_moves_the_base(running_server, tmp_path):
+    """a base branch that merged into main must be movable without a db write"""
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path, branch="feature/review-tool")
+    subprocess.run(["git", "-C", str(repo_path), "branch", "main"], check=True)
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, repo = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "smolsmort", "path": str(repo_path), "default_branch": "feature/review-tool"},
+    )
+    status, updated = _request(
+        f"{running_server}/api/repos/{repo['id']}", "PATCH", {"default_branch": "main"}
+    )
+    assert status == 200
+    assert updated["default_branch"] == "main"
+
+
+def test_patch_repo_to_a_missing_branch_is_400_and_changes_nothing(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, repo = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "smortboard", "path": str(repo_path), "default_branch": "main"},
+    )
+    status, body = _request(
+        f"{running_server}/api/repos/{repo['id']}",
+        "PATCH",
+        {"default_branch": "no-such-branch", "test_command": "uv run pytest"},
+    )
+    assert status == 400
+    assert "no-such-branch" in body["error"]
+    _, unchanged = _request(f"{running_server}/api/boards/{board['id']}/repos", "GET")
+    assert unchanged[0]["default_branch"] == "main"
+    assert unchanged[0]["test_command"] is None
+
+
 def test_patch_repo_unknown_field_is_400(running_server, tmp_path):
     repo_path = tmp_path / "repo"
     _init_repo(repo_path)

@@ -300,6 +300,14 @@ def test_criteria_have_no_update_path(store):
     assert unchanged["criteria"][0]["text"] == "must pass review"
 
 
+def test_set_repo_default_branch_round_trips(store):
+    board = store.create_board("b")
+    repo = store.create_repo(board["id"], "r", "/tmp/r", "feature/review-tool")
+    updated = store.set_repo_default_branch(repo["id"], "main")
+    assert updated["default_branch"] == "main"
+    assert store.get_repo(repo["id"])["default_branch"] == "main"
+
+
 def test_a_repo_can_declare_its_image(store):
     board = store.create_board("b")
     repo = store.create_repo(board["id"], "r", "/tmp/r", "main", image="card-python:latest")
