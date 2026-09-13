@@ -103,6 +103,9 @@ function renderEmptyState(empty) {
 
 async function onBoardEnter(boardId) {
   currentBoardId = boardId;
+  // a fresh board has its own cards under these ids - forget the old board's snapshot so
+  // followRunsOnce learns this one before it starts diffing against it
+  followedCardStates = null;
   const cards = await api(`/api/boards/${boardId}/cards`);
   renderBuckets(cards);
   // mission control is per-board, so a board switch while it is open reloads its conversation
@@ -136,10 +139,17 @@ function renderBuckets(cards) {
     cards.filter(c => c.status === status)
       .forEach(card => bucket.appendChild(renderCardStrip(card)));
   });
-  bucketsApi = makeBuckets(row, {onExitTop: returnToBoardBar});
+  refreshBucketNav();
   // the cream marker glides to whatever took focus, rather than every card drawing its own ring.
   // focusin rather than a per-card handler, so it also catches focus arriving by click or by tab
   row.addEventListener('focusin', evt => indicateFocus(evt.target));
+}
+
+// rebinds the 2D grid nav to whatever is currently in the buckets - a full renderBuckets always
+// needs this, and so does a targeted redrawCardStrip that moved a strip to a new bucket
+function refreshBucketNav() {
+  const row = document.getElementById('bucket-row');
+  bucketsApi = makeBuckets(row, {onExitTop: returnToBoardBar});
 }
 
 function renderCardStrip(card) {
@@ -417,24 +427,50 @@ function pollRun(cardId) {
   }, RUN_POLL_MS);
 }
 
-// A RUN THIS PAGE DID NOT START STILL MOVES ITS CARD. pollRun only follows a run started with r on
-// this page; one started by the api, or already running when the page was reloaded, left its card
-// drawn as doing after it had finished. so the board watches which cards are running and redraws
-// whenever that set changes
+// A CARD CAN CHANGE COLUMN MID-RUN, NOT ONLY WHEN THE RUN ENDS. todo -> doing and doing -> checking
+// happen inside lifecycle.py while the run is still going, and whatever wrote the change (this
+// page's own run, another run, a key, mission control) already committed it before we asked. so
+// the board polls every card's status and updated_at and redraws only the strips that moved -
+// leaving every other strip, and the DOM in general, untouched
 const FOLLOW_RUNS_MS = 4000;
-let followedRunIds = null;
+let followedCardStates = null; // Map<card id, `${status}|${updated_at}`> as of the last poll
+
+// swaps one card's strip for a freshly rendered one in its (possibly new) bucket, and refocuses it
+// if it held focus - the open card's own strip is never passed in here, see followRunsOnce
+function redrawCardStrip(card) {
+  const old = document.querySelector(`.card-strip[data-card-id="${card.id}"]`);
+  const bucket = document.querySelector(`.bucket[data-status="${card.status}"] .bucket-rows`);
+  if (!old || !bucket) return;
+  const hadFocus = old.contains(document.activeElement);
+  const strip = renderCardStrip(card);
+  bucket.appendChild(strip);
+  old.remove();
+  if (hadFocus) { strip.focus(); indicateFocus(strip); }
+}
 
 async function followRunsOnce() {
-  let active;
-  try { active = await api('/api/runs'); } catch (err) { return false; } // server restarting
-  const ids = new Set(active.map(r => r.card_id));
-  const before = followedRunIds;
-  const changed = before && (ids.size !== before.size || [...ids].some(id => !before.has(id)));
-  if (!changed) { followedRunIds = ids; return false; }
-  // never rebuild the strips under an open card or a half-typed line - try again next tick
-  if (openCard || document.activeElement?.matches?.('input, textarea')) return false;
-  followedRunIds = ids;
-  if (currentBoardId) await reloadBoardKeepingFocus();
+  if (!currentBoardId) return false;
+  let cards;
+  try { cards = await api(`/api/boards/${currentBoardId}/cards`); } catch (err) { return false; } // server restarting
+  const states = new Map(cards.map(c => [c.id, `${c.status}|${c.updated_at}`]));
+  const before = followedCardStates;
+  if (!before) { followedCardStates = states; return false; } // the first poll only learns where things stand
+
+  const next = new Map(before);
+  const toRedraw = [];
+  cards.forEach(card => {
+    const state = states.get(card.id);
+    if (before.get(card.id) === state) return;
+    // the open card keeps its panel - its entry is left stale here so the next poll sees it as
+    // changed again, and it gets its redraw once the card closes
+    if (openCard && openCard.cardId === card.id) return;
+    toRedraw.push(card);
+    next.set(card.id, state);
+  });
+  followedCardStates = next;
+  if (!toRedraw.length) return false;
+  toRedraw.forEach(redrawCardStrip);
+  refreshBucketNav();
   return true;
 }
 
@@ -443,13 +479,6 @@ function followRuns() {
     // unref where it exists: the browser has none, and a test process must not stay alive for this
     setTimeout(followRuns, FOLLOW_RUNS_MS)?.unref?.();
   });
-}
-
-async function reloadBoardKeepingFocus() {
-  const focusedId = focusedCardId();
-  await onBoardEnter(currentBoardId);
-  const strip = focusedId && document.querySelector(`.card-strip[data-card-id="${focusedId}"]`);
-  if (strip) { strip.focus(); indicateFocus(strip); }
 }
 
 // ---- stopping a running card (k) ------------------------------------------------------
