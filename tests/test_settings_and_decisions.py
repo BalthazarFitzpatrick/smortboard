@@ -43,6 +43,7 @@ def test_the_global_route_forces_every_card(store, card_id):
         "reviewer_model": None,
         "max_parallel": None,
         "resume_briefing": None,
+        "gate_timeout_seconds": None,
     }
 
 
@@ -67,6 +68,7 @@ def test_settings_travel_in_the_export_bundle(store, tmp_path):
             "reviewer_model": None,
             "max_parallel": None,
             "resume_briefing": None,
+            "gate_timeout_seconds": None,
         }
 
 
