@@ -661,3 +661,8 @@ the operator to delete or keep.
 ## 2026-09-13T13:50Z - consumer-project-5e [c4c82c] - board database purged, board from a repo
 - the operator purged the board database (moved to smortboard.db.bak-20260913-before-purge); boards and repos get set up again from the repos and ledgers.
 - the create board dialogue gets three buttons in its first row: new board, from local repo (built on feature/board-from-local-repo), from online repo (queued as its own task).
+
+## 2026-09-13T16:48Z - consumer-project-77 [cb4b0d] - empty-board fix, ledger into the repo, lease globs found wrong
+- #73: an empty board hid its five columns with [hidden], but .bucket's display: flex outranked it, so the columns squeezed beside the hazard box. added .bucket[hidden] { display: none }.
+- the ledger moved into dev_ledger/ with root symlinks and was scrubbed for a public repo: the operator's name, home paths and consumer-project names.
+- queued card-leases-from-real-files: two cards were leased to src/**/*.tsx globs that match nothing here and stopped on LEASE_CONFLICT.
