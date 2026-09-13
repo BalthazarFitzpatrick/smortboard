@@ -83,6 +83,17 @@ body {
 .card-strip.card-rejected { border-color: var(--fill-warn); }
 /* vanilla is the palest edge, so attention is also the only one that glows: rings stepping down to
    nothing, outside the border so the card's content does not move */
+/* the ⋯ trigger sits over the card's own corner rather than pushing the title over - the strip is
+   the positioning context, same trick the fan layout's transform already gives it for free, stated
+   explicitly here since a plain (non-transformed) strip needs it too */
+.card-strip { position: relative; }
+.card-strip .card-overflow {
+  position: absolute; top: 4px; right: 6px;
+  padding: 0 6px; height: auto; line-height: 1.4; font-weight: 700; cursor: pointer;
+}
+/* clears the ⋯ sitting over the same corner rather than letting a long title run under it */
+.card-strip .card-title { padding-right: 26px; box-sizing: border-box; }
+
 .card-strip.card-attention, .expand-panel.card-attention {
   border-color: var(--fill-attention);
   box-shadow:

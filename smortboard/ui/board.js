@@ -20,6 +20,9 @@ const BINDINGS = [
   {code: 'KeyY', label: 'y', action: 'accept the focused card', group: 'cards'},
   {code: 'KeyX', label: 'x', action: 'reject the focused card', group: 'cards'},
   {code: 'KeyM', label: 'm', action: "cycle the card's model", group: 'cards'},
+  {code: 'KeyE', label: 'e', action: 'edit: open the focused card', group: 'cards'},
+  {code: 'KeyJ', label: 'j', action: 'move the focused card to another status', group: 'cards'},
+  {code: 'Delete', label: 'del', action: 'delete the focused card, with confirmation', group: 'cards'},
   {code: 'KeyT', label: 't', action: "run replay: scrub the focused card's run step by step", group: 'cards'},
   {code: 'Slash', label: '/', action: "type: the open card's comment, or the open chat", group: 'cards'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
@@ -147,6 +150,8 @@ function renderCardStrip(card) {
   strip.className = cardClasses(card);
   strip.tabIndex = -1;
   strip.dataset.cardId = card.id;
+  // openMoveStatusMenu reads this back to grey out the column the card is already in
+  strip.dataset.status = card.status;
   // a card, not a strip: a title band at the top, a rule, the description with the room, and the
   // secondary facts sitting on the floor. ui_base draws the rule with .h-divider - the parent
   // spaces its children and the rule only draws the line
@@ -166,6 +171,15 @@ function renderCardStrip(card) {
       <span class="card-run" hidden></span>
     </div>
   `;
+  // appended rather than templated into the string above: the test dom stub does not parse
+  // innerHTML back into a tree (see the same note on terminalDom further down), so a live listener
+  // needs a real node - appendChild gives one in the stub and in a real browser alike
+  const overflow = document.createElement('span');
+  overflow.className = 'toggle card-overflow';
+  overflow.title = 'edit, delete, change model, move status';
+  overflow.textContent = '⋯';
+  overflow.onclick = () => openCardOverflowMenu(card.id, overflow);
+  strip.appendChild(overflow);
   const expander = makeExpander(strip, {
     // THREE TIMES THE DEFAULT WIDTH. at 1:3 an open card was a narrow column that wrapped every
     // line of its outcome; makeExpander keeps the height and sizes width from the ratio, so 1:1
@@ -1015,8 +1029,7 @@ function modelLabel(model) {
 
 // cycles default -> haiku -> sonnet -> opus -> default. a model set outside the cycle (a full id)
 // steps back to the default, so the key always lands somewhere the next press can leave
-async function cycleCardModel() {
-  const cardId = actionableCardId();
+async function cycleCardModel(cardId = actionableCardId()) {
   if (!cardId) return;
   try {
     const card = await api(`/api/cards/${cardId}`);
@@ -1031,6 +1044,115 @@ async function cycleCardModel() {
   } catch (err) {
     showRun(cardId, "can't change model", null, err.message);
   }
+}
+
+// ---- card overflow menu (...) - edit, delete, change model, move status ---------------------------
+// the four actions any card can take. change model reuses cycleCardModel above as-is; edit reuses
+// the same open-to-edit the strip's own Enter/Space already does - the panel is where every field
+// on a card lives, so there is nothing further to build for it. delete and move-status are new.
+
+function editCard(cardId = actionableCardId()) {
+  if (!cardId || (openCard && openCard.cardId === cardId)) return;
+  document.querySelector(`.card-strip[data-card-id="${cardId}"]`)?._expander?.open();
+}
+
+const STATUS_LABELS = {todo: 'to do', doing: 'doing', checking: 'checking', accepted: 'accepted', rejected: 'rejected'};
+
+// a direct status write, unlike y/x which call the accept/reject routes and their gates - this is
+// the manual override for every other move a card can make
+async function moveCardStatus(cardId, status) {
+  try {
+    await api(`/api/cards/${cardId}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({status}),
+    });
+  } catch (err) {
+    showRun(cardId, "can't move", null, err.message);
+    return;
+  }
+  if (currentBoardId) await onBoardEnter(currentBoardId);
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  if (strip) { strip.focus(); indicateFocus(strip); }
+}
+
+function openMoveStatusMenu(cardId = actionableCardId()) {
+  if (!cardId) return;
+  const current = document.querySelector(`.card-strip[data-card-id="${cardId}"]`)?.dataset.status;
+  const menu = new Menu({
+    title: 'move to',
+    sections: [{
+      kind: 'list',
+      items: STATUSES.map(s => ({id: s, label: STATUS_LABELS[s] || s, disabled: s === current})),
+      onPick: item => { menu.close(); moveCardStatus(cardId, item.id); },
+    }],
+  });
+  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
+  return menu;
+}
+
+// same two-item confirm shape as the stop-a-run menu above - a destructive action states the
+// consequence and makes the operator pick "keep it" over actually saying delete
+function openDeleteConfirm(cardId) {
+  const menu = new Menu({
+    title: 'delete this card?',
+    sections: [{
+      kind: 'list',
+      items: [
+        {id: 'delete', label: 'delete the card'},
+        {id: 'keep', label: 'keep it'},
+      ],
+      onPick: item => {
+        menu.close();
+        if (item.id === 'delete') doDeleteCard(cardId);
+      },
+    }],
+  });
+  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
+}
+
+async function doDeleteCard(cardId) {
+  // close its panel first, same order acceptOrRejectCard closes before moving a card elsewhere
+  if (openCard && openCard.cardId === cardId) openCard.expander.close();
+  try {
+    await api(`/api/cards/${cardId}`, {method: 'DELETE'});
+  } catch (err) {
+    showRun(cardId, "can't delete", null, err.message);
+    return;
+  }
+  if (currentBoardId) await onBoardEnter(currentBoardId);
+  returnToBoardBar();
+}
+
+function deleteCard(cardId = actionableCardId()) {
+  if (cardId) openDeleteConfirm(cardId);
+}
+
+// the ⋯ trigger on a card strip - always acts on that card, not whatever is focused, so a click
+// on card B's menu never touches card A even while A holds keyboard focus
+function openCardOverflowMenu(cardId, anchor) {
+  const menu = new Menu({
+    title: 'card actions',
+    sections: [{
+      kind: 'list',
+      items: [
+        {id: 'edit', label: 'edit'},
+        {id: 'model', label: 'change model'},
+        {id: 'status', label: 'move status'},
+        {id: 'delete', label: 'delete'},
+      ],
+      onPick: item => {
+        menu.close();
+        if (item.id === 'edit') editCard(cardId);
+        else if (item.id === 'model') cycleCardModel(cardId);
+        else if (item.id === 'status') openMoveStatusMenu(cardId);
+        else if (item.id === 'delete') deleteCard(cardId);
+      },
+    }],
+  });
+  const rect = anchor.getBoundingClientRect();
+  menu.openAt({x: rect.left, y: rect.bottom});
+  return menu;
 }
 
 // ---- usage (u) --------------------------------------------------------------------------------
@@ -1449,6 +1571,9 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
   if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
   if (evt.code === 'KeyM') { cycleCardModel(); return; }
+  if (evt.code === 'KeyE') { editCard(); return; }
+  if (evt.code === 'KeyJ') { openMoveStatusMenu(); return; }
+  if (evt.code === 'Delete') { deleteCard(); return; }
   if (evt.code === 'KeyT') { toggleReplay(); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
