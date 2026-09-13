@@ -78,8 +78,8 @@ consumer, so there is no need to pay for it up front.
 this project spans repos. `ui_base` (`../ui_base`) is the shared interface package - read its
 `CLAUDE.md` before writing any interface code. all final results live here in smortboard.
 
-ledgers: `TASKS.jsonl` and `WORKLOG.md` are symlinks into the private `../dev_ledgers` repo. they
-resolve only while both repos sit side by side under the same parent.
+ledgers: `TASKS.jsonl` and `WORKLOG.md` live in `dev_ledger/` and are tracked in this repo; the
+root files are relative symlinks into that directory.
 
 ## Constraints and Gotchas
 
