@@ -59,6 +59,9 @@ body {
   flex-direction: column;
   gap: 8px;
 }
+/* the display rule above outranks the browser's own [hidden], so an empty board kept its five
+   columns squeezed beside the hazard box instead of hiding them */
+.bucket[hidden] { display: none; }
 
 .bucket-label {
   color: var(--text-dim);
