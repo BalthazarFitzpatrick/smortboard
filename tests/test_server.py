@@ -478,6 +478,46 @@ def test_patch_repo_to_a_missing_branch_is_400_and_changes_nothing(running_serve
     assert unchanged[0]["test_command"] is None
 
 
+def test_folders_lists_subfolders_and_marks_repos(running_server, tmp_path):
+    _init_repo(tmp_path / "a-repo")
+    (tmp_path / "plain").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "a-file.txt").write_text("x")
+    status, body = _request(f"{running_server}/api/folders?under={tmp_path}")
+    assert status == 200
+    assert body["here"] == str(tmp_path.resolve())
+    assert body["parent"] == str(tmp_path.resolve().parent)
+    assert [(f["name"], f["repo"]) for f in body["folders"]] == [("a-repo", True), ("plain", False)]
+
+
+def test_folders_on_a_missing_path_is_400(running_server, tmp_path):
+    status, body = _request(f"{running_server}/api/folders?under={tmp_path / 'nope'}")
+    assert status == 400
+    assert "not a folder" in body["error"]
+
+
+def test_board_from_a_local_repo_registers_it(running_server, tmp_path):
+    _init_repo(tmp_path / "myrepo")
+    status, body = _request(
+        f"{running_server}/api/boards/from-repo", "POST", {"path": str(tmp_path / "myrepo")}
+    )
+    assert status == 201
+    assert body["board"]["name"] == "myrepo"
+    assert body["repo"]["default_branch"] == "main"
+    _, repos = _request(f"{running_server}/api/boards/{body['board']['id']}/repos")
+    assert [r["name"] for r in repos] == ["myrepo"]
+
+
+def test_board_from_a_plain_folder_is_400_and_creates_no_board(running_server, tmp_path):
+    (tmp_path / "not-a-repo").mkdir()
+    status, body = _request(
+        f"{running_server}/api/boards/from-repo", "POST", {"path": str(tmp_path / "not-a-repo")}
+    )
+    assert status == 400
+    _, boards = _request(f"{running_server}/api/boards")
+    assert boards == []
+
+
 def test_patch_repo_unknown_field_is_400(running_server, tmp_path):
     repo_path = tmp_path / "repo"
     _init_repo(repo_path)
