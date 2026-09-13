@@ -92,6 +92,13 @@ export function element(tag, className = '') {
       if (html === '') { el.children.forEach(c => { c.parentNode = null; }); el.children = []; }
     },
   });
+  // a textarea's growth math needs just enough geometry to be meaningful: clientHeight tracks the
+  // visible box (one unit per row), scrollHeight tracks the content (one unit per line the value
+  // actually breaks into) - a real browser's own units, not these, drive the real thing
+  let rows = 1;
+  Object.defineProperty(el, 'rows', {get: () => rows, set: v => { rows = v; }});
+  Object.defineProperty(el, 'clientHeight', {get: () => rows * 20});
+  Object.defineProperty(el, 'scrollHeight', {get: () => ((el.value.match(/\n/g) || []).length + 1) * 20});
   return el;
 }
 
