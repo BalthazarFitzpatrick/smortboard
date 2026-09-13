@@ -6,6 +6,61 @@ You write a card and press a key. An agent picks it up in a sealed container and
 The board then re-runs the tests itself, has a second agent read the diff, and opens a pull request.
 It never merges. Anything that needs you waits in one inbox.
 
+## Start in a minute
+
+**1. Install**, once:
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/), and keep it running
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- Claude Code: `npm install -g @anthropic-ai/claude-code`
+- [GitHub CLI](https://cli.github.com/), then `gh auth login`. The board opens its pull requests
+  through it.
+
+**2. Get the board** and build the image cards run in:
+
+```bash
+git clone https://github.com/BalthazarFitzpatrick/smortboard && cd smortboard
+docker build -f docker/card.Dockerfile -t smortboard-card:latest .
+```
+
+**3. Give it the key.** Cards use their own model-only token, never your Claude login:
+
+```bash
+claude setup-token
+```
+
+It prints the token once. Copy it, then on macOS:
+
+```bash
+mkdir -p ~/.config/smortboard
+(umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
+```
+
+Linux and Windows: see [Setup](#setup).
+
+**4. Start it:**
+
+```bash
+uv run smortboard
+```
+
+It opens http://127.0.0.1:8000/ui/index.html. Keep that terminal open. Closing it stops the board
+and any card that is running.
+
+**5. Board 1 and its repo:**
+
+1. Press `b`. Type a board name and press Enter.
+2. Register a repo on it: the path to a local clone of a GitHub repo, its default branch, and the
+   command that runs its tests, e.g. `uv run pytest -q`. The board runs that command itself before it
+   opens a pull request, so a repo without one can't finish a card. If the tests need more than git,
+   uv and Python, give the repo its own image (see [Setup](#setup)).
+3. Press `1` to open board 1.
+4. Press `h`. The checklist shows anything still missing, and how to fix it.
+5. Press `.` and tell the orchestrator what you want built. It answers with a plan and cards.
+6. Pick a card and press `r`, or press `w` to run the whole board.
+
+Anything that needs you lands in the inbox, `n`. The board never merges. You do.
+
 ![A payments service mid-sprint: cards in every state across five columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
 
 ![A card opened over the board: its criteria, tasks, dependencies and the run as a timeline - tests passed, reviewer approved, pull request open](docs/images/hero-card.jpg)
