@@ -39,6 +39,8 @@ CARD_WRITABLE_FIELDS = {
 # gate_timeout_seconds caps the test gate - unset means review.gates.GATE_TIMEOUT_SECONDS (600)
 # auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - "off" parks the board until
 # the reset instead (the pre-profiles behaviour), unset means on
+# mall_cam_interval_seconds is the workforce drawer's auto-cycle period (cf90bacc) - unset means
+# chat.js's own default (10)
 _SETTING_KEYS = (
     "findings_route",
     "orchestrator_model",
@@ -48,6 +50,7 @@ _SETTING_KEYS = (
     "resume_briefing",
     "gate_timeout_seconds",
     "auto_switch_profiles",
+    "mall_cam_interval_seconds",
 )
 
 # writable settings that are not plain strings. mission_control_read_paths is a json list of
@@ -551,6 +554,8 @@ class Store:
             _check_findings_route(value)
         if key == "max_parallel":
             _check_positive_int("max_parallel", value)
+        if key == "mall_cam_interval_seconds":
+            _check_positive_int("mall_cam_interval_seconds", value)
         stored = value
         # a list is the panel's whole-list replace and is checked path by path; a string is already
         # json and stored as given, which mission_control_read_paths() reads tolerantly

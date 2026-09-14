@@ -72,6 +72,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
   loadRoster, jumpToCard, usageSections, sendMissionControl, renderMissionControl, mc, mcQueueFor,
   resolveWorkforceTarget, loadWorkforce, wf, buildDrawers, drawers, onBoardEnter, createMessageQueue,
   boardIdRef: () => currentBoardId, __badgeCalls,
+  cycleWorkforce, loadMallCamSeconds, mallCamSecondsRef: () => mallCamSeconds, resetWorkforceTarget,
 };`)(SpyMenu, SpyDrawer);
 
 mod.buildDrawers();
@@ -382,6 +383,56 @@ assert.notEqual(document.activeElement, mod.wf.input, 'escape leaves the input')
 strip.focus();
 document._dispatch('keydown', {code: 'Comma', key: ',', target: strip, preventDefault() {}});
 assert.ok(!mod.drawers.left.isOpen(), 'the same , closes the drawer it opened');
+
+// ---- mall cam (cf90bacc): manual navigation pins, the interval is read from settings, and a
+// board switch drops any stale pin left from the board just departed --------------------------
+
+// a mall cam of three, mid-cycle - prev/next is the operator taking over, so it pins
+mod.wf.pinned = false;
+mod.wf.working = [{card_id: 'w1'}, {card_id: 'w2'}, {card_id: 'w3'}];
+mod.wf.index = 0;
+mod.wf.cardId = 'w1';
+responses.set('/api/cards/w2/conversation', stubJson(200,
+  {card_id: 'w2', title: 'w2', running: false, phase: null, delivery: 'next_run', messages: []}));
+mod.cycleWorkforce(1);
+assert.equal(mod.wf.cardId, 'w2', 'stepping by hand still moves to the next card');
+assert.equal(mod.wf.pinned, true, 'stepping by hand pins the drawer - the auto-cycle stops');
+
+// the internal timer's own advance passes {manual: false} and must not pin
+mod.wf.pinned = false;
+responses.set('/api/cards/w3/conversation', stubJson(200,
+  {card_id: 'w3', title: 'w3', running: false, phase: null, delivery: 'next_run', messages: []}));
+mod.cycleWorkforce(1, {manual: false});
+assert.equal(mod.wf.pinned, false, "the timer's own advance does not pin");
+
+// the interval comes from settings, falling back to the 10s default on anything invalid
+responses.set('/api/settings', stubJson(200, {mall_cam_interval_seconds: '25'}));
+await mod.loadMallCamSeconds();
+assert.equal(mod.mallCamSecondsRef(), 25, 'a valid setting overrides the default');
+responses.set('/api/settings', stubJson(200, {mall_cam_interval_seconds: null}));
+await mod.loadMallCamSeconds();
+assert.equal(mod.mallCamSecondsRef(), 10, 'an unset setting falls back to the default');
+responses.set('/api/settings', stubJson(200, {mall_cam_interval_seconds: 'not a number'}));
+await mod.loadMallCamSeconds();
+assert.equal(mod.mallCamSecondsRef(), 10, 'a bad value falls back to the default rather than breaking the cycle');
+
+// a board switch drops the stale pin, so the next open resolves fresh for the new board
+mod.wf.pinned = true;
+mod.wf.cardId = 'stale-card';
+mod.wf.working = [{card_id: 'stale-card'}];
+mod.resetWorkforceTarget();
+assert.equal(mod.wf.pinned, false, 'a board switch clears the pin');
+assert.equal(mod.wf.cardId, null, 'and the stale card id with it');
+assert.deepEqual(mod.wf.working, [], 'and the stale roster it was cycling');
+
+// onBoardEnter itself calls resetWorkforceTarget - a board switch through the real entry point,
+// not just the helper in isolation
+mod.wf.pinned = true;
+mod.wf.cardId = 'stale-card-2';
+responses.set('/api/boards/b1/cards', stubJson(200, []));
+await mod.onBoardEnter('b1');
+assert.equal(mod.wf.pinned, false, 'entering a board clears a pin left over from the last one');
+assert.equal(mod.wf.cardId, null);
 
 console.log('ok');
 // the workforce drawer's own rotate/poll timers (wf.rotate, wf.poll) are not proven cleared by

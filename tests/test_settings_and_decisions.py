@@ -47,6 +47,7 @@ def test_the_global_route_forces_every_card(store, card_id):
         "resume_briefing": None,
         "gate_timeout_seconds": None,
         "auto_switch_profiles": None,
+        "mall_cam_interval_seconds": None,
         "mission_control_read_paths": [],
     }
 
@@ -70,6 +71,16 @@ def test_max_parallel_refuses_zero_negatives_and_non_numbers(store, card_id):
     )  # settings are stored as text, like every other one
     store.set_setting("max_parallel", None)  # null clears it back to the scheduler's default
     assert store.get_settings()["max_parallel"] is None
+
+
+def test_mall_cam_interval_refuses_zero_negatives_and_non_numbers(store, card_id):
+    for bad in (0, -1, "0", "-3", "two", 1.5, True):
+        with pytest.raises(ValueError):
+            store.set_setting("mall_cam_interval_seconds", bad)
+    store.set_setting("mall_cam_interval_seconds", 15)
+    assert store.get_settings()["mall_cam_interval_seconds"] == "15"
+    store.set_setting("mall_cam_interval_seconds", None)  # null clears it back to chat.js's default
+    assert store.get_settings()["mall_cam_interval_seconds"] is None
 
 
 def test_a_board_max_parallel_refuses_zero_negatives_and_non_numbers(store):
@@ -127,6 +138,7 @@ def test_settings_travel_in_the_export_bundle(store, tmp_path):
             "resume_briefing": None,
             "gate_timeout_seconds": None,
             "auto_switch_profiles": None,
+            "mall_cam_interval_seconds": None,
             "mission_control_read_paths": [],
         }
 

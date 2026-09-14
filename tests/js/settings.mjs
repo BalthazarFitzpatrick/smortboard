@@ -121,9 +121,11 @@ assert.ok(!boardBar.children.includes(button), 'the button must not live inside 
 button.onclick();
 assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel');
 
-// ---- the panel renders all three sections: credential profiles, mission control can read, parallelism
+// ---- the panel renders all four sections: credential profiles, mission control can read,
+// parallelism, mall cam interval (cf90bacc)
 await flush();
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 3, 'credential profiles, mission control can read, how many cards run at once');
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 4,
+  'credential profiles, mission control can read, how many cards run at once, mall cam interval');
 assert.ok(mod.st.listEl.querySelector('.settings-auto-switch-checkbox'), 'the credential section carries the auto-switch toggle');
 assert.ok(mod.rp.listEl.querySelector('.hazard-placeholder'), 'no folders yet shows a placeholder, not nothing');
 
