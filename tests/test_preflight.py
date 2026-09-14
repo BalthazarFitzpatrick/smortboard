@@ -137,7 +137,9 @@ def test_gh_not_installed(monkeypatch, store, tmp_path):
     assert "cli.github.com" in row["fix"]
 
 
-def test_gh_not_authenticated(store, tmp_path):
+def test_gh_not_authenticated(store, tmp_path, monkeypatch):
+    # the gate container has no gh binary, and this test is about the auth step after install
+    monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: "/usr/bin/gh")
     token_file = tmp_path / "card_token"
     token_file.write_text("x" * 108)
     token_file.chmod(0o600)
