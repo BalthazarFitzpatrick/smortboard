@@ -37,6 +37,8 @@ CARD_WRITABLE_FIELDS = {
 # smortboard.scheduler.DEFAULT_MAX_PARALLEL
 # resume_briefing gates lifecycle.py's resume briefing - "off" disables it, unset means on
 # gate_timeout_seconds caps the test gate - unset means review.gates.GATE_TIMEOUT_SECONDS (600)
+# auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - "off" parks the board until
+# the reset instead (the pre-profiles behaviour), unset means on
 _SETTING_KEYS = (
     "findings_route",
     "orchestrator_model",
@@ -45,6 +47,7 @@ _SETTING_KEYS = (
     "max_parallel",
     "resume_briefing",
     "gate_timeout_seconds",
+    "auto_switch_profiles",
 )
 
 

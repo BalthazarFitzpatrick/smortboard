@@ -120,21 +120,59 @@ def test_add_profile_rejects_an_invalid_name(bad):
         profiles.add_profile(bad)
 
 
-def test_remove_profile_refuses_to_remove_default():
+def test_remove_profile_refuses_to_remove_the_last_remaining_profile():
     with pytest.raises(profiles.ProfileError):
         profiles.remove_profile("default")
-
-
-def test_remove_profile_refuses_to_remove_the_active_profile():
-    profiles.add_profile("work")
-    profiles.set_active("work")
-    with pytest.raises(profiles.ProfileError):
-        profiles.remove_profile("work")
 
 
 def test_remove_profile_drops_a_registered_inactive_profile():
     profiles.add_profile("work")
     profiles.remove_profile("work")
+    assert [r["name"] for r in profiles.list_profiles()] == ["default"]
+
+
+def test_remove_profile_switches_active_to_a_non_limited_profile_first():
+    profiles.add_profile("work")
+    profiles.add_profile("third", token="t")
+    profiles.mark_limited("third", time.time() + 3600)
+    profiles.set_active("work")
+    profiles.remove_profile("work")
+    # "third" is limited right now, so active moves to "default" instead
+    assert profiles.active_profile() == "default"
+    assert [r["name"] for r in profiles.list_profiles()] == ["default", "third"]
+
+
+def test_remove_profile_falls_back_to_a_limited_profile_if_every_other_is_limited():
+    profiles.add_profile("work")
+    profiles.mark_limited("default", time.time() + 3600)
+    profiles.set_active("work")
+    profiles.remove_profile("work")
+    assert profiles.active_profile() == "default"
+
+
+def test_remove_default_is_now_allowed_and_unlinks_its_token_file():
+    from smortboard.exec.backends import card_token_path
+
+    profiles.add_profile("work")
+    path = card_token_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("legacy-token\n")
+    profiles.remove_profile("default")
+    assert [r["name"] for r in profiles.list_profiles()] == ["work"]
+    assert not path.exists()
+
+
+def test_removed_default_stays_removed_after_a_state_reload():
+    profiles.add_profile("work")
+    profiles.remove_profile("default")
+    # _load_state must trust an on-disk state file as-is, not re-insert "default" into it
+    assert "default" not in [r["name"] for r in profiles.list_profiles()]
+    assert profiles.active_profile() == "work"
+
+
+def test_a_board_with_no_state_file_still_auto_creates_default():
+    # the removal-persists guard above must not break the untouched-file fallback
+    assert not profiles.state_path().exists()
     assert [r["name"] for r in profiles.list_profiles()] == ["default"]
 
 
@@ -366,6 +404,29 @@ def test_with_every_profile_limited_the_board_parks_until_the_earliest_reset(sto
     assert view["paused_until"] == pytest.approx(min(first_reset, second_reset))
     # nothing left to switch to - not resumed a third time
     assert runs.started == [card["id"], card["id"]]
+
+
+def test_auto_switch_off_parks_instead_of_rotating(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    store.set_setting("max_parallel", "1")
+    store.set_setting("auto_switch_profiles", "off")
+    profiles.add_profile("second", token="second-token")
+    card = store.create_card(board_id, repo_id, "a")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    resets_at = time.time() + 3600
+    store.append_event(card["id"], "rate_limit_event", {"rate_limit_info": {"resetsAt": resets_at}})
+    runs.finish(card["id"], blocked_reason_code="USAGE_LIMIT")
+
+    # parked, not rotated - active stays "default" even though "second" is configured and free
+    assert profiles.active_profile() == "default"
+    assert profiles.is_limited("default")
+    view = scheduler.schedule_view()
+    assert view["paused_until"] == pytest.approx(resets_at)
+    assert runs.started == [card["id"]]  # never resumed a second time
 
 
 def test_a_single_profile_board_still_parks_and_writes_no_profile_state(store, board_and_repo):
