@@ -71,7 +71,7 @@ assert.equal(rows.length, 2, 'both profiles render as rows');
 assert.equal(rows[0].querySelector('.profile-name').textContent, 'default');
 assert.ok(rows[0].querySelector('.profile-name').className.includes('profile-active'), 'the active profile is marked');
 assert.ok(!rows[0].querySelector('.profile-activate'), 'the active row has no activate control');
-assert.ok(!rows[0].querySelector('.profile-remove'), 'default cannot be removed');
+assert.ok(rows[0].querySelector('.profile-remove'), 'every profile, default and active included, can be removed');
 assert.ok(rows[1].querySelector('.profile-activate'), 'an inactive row can be activated');
 assert.ok(rows[1].querySelector('.profile-remove'), 'a non-default row can be removed');
 

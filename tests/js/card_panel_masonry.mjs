@@ -41,7 +41,7 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {computeMasonryLayout, layoutCardSections};`)(SpyMenu, SpyDrawer);
+;return {computeMasonryLayout, layoutCardSections, watchCardSections};`)(SpyMenu, SpyDrawer);
 
 // ---- computeMasonryLayout is pure: no dom, just heights in, positions out --------------------
 
@@ -135,6 +135,29 @@ sections.getBoundingClientRect = () => ({left: 0, top: 0, right: 0, bottom: 0, w
 const beforeZeroWidth = status.style.width;
 mod.layoutCardSections(panel);
 assert.equal(status.style.width, beforeZeroWidth, 'a zero-width read should not touch section styles');
+
+// ---- a panel laid out before it had a box is laid out again once it gets one: a resize observer
+// re-runs layout when the container's width lands or a section's height changes, and a closed
+// panel stops being watched
+const observed = [];
+let fire = null;
+globalThis.ResizeObserver = class {
+  constructor(callback) { fire = callback; }
+  observe(el) { observed.push(el); }
+  disconnect() { observed.length = 0; }
+};
+panel.isConnected = true;
+status.style.top = '';
+mod.watchCardSections(panel);
+assert.ok(observed.includes(sections), 'the container is watched for its width');
+assert.ok(observed.includes(status), 'each section is watched for its height');
+sections.getBoundingClientRect = () => ({left: 0, top: 0, right: 0, bottom: 0, width: 800, height: 0});
+fire([]);
+assert.equal(status.style.top, '80px', 'the observer lays the panel out once it has a real width');
+panel.isConnected = false;
+fire([]);
+assert.equal(observed.length, 0, 'a closed panel stops being watched');
+delete globalThis.ResizeObserver;
 
 // ---- the design archive's fifteen panel-layout-N variants restyle .card-sections back to a normal
 // flow list (panel-layouts.css) - masonry's position: absolute must stay scoped away from them, or
