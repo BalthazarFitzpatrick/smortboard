@@ -16,6 +16,7 @@ disk - list/read/mark/rotate operations move names, paths and timestamps only.
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,12 @@ DEFAULT_PROFILE = "default"
 # a test seam, mirrors CARD_TOKEN_PATH_ENV - points the state file at a tmp path instead of the
 # operator's real config directory
 STATE_PATH_ENV = "SMORTBOARD_PROFILES_STATE_PATH"
+
+# guards every load-mutate-save cycle below. BoardScheduler can run several cards at once
+# (max_parallel > 1), each on its own thread, and two USAGE_LIMIT events landing close together
+# must not interleave their read-modify-write of the same state file - one would clobber the
+# other's rotation (a lost mark_limited or set_active).
+_STATE_LOCK = threading.Lock()
 
 _NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
@@ -72,9 +79,13 @@ def _load_state() -> dict[str, Any]:
 
 
 def _save_state(state: dict[str, Any]) -> None:
+    # write-then-rename: a crash or power loss mid-write leaves the old file (or a stray .tmp-*
+    # file) intact rather than half-written json that _load_state would silently treat as absent
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2))
+    tmp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    tmp_path.write_text(json.dumps(state, indent=2))
+    tmp_path.replace(path)
 
 
 def _validate_name(name: str) -> None:
@@ -161,47 +172,56 @@ def write_token_file(path: str | Path, token: str) -> None:
 
 def add_profile(name: str, token: str | None = None) -> Path:
     _validate_name(name)
-    state = _load_state()
-    if name in state["profiles"]:
-        raise ProfileError(f"profile '{name}' already exists")
-    path = profile_path(name)
-    if token is not None:
-        write_token_file(path, token)
-    state["profiles"].append(name)
-    _save_state(state)
-    return path
+    with _STATE_LOCK:
+        state = _load_state()
+        if name in state["profiles"]:
+            raise ProfileError(f"profile '{name}' already exists")
+        path = profile_path(name)
+        if token is not None:
+            write_token_file(path, token)
+        state["profiles"].append(name)
+        _save_state(state)
+        return path
 
 
 def remove_profile(name: str) -> None:
     if name == DEFAULT_PROFILE:
         raise ProfileError("the 'default' profile cannot be removed")
-    state = _load_state()
-    if name not in state["profiles"]:
-        raise ProfileError(f"no such profile '{name}'")
-    if state["active"] == name:
-        raise ProfileError(f"'{name}' is the active profile - switch to another one first")
-    state["profiles"].remove(name)
-    state["limits"].pop(name, None)
-    _save_state(state)
+    with _STATE_LOCK:
+        state = _load_state()
+        if name not in state["profiles"]:
+            raise ProfileError(f"no such profile '{name}'")
+        if state["active"] == name:
+            raise ProfileError(f"'{name}' is the active profile - switch to another one first")
+        state["profiles"].remove(name)
+        state["limits"].pop(name, None)
+        _save_state(state)
 
 
 def set_active(name: str) -> None:
-    state = _load_state()
-    if name not in state["profiles"]:
-        raise ProfileError(f"no such profile '{name}'")
-    state["active"] = name
-    _save_state(state)
+    with _STATE_LOCK:
+        state = _load_state()
+        if name not in state["profiles"]:
+            raise ProfileError(f"no such profile '{name}'")
+        state["active"] = name
+        _save_state(state)
 
 
-def mark_limited(name: str, resets_at: float | None) -> None:
-    """records that `name` hit its rate limit until resets_at. called by the scheduler, never by a
-    human, which is why an unknown name is registered rather than refused - the profile it names is
-    real (it was just the active one), only unrecorded here yet."""
-    state = _load_state()
+def _mark_limited(state: dict[str, Any], name: str, resets_at: float | None) -> None:
+    """in-memory mutation only - callers load and save around this, see mark_limited() and
+    handle_usage_limit() below. an unknown name is registered rather than refused: the profile it
+    names is real (it was just the active one), only unrecorded here yet."""
     if name not in state["profiles"]:
         state["profiles"].append(name)
     state["limits"][name] = {"limited_until": resets_at}
-    _save_state(state)
+
+
+def mark_limited(name: str, resets_at: float | None) -> None:
+    """records that `name` hit its rate limit until resets_at."""
+    with _STATE_LOCK:
+        state = _load_state()
+        _mark_limited(state, name, resets_at)
+        _save_state(state)
 
 
 def is_limited(name: str, now: float | None = None) -> bool:
@@ -211,10 +231,9 @@ def is_limited(name: str, now: float | None = None) -> bool:
     return bool(limited_until and limited_until > now)
 
 
-def next_available(now: float | None = None) -> str | None:
-    """the next profile after the active one, in rotation order, that is not limited right now -
-    None once every configured profile is"""
-    state = _load_state()
+def _next_available(state: dict[str, Any], now: float) -> str | None:
+    """in-memory: the next profile after the active one, in rotation order, that is not limited
+    at `now` - None once every configured profile is"""
     order = state["profiles"]
     active = state["active"]
     if active in order:
@@ -222,7 +241,6 @@ def next_available(now: float | None = None) -> str | None:
         rotated = order[idx + 1 :] + order[: idx + 1]
     else:
         rotated = list(order)
-    now = time.time() if now is None else now
     for name in rotated:
         limited_until = (state["limits"].get(name) or {}).get("limited_until")
         if not (limited_until and limited_until > now):
@@ -230,17 +248,53 @@ def next_available(now: float | None = None) -> str | None:
     return None
 
 
-def earliest_reset(now: float | None = None) -> float | None:
-    """the soonest a currently-limited profile resets - what the board parks until once every
-    profile is limited"""
+def next_available(now: float | None = None) -> str | None:
     state = _load_state()
-    now = time.time() if now is None else now
+    return _next_available(state, time.time() if now is None else now)
+
+
+def _earliest_reset(state: dict[str, Any], now: float) -> float | None:
+    """in-memory: the soonest a currently-limited profile resets, at `now`"""
     resets = [
         info.get("limited_until")
         for info in state["limits"].values()
         if info.get("limited_until") and info["limited_until"] > now
     ]
     return min(resets) if resets else None
+
+
+def earliest_reset(now: float | None = None) -> float | None:
+    """the soonest a currently-limited profile resets - what the board parks until once every
+    profile is limited"""
+    state = _load_state()
+    return _earliest_reset(state, time.time() if now is None else now)
+
+
+def handle_usage_limit(resets_at: float | None, now: float | None = None) -> dict[str, Any]:
+    """the one transaction a USAGE_LIMIT event needs: mark the active profile limited, rotate to
+    the next one that is not, in a single load-mutate-save under _STATE_LOCK - not the four
+    separate load/save round trips (has_multiple_profiles + mark_limited + next_available +
+    set_active) this used to take, each reading and some writing the same file again.
+
+    Returns {"rotated": bool, "next_profile": str | None, "earliest_reset": float | None}.
+    rotated is False only for a single-profile board, which - like every read-only path in this
+    module - must never write a state file just because a run hit its limit alone.
+    """
+    now = time.time() if now is None else now
+    with _STATE_LOCK:
+        state = _load_state()
+        if len(state["profiles"]) <= 1:
+            return {"rotated": False, "next_profile": None, "earliest_reset": None}
+        _mark_limited(state, state["active"], resets_at)
+        next_profile = _next_available(state, now)
+        if next_profile is not None:
+            state["active"] = next_profile
+        _save_state(state)
+        return {
+            "rotated": True,
+            "next_profile": next_profile,
+            "earliest_reset": _earliest_reset(state, now),
+        }
 
 
 def read_active_token() -> str:
