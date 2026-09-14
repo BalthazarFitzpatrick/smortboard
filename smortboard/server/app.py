@@ -21,6 +21,7 @@ from smortboard.orchestrator import (
 )
 from smortboard.preflight import run_preflight
 from smortboard.prompts import ROLES
+from smortboard.pulls import open_pull_requests
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
@@ -96,6 +97,7 @@ _ROUTES = [
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
     (re.compile(r"^/api/attention$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/answer$"), "POST"),
+    (re.compile(r"^/api/pulls$"), "GET"),
 ]
 
 _ROLE_DEFAULTS = {
@@ -268,6 +270,8 @@ def _make_handler(
                 self._send_json(200, board_costs(store, params["board_id"]))
             elif path == "/api/attention":
                 self._send_json(200, attention_rows(store))
+            elif path == "/api/pulls":
+                self._send_json(200, open_pull_requests(store))
             elif "card_id" in params and path.endswith("/answer"):
                 self._handle_answer(params["card_id"])
             elif "card_id" in params and method == "GET":
