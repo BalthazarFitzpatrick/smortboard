@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.exec.backends import card_image, container_name, docker_available
+from smortboard.store.errors import NotFoundError
 
 # a test suite that has not finished in ten minutes is not going to; the card is stuck rather than
 # slow, and a gate that waits forever is a card that never reaches the board
@@ -79,6 +80,23 @@ def _remove_container(name: str) -> None:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30, check=False)
 
 
+def _current_repo(store: Any, repo: dict[str, Any] | None) -> dict[str, Any] | None:
+    """the repo row fresh off the store, not whatever the caller happened to be holding.
+
+    a card on the fix route loops through this gate several times in one run, and an operator
+    edit to test_command between rounds must reach the very next one - not only a card started
+    after the edit. falls back to the given `repo` when there is no store or id to re-read by
+    (tests pass a bare dict; an orchestrator turn passes no store at all).
+    """
+    repo_id = (repo or {}).get("id")
+    if store is None or not repo_id:
+        return repo
+    try:
+        return store.get_repo(repo_id)
+    except NotFoundError:
+        return repo
+
+
 def run_test_gate(
     store: Any,
     card_id: str,
@@ -90,6 +108,7 @@ def run_test_gate(
     `--network none`: the gate has no reason to reach anything, and a test suite that needs the
     network to pass is one whose result depends on something outside the card.
     """
+    repo = _current_repo(store, repo)
     command = (repo or {}).get("test_command")
     if not command:
         raise GateUnavailable(
