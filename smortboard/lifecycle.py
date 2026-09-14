@@ -106,6 +106,17 @@ NO_LEASE_NOTE = (
     "then run it again."
 )
 
+# a run that ends on one of these never got to say it was done - it just ran out of budget or
+# turns mid-turn. with commits on the branch that is still real work, so it goes to the gates
+# like a normal finish; with none, it is blocked like any other failed run, but the note names
+# the actual limit instead of a bare CRASH
+BUDGET_CAPPED_SUBTYPES = frozenset({"error_max_budget_usd", "error_max_turns"})
+
+NO_COMMITS_BUDGET_NOTE = (
+    "The run hit its {limit} before committing anything, so there is nothing to test or review. "
+    "Its last words are in the timeline. Run it again, with a note if it stopped early."
+)
+
 
 @dataclass
 class LifecycleResult:
@@ -469,6 +480,7 @@ def run_card_lifecycle(
     last_summary: str | None = None
 
     def work(prompt: str) -> LifecycleResult | None:
+        nonlocal last_summary
         """one agent run in the card's worktree; returns the blocked/stopped state if it stopped
         short"""
         run = runtime.run_card(
@@ -490,6 +502,24 @@ def run_card_lifecycle(
             return _stopped(store, state)
         if run.auth_failed:
             return _refuse(store, state, TOKEN_REFUSED_NOTE)
+        if run.subtype in BUDGET_CAPPED_SUBTYPES:
+            if branch_has_commits(repo["path"], tree.branch, base):
+                store.append_event(card_id, "budget_capped_with_commits", {"subtype": run.subtype})
+                _note(
+                    store,
+                    card_id,
+                    "It hit its budget after committing, so its work went to tests and review.",
+                )
+                store.append_event(card_id, "worker_summary", {"text": run.result_text})
+                last_summary = run.result_text
+                return None
+            limit = "budget" if run.subtype == "error_max_budget_usd" else "turn limit"
+            return _block(
+                store,
+                state,
+                run.blocked_reason_code or "CRASH",
+                NO_COMMITS_BUDGET_NOTE.format(limit=limit),
+            )
         if run.blocked_reason_code:
             return _block(
                 store,
@@ -498,7 +528,6 @@ def run_card_lifecycle(
                 f"The run stopped: {run.blocked_reason_code}.\n\n{run.result_text or ''}".strip(),
             )
         store.append_event(card_id, "worker_summary", {"text": run.result_text})
-        nonlocal last_summary
         last_summary = run.result_text
         return None
 
