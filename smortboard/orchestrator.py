@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from smortboard import profiles
 from smortboard.exec.backends import card_image, docker_available, read_card_token
 from smortboard.exec.runner import build_command, run_process
 from smortboard.operator import OPERATOR_NAME
@@ -503,11 +504,13 @@ class OrchestratorRegistry:
     ) -> None:
         store = Store(self._db_path)  # this thread's own connection, never the server's
         try:
+            # the active profile, resolved per turn as card runs do, so a shift+p switch reaches
+            # mission control too [a fixed override still wins]
             result = run_orchestrator_turn(
                 store,
                 board_id,
                 message,
-                token_path=self._token_path,
+                token_path=profiles.token_path_for_run(self._token_path),
                 runner=runner,
                 store_message=not message_already_stored,
             )
