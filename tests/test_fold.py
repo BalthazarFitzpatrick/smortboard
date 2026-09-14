@@ -44,7 +44,13 @@ def test_a_group_becomes_one_card_carrying_every_criterion_lease_and_dependency(
         store, board_id, repo_id, "a", leases=["x.py"], criteria=["a works"], ledger_task="t1"
     )
     b = _card(
-        store, board_id, repo_id, "b", leases=["y.py"], criteria=["b works"], ledger_task="t2"
+        store,
+        board_id,
+        repo_id,
+        "b",
+        leases=["x.py", "y.py"],
+        criteria=["b works"],
+        ledger_task="t2",
     )
     busy = _card(store, board_id, repo_id, "busy", status="doing")
     later = _card(store, board_id, repo_id, "later")
@@ -84,6 +90,44 @@ def test_cards_on_another_repo_never_fold_and_a_lone_card_is_left_alone(store, b
     lines = apply_folds(store, board_id, [group])
     assert _titles(store, board_id) == ["a", "o"]
     assert lines[0].startswith("not folded") and "another repo" in lines[0]
+
+
+def test_the_snapshot_lists_which_todo_cards_share_a_lease(store, board):
+    board_id, repo_id, other_id = board
+    a = _card(store, board_id, repo_id, "a", leases=["ui/*.js"])
+    b = _card(store, board_id, repo_id, "b", leases=["ui/board.js"])
+    _card(store, board_id, repo_id, "c", leases=["server.py"])
+    _card(store, board_id, other_id, "o", leases=["ui/board.js"])
+    snapshot = consolidate.build_fold_snapshot(store, board_id)
+    cards = {card["title"]: card for card in snapshot["cards"]}
+    assert cards["a"]["overlaps"] == [b["id"][:8]]
+    assert cards["b"]["overlaps"] == [a["id"][:8]]
+    assert cards["c"]["overlaps"] == []
+    # the same file on another repo is another file
+    assert cards["o"]["overlaps"] == []
+
+
+def test_the_board_refuses_a_group_past_one_agents_worth(store, board):
+    board_id, repo_id, _ = board
+    five = [_card(store, board_id, repo_id, f"c{i}", leases=["x.py"]) for i in range(5)]
+    everyone = {"cards": [c["id"] for c in five], "title": "all", "criteria": []}
+    assert "5 cards is more than one agent's worth" in apply_folds(store, board_id, [everyone])[0]
+    wordy = {
+        "cards": [five[0]["id"], five[1]["id"]],
+        "title": "two",
+        "criteria": [f"criterion {i}" for i in range(13)],
+    }
+    assert "13 criteria is more than one agent's worth" in apply_folds(store, board_id, [wordy])[0]
+    assert len(store.list_cards(board_id)) == 5
+
+
+def test_a_card_that_shares_no_lease_with_the_group_is_refused(store, board):
+    board_id, repo_id, _ = board
+    a = _card(store, board_id, repo_id, "a", leases=["x.py"])
+    b = _card(store, board_id, repo_id, "b", leases=["y.py"])
+    group = {"cards": [a["id"], b["id"]], "title": "ab", "criteria": []}
+    assert "shares no lease with the rest" in apply_folds(store, board_id, [group])[0]
+    assert _titles(store, board_id) == ["a", "b"]
 
 
 def test_fewer_than_two_todo_cards_never_starts_a_run(store, board):
