@@ -30,7 +30,7 @@ const BINDINGS = [
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
   {code: 'KeyI', label: 'i', action: 'cost telemetry: card attempts, or the board cost table', group: 'panels'},
   {code: 'KeyC', label: 'c', action: 'cost overview: spend across every board', group: 'panels'},
-  {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card', group: 'panels'},
+  {code: 'KeyA', label: 'a', action: 'agent roster: jump to a card an agent is working on', group: 'panels'},
   {code: 'KeyD', label: 'd', action: 'morning digest: pull requests and open questions', group: 'panels'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
   // one binding row for both: the letter acts on a card elsewhere in this table, shift on the
@@ -1356,15 +1356,11 @@ async function loadRoster(menu) {
     if (!roster.length) {
       const box = document.createElement('div');
       box.className = 'hazard-stripes hazard-placeholder';
-      box.innerHTML = '<span class="hazard-label">no agent is holding a card</span>';
+      box.innerHTML = '<span class="hazard-label">nothing is running - check the inbox (n) for anything waiting</span>';
       menu.refresh([{kind: 'node', node: box}]);
       return;
     }
-    const items = roster.map(r => ({
-      id: r.card_id, label: r.title,
-      stats: r.state === 'blocked' ? `blocked: ${r.reason || ''}` : r.activity,
-      on: r.state === 'working', disabled: r.state === 'blocked',
-    }));
+    const items = roster.map(r => ({id: r.card_id, label: r.title, stats: r.activity, on: true}));
     menu.refresh([{kind: 'list', items, onPick: item => jumpToCard(item.id, roster)}]);
   } catch (err) {
     menu.refresh([{kind: 'list', items: [], empty: `could not load the roster: ${err.message}`}]);
