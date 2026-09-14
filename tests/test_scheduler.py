@@ -50,6 +50,12 @@ class FakeRuns:
         # from this fake's own perspective once .start() has returned
         return None
 
+    def active(self):
+        # matches RunRegistry.active()'s shape: every card started but not yet .finish()ed. one
+        # FakeRuns shared by several BoardSchedulers (as the real RunRegistry is) is what lets a
+        # test prove the global cap is counted across boards, not per board
+        return [SimpleNamespace(card_id=cid, running=True) for cid in self._callbacks]
+
     def finish(self, card_id, blocked_reason_code=None):
         callback = self._callbacks.pop(card_id, None)
         assert callback is not None, f"{card_id} was never started"
@@ -370,6 +376,82 @@ def test_setting_max_parallel_raises_the_cap(store, board_and_repo):
     scheduler = BoardScheduler(board_id, store.path, runs)
     scheduler.start_all()
     assert len(runs.started) == 3
+
+
+def test_a_board_limit_holds_a_board_back_while_another_board_still_starts(store, board_and_repo):
+    """global 3, board a limit 1: a starts one at a time while board b, sharing the same global
+    seat count through one RunRegistry, still gets its own card in"""
+    board_a, repo_a = board_and_repo
+    board_b = store.create_board("b2")
+    repo_b = store.create_repo(board_b["id"], "r2", "/tmp/r2", "main")
+
+    store.set_setting("max_parallel", "3")
+    store.set_board_max_parallel(board_a, 1)
+    [store.create_card(board_a, repo_a, f"a{i}") for i in range(2)]
+    card_b = store.create_card(board_b["id"], repo_b["id"], "b0")
+
+    runs = FakeRuns()  # one shared registry, exactly as the real server wires every board's own
+    scheduler_a = BoardScheduler(board_a, store.path, runs)
+    scheduler_b = BoardScheduler(board_b["id"], store.path, runs)
+
+    scheduler_a.start_all()
+    assert len(scheduler_a.schedule_view()["running"]) == 1, "board a's own cap holds it to one"
+    assert len(scheduler_a.schedule_view()["queued"]) == 1
+
+    scheduler_b.start_all()
+    assert scheduler_b.schedule_view()["running"] == [card_b["id"]], (
+        "board b is unaffected by a's cap"
+    )
+
+
+def test_a_global_cap_of_two_holds_a_third_card_back_on_any_board(store, board_and_repo):
+    board_a, repo_a = board_and_repo
+    board_b = store.create_board("b2")
+    repo_b = store.create_repo(board_b["id"], "r2", "/tmp/r2", "main")
+
+    store.set_setting("max_parallel", "2")
+    store.create_card(board_a, repo_a, "a0")
+    store.create_card(board_a, repo_a, "a1")
+    card_b = store.create_card(board_b["id"], repo_b["id"], "b0")
+
+    runs = FakeRuns()
+    scheduler_a = BoardScheduler(board_a, store.path, runs)
+    scheduler_b = BoardScheduler(board_b["id"], store.path, runs)
+
+    scheduler_a.start_all()
+    assert len(runs.started) == 2  # the global cap, not board a's own (unset) limit
+
+    scheduler_b.start_all()
+    assert card_b["id"] not in runs.started, "the third card waits on the shared global cap"
+    assert scheduler_b.schedule_view()["queued"] == [card_b["id"]]
+
+    runs.finish(runs.started[0])
+    scheduler_b._tick()
+    assert card_b["id"] in runs.started, "a freed global seat lets board b's card start"
+
+
+def test_an_unset_board_limit_behaves_exactly_like_today(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    [store.create_card(board_id, repo_id, f"c{i}") for i in range(3)]
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    assert len(runs.started) == DEFAULT_MAX_PARALLEL == 2
+
+
+def test_a_lowered_board_limit_never_stops_an_already_running_card(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    ids = [store.create_card(board_id, repo_id, f"c{i}")["id"] for i in range(2)]
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    assert len(runs.started) == 2
+
+    store.set_board_max_parallel(board_id, 1)  # lowered while both cards are running
+    scheduler._tick()
+    assert set(runs.started) == set(ids), "a lowered cap only holds back the NEXT card, not these"
 
 
 # -- blocked cards rejoin the queue --------------------------------------------------
@@ -813,6 +895,34 @@ def test_run_all_on_an_unknown_board_is_a_404(server):
     base, _, _ = server
     status, _ = _call(f"{base}/api/boards/nope/run-all", method="POST")
     assert status == 404
+
+
+def _patch_json(url, body):
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        url, data=data, method="PATCH", headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            raw = resp.read()
+            return resp.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        return exc.code, (json.loads(raw) if raw else None)
+
+
+def test_patch_board_max_parallel_over_http(server):
+    base, board_id, _ = server
+    status, body = _patch_json(f"{base}/api/boards/{board_id}", {"max_parallel": 2})
+    assert status == 200
+    assert body["max_parallel"] == 2
+
+    status, body = _patch_json(f"{base}/api/boards/{board_id}", {"max_parallel": 0})
+    assert status == 400
+
+    status, body = _patch_json(f"{base}/api/boards/{board_id}", {"max_parallel": None})
+    assert status == 200
+    assert body["max_parallel"] is None
 
 
 # -- keeping a checking card's pr mergeable ------------------------------------------------------

@@ -309,6 +309,11 @@ _MIGRATIONS: list[str] = [
 
     CREATE INDEX IF NOT EXISTS idx_repo_remembered_leases_repo ON repo_remembered_leases (repo_id);
     """,
+    # 14: a board's own parallel cap, on top of the global max_parallel setting - unset means
+    # only the global limit applies, same as before this column existed
+    """
+    ALTER TABLE boards ADD COLUMN max_parallel INTEGER;
+    """,
 ]
 
 
