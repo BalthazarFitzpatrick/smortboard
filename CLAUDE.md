@@ -10,7 +10,7 @@ need a decision. Single user, local-first, browser-based, distributed via Docker
 
 **It is not a harness.** It does not reimplement the agent loop - it schedules and observes one.
 
-The design test for every feature: does it help operator define work and then walk away? Anything
+The design test for every feature: does it help the operator define work and then walk away? Anything
 that rewards hovering is wrong, and should be argued against rather than built.
 
 mode: outcome-defined - the target is a stated vision to be checked and then implemented, not an
@@ -78,8 +78,8 @@ consumer, so there is no need to pay for it up front.
 this project spans repos. `ui_base` (`../ui_base`) is the shared interface package - read its
 `CLAUDE.md` before writing any interface code. all final results live here in smortboard.
 
-ledgers: `TASKS.jsonl` and `WORKLOG.md` are symlinks into the private `../private-ledgers` repo. they
-resolve only while both repos sit side by side under the same parent.
+ledgers: `TASKS.jsonl` and `WORKLOG.md` live in `dev_ledger/` and are tracked in this repo; the
+root files are relative symlinks into that directory.
 
 ## Constraints and Gotchas
 

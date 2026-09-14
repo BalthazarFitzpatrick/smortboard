@@ -294,7 +294,9 @@ async function createBoardFromRepo(path, menu) {
 
 function renderRepoRow(repo) {
   const row = document.createElement('div');
-  row.className = 'repo-row';
+  // renderRepoList only ever loads repos for currentBoardId, so every row rendered here belongs
+  // to the open board - same "opened" look boards.on gives the board row itself
+  row.className = 'repo-row on';
   row.dataset.repoId = repo.id;
 
   const head = document.createElement('div');
