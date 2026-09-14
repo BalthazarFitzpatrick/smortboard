@@ -236,9 +236,60 @@ function fitTotal(rows, fit, gap) {
   fullCards(bucketRows).forEach(s => { s.getBoundingClientRect = () => ({top: 0, left: 0, right: 0, bottom: 0, width: 100, height: 307}); });
   mod.fitPiledColumn(bucketRows);
   assert.equal(parseFloat(pile.style.height), mod.MIN_PILE_HEIGHT);
-  const clipped = fullCards(bucketRows).filter(s => s.className.includes('card-clipped'));
-  assert.ok(clipped.length && clipped.every(s => parseFloat(s.style.height) < 307), 'a card per full pair is cut short');
-  assert.ok(!fullCards(bucketRows)[0].className.includes('card-clipped'), 'with no excursion yet, the first card stays whole');
+  // real overlap: every card keeps its full 307px box (a shorter one reflows its foot and button
+  // up into view); the row after it slides up over it, and whatever that row cannot cover - a pile
+  // is shorter than the part it covers - is clipped away rather than left poking out beneath
+  const gap = 18; // the stub's computed rowGap is empty, so fitPiledColumn falls back to 18
+  const clipOf = s => Number((/inset\(0 0 (\d+)px 0\)/.exec(s.style.clipPath || '') || [0, 0])[1]);
+  const covered = fullCards(bucketRows).filter(s => s.className.includes('card-covered'));
+  assert.ok(covered.length, 'a card per full pair is tucked under the row after it');
+  covered.forEach(s => {
+    assert.ok(!s.style.height, 'a covered card keeps its full box - it is clipped, never shrunk');
+    const next = bucketRows.children[bucketRows.children.indexOf(s) + 1];
+    const nextTop = 307 + gap + parseFloat(next.style.marginTop);
+    const visibleBottom = 307 - clipOf(s);
+    const opaque = next.className.includes('card-pile') ? parseFloat(next.style.height) - 9 : 307;
+    assert.ok(nextTop < visibleBottom, 'the row after a covered card really overlaps it');
+    assert.ok(visibleBottom <= nextTop + opaque, 'and covers all of what shows - nothing pokes out beneath');
+  });
+  const underPile = covered.find(s => bucketRows.children[bucketRows.children.indexOf(s) + 1].className.includes('card-pile'));
+  assert.ok(underPile && clipOf(underPile) > 0, 'a card under a pile is clipped to end behind its face');
+  assert.ok(!fullCards(bucketRows)[0].className.includes('card-covered'), 'with no excursion yet, the first card stays whole');
+
+  // focus on the bottom pair's upper card: the last row gives way, and with nothing below it to
+  // slide over it, that one is clipped instead - and the earlier overlap is undone on the refit
+  bucketRows._pile.focusIndex = 8;
+  mod.fitPiledColumn(bucketRows);
+  const last = fullCards(bucketRows).at(-1);
+  assert.ok(last.className.includes('card-clipped'), 'the last row is clipped when it is the one giving way');
+  assert.ok(clipOf(last) > 0 && parseFloat(last.style.marginBottom) === -clipOf(last),
+    'clipped, and its layout gives the same height back, so the column still fits');
+  assert.equal(fullCards(bucketRows).filter(s => s.className.includes('card-clipped')).length, 1);
+  assert.equal(pile.style.marginTop, '', 'a refit clears the overlap a previous fit left behind');
+}
+
+// ---- pile style: straight layers, and the edge of the state the pile holds ----------------------
+
+{
+  const cards = Array.from({length: 10}, (_, i) => card(`s${i}`, 'doing'));
+  const {bucketRows} = buildColumn(200, cards, 'doing');
+  const pile = piles(bucketRows)[0];
+  assert.ok(pile.className.includes('card-pile-doing'), 'a doing pile wears the doing edge');
+  const layers = pile.children.filter(c => c.className.includes('card-pile-layer'));
+  assert.ok(layers.length && layers.every(l => !l.style.transform.includes('rotate')),
+    'layers stack straight - a rotated corner rose over the face');
+}
+{
+  // attention sorts first, so three of them put one past the top pair and into the pile
+  const cards = Array.from({length: 10}, (_, i) => card(`p${i}`, 'todo', i < 3 ? {blocked_reason_code: 'CRASH'} : {}));
+  const {bucketRows} = buildColumn(200, cards);
+  assert.ok(piles(bucketRows)[0].className.includes('card-pile-attention'), 'a pile holding an attention card wears its edge');
+}
+{
+  const cards = Array.from({length: 10}, (_, i) => card(`q${i}`, 'todo'));
+  const {bucketRows} = buildColumn(200, cards);
+  const cls = piles(bucketRows)[0].className;
+  assert.ok(!cls.includes('card-pile-doing') && !cls.includes('card-pile-attention'), 'a quiet pile keeps the grey edge');
 }
 
 console.log('ok');
