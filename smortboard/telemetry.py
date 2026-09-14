@@ -1,7 +1,8 @@
 """pure projections over the store and the run registry - no model calls, nothing derived by asking.
 
-roster: every card an agent currently holds, working or blocked, with a one-line activity read off
-its own latest event rather than asked for (see docs/PLAN.md Phase 5's roster unit).
+roster: every card an agent currently holds - a live run only - with a one-line activity read off
+its own latest event rather than asked for (see docs/PLAN.md Phase 5's roster unit). a blocked card
+belongs to the attention inbox instead, not to this list.
 usage: rate-limit windows and model spend, summed straight off the event log.
 """
 
@@ -9,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from smortboard import profiles
 from smortboard.exec.runner import classify_rate_limit, classify_result
 from smortboard.store.api import Store
 
@@ -83,7 +85,10 @@ def _activity_for_running_card(store: Store, card_id: str, phase: str | None) ->
 
 def roster_rows(store: Store, active_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """`active_runs` is `[{"card_id", "phase"}, ...]` - the caller (the http handler) passes
-    RunRegistry.active() through in that shape, so telemetry never imports server.runs."""
+    RunRegistry.active() through in that shape, so telemetry never imports server.runs.
+
+    only cards an agent currently holds - a live run. a blocked card is not an agent working on
+    anything; it belongs to the attention inbox (see attention_rows), not here."""
     working = []
     for run in active_runs:
         card = store.get_card(run["card_id"])
@@ -97,24 +102,7 @@ def roster_rows(store: Store, active_runs: list[dict[str, Any]]) -> list[dict[st
                 "activity": _activity_for_running_card(store, card["id"], run.get("phase")),
             }
         )
-
-    running_ids = {r["card_id"] for r in active_runs}
-    blocked = []
-    for card in store.list_doing_cards_blocked():
-        if card["id"] in running_ids:
-            continue  # a card can be both "doing" and mid-retry-run; the run wins
-        blocked.append(
-            {
-                "card_id": card["id"],
-                "board_id": card["board_id"],
-                "title": card["title"],
-                "state": "blocked",
-                "reason": card["blocked_reason_code"],
-                "activity": f"blocked: {card['blocked_reason_code']}",
-            }
-        )
-
-    return working + blocked
+    return working
 
 
 def _window_from_rate_limit_event(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -124,12 +112,16 @@ def _window_from_rate_limit_event(payload: dict[str, Any]) -> list[dict[str, Any
     "rateLimitType"}}. older builds nested per-window figures under "unifiedWindows". never invent
     a number neither shape provided.
     """
+    # "default" for a run recorded before profile attribution existed (runner.py stamps every new
+    # rate_limit_event with the profile active when it landed) - never invented for an old event
+    profile = payload.get("profile") or profiles.DEFAULT_PROFILE
     info = payload.get("rate_limit_info") or {}
     unified = info.get("unifiedWindows")
     if isinstance(unified, dict):
         return [
             {
                 "type": window_type,
+                "profile": profile,
                 "status": window.get("status") or info.get("status"),
                 "resets_at": window.get("resetsAt"),
                 "utilization": window.get("utilization"),
@@ -142,6 +134,7 @@ def _window_from_rate_limit_event(payload: dict[str, Any]) -> list[dict[str, Any
     return [
         {
             "type": window_type,
+            "profile": profile,
             "status": info.get("status"),
             "resets_at": info.get("resetsAt"),
             "utilization": None,
@@ -151,12 +144,13 @@ def _window_from_rate_limit_event(payload: dict[str, Any]) -> list[dict[str, Any
 
 def usage_projection(store: Store) -> dict[str, Any]:
     rate_events = store.list_events_by_kind(["rate_limit_event"])
-    latest_by_type: dict[str, dict[str, Any]] = {}
+    latest_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for event in rate_events:
         for window in _window_from_rate_limit_event(event["payload"]):
-            # later events overwrite earlier ones per type - list_events_by_kind is oldest first
-            latest_by_type[window["type"]] = window
-    windows = list(latest_by_type.values())
+            # later events overwrite earlier ones per (window type, profile) - list_events_by_kind
+            # is oldest first by wall-clock time, so the last write per key is the true latest
+            latest_by_key[(window["type"], window["profile"])] = window
+    windows = list(latest_by_key.values())
 
     result_events = store.list_events_by_kind(["result"])
     models: dict[str, dict[str, float]] = {}

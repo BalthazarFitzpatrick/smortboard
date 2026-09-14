@@ -86,9 +86,15 @@ def build_repo_snapshot(
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"smortboard-mc-{uuid.uuid4().hex[:8]}-"))
     mount_args: list[str] = []
     warnings: list[str] = []
+    used_targets: set[str] = set()
 
     for repo in repos:
         name = repo["name"]
+        # a repo name reaches both the clone destination and the mount target, so a name carrying a
+        # separator or ".." could escape the temp dir - skip it with a message rather than traverse
+        if name != Path(name).name or name in {"", ".", ".."}:
+            warnings.append(f'the repo "{name}" has an unsafe name and was not cloned for reading')
+            continue
         dest = tmp_dir / name
         try:
             clone(repo["path"], repo["default_branch"], dest)
@@ -104,6 +110,20 @@ def build_repo_snapshot(
                 f'the read path "{raw}" does not exist, so mission control was not given it'
             )
             continue
-        mount_args += ["-v", f"{path}:{EXTRA_MOUNT}/{path.name}:ro"]
+        # two paths can share a basename (/a/screens, /b/screens) - keep both by disambiguating the
+        # second, so one mount never silently overwrites the other
+        target = _unique_target(path.name, used_targets)
+        mount_args += ["-v", f"{path}:{EXTRA_MOUNT}/{target}:ro"]
 
     return RepoSnapshot(mount_args=mount_args, warnings=warnings, _tmp_dir=tmp_dir)
+
+
+def _unique_target(base: str, used: set[str]) -> str:
+    """a mount basename not yet used this turn, suffixing -2, -3 ... on a collision"""
+    candidate = base
+    n = 2
+    while candidate in used:
+        candidate = f"{base}-{n}"
+        n += 1
+    used.add(candidate)
+    return candidate
