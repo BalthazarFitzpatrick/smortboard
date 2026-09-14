@@ -125,6 +125,7 @@ export function installStubDom({fetchImpl} = {}) {
     body: element('body'),
     activeElement: null,
     createElement: element,
+    createTextNode(text) { return Object.assign(element('#text'), {textContent: String(text)}); },
     getElementById(id) { return queryAll(root, `#${id}`)[0] || null; },
     addEventListener(type, fn) { (docListeners[type] ||= []).push(fn); },
     removeEventListener(type, fn) { docListeners[type] = (docListeners[type] || []).filter(f => f !== fn); },
