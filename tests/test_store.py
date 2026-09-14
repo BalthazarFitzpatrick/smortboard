@@ -471,3 +471,60 @@ def test_set_leases_refuses_a_glob_the_guard_could_never_match(store, glob):
 def test_set_leases_on_a_missing_card_is_not_found(store):
     with pytest.raises(NotFoundError):
         store.set_leases("nope", ["src/**"])
+
+
+def test_set_dependencies_replaces_the_whole_list(store):
+    board = store.create_board("b")
+    a = store.create_card(board["id"], None, "a")
+    b = store.create_card(board["id"], None, "b")
+    c = store.create_card(board["id"], None, "c")
+    store.set_dependencies(c["id"], [a["id"]])
+    assert store.get_card(c["id"])["depends_on"] == [a["id"]]
+    updated = store.set_dependencies(c["id"], [b["id"]])
+    assert updated["depends_on"] == [b["id"]]
+    assert store.set_dependencies(c["id"], [])["depends_on"] == []
+
+
+def test_create_card_with_depends_on_links_them(store):
+    board = store.create_board("b")
+    upstream = store.create_card(board["id"], None, "upstream")
+    downstream = store.create_card(board["id"], None, "downstream", depends_on=[upstream["id"]])
+    assert downstream["depends_on"] == [upstream["id"]]
+    assert store.get_dependents(upstream["id"]) == [downstream["id"]]
+
+
+def test_create_card_with_unknown_depends_on_is_refused(store):
+    board = store.create_board("b")
+    with pytest.raises(ValueError):
+        store.create_card(board["id"], None, "downstream", depends_on=["nope"])
+    assert store.list_cards(board["id"]) == []
+
+
+def test_set_dependencies_refuses_an_unknown_card_id(store):
+    _, card = _make_board_and_card(store)
+    with pytest.raises(ValueError):
+        store.set_dependencies(card["id"], ["nope"])
+    assert store.get_card(card["id"])["depends_on"] == []
+
+
+def test_set_dependencies_refuses_self_dependency(store):
+    _, card = _make_board_and_card(store)
+    with pytest.raises(ValueError):
+        store.set_dependencies(card["id"], [card["id"]])
+    assert store.get_card(card["id"])["depends_on"] == []
+
+
+def test_set_dependencies_refuses_a_cycle(store):
+    board = store.create_board("b")
+    a = store.create_card(board["id"], None, "a")
+    b = store.create_card(board["id"], None, "b")
+    store.set_dependencies(b["id"], [a["id"]])
+    with pytest.raises(ValueError):
+        store.set_dependencies(a["id"], [b["id"]])
+    assert store.get_card(a["id"])["depends_on"] == []
+    assert store.get_card(b["id"])["depends_on"] == [a["id"]]
+
+
+def test_set_dependencies_on_a_missing_card_is_not_found(store):
+    with pytest.raises(NotFoundError):
+        store.set_dependencies("nope", [])
