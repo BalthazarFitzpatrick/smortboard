@@ -23,7 +23,8 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {sortColumnCards, computePileLayout, letterCounts, renderBucketColumn, handlePileKey, MIN_PILED_CARDS};`)(SpyMenu, SpyDrawer);
+;return {sortColumnCards, computePileLayout, letterCounts, renderBucketColumn, handlePileKey, MIN_PILED_CARDS,
+  computePileFit, fitPiledColumn, MIN_PILE_HEIGHT, MIN_COVERED_VISIBLE};`)(SpyMenu, SpyDrawer);
 
 function card(id, status, extra = {}) {
   return {id, title: `card ${id}`, status, workstream: '', ...extra};
@@ -186,6 +187,58 @@ function piles(bucketRows) {
   pile._listeners.click[0]();
   assert.equal(piles(bucketRows).length, 0, 'clicking the pile also opens the column');
   assert.equal(fullCards(bucketRows).length, 10);
+}
+
+// ---- pile fit: piles take the measured leftover, full cards overlap only when they must ---------
+
+function fitTotal(rows, fit, gap) {
+  return rows.reduce((sum, r, i) => sum + (r.type === 'pile' ? fit.pileHeight : r.height - fit.cuts[i]), 0)
+    + (rows.length - 1) * gap;
+}
+
+{
+  // roomy: short cards leave plenty over - the pile takes it, no card is cut
+  const c = {type: 'card', height: 30};
+  const rows = [c, c, {type: 'pile', height: 0}, c, c];
+  const fit = mod.computePileFit(rows, 400, 10);
+  assert.ok(fit.pileHeight >= mod.MIN_PILE_HEIGHT);
+  assert.ok(fit.cuts.every(cut => cut === 0));
+  assert.ok(fitTotal(rows, fit, 10) <= 400);
+}
+
+{
+  // the measured browser case: 307px cards against 886px - at rest, drawn down, drawn up
+  const c = (focused = false) => ({type: 'card', height: 307, focused});
+  const p = {type: 'pile', height: 0};
+  const layouts = [[c(true), c(), p, c(), c()], [p, c(), c(true), p, c(), c()], [c(), c(), p, c(true), c(), p]];
+  for (const rows of layouts) {
+    const fit = mod.computePileFit(rows, 886, 10);
+    assert.ok(fit.pileHeight >= mod.MIN_PILE_HEIGHT, 'every pile keeps room for its count');
+    assert.ok(fitTotal(rows, fit, 10) <= 886, 'the column fits the measured height');
+    rows.forEach((r, i) => {
+      if (r.focused) assert.equal(fit.cuts[i], 0, 'the focused card is never cut');
+      if (fit.cuts[i]) assert.ok(r.height - fit.cuts[i] >= mod.MIN_COVERED_VISIBLE, 'a cut card keeps its title band');
+    });
+  }
+}
+
+{
+  // in the dom: stub cards measure 30px, gap falls back to 18 - pile height comes from the leftover
+  const cards = Array.from({length: 10}, (_, i) => card(`f${i}`, 'todo'));
+  const {bucketRows} = buildColumn(400, cards);
+  const pile = piles(bucketRows)[0];
+  const pileHeight = parseFloat(pile.style.height);
+  assert.ok(pileHeight > 0, 'the pile gets a positive height from the leftover');
+  assert.ok(fullCards(bucketRows).every(s => !s.className.includes('fan-item')), 'piled full cards drop the fan overlap');
+  assert.ok(fullCards(bucketRows).length * 30 + pileHeight + 4 * 18 <= 400, 'rows fit the available height');
+
+  // re-measured tall: the pile holds its minimum and cards away from focus are cut short instead
+  fullCards(bucketRows).forEach(s => { s.getBoundingClientRect = () => ({top: 0, left: 0, right: 0, bottom: 0, width: 100, height: 307}); });
+  mod.fitPiledColumn(bucketRows);
+  assert.equal(parseFloat(pile.style.height), mod.MIN_PILE_HEIGHT);
+  const clipped = fullCards(bucketRows).filter(s => s.className.includes('card-clipped'));
+  assert.ok(clipped.length && clipped.every(s => parseFloat(s.style.height) < 307), 'a card per full pair is cut short');
+  assert.ok(!fullCards(bucketRows)[0].className.includes('card-clipped'), 'with no excursion yet, the first card stays whole');
 }
 
 console.log('ok');
