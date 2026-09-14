@@ -49,6 +49,7 @@ from smortboard.review.merge_request import (
     open_merge_request,
 )
 from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
+from smortboard.review.screenshot import diff_touches_ui, take_screenshot
 from smortboard.store.api import Store
 
 # the phases a card passes through, in order. the last four are terminal
@@ -364,6 +365,10 @@ def run_card_lifecycle(
     worker_model = card.get("model") or configured.get("worker_model") or DEFAULT_WORKER_MODEL
     reviewer_model = configured.get("reviewer_model") or DEFAULT_REVIEWER_MODEL
 
+    # the worker's own final message, kept for the screenshot step below - it is where the worker
+    # names which view to open, per runner.SYSTEM_PROMPT's SCREENSHOT: instruction
+    last_summary: str | None = None
+
     def work(prompt: str) -> LifecycleResult | None:
         """one agent run in the card's worktree; returns the blocked/stopped state if it stopped
         short"""
@@ -394,6 +399,8 @@ def run_card_lifecycle(
                 f"The run stopped: {run.blocked_reason_code}.\n\n{run.result_text or ''}".strip(),
             )
         store.append_event(card_id, "worker_summary", {"text": run.result_text})
+        nonlocal last_summary
+        last_summary = run.result_text
         return None
 
     # a resumed card (an inbox answer, or a re-run after a block) keeps this worktree and its
@@ -432,11 +439,12 @@ def run_card_lifecycle(
             )
 
         phase("reviewing")
+        diff_text = branch_diff(repo["path"], base, tree.branch)
         try:
             review = run_review(
                 store,
                 card_id,
-                branch_diff(repo["path"], base, tree.branch),
+                diff_text,
                 tree.path,
                 settings,
                 repo=repo,
@@ -474,6 +482,15 @@ def run_card_lifecycle(
 
     if stopped_now():
         return _stopped(store, state)
+
+    # both gates passed - a card whose diff touches smortboard/ui/ gets one screenshot, taken on
+    # the host so the operator sees the change before merging. a failed screenshot is a note, never
+    # a block: nothing about the work itself was wrong
+    if diff_touches_ui(diff_text):
+        phase("screenshotting")
+        shot = take_screenshot(store, card_id, tree.path, last_summary)
+        if shot.note:
+            _note(store, card_id, f"Screenshot not attached: {shot.note}")
 
     # only now is the card work waiting on a human: checking requires both gates, not either
     store.update_card(card_id, status="checking")
