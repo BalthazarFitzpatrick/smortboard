@@ -710,3 +710,19 @@ no UI button or preflight staleness check, to avoid the UI-focused session's fil
 existing card/* branch work for the first three and the fifth (via git merge, resolving one
 schema.py migration-number conflict and the board.js/shortcuts.js split); built the rest from
 scratch. Full suite green throughout (793 pytest, 25 js) except where noted per-card.
+
+## 2026-09-15T00:20Z — session_01Q7ysyPb6CZxFenAKTou9L1 [b57fb28]
+Landed A (three loose ends: queued cta text, deduped handled_by_board retry text, column
+attention count) plus six of the seven UI cards on development, one commit each: 3919ce56
+(reverted the oversized CTA button, restored a coloured/bold compact note), 1db20994 (c cost
+overview redesign with accepted/refused groups - the drop-shadow fix was already landed
+tonight), 9bd5a207 (partial - doing-column live-agent ordering, overview/detail split,
+overflow-click fix; the Cmd/Ctrl+F filter was not attempted, out of budget for a full separate
+feature), d1ecc364 (salvaged 2e0acbf, fixed two bugs in its own test that meant it never
+actually passed), 8082e7af (salvaged adc7859, reapplied onto the ES-module split), cf90bacc
+(dependency b1304faf was accepted; closed the three gaps against an already-largely-built mall
+cam feature). da44f144 was salvaged (3b77748) but its reviewer rejected it for a real
+architecture violation - the formatting primitives belong in ui_base, a separate pinned-sha
+repo out of this worktree's scope - so it was left undone rather than re-landing the same
+violation; see the final report for the exact finding. Full suite green throughout (800
+pytest, all js) except where noted. Worktree and branch removed after this entry.
