@@ -11,6 +11,9 @@ dependencies = [
     "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@3ea805c331a000e057a490cef661735e8d7003c3",
     # os-correct data dir for the default db location — not the cwd, not a hand-rolled path
     "platformdirs>=4.0",
+    # mission control's one screenshot per ask - host-side only, chromium headless. the browser
+    # binary itself is a separate `playwright install chromium` step, not a pip dependency
+    "playwright>=1.40",
 ]
 
 [project.scripts]

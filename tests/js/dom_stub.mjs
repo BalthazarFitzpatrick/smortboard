@@ -67,6 +67,12 @@ export function element(tag, className = '') {
     removeEventListener(type, fn) { el._listeners[type] = (el._listeners[type] || []).filter(f => f !== fn); },
     appendChild(child) { child.parentNode = el; el.children.push(child); return child; },
     append(...kids) { kids.forEach(k => el.appendChild(k)); },
+    insertBefore(child, ref) {
+      child.parentNode = el;
+      const at = ref ? el.children.indexOf(ref) : -1;
+      if (at === -1) el.children.push(child); else el.children.splice(at, 0, child);
+      return child;
+    },
     remove() {
       if (el.parentNode) el.parentNode.children = el.parentNode.children.filter(c => c !== el);
       el.parentNode = null; el.removed = true;
@@ -134,6 +140,7 @@ export function installStubDom({fetchImpl} = {}) {
     body: element('body'),
     activeElement: null,
     createElement: element,
+    createTextNode(text) { return Object.assign(element('#text'), {textContent: String(text)}); },
     getElementById(id) { return queryAll(root, `#${id}`)[0] || null; },
     addEventListener(type, fn) { (docListeners[type] ||= []).push(fn); },
     removeEventListener(type, fn) { docListeners[type] = (docListeners[type] || []).filter(f => f !== fn); },

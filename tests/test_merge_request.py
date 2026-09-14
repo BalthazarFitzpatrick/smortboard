@@ -291,6 +291,44 @@ def test_gh_pr_create_failing_is_a_refusal_not_an_exception(tmp_path, monkeypatc
     store.close()
 
 
+def test_the_body_links_the_cards_latest_screenshot(tmp_path, monkeypatch):
+    bodies = []
+    _fake(monkeypatch)
+    store, card_id = _store(tmp_path)
+    store.add_attachment(card_id, "screenshot-1.png", "image/png", b"not a real png, just bytes")
+    real_run = mr._run
+
+    def _capture(cmd, cwd=None):
+        if cmd[:3] == ["gh", "pr", "create"]:
+            bodies.append(Path(cmd[cmd.index("--body-file") + 1]).read_text())
+        return real_run(cmd, cwd=cwd)
+
+    monkeypatch.setattr(mr, "_run", _capture)
+    mr.open_merge_request(store, card_id, tmp_path, BRANCH)
+
+    shot = store.list_attachments(card_id)[0]
+    assert f"/api/cards/{card_id}/attachments/{shot['id']}" in bodies[0]
+    assert "screenshot-1.png" in bodies[0]
+    store.close()
+
+
+def test_a_card_with_no_screenshot_gets_no_screenshot_line(tmp_path, monkeypatch):
+    bodies = []
+    _fake(monkeypatch)
+    store, card_id = _store(tmp_path)
+    real_run = mr._run
+
+    def _capture(cmd, cwd=None):
+        if cmd[:3] == ["gh", "pr", "create"]:
+            bodies.append(Path(cmd[cmd.index("--body-file") + 1]).read_text())
+        return real_run(cmd, cwd=cwd)
+
+    monkeypatch.setattr(mr, "_run", _capture)
+    mr.open_merge_request(store, card_id, tmp_path, BRANCH)
+    assert "Screenshot:" not in bodies[0]
+    store.close()
+
+
 def test_a_real_repo_with_no_commits_ahead_is_seen_as_empty(tmp_path):
     """the one test that uses real git rather than the fake, so branch_has_commits is checked
     against git's actual output rather than against a string this file invented"""

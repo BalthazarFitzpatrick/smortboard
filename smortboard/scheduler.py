@@ -7,8 +7,10 @@ the same entry point a manual run uses. Three rules gate a start, each documente
 DEPENDENCIES - a card starts only once every card it depends on has a pull request MERGED on
   GitHub, not merely `accepted` on the board.
 LEASES - two cards in the same repo whose lease globs could touch the same file never run together.
-USAGE_LIMIT - a run that blocks on it pauses new starts until the window resets; already-running
-  cards are left alone, and the blocked card itself stays blocked for a human, not retried here.
+USAGE_LIMIT - a run that blocks on it marks the active credential profile limited and switches to
+  the next one that is not, resuming the very card that hit it. Only once every configured profile
+  is limited does this pause new starts until the earliest window resets, as it always did before
+  profiles existed; already-running cards are left alone either way. See smortboard/profiles.py.
 
 TESTABLE WITHOUT THREADS. `_tick` is a plain method: given a store and a fake `runs` object (one
 whose `.start` calls the runner synchronously and fires `on_finish` inline, as RunRegistry itself
@@ -26,9 +28,23 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from smortboard import profiles
+from smortboard.actions import with_next
+from smortboard.exec.runner import _api_unreachable_signal, _session_limit_text_signal
+from smortboard.exec.worktrees import (
+    branch_name,
+    default_branch,
+    fetch_base,
+    has_remote,
+    worktree_path,
+)
 from smortboard.review.merge_request import PullRequestState, pr_view
+from smortboard.review.mergeable import check_mergeable, merge_branch, push_branch
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
+
+# the same author every other board-written comment carries - see lifecycle.BOARD_AUTHOR
+_BOARD_AUTHOR = "smortboard"
 
 # unset means this - fabian's own value in settings always wins, see store.api._SETTING_KEYS
 DEFAULT_MAX_PARALLEL = 2
@@ -52,6 +68,37 @@ def _is_queueable(card: dict[str, Any]) -> bool:
 # but a stream is someone else's format) parks for this long rather than never resuming
 _FALLBACK_PARK_SECONDS = 5 * 60
 
+# API_UNREACHABLE backoff: three automatic retries, then it stays blocked for the operator
+API_UNREACHABLE_BACKOFF_MINUTES = (2, 10, 30)
+API_UNREACHABLE_MAX_RETRIES = len(API_UNREACHABLE_BACKOFF_MINUTES)
+
+
+def relabel_stale_crashes(store: Store) -> list[dict[str, str]]:
+    """one-time fix for cards blocked CRASH before the classifier learned session-limit and
+    api-unreachable wording: relabels them by re-reading their last `result` event's own text,
+    the same signals classify_result checks on a fresh run. Returns each relabel for logging.
+    """
+    relabeled = []
+    for board in store.list_boards():
+        for card in store.list_cards(board["id"]):
+            if card.get("blocked_reason_code") != "CRASH":
+                continue
+            results = [e for e in store.list_events(card["id"]) if e["kind"] == "result"]
+            if not results:
+                continue
+            payload = results[-1]["payload"]
+            if _session_limit_text_signal(payload):
+                new_code = "USAGE_LIMIT"
+            elif _api_unreachable_signal(payload):
+                new_code = "API_UNREACHABLE"
+            else:
+                continue
+            store.update_card(card["id"], blocked_reason_code=new_code)
+            store.append_event(card["id"], "relabeled", {"from": "CRASH", "to": new_code})
+            relabeled.append({"card_id": card["id"], "from": "CRASH", "to": new_code})
+    return relabeled
+
+
 # schedule_view is polled by the UI every couple seconds - asking GitHub every poll would hammer
 # it for no benefit, so one answer per PR url is good for this long
 _PR_STATE_TTL_SECONDS = 60
@@ -74,6 +121,72 @@ def _latest_merge_request_url(store: Store, card_id: str) -> str | None:
         return None
     url = events[-1]["payload"].get("url")
     return url or None
+
+
+# a checking card's branch is re-synced with its base no more often than this, per repo - the
+# board has no push signal for "someone merged a PR on this repo" (only for a specific PR's own
+# state, see _dependency_wait above), so this is the timer fallback the spec allows
+_SWEEP_INTERVAL_SECONDS = 5 * 60
+_last_sweep: dict[str, float] = {}
+
+
+def _sweep_checking_prs(store: Store, board_id: str) -> None:
+    """keeps every checking card's branch mergeable with its base while its pull request waits.
+
+    Measured 2026-09-14 (card 59727ba3, PR #112): a branch cut once at the start of a run and
+    never updated drifted 34 commits behind main while its PR waited, and conflicted in four files
+    other PRs had since touched. Behind but still mergeable: merges base in and pushes, so the PR
+    stays current. Behind and conflicting: blocks the card MERGE_CONFLICT with the files, same as
+    lifecycle.py does at hand-over - never touches the pull request either way.
+    """
+    now = time.time()
+    for card in store.list_cards(board_id):
+        if card["status"] != "checking" or card.get("blocked_reason_code"):
+            continue
+        if not _latest_merge_request_url(store, card["id"]):
+            continue  # opening never finished - nothing open to keep current
+        try:
+            repo = store.get_repo(card["repo_id"])
+        except NotFoundError:
+            continue
+        repo_path = repo["path"]
+        last = _last_sweep.get(repo_path, 0.0)
+        if now - last < _SWEEP_INTERVAL_SECONDS:
+            continue
+        _last_sweep[repo_path] = now
+        if not has_remote(repo_path):
+            continue
+        base = default_branch(repo)
+        if not fetch_base(repo_path, base):
+            continue
+        tree = worktree_path(repo_path, card["id"])
+        if not tree.exists():
+            continue  # worktree cleaned up - nothing here to sync
+        branch, base_ref = branch_name(card["id"]), f"origin/{base}"
+        check = check_mergeable(tree, branch, base_ref)
+        if not check.behind:
+            continue  # already current
+        if not check.clean:
+            _flag_merge_conflict(store, card["id"], branch, base_ref, check.conflicting_files)
+            continue
+        merged = merge_branch(tree, base_ref)
+        if not merged.clean:
+            _flag_merge_conflict(store, card["id"], branch, base_ref, merged.conflicting_files)
+        elif merged.merged:
+            push_branch(tree, branch)
+
+
+def _flag_merge_conflict(
+    store: Store, card_id: str, branch: str, base_ref: str, files: list[str]
+) -> None:
+    store.append_event(card_id, "merge_conflict", {"base_ref": base_ref, "files": files})
+    store.update_card(card_id, blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+    note = with_next(
+        f"Merging {base_ref} into {branch} now conflicts in: {', '.join(files) or 'unknown files'}."
+        "\n\nResuming this card lets the worker merge the base branch and resolve them.",
+        "MERGE_CONFLICT",
+    )
+    store.add_comment(card_id, author=_BOARD_AUTHOR, body=note)
 
 
 def _lease_globs(card: dict[str, Any]) -> list[str]:
@@ -205,18 +318,31 @@ class BoardScheduler:
         self._running: set[str] = set()
         self._waiting: dict[str, str] = {}
         self._paused_until: float | None = None
+        # per-card timers for a solo, automatic retry - API_UNREACHABLE backoff and a resumed
+        # MERGE_CONFLICT's own once-only attempt, both keyed by card id
+        self._card_retry_at: dict[str, float] = {}
 
     # -- reads --------------------------------------------------------------------
 
     def schedule_view(self) -> dict[str, Any]:
         """running / queued / waiting / paused_until - resumes a lapsed pause first, so polling
-        this is enough to drain the queue again once a USAGE_LIMIT window rolls over; nothing
-        else needs its own timer."""
+        this is enough to drain the queue again once a USAGE_LIMIT window rolls over. Also requeues
+        any card whose own retry timer (API_UNREACHABLE backoff, a MERGE_CONFLICT auto-resume) has
+        come due - those are per-card, not the board-wide pause, so nothing else drains them."""
+        now = time.time()
         with self._lock:
-            expired = self._paused_until is not None and time.time() >= self._paused_until
+            expired = self._paused_until is not None and now >= self._paused_until
+            due = [card_id for card_id, at in self._card_retry_at.items() if now >= at]
+        if due:
+            with self._lock:
+                for card_id in due:
+                    self._card_retry_at.pop(card_id, None)
+                    if card_id not in self._queue and card_id not in self._running:
+                        self._queue.append(card_id)
         if expired:
             with self._lock:
                 self._paused_until = None
+        if expired or due:
             self._tick()
         with self._lock:
             return {
@@ -224,6 +350,7 @@ class BoardScheduler:
                 "queued": list(self._queue),
                 "waiting": dict(self._waiting),
                 "paused_until": self._paused_until,
+                "card_retry_at": dict(self._card_retry_at),
             }
 
     # -- writes --------------------------------------------------------------------
@@ -270,6 +397,9 @@ class BoardScheduler:
 
         store = Store(self._db_path)
         try:
+            # no push signal for "a PR merged on this repo" exists board-wide, so every tick is
+            # the opportunity to notice one - _sweep_checking_prs throttles itself per repo
+            _sweep_checking_prs(store, self.board_id)
             running_cards = []
             for card_id in running_ids:
                 with contextlib.suppress(NotFoundError):
@@ -325,23 +455,130 @@ class BoardScheduler:
         def _on_finish(state: Any) -> None:
             with self._lock:
                 self._running.discard(card_id)
-            if getattr(state, "blocked_reason_code", None) == "USAGE_LIMIT":
-                self._pause_for_usage_limit()
-            self._tick()
+            reason = getattr(state, "blocked_reason_code", None)
+            if reason == "USAGE_LIMIT":
+                self._handle_usage_limit(card_id)
+            elif reason == "API_UNREACHABLE":
+                self._handle_api_unreachable(card_id)
+            elif reason == "MERGE_CONFLICT":
+                self._handle_merge_conflict(card_id)
+            else:
+                self._tick()
 
         return _on_finish
 
-    def _pause_for_usage_limit(self) -> None:
-        """stop starting new cards until the latest rate_limit_event's resetsAt. THE CARD THAT HIT
-        IT IS NOT RETRIED HERE - it is blocked USAGE_LIMIT like a manual run would leave it, for a
-        human to look at or re-run; this only holds back cards that have not started yet."""
+    def _handle_merge_conflict(self, card_id: str) -> None:
+        """resumes a MERGE_CONFLICT card exactly once, automatically, through the same path an
+        inbox answer uses (attention.answer_card) - the note tells the worker which base to merge
+        and which files it conflicts in. A second MERGE_CONFLICT on the same card (the resume's own
+        attempt failed to resolve it) is left for the operator - never retried twice."""
+        # imported here, not at module level: attention.py imports conflicting_run from this
+        # module, so a top-level import here would be circular
+        from smortboard.attention import AnswerRefused, answer_card
+
         store = Store(self._db_path)
         try:
-            resets_at = _latest_reset(store)
+            already_tried = any(
+                e["kind"] == "merge_conflict_auto_resume" for e in store.list_events(card_id)
+            )
+            if already_tried:
+                store.add_comment(
+                    card_id,
+                    author=_BOARD_AUTHOR,
+                    body="merge conflict again after the automatic resume - left for the operator.",
+                )
+                return
+            merge_events = [e for e in store.list_events(card_id) if e["kind"] == "merge_conflict"]
+            payload = merge_events[-1]["payload"] if merge_events else {}
+            base_ref = payload.get("base_ref", "the base branch")
+            files = payload.get("files") or []
+            store.append_event(card_id, "merge_conflict_auto_resume", {"files": files})
+            note = (
+                f"Resuming automatically: merge {base_ref} into this branch and resolve the "
+                f"conflicts in: {', '.join(files) or 'the listed files'}. Then commit the result."
+            )
+            # still blocked - the operator sees it in the inbox like any other refusal
+            with contextlib.suppress(AnswerRefused):
+                answer_card(store, self._runs, card_id, note)
+        finally:
+            store.close()
+        self._tick()
+
+    def _handle_api_unreachable(self, card_id: str) -> None:
+        """retries an API_UNREACHABLE card itself, with backoff 2/10/30 minutes. After
+        API_UNREACHABLE_MAX_RETRIES automatic attempts it is left blocked for the operator, same
+        as any other block - the card's own blocked_reason_code and board note already say why."""
+        store = Store(self._db_path)
+        try:
+            attempts = [
+                e for e in store.list_events(card_id) if e["kind"] == "api_unreachable_retry"
+            ]
+            attempt = len(attempts) + 1
+            if attempt > API_UNREACHABLE_MAX_RETRIES:
+                store.add_comment(
+                    card_id,
+                    author=_BOARD_AUTHOR,
+                    body=f"api unreachable after {len(attempts)} automatic retries - "
+                    "left for the operator.",
+                )
+                return
+            delay_minutes = API_UNREACHABLE_BACKOFF_MINUTES[attempt - 1]
+            retry_at = time.time() + delay_minutes * 60
+            store.append_event(
+                card_id, "api_unreachable_retry", {"attempt": attempt, "retry_at": retry_at}
+            )
+            store.add_comment(
+                card_id,
+                author=_BOARD_AUTHOR,
+                body=f"api unreachable - retrying automatically in {delay_minutes} minute(s) "
+                f"(attempt {attempt}/{API_UNREACHABLE_MAX_RETRIES}).",
+            )
         finally:
             store.close()
         with self._lock:
-            self._paused_until = resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+            self._card_retry_at[card_id] = retry_at
+        self._tick()
+
+    def _handle_usage_limit(self, card_id: str) -> None:
+        """the credential in use just got refused. Marks it limited and, if another configured
+        profile is not, switches to it and resumes `card_id` itself - USAGE_LIMIT blocks a manual
+        run for a human, but here there is another credential to try before giving up like that.
+
+        profiles.handle_usage_limit does the mark-and-rotate as one load-mutate-save transaction
+        (see its docstring) rather than this method making several separate profiles calls that
+        each hit disk - with only the implicit "default" profile configured it stays a pure read,
+        so a single-credential board never grows a profiles.json.
+
+        auto_switch_profiles=off skips the rotation half: the profile is still marked limited (so
+        it is skipped once switching resumes), but the board parks until the reset exactly as it
+        did before profiles existed, instead of rotating credentials on the operator's behalf.
+        """
+        store = Store(self._db_path)
+        try:
+            resets_at = _latest_reset(store)
+            auto_switch = store.get_settings().get("auto_switch_profiles") != "off"
+            if auto_switch:
+                result = profiles.handle_usage_limit(resets_at)
+            else:
+                profiles.mark_limited(profiles.active_profile(), resets_at)
+                result = {"rotated": False, "next_profile": None, "earliest_reset": None}
+        finally:
+            store.close()
+
+        if result["next_profile"] is not None:
+            with self._lock:
+                if card_id not in self._queue and card_id not in self._running:
+                    self._queue.insert(0, card_id)
+        else:
+            fallback = result["earliest_reset"] if result["rotated"] else None
+            # the card itself has to rejoin the queue too, not only the board-wide pause clear -
+            # left out of the queue, schedule_view's lapsed-pause check had nothing to start once
+            # the window rolled over, and this card sat blocked past its own reset forever
+            with self._lock:
+                self._paused_until = fallback or resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+                if card_id not in self._queue and card_id not in self._running:
+                    self._queue.append(card_id)
+        self._tick()
 
 
 def _latest_reset(store: Store) -> float | None:

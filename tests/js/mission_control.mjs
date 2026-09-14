@@ -65,7 +65,8 @@ function SpyDrawer(opts) {
 const badgeSpySrc = 'const __badgeCalls = []; const __rawIndicateBadge = indicateBadge; ' +
   'indicateBadge = (host, n) => { __badgeCalls.push(n); return __rawIndicateBadge(host, n); };';
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), badgeSpySrc, uiBase('shell.js'),
-  smort('messageQueue.js'), smort('board.js')].join('\n;\n');
+  smort('messageQueue.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'),
+  smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {
   loadRoster, jumpToCard, usageSections, sendMissionControl, renderMissionControl, mc, mcQueueFor,
@@ -75,22 +76,18 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 
 mod.buildDrawers();
 
-// ---- agent roster: working (on), blocked (disabled, reason in stats), and empty -----------------
+// ---- agent roster: only cards a run is holding, never a blocked one ------------------------------
 responses.set('/api/roster', stubJson(200, [
   {card_id: 'c1', board_id: 'b1', title: 'ship the thing', state: 'working', reason: null, activity: 'writing tests'},
-  {card_id: 'c2', board_id: 'b1', title: 'fix the bug', state: 'blocked', reason: 'EXPIRED_CREDENTIAL', activity: ''},
 ]));
 {
   const menu = new SpyMenu({title: 'agent roster', sections: []});
   await mod.loadRoster(menu);
   const items = menu.sections[0].items;
-  assert.equal(items.length, 2, 'one row per agent');
+  assert.equal(items.length, 1, 'one row per live run - the blocked card the backend no longer sends is not here either');
   const working = items.find(i => i.id === 'c1');
-  const blocked = items.find(i => i.id === 'c2');
   assert.equal(working.on, true, 'a working row is marked on');
-  assert.equal(working.disabled, undefined ?? false, 'a working row stays pickable');
-  assert.equal(blocked.disabled, true, 'a blocked row is disabled');
-  assert.equal(blocked.stats, 'blocked: EXPIRED_CREDENTIAL', 'a blocked row shows the reason in stats');
+  assert.equal(working.stats, 'writing tests', 'a working row shows its activity in stats');
 }
 
 responses.set('/api/roster', stubJson(200, []));
@@ -98,6 +95,9 @@ responses.set('/api/roster', stubJson(200, []));
   const menu = new SpyMenu({title: 'agent roster', sections: []});
   await mod.loadRoster(menu);
   assert.equal(menu.sections[0].kind, 'node', 'an empty roster renders a node section');
+  const text = menu.sections[0].node.innerHTML;
+  assert.match(text, /nothing is running/, 'the empty state says nothing is running');
+  assert.match(text, /inbox/, 'the empty state points at the inbox for anything waiting');
 }
 
 // ---- usage: a null utilization shows no percentage, a real one does -----------------------------

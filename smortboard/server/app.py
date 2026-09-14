@@ -9,7 +9,15 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from smortboard.attention import AnswerRefused, answer_card, attention_rows, with_actions
+from smortboard import profiles
+from smortboard.attention import (
+    AnswerRefused,
+    answer_card,
+    approve_lease,
+    attention_rows,
+    with_actions,
+)
+from smortboard.consolidate import FoldRegistry
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.local_repos import detect_default_branch, list_folders
@@ -24,7 +32,7 @@ from smortboard.prompts import ROLES
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
-from smortboard.scheduler import SchedulerRegistry, conflicting_run
+from smortboard.scheduler import SchedulerRegistry, conflicting_run, relabel_stale_crashes
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import (
@@ -79,6 +87,8 @@ _ROUTES = [
     (re.compile(r"^/api/tasks/(?P<task_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "POST"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/fold$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/fold$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/conversation$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/conversation$"), "POST"),
     (re.compile(r"^/api/roster$"), "GET"),
@@ -96,7 +106,26 @@ _ROUTES = [
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
     (re.compile(r"^/api/attention$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/answer$"), "POST"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/lease/approve$"), "POST"),
+    (re.compile(r"^/api/profiles$"), "GET"),
+    (re.compile(r"^/api/profiles$"), "POST"),
+    (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)/activate$"), "POST"),
+    (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)$"), "DELETE"),
 ]
+
+# a full claude setup-token is 108 bytes (see README Setup); this is a shape check, not a network
+# call - short enough to catch an empty paste, generous enough to never reject a real token
+_MIN_TOKEN_LENGTH = 80
+_MAX_TOKEN_LENGTH = 4096
+
+
+def _token_shape_problem(token: str) -> str | None:
+    if not token or len(token) < _MIN_TOKEN_LENGTH or len(token) > _MAX_TOKEN_LENGTH:
+        return "that doesn't look like a claude setup-token - check the length and try again."
+    if any(ch.isspace() for ch in token.strip()):
+        return "a token is a single line - remove any internal spaces or line breaks."
+    return None
+
 
 _ROLE_DEFAULTS = {
     "orchestrator": ORCHESTRATOR_PROMPT,
@@ -125,6 +154,7 @@ def _make_handler(
     # the message ids each board's mission control already accepted, newest last - a retried or
     # second-tab send of the same message is answered as done instead of starting another turn
     accepted_messages: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=500))
+    folds = FoldRegistry(store.path, token_path=token_path)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "smortboard/0.1"
@@ -245,6 +275,11 @@ def _make_handler(
                 self._send_json(200, self._orchestrator_view(params["board_id"]))
             elif "board_id" in params and path.endswith("/orchestrator") and method == "POST":
                 self._handle_orchestrator_post(params["board_id"])
+            elif "board_id" in params and path.endswith("/fold") and method == "GET":
+                store.get_board(params["board_id"])
+                self._send_json(200, self._fold_view(params["board_id"]))
+            elif "board_id" in params and path.endswith("/fold") and method == "POST":
+                self._handle_fold_post(params["board_id"])
             elif "card_id" in params and path.endswith("/conversation") and method == "GET":
                 self._send_json(200, self._conversation_view(params["card_id"]))
             elif "card_id" in params and path.endswith("/conversation") and method == "POST":
@@ -268,8 +303,18 @@ def _make_handler(
                 self._send_json(200, board_costs(store, params["board_id"]))
             elif path == "/api/attention":
                 self._send_json(200, attention_rows(store))
+            elif "card_id" in params and path.endswith("/lease/approve"):
+                self._handle_lease_approve(params["card_id"])
             elif "card_id" in params and path.endswith("/answer"):
                 self._handle_answer(params["card_id"])
+            elif path == "/api/profiles" and method == "GET":
+                self._send_json(200, self._profiles_view())
+            elif path == "/api/profiles" and method == "POST":
+                self._handle_add_profile()
+            elif "profile_name" in params and path.endswith("/activate") and method == "POST":
+                self._handle_activate_profile(params["profile_name"])
+            elif "profile_name" in params and method == "DELETE":
+                self._handle_remove_profile(params["profile_name"])
             elif "card_id" in params and method == "GET":
                 self._send_json(200, store.get_card(params["card_id"]))
             elif "card_id" in params and method == "PATCH":
@@ -366,19 +411,106 @@ def _make_handler(
                 return
             self._send_json(202, state)
 
+        def _handle_lease_approve(self, card_id: str) -> None:
+            """the inbox's one-click reply to a LEASE_CONFLICT: widen the lease by exactly the
+            refused paths and resume. 400 for an empty/invalid path list or a bad glob, 404 for an
+            unknown card, 409 when the card is not blocked on LEASE_CONFLICT or the resume itself
+            is refused (the lease stays widened either way - see attention.approve_lease).
+            """
+            paths = self._read_json().get("paths")
+            try:
+                state = approve_lease(store, runs, card_id, paths)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            except AnswerRefused as exc:
+                self._send_json(409, {"error": str(exc)})
+                return
+            self._send_json(202, state)
+
+        def _profiles_view(self) -> list[dict]:
+            """name, active, present, limited_until only - never the token, per the card's rule"""
+            return [
+                {
+                    "name": row["name"],
+                    "active": row["active"],
+                    "present": row["present"],
+                    "limited_until": row["limited_until"],
+                }
+                for row in profiles.list_profiles()
+            ]
+
+        def _handle_add_profile(self) -> None:
+            """pastes a token straight into its mode-600 file - checked for shape, never echoed"""
+            body = self._read_json()
+            name = (body.get("name") or "").strip()
+            token = body.get("token") or ""
+            problem = _token_shape_problem(token)
+            if problem:
+                self._send_json(400, {"error": problem})
+                return
+            try:
+                profiles.profiles_dir().mkdir(parents=True, exist_ok=True)
+                profiles.profiles_dir().chmod(0o700)
+            except OSError as exc:
+                self._send_json(
+                    400, {"error": f"could not make {profiles.profiles_dir()} mode 700: {exc}"}
+                )
+                return
+            try:
+                profiles.add_profile(name, token)
+            except profiles.ProfileError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            self._send_json(201, self._one_profile_view(name))
+
+        def _one_profile_view(self, name: str) -> dict:
+            for row in self._profiles_view():
+                if row["name"] == name:
+                    return row
+            raise profiles.ProfileError(f"no such profile '{name}'")  # pragma: no cover - defensive
+
+        def _handle_activate_profile(self, name: str) -> None:
+            try:
+                profiles.set_active(name)
+            except profiles.ProfileError as exc:
+                self._send_json(404, {"error": str(exc)})
+                return
+            self._send_json(200, self._one_profile_view(name))
+
+        def _handle_remove_profile(self, name: str) -> None:
+            # remove_profile() does the whole thing itself now: switches active away if needed,
+            # drops the name, and unlinks the token file - nothing left for app.py to do after.
+            try:
+                profiles.remove_profile(name)
+            except profiles.ProfileError as exc:
+                message = str(exc)
+                status = 404 if "no such" in message else 409
+                self._send_json(status, {"error": message})
+                return
+            self._send_status(204)
+
         def _handle_patch_card(self, card_id: str) -> None:
             body = self._read_json()
             # the store's own list - a second copy here went stale and refused `model` with a 400
-            unknown = set(body) - CARD_WRITABLE_FIELDS - {"leases"}
+            unknown = set(body) - CARD_WRITABLE_FIELDS - {"leases", "depends_on"}
             if unknown:
                 self._send_json(400, {"error": f"not writable: {sorted(unknown)}"})
                 return
+            # shapes are checked before anything is written, so a bad depends_on
+            # can't leave a lease change (or vice versa) committed behind a 400
             leases = body.pop("leases", None)
+            if leases is not None and not isinstance(leases, list):
+                self._send_json(400, {"error": "leases must be a list of globs"})
+                return
+            depends_on = body.pop("depends_on", None)
+            if depends_on is not None and not isinstance(depends_on, list):
+                self._send_json(400, {"error": "depends_on must be a list of card ids"})
+                return
             if leases is not None:
-                if not isinstance(leases, list):
-                    self._send_json(400, {"error": "leases must be a list of globs"})
-                    return
                 store.set_leases(card_id, leases)
+            if depends_on is not None:
+                store.set_dependencies(card_id, depends_on)
             card = store.update_card(card_id, **body) if body else store.get_card(card_id)
             self._send_json(200, card)
 
@@ -501,6 +633,21 @@ def _make_handler(
                 accepted_messages[board_id].append(client_id)
             orchestrator.start(board_id, message, message_already_stored=True)
             self._send_json(202, self._orchestrator_view(board_id))
+
+        def _fold_view(self, board_id: str) -> dict:
+            return {"running": folds.running(board_id), "error": folds.error(board_id)}
+
+        def _handle_fold_post(self, board_id: str) -> None:
+            store.get_board(board_id)  # 404 for an unknown board before anything starts
+            if folds.running(board_id):
+                self._send_json(409, {"error": "a fold is already running on this board"})
+                return
+            # stored before the thread starts, so mission control shows it the moment it opens
+            store.add_orchestrator_message(
+                board_id, "board", "fold: reading every card and the ledger - this takes minutes"
+            )
+            folds.start(board_id)
+            self._send_json(202, self._fold_view(board_id))
 
         def _conversation_view(self, card_id: str) -> dict:
             card = store.get_card(card_id)
@@ -717,6 +864,10 @@ def build_server(
 ) -> HTTPServer:
     # a new board has no runs, so any card still mid-run lost the last board process under it
     recovered = recover_orphaned_runs(store)
+    # one-time: a CRASH card blocked before the classifier learned session-limit/api-unreachable
+    # wording becomes USAGE_LIMIT/API_UNREACHABLE instead, so it is picked up by the auto-retry
+    # paths rather than sitting mislabeled
+    relabel_stale_crashes(store)
     # single-threaded: the store's sqlite3 connection is bound to the thread that opened it. card
     # runs are the exception and get their own thread and their own connection - see runs.py
     runs = RunRegistry(store.path, token_path=token_path)

@@ -41,7 +41,14 @@ class FakeRuns:
         self.started.append(card_id)
         if on_finish is not None:
             self._callbacks[card_id] = on_finish
-        return SimpleNamespace(card_id=card_id, running=True)
+        state = SimpleNamespace(card_id=card_id, running=True)
+        state.as_dict = lambda: {"card_id": card_id, "running": True}
+        return state
+
+    def get(self, card_id):
+        # matches RunRegistry.get()'s shape for attention.answer_card - nothing is ever mid-run
+        # from this fake's own perspective once .start() has returned
+        return None
 
     def finish(self, card_id, blocked_reason_code=None):
         callback = self._callbacks.pop(card_id, None)
@@ -513,6 +520,172 @@ def test_the_queue_resumes_once_the_pause_expires(store, board_and_repo, monkeyp
     assert b["id"] in runs.started
 
 
+def test_a_usage_limit_card_itself_rejoins_the_queue_once_the_pause_expires(store, board_and_repo):
+    """the gap the queue-only fix left: the card that hit USAGE_LIMIT must rerun once its own
+    reset passes, not only unblock cards behind it."""
+    board_id, repo_id = board_and_repo
+    store.set_setting("max_parallel", "1")
+    a = store.create_card(board_id, repo_id, "a")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    runs.finish(a["id"], blocked_reason_code="USAGE_LIMIT")
+    runs.started.clear()
+
+    scheduler._paused_until = time.time() - 1
+    scheduler.schedule_view()
+    assert a["id"] in runs.started
+
+
+# -- API_UNREACHABLE backoff ---------------------------------------------------------
+
+
+def test_api_unreachable_retries_with_backoff_then_stops_at_three(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    assert runs.started == [a["id"]]
+
+    for expected_minutes in scheduler_module.API_UNREACHABLE_BACKOFF_MINUTES:
+        runs.started.clear()
+        runs.finish(a["id"], blocked_reason_code="API_UNREACHABLE")
+        view = scheduler.schedule_view()
+        retry_at = view["card_retry_at"][a["id"]]
+        assert retry_at == pytest.approx(time.time() + expected_minutes * 60, abs=5)
+        # fast-forward: the retry is due, so polling starts it again
+        scheduler._card_retry_at[a["id"]] = time.time() - 1
+        scheduler.schedule_view()
+        assert runs.started == [a["id"]]
+
+    # a fourth failure exhausts the automatic retries and stays blocked for the operator
+    runs.started.clear()
+    runs.finish(a["id"], blocked_reason_code="API_UNREACHABLE")
+    view = scheduler.schedule_view()
+    assert a["id"] not in view["card_retry_at"]
+    assert runs.started == []
+
+    retries = [e for e in store.list_events(a["id"]) if e["kind"] == "api_unreachable_retry"]
+    assert len(retries) == len(scheduler_module.API_UNREACHABLE_BACKOFF_MINUTES)
+
+
+def test_api_unreachable_retry_posts_a_board_comment_with_the_next_retry_time(
+    store, board_and_repo
+):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    runs.finish(a["id"], blocked_reason_code="API_UNREACHABLE")
+    comments = store.get_card(a["id"])["comments"]
+    assert any("retrying automatically" in c["body"] for c in comments)
+
+
+# -- stale CRASH relabel --------------------------------------------------------------
+
+
+def test_relabel_stale_crashes_fixes_a_mislabeled_session_limit(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.update_card(a["id"], blocked_reason_code="CRASH", review_flag=True)
+    store.append_event(
+        a["id"],
+        "result",
+        {
+            "type": "result",
+            "is_error": True,
+            "result": "You've hit your session limit · resets 3:40pm (UTC)",
+        },
+    )
+
+    relabeled = scheduler_module.relabel_stale_crashes(store)
+    assert relabeled == [{"card_id": a["id"], "from": "CRASH", "to": "USAGE_LIMIT"}]
+    assert store.get_card(a["id"])["blocked_reason_code"] == "USAGE_LIMIT"
+    kinds = [e["kind"] for e in store.list_events(a["id"])]
+    assert "relabeled" in kinds
+
+
+def test_relabel_stale_crashes_fixes_a_mislabeled_api_unreachable(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.update_card(a["id"], blocked_reason_code="CRASH", review_flag=True)
+    store.append_event(
+        a["id"],
+        "result",
+        {"type": "result", "is_error": True, "result": "Unable to connect to API"},
+    )
+
+    relabeled = scheduler_module.relabel_stale_crashes(store)
+    assert relabeled == [{"card_id": a["id"], "from": "CRASH", "to": "API_UNREACHABLE"}]
+    assert store.get_card(a["id"])["blocked_reason_code"] == "API_UNREACHABLE"
+
+
+def test_relabel_stale_crashes_leaves_a_genuine_crash_alone(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.update_card(a["id"], blocked_reason_code="CRASH", review_flag=True)
+    store.append_event(
+        a["id"], "result", {"type": "result", "is_error": True, "result": "TypeError: boom"}
+    )
+
+    assert scheduler_module.relabel_stale_crashes(store) == []
+    assert store.get_card(a["id"])["blocked_reason_code"] == "CRASH"
+
+
+# -- MERGE_CONFLICT auto-resume -------------------------------------------------------
+
+
+def test_a_merge_conflict_is_resumed_automatically_once(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.append_event(
+        a["id"], "merge_conflict", {"base_ref": "origin/development", "files": ["x.py"]}
+    )
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    # mirrors what lifecycle._block already wrote before this card's run finished
+    store.update_card(a["id"], blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+    runs.finish(a["id"], blocked_reason_code="MERGE_CONFLICT")
+
+    # answer_card resumed it through runs.start - the same path an inbox answer uses
+    assert a["id"] in runs.started
+    assert store.get_card(a["id"])["blocked_reason_code"] is None
+    kinds = [e["kind"] for e in store.list_events(a["id"])]
+    assert "merge_conflict_auto_resume" in kinds
+    comments = store.get_card(a["id"])["comments"]
+    assert any("Resuming automatically" in c["body"] for c in comments)
+
+
+def test_a_second_merge_conflict_on_the_same_card_is_left_for_the_operator(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.append_event(
+        a["id"], "merge_conflict", {"base_ref": "origin/development", "files": ["x.py"]}
+    )
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    runs.finish(a["id"], blocked_reason_code="MERGE_CONFLICT")
+    runs.started.clear()
+
+    # the resumed run conflicts again
+    store.update_card(a["id"], blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+    scheduler._handle_merge_conflict(a["id"])
+
+    assert a["id"] not in runs.started  # never retried twice for the same conflict
+    retries = [e for e in store.list_events(a["id"]) if e["kind"] == "merge_conflict_auto_resume"]
+    assert len(retries) == 1
+    comments = store.get_card(a["id"])["comments"]
+    assert any("left for the operator" in c["body"] for c in comments)
+
+
 # -- stop ---------------------------------------------------------------------------
 
 
@@ -619,7 +792,13 @@ def test_schedule_endpoint_reports_an_empty_board_cleanly(server):
     base, board_id, _ = server
     status, body = _call(f"{base}/api/boards/{board_id}/schedule")
     assert status == 200
-    assert body == {"running": [], "queued": [], "waiting": {}, "paused_until": None}
+    assert body == {
+        "running": [],
+        "queued": [],
+        "waiting": {},
+        "paused_until": None,
+        "card_retry_at": {},
+    }
 
 
 def test_run_all_stop_clears_the_queue_over_http(server):
@@ -634,3 +813,169 @@ def test_run_all_on_an_unknown_board_is_a_404(server):
     base, _, _ = server
     status, _ = _call(f"{base}/api/boards/nope/run-all", method="POST")
     assert status == 404
+
+
+# -- keeping a checking card's pr mergeable ------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_sweep_throttle():
+    scheduler_module._last_sweep.clear()
+    yield
+    scheduler_module._last_sweep.clear()
+
+
+def _checking_card(store, board_id, repo_path, tmp_path):
+    """a card in checking, with an open pull request recorded and a worktree on disk - what the
+    sweep needs to have anything to act on. its own repo row, so its path is real and per-test"""
+    repo_path.mkdir(parents=True, exist_ok=True)
+    repo = store.create_repo(board_id, "r", str(repo_path), "main")
+    repo_id = repo["id"]
+    card = store.create_card(board_id, repo_id, "waiting card", leases=["x"])
+    store.update_card(card["id"], status="checking")
+    _merge(store, card["id"], "https://x/pull/9")
+    from smortboard.exec.worktrees import branch_name, worktree_path
+
+    tree = worktree_path(repo_path, card["id"])
+    tree.mkdir(parents=True)
+    return card["id"], tree, branch_name(card["id"])
+
+
+def _stub_git_plumbing(monkeypatch, *, has_remote=True, fetch_ok=True):
+    monkeypatch.setattr(scheduler_module, "has_remote", lambda *a, **k: has_remote)
+    monkeypatch.setattr(scheduler_module, "fetch_base", lambda *a, **k: fetch_ok)
+
+
+def test_a_clean_behind_branch_is_merged_and_pushed(store, board_and_repo, tmp_path, monkeypatch):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    card_id, tree, branch = _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    _stub_git_plumbing(monkeypatch)
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a, **k: MergeSyncResult(clean=True, behind=True),
+    )
+    pushed = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "merge_branch",
+        lambda *a, **k: MergeSyncResult(clean=True, behind=True, merged=True),
+    )
+    monkeypatch.setattr(
+        scheduler_module, "push_branch", lambda repo_path, br, **k: pushed.append(br) or True
+    )
+
+    scheduler_module._sweep_checking_prs(store, board_id)
+
+    assert pushed == [branch]
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] is None
+
+
+def test_a_conflicting_behind_branch_is_flagged_merge_conflict(
+    store, board_and_repo, tmp_path, monkeypatch
+):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    card_id, tree, branch = _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    _stub_git_plumbing(monkeypatch)
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a, **k: MergeSyncResult(
+            clean=False, behind=True, conflicting_files=["a.py", "b.py"]
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler_module, "merge_branch", lambda *a, **k: pytest.fail("must not merge for real")
+    )
+    monkeypatch.setattr(
+        scheduler_module, "push_branch", lambda *a, **k: pytest.fail("must not push a conflict")
+    )
+
+    scheduler_module._sweep_checking_prs(store, board_id)
+
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] == "MERGE_CONFLICT"
+    note = card["comments"][-1]["body"]
+    assert "a.py" in note and "b.py" in note
+    events = [e for e in store.list_events(card_id) if e["kind"] == "merge_conflict"]
+    assert events and events[-1]["payload"]["files"] == ["a.py", "b.py"]
+
+
+def test_a_not_behind_branch_is_left_alone(store, board_and_repo, tmp_path, monkeypatch):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    card_id, tree, branch = _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    _stub_git_plumbing(monkeypatch)
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a, **k: MergeSyncResult(clean=True, behind=False),
+    )
+    monkeypatch.setattr(
+        scheduler_module, "merge_branch", lambda *a, **k: pytest.fail("nothing to merge")
+    )
+
+    scheduler_module._sweep_checking_prs(store, board_id)
+
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] is None
+
+
+def test_the_sweep_is_throttled_per_repo(store, board_and_repo, tmp_path, monkeypatch):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    card_id, tree, branch = _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    _stub_git_plumbing(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a, **k: calls.append(1) or MergeSyncResult(clean=True, behind=False),
+    )
+
+    scheduler_module._sweep_checking_prs(store, board_id)
+    scheduler_module._sweep_checking_prs(store, board_id)
+
+    assert calls == [1]  # the second call landed inside the 5-minute throttle window
+
+
+def test_the_sweep_reads_a_non_main_default_branch(store, board_and_repo, tmp_path, monkeypatch):
+    """a repo pointed at "development" is synced against origin/development, never origin/main"""
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo = store.create_repo(board_id, "r2", str(repo_path), "development")
+    card = store.create_card(board_id, repo["id"], "waiting card", leases=["x"])
+    store.update_card(card["id"], status="checking")
+    _merge(store, card["id"], "https://x/pull/10")
+    from smortboard.exec.worktrees import worktree_path
+
+    worktree_path(repo_path, card["id"]).mkdir(parents=True)
+
+    _stub_git_plumbing(monkeypatch)
+    fetched = []
+    monkeypatch.setattr(
+        scheduler_module, "fetch_base", lambda path, base, **k: fetched.append(base) or True
+    )
+    checked = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda tree, branch, base_ref: (
+            checked.append(base_ref) or MergeSyncResult(clean=True, behind=False)
+        ),
+    )
+
+    scheduler_module._sweep_checking_prs(store, board_id)
+
+    assert fetched == ["development"]
+    assert checked == ["origin/development"]
