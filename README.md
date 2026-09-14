@@ -251,10 +251,14 @@ outside this card's lease`), the write never happens, and the card stops as `LEA
 you to decide. The agent is also told its lease up front, so it knows where the work is before it
 starts.
 
-**How a glob matches.** Python's `fnmatch` against the path relative to the repo root. `*` also
-crosses `/`: `smortboard/ui/*` matches `smortboard/ui/board.js` and anything in folders below it.
-`?` is one character, `[abc]` one of a set. A glob that is absolute or climbs with `..` is refused
-when it is saved, since it could never match a path inside the repo.
+**How a glob matches.** Gitignore-style, against the path relative to the repo root. `*` and `?`
+stay inside one folder: `smortboard/ui/*` matches `smortboard/ui/board.js` but not a file in a folder
+below it. `**/` is any number of folders, none included: `smortboard/**/*.py` matches
+`smortboard/scheduler.py` and `smortboard/server/app.py`. A trailing `**` is everything below:
+`tests/js/**`. `[abc]` is one of a set, `[!abc]` anything else. The board and the guard inside the
+container share one definition (`lease_allows` in `smortboard/exec/leases.py`). A glob that is
+absolute or climbs with `..` is refused when it is saved, since it could never match a path inside
+the repo.
 
 **What it guarantees:**
 

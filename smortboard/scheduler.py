@@ -33,6 +33,21 @@ from smortboard.store.errors import NotFoundError
 # unset means this - operator's own value in settings always wins, see store.api._SETTING_KEYS
 DEFAULT_MAX_PARALLEL = 2
 
+# statuses a blocked card can never be requeued from - the schema has no "blocked" status of its
+# own (a blocked card keeps whatever status it was in and raises blocked_reason_code instead, see
+# store/schema.py), so queueability is decided on that flag, not on status alone
+_NEVER_QUEUEABLE = ("accepted", "rejected")
+
+
+def _is_queueable(card: dict[str, Any]) -> bool:
+    """whether `w` may draw this card into the queue: a fresh todo card, or one a run left
+    blocked - a bad lease widened or a test command fixed should let it re-run on its own, not
+    wait for a human to drag it back to todo first."""
+    if card["status"] in _NEVER_QUEUEABLE:
+        return False
+    return card["status"] == "todo" or bool(card.get("blocked_reason_code"))
+
+
 # a run that blocks USAGE_LIMIT but carries no readable resetsAt (never happened in the spikes,
 # but a stream is someone else's format) parks for this long rather than never resuming
 _FALLBACK_PARK_SECONDS = 5 * 60
@@ -98,9 +113,8 @@ def globs_may_overlap(a: str, b: str) -> bool:
 
 def _leases_conflict(globs_a: list[str], globs_b: list[str]) -> bool:
     # AN EMPTY LEASE TOUCHES NOTHING, NOT EVERYTHING. the hook the lease compiles to
-    # (exec/leases.py) is `any(fnmatch(rel, glob) for glob in globs)` - over an empty list that is
-    # False for every path. the lifecycle refuses such a card before its agent runs, so this only
-    # keeps it from holding anyone else up
+    # (exec/leases.py lease_allows) is False for every path over an empty list. the lifecycle
+    # refuses such a card before its agent runs, so this only keeps it from holding anyone else up
     if not globs_a or not globs_b:
         return False
     return any(globs_may_overlap(a, b) for a in globs_a for b in globs_b)
@@ -221,7 +235,7 @@ class BoardScheduler:
             todo = [
                 c["id"]
                 for c in store.list_cards(self.board_id)
-                if c["status"] == "todo" and c.get("repo_id")
+                if _is_queueable(c) and c.get("repo_id")
             ]
         finally:
             store.close()
@@ -277,7 +291,7 @@ class BoardScheduler:
                     card = store.get_card(card_id)
                 except NotFoundError:
                     continue  # gone - drop it, nothing to wait for
-                if card_id in running_ids or card["status"] != "todo":
+                if card_id in running_ids or not _is_queueable(card):
                     continue  # started by hand, accepted, rejected - either way not ours to queue
                 if slots <= 0:
                     remaining.append(card_id)

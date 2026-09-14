@@ -5,7 +5,9 @@ lands and can refuse it with exit 2. This module writes the two files that make 
 one card's worktree — the lease itself, and a `--settings` file wiring the hook to enforce it.
 """
 
+import inspect
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -14,13 +16,50 @@ from smortboard.exec.bash_guard import write_bash_guard_hook
 # our own prefix, so the board can tell a lease refusal apart from any other hook denial
 LEASE_CONFLICT_PREFIX = "LEASE_CONFLICT:"
 
-_HOOK_SCRIPT = '''\
-"""PreToolUse hook: refuses an Edit/Write outside the card's declared path lease"""
-import fnmatch
-import json
-import sys
-from pathlib import Path
 
+def lease_glob_regex(glob: str) -> str:
+    """gitignore-style: * and ? stay inside one folder, **/ is any number of folders (none too),
+    and a trailing ** is everything below - what people and mission control write when they mean
+    "anywhere under here". fnmatch let * cross folders yet needed a real one for **/"""
+    out, i = [], 0
+    while i < len(glob):
+        if glob.startswith("**/", i):
+            out.append("(?:[^/]+/)*")
+            i += 3
+        elif glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif glob[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif glob[i] == "?":
+            out.append("[^/]")
+            i += 1
+        elif glob[i] == "[" and "]" in glob[i + 2 :]:
+            end = glob.index("]", i + 2)
+            body = glob[i + 1 : end].replace("\\", "\\\\")
+            out.append("[^" + body[1:] + "]" if body.startswith("!") else "[" + body + "]")
+            i = end + 1
+        else:
+            out.append(re.escape(glob[i]))
+            i += 1
+    return "(?s:" + "".join(out) + r")\Z"
+
+
+def lease_allows(rel: str, globs: list[str]) -> bool:
+    """whether a repo-relative path is inside any of the lease's globs"""
+    return any(re.match(lease_glob_regex(glob), rel) for glob in globs)
+
+
+# the hook runs inside the card's container with no smortboard installed, so it carries the two
+# functions above as source - one definition for the board and the guard, they cannot drift
+_HOOK_SCRIPT = (
+    '"""PreToolUse hook: refuses an Edit/Write outside the card\'s declared path lease"""\n'
+    "import json\nimport re\nimport sys\nfrom pathlib import Path\n\n\n"
+    + inspect.getsource(lease_glob_regex)
+    + "\n\n"
+    + inspect.getsource(lease_allows)
+    + """
 payload = json.load(sys.stdin)
 file_path = payload.get("tool_input", {}).get("file_path")
 if not file_path:
@@ -36,12 +75,13 @@ try:
 except ValueError:
     rel = Path(file_path)
 
-if any(fnmatch.fnmatch(str(rel), glob) for glob in globs):
+if lease_allows(str(rel), globs):
     sys.exit(0)
 
 print(f"{prefix} {rel} is outside this card's lease", file=sys.stderr)
 sys.exit(2)
-'''.replace("{prefix}", LEASE_CONFLICT_PREFIX)
+""".replace("{prefix}", LEASE_CONFLICT_PREFIX)
+)
 
 
 def write_lease_settings(
