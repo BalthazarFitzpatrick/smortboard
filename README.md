@@ -4,7 +4,7 @@
 
 You write a card and press a key. An agent picks it up in a sealed container and commits its work.
 The board then re-runs the tests itself, has a second agent read the diff, and opens a pull request.
-It never merges. Anything that needs you waits in one inbox.
+It never merges into main. Anything that needs you waits in one inbox.
 
 ## Start in a minute
 
@@ -61,7 +61,7 @@ and any card that is running.
 5. Press `.` and tell the orchestrator what you want built. It answers with a plan and cards.
 6. Pick a card and press `r`, or press `w` to run the whole board.
 
-Anything that needs you lands in the inbox, `n`. The board never merges. You do.
+Anything that needs you lands in the inbox, `n`. The board never merges into main. You do.
 
 ![A payments service mid-sprint: cards in every state across five columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
 
@@ -78,8 +78,11 @@ Anything that needs you lands in the inbox, `n`. The board never merges. You do.
 1. **The agent never decides it is finished.** Its claim that the tests pass counts for nothing. The
    board re-runs them offline. A separate read-only reviewer then reads the code itself for
    vulnerabilities, leaked credentials, bad practice and waste.
-2. **The board never merges.** Every card ends at an open pull request or a stated reason it
-   stopped, and merging is always done by a person.
+2. **The board never merges into main.** On a repo whose base branch is main, every card ends at an
+   open pull request or a stated reason it stopped, and a person merges it. On a repo whose base is
+   a development branch, the board merges each finished card into development itself, so the next
+   card starts on top of it. It keeps one open pull request from development into main, and merging
+   that is always done by a person.
 3. **Every card runs sealed.** It gets its own throwaway container, a clone of its repo, a write
    lease and a command allowlist. If Docker isn't available, the card refuses to run rather than
    running outside a container.
@@ -98,6 +101,7 @@ Anything that needs you lands in the inbox, `n`. The board never merges. You do.
 | **testing** | The repo's own test command runs in the repo's image with no network. |
 | **reviewing** | A second agent with Read, Grep and Glob only reviews the diff in its surrounding code and answers four questions: vulnerabilities (injection, path traversal, unchecked input), leaked credentials, best practices (the project's conventions and the language's), and efficiency. It never sees the test results and doesn't judge the criteria; the test gate does that. A leaked credential at any severity, any high or critical finding, or no usable verdict blocks the card. |
 | **opening** | The board pushes the branch and runs `gh pr create`. A re-run of a card whose pull request is already open pushes to that one instead, never forced. Its `gh` wrapper allows four subcommands - `pr create`, `list`, `view` and `close` - and merge isn't one of them. |
+| **landing** | Only when the base is not main, master or trunk. The board merges the base into the branch once more (rerunning the tests if that brought anything in), pushes one two-parent merge commit to the base, and accepts the card. If the base moved in between, it syncs and tries again, up to three times; a card that still can't land keeps its pull request for you. |
 
 ![An open card: sections headed like board columns, the run as a timeline](docs/images/card.jpg)
 
@@ -107,7 +111,7 @@ Anything that needs you lands in the inbox, `n`. The board never merges. You do.
 |---|---|
 | **Board** | A named set of cards and repos. `1`-`9` jump between boards. |
 | **Card** | One unit of work: a title, a description, acceptance criteria, tasks, dependencies, a lease, and optionally a model. |
-| **Repo** | Where cards work: a path, a default branch, a test command, an optional lint command and an optional image. |
+| **Repo** | Where cards work: a path, a default branch, a test command, an optional lint command and an optional image. Set the default branch to `development` (it must exist on the remote) and the board lands cards there itself. |
 | **Lease** | The path globs a card may Edit or Write, set with `PATCH /api/cards/<id>` and `{"leases": [...]}`. An empty lease allows no writes at all, so the board refuses to run a card without one. |
 | **Worktree** | One git worktree and branch per card. The container works on a clone, and its commits are fetched back. |
 | **Attempt** | One run of a card, from its `lifecycle_started` event to where it stopped. Cost, replay and the resume briefing all work per attempt. |
