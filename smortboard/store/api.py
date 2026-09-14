@@ -47,6 +47,11 @@ _SETTING_KEYS = (
     "gate_timeout_seconds",
 )
 
+# writable settings that get_settings does not summarise, because they are not scalars callers read
+# at a glance. mission_control_read_paths is a json list of absolute host paths (see
+# mission_control_read_paths()); its own reader parses it, so it stays out of the settings dict.
+_EXTRA_SETTING_KEYS = ("mission_control_read_paths",)
+
 
 def _check_findings_route(value: str | None) -> None:
     if value is not None and value not in FINDINGS_ROUTES:
@@ -419,7 +424,7 @@ class Store:
 
     def set_setting(self, key: str, value: str | None) -> dict[str, Any]:
         """sets a board-wide value, or clears it with None"""
-        if key not in _SETTING_KEYS:
+        if key not in _SETTING_KEYS and key not in _EXTRA_SETTING_KEYS:
             raise UnknownFieldError(f"no setting {key!r}")
         if key == "findings_route":
             _check_findings_route(value)
@@ -431,6 +436,25 @@ class Store:
             )
         self._conn.commit()
         return self.get_settings()
+
+    def mission_control_read_paths(self) -> list[str]:
+        """the operator's extra read-only paths for mission control, parsed from the settings row.
+
+        stored as a json list of absolute host paths. an unset or malformed value is no paths, never
+        an error - a bad value must not stop a turn from running.
+        """
+        row = self._conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("mission_control_read_paths",)
+        ).fetchone()
+        if row is None or not row["value"]:
+            return []
+        try:
+            value = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if not isinstance(value, list):
+            return []
+        return [str(p) for p in value if isinstance(p, str) and p.strip()]
 
     def findings_route(self, card_id: str) -> str:
         """where this card's reviewer findings go.
