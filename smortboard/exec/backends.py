@@ -117,17 +117,23 @@ def card_token_path() -> Path:
     return Path(os.environ.get(CARD_TOKEN_PATH_ENV) or _default_token_file())
 
 
+def config_base() -> Path:
+    """the platform's config root - APPDATA on Windows, XDG_CONFIG_HOME or ~/.config elsewhere.
+
+    shared with smortboard/profiles.py so a profile's token file and the legacy card_token file
+    live under the same tree; kept here since this is where that tree was first decided.
+    """
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+
+
 def _default_token_file() -> Path:
     """where the token file lives, per platform - the first place the board looks.
 
-    APPDATA on Windows, XDG_CONFIG_HOME or ~/.config elsewhere. The OS credential store is only
-    the fallback when this file is absent.
+    The OS credential store is only the fallback when this file is absent.
     """
-    if os.name == "nt":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return base / "smortboard" / "card_token"
+    return config_base() / "smortboard" / "card_token"
 
 
 def _credential_store_token() -> str | None:
