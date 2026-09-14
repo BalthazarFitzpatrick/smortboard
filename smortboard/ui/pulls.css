@@ -1,0 +1,47 @@
+/* pull requests (v): every open PR across every board, in merge order. every visual primitive -
+   panel-floating, h-divider, field-label, stat, hazard stripes - comes from base.css; this file
+   only positions and sizes them for this panel, same rule inbox.css states for the inbox. */
+
+.pulls-panel {
+  width: min(720px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+
+.pulls-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.pulls-row {
+  padding: var(--gap, 8px) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pulls-row:first-child .h-divider { display: none; }
+
+/* the merge-order highlight - not real dom focus, see pulls.js's top-of-file note on why */
+.pulls-row-active { border-left: 2px solid var(--attention); padding-left: 8px; }
+
+.pulls-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.pulls-title { font-weight: 600; color: var(--cream); }
+.pulls-state { margin-left: auto; text-transform: uppercase; }
+
+.pulls-link { color: var(--text-dim); }
+
+.pulls-markers { display: flex; gap: 14px; }
+.pulls-marker { font-weight: 600; }
+.pulls-marker-conflicting { color: var(--status-warn); }
+.pulls-marker-dependency { color: var(--fill-attention, var(--attention)); }
+
+.pulls-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.pulls-status.pulls-error { color: var(--status-warn); }

@@ -29,6 +29,7 @@ from smortboard.orchestrator import (
 )
 from smortboard.preflight import run_preflight
 from smortboard.prompts import ROLES
+from smortboard.pulls import open_pull_requests
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
@@ -112,6 +113,7 @@ _ROUTES = [
     (re.compile(r"^/api/profiles$"), "POST"),
     (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)/activate$"), "POST"),
     (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)$"), "DELETE"),
+    (re.compile(r"^/api/pulls$"), "GET"),
 ]
 
 # a full claude setup-token is 108 bytes (see README Setup); this is a shape check, not a network
@@ -308,6 +310,8 @@ def _make_handler(
                 self._send_json(200, attention_rows(store))
             elif "card_id" in params and path.endswith("/lease/approve"):
                 self._handle_lease_approve(params["card_id"])
+            elif path == "/api/pulls":
+                self._send_json(200, open_pull_requests(store))
             elif "card_id" in params and path.endswith("/answer"):
                 self._handle_answer(params["card_id"])
             elif path == "/api/profiles" and method == "GET":
