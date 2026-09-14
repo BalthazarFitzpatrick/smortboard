@@ -257,6 +257,83 @@ def test_a_report_that_mentions_approval_is_not_a_question():
     assert classify_result(result_event) is None
 
 
+def test_session_limit_text_classifies_as_usage_limit_not_crash():
+    """the real card evidence: the run's only output was this refusal text and it was classified
+    CRASH (is_error true), so nothing rotated"""
+    result_event = {
+        "type": "result",
+        "subtype": "error_during_execution",
+        "is_error": True,
+        "permission_denials": [],
+        "result": "You've hit your session limit · resets 3:40pm (UTC)",
+    }
+    assert classify_result(result_event) == "USAGE_LIMIT"
+    run_result = result_to_run_result(result_event)
+    assert run_result.blocked_reason_code == "USAGE_LIMIT"
+    assert run_result.resets_at is not None
+
+
+def test_session_limit_time_resets_at_is_in_the_future():
+    from datetime import UTC, datetime
+
+    result_event = {
+        "type": "result",
+        "is_error": True,
+        "permission_denials": [],
+        "result": "You've hit your session limit · resets 3:40pm (UTC)",
+    }
+    run_result = result_to_run_result(result_event)
+    assert run_result.resets_at > datetime.now(UTC).timestamp()
+
+
+def test_session_limit_date_variant_classifies_as_usage_limit():
+    result_event = {
+        "type": "result",
+        "is_error": True,
+        "permission_denials": [],
+        "result": "You've hit your session limit · resets Dec 25 (UTC)",
+    }
+    run_result = result_to_run_result(result_event)
+    assert run_result.blocked_reason_code == "USAGE_LIMIT"
+    assert run_result.resets_at is not None
+
+
+def test_a_real_rate_limit_event_wins_over_the_session_limit_text(tmp_path):
+    """S2's own signal - a refused rate_limit_event - must not be overridden by this new text
+    heuristic: the run's only recorded rate_limit_event stays the real one, its resetsAt
+    untouched by a synthetic one built from the text."""
+    from smortboard.exec.runner import run_process
+
+    real_resets_at = 1999999999
+    events = [
+        json.dumps(
+            {
+                "type": "rate_limit_event",
+                "rate_limit_info": {"status": "rejected", "resetsAt": real_resets_at},
+            }
+        ),
+        json.dumps(
+            {
+                "type": "result",
+                "subtype": "error_during_execution",
+                "is_error": True,
+                "permission_denials": [],
+                "result": "You've hit your session limit · resets 3:40pm (UTC)",
+                "session_id": "abc",
+            }
+        ),
+    ]
+    cmd = ["python3", "-c", "import sys; [print(line) for line in sys.argv[1:]]", *events]
+    with Store(tmp_path / "board.sqlite3") as store:
+        board = store.create_board("b")
+        card = store.create_card(board["id"], None, "a card")
+        run_result = run_process(store, card["id"], cmd)
+        assert run_result.blocked_reason_code == "USAGE_LIMIT"
+        recorded = store.list_events_by_kind(["rate_limit_event"])
+        assert len(recorded) == 1
+        assert recorded[0]["payload"]["rate_limit_info"]["resetsAt"] == real_resets_at
+
+
 def test_crash_when_is_error_and_no_other_signal():
     result_event = {
         "type": "result",
