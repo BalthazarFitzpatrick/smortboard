@@ -295,6 +295,20 @@ _MIGRATIONS: list[str] = [
 
     PRAGMA foreign_keys = ON;
     """,
+    # 13: a repo's remembered lease globs - ticked "remember for this repo" on a lease approval,
+    # so a later card on the same repo can write that path without ever being asked again. always
+    # an explicit operator choice (see attention.approve_lease); nothing inserts here on its own
+    """
+    CREATE TABLE repo_remembered_leases (
+        id TEXT PRIMARY KEY,
+        repo_id TEXT NOT NULL REFERENCES repos(id),
+        path_glob TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (repo_id, path_glob)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_repo_remembered_leases_repo ON repo_remembered_leases (repo_id);
+    """,
 ]
 
 
