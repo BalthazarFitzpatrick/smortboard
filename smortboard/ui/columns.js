@@ -284,8 +284,9 @@ function drawColumn(bucketRowsEl) {
 }
 
 function focusPileIndex(bucketRowsEl, idx) {
-  bucketRowsEl.children.forEach(row => { row.tabIndex = -1; });
-  const target = bucketRowsEl.children.find(row => row.dataset.idx === String(idx));
+  const rows = Array.from(bucketRowsEl.children);
+  rows.forEach(row => { row.tabIndex = -1; });
+  const target = rows.find(row => row.dataset.idx === String(idx));
   if (!target) return;
   target.tabIndex = 0;
   target.focus();
