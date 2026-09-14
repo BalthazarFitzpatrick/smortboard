@@ -51,9 +51,10 @@ assert.ok(!boardBar.children.includes(button), 'the button must not live inside 
 button.onclick();
 assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel');
 
-// ---- the panel renders an empty section list, ready for preferences --------------------------
-assert.ok(mod.st.listEl.querySelector('.hazard-placeholder'), 'an empty settings list shows a placeholder, not nothing');
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 0, 'no preference sections exist yet');
+// ---- the panel lists its one section, the credential-profile auto-switch toggle ---------------
+assert.ok(!mod.st.listEl.querySelector('.hazard-placeholder'), 'a list with a section shows no placeholder');
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 1, 'the credential-profile section is listed');
+assert.ok(mod.st.listEl.querySelector('.settings-auto-switch-checkbox'), 'it carries the auto-switch toggle');
 
 // ---- a click on the backdrop itself closes it, a click inside the panel does not ---------------
 mod.st.backdrop._listeners.mousedown.forEach(fn => fn({target: mod.st.panel}));
