@@ -7,8 +7,10 @@ the same entry point a manual run uses. Three rules gate a start, each documente
 DEPENDENCIES - a card starts only once every card it depends on has a pull request MERGED on
   GitHub, not merely `accepted` on the board.
 LEASES - two cards in the same repo whose lease globs could touch the same file never run together.
-USAGE_LIMIT - a run that blocks on it pauses new starts until the window resets; already-running
-  cards are left alone, and the blocked card itself stays blocked for a human, not retried here.
+USAGE_LIMIT - a run that blocks on it marks the active credential profile limited and switches to
+  the next one that is not, resuming the very card that hit it. Only once every configured profile
+  is limited does this pause new starts until the earliest window resets, as it always did before
+  profiles existed; already-running cards are left alone either way. See smortboard/profiles.py.
 
 TESTABLE WITHOUT THREADS. `_tick` is a plain method: given a store and a fake `runs` object (one
 whose `.start` calls the runner synchronously and fires `on_finish` inline, as RunRegistry itself
@@ -26,6 +28,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from smortboard import profiles
 from smortboard.review.merge_request import PullRequestState, pr_view
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
@@ -326,22 +329,43 @@ class BoardScheduler:
             with self._lock:
                 self._running.discard(card_id)
             if getattr(state, "blocked_reason_code", None) == "USAGE_LIMIT":
-                self._pause_for_usage_limit()
-            self._tick()
+                self._handle_usage_limit(card_id)
+            else:
+                self._tick()
 
         return _on_finish
 
-    def _pause_for_usage_limit(self) -> None:
-        """stop starting new cards until the latest rate_limit_event's resetsAt. THE CARD THAT HIT
-        IT IS NOT RETRIED HERE - it is blocked USAGE_LIMIT like a manual run would leave it, for a
-        human to look at or re-run; this only holds back cards that have not started yet."""
+    def _handle_usage_limit(self, card_id: str) -> None:
+        """the credential in use just got refused. Marks it limited and, if another configured
+        profile is not, switches to it and resumes `card_id` itself - USAGE_LIMIT blocks a manual
+        run for a human, but here there is another credential to try before giving up like that.
+
+        With only the implicit "default" profile configured (has_multiple_profiles() False) this
+        never calls mark_limited/set_active at all, so a single-credential board never grows a
+        profiles.json - see the module docstring on smortboard/profiles.py for why that matters.
+        """
         store = Store(self._db_path)
         try:
             resets_at = _latest_reset(store)
+            rotate = profiles.has_multiple_profiles()
+            next_profile = None
+            if rotate:
+                profiles.mark_limited(profiles.active_profile(), resets_at)
+                next_profile = profiles.next_available()
+                if next_profile is not None:
+                    profiles.set_active(next_profile)
         finally:
             store.close()
-        with self._lock:
-            self._paused_until = resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+
+        if next_profile is not None:
+            with self._lock:
+                if card_id not in self._queue and card_id not in self._running:
+                    self._queue.insert(0, card_id)
+        else:
+            fallback = profiles.earliest_reset() if rotate else None
+            with self._lock:
+                self._paused_until = fallback or resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+        self._tick()
 
 
 def _latest_reset(store: Store) -> float | None:
