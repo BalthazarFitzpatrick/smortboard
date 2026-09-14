@@ -467,6 +467,72 @@ def test_a_stop_during_the_worker_run_never_reaches_the_gates(board, monkeypatch
     assert gated == [] and reviewed == [] and opened == []
 
 
+# -- budget/turn cap: commits still reach the gates (Fix B) -------------------
+
+
+def test_a_budget_capped_run_with_commits_reaches_the_gates(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)  # branch_has_commits -> True
+    backend = _Backend(
+        RunResult(
+            subtype="error_max_budget_usd",
+            is_error=True,
+            blocked_reason_code="CRASH",
+            session_id="s",
+            total_cost_usd=5.0,
+            num_turns=40,
+            result_text="ran out of budget",
+        )
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "opened"
+    kinds = [e["kind"] for e in store.list_events(card_id)]
+    assert "budget_capped_with_commits" in kinds
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any("hit its budget after committing" in b for b in bodies)
+
+
+def test_a_budget_capped_run_with_no_commits_blocks_with_a_clear_note(board, monkeypatch):
+    store, card_id = board
+    monkeypatch.setattr(lifecycle, "branch_has_commits", lambda *a, **k: False)
+    backend = _Backend(
+        RunResult(
+            subtype="error_max_budget_usd",
+            is_error=True,
+            blocked_reason_code="CRASH",
+            session_id="s",
+            total_cost_usd=5.0,
+            num_turns=40,
+            result_text="ran out of budget",
+        )
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "blocked"
+    assert result.blocked_reason_code == "CRASH"
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any("hit its budget" in b for b in bodies)
+
+
+def test_a_turn_capped_run_with_no_commits_names_the_turn_limit(board, monkeypatch):
+    store, card_id = board
+    monkeypatch.setattr(lifecycle, "branch_has_commits", lambda *a, **k: False)
+    backend = _Backend(
+        RunResult(
+            subtype="error_max_turns",
+            is_error=True,
+            blocked_reason_code="CRASH",
+            session_id="s",
+            total_cost_usd=1.0,
+            num_turns=200,
+            result_text="ran out of turns",
+        )
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "blocked"
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any("turn limit" in b for b in bodies)
+
+
 def test_a_stop_leaves_the_card_flagged_with_a_comment_and_an_event(board, monkeypatch):
     store, card_id = board
     lifecycle.run_card_lifecycle(store, card_id, backend=_Backend(), stop_requested=lambda: True)
