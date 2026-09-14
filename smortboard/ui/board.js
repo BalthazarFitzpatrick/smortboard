@@ -162,6 +162,7 @@ const CTA_BLOCKED_LABELS = new Map([
   ['TESTS_FAILED', 'Review failure'],
   ['REVIEW_REJECTED', 'Review findings'],
   ['DEPENDENCY_REJECTED', 'Review dependency'],
+  ['MERGE_CONFLICT', 'Resolve conflicts'],
 ]);
 
 // the one action a card wants next, off the same status and reason code cardClasses reads - never
