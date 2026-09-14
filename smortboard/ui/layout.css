@@ -111,12 +111,6 @@ body {
 .bucket-rows.bucket-rows-expanded { overflow-y: auto; padding-right: 4px; }
 /* a piled column spends its height on cards and piles, not gaps - columns.js reads this gap back */
 .bucket-rows.bucket-rows-piled { gap: 10px; }
-/* a card tucked under the row after it: that row paints over it, and under a pile (shorter than
-   the part it covers) columns.js cuts it to end behind the pile's face, so nothing pokes out */
-.card-strip.card-covered { overflow: hidden; }
-/* the last row has nothing below it to slide over its lower part, so that one is cut short -
-   without a bottom edge, so it reads as running on past the column, not as a small card */
-.card-strip.card-clipped { overflow: hidden; border-bottom: 0; }
 
 /* collapsed card: a wide flat strip - makeExpander reads its own rect as the animation's starting
    box, so this is the only place that ratio lives */

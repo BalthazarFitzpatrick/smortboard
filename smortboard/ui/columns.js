@@ -275,7 +275,8 @@ function fitPiledColumn(bucketRowsEl) {
     const next = rows[i + 1];
     el.classList.toggle('card-covered', cuts[i] > 0 && !!next);
     el.classList.toggle('card-clipped', cuts[i] > 0 && !next);
-    el.style.height = '';
+    el.style.clipPath = '';
+    el.style.marginBottom = '';
     if (!cuts[i]) return;
     const shown = rows[i].height - cuts[i];
     // a pile is shorter than the part it covers, so a card under one stops behind the pile's face;
@@ -283,8 +284,11 @@ function fitPiledColumn(bucketRowsEl) {
     let kept = rows[i].height;
     if (!next) kept = shown;
     else if (next.type === 'pile') kept = Math.min(kept, shown + gap + pileHeight - PILE_FACE_INSET);
-    if (kept < rows[i].height) el.style.height = `${kept}px`;
-    if (next) slides[i + 1] = shown - kept;
+    // CLIP, NEVER SHRINK. a shorter box reflows the card's flex column and pulls its foot and
+    // button up into view - the full box stays, and only what should be hidden is cut away
+    if (kept < rows[i].height) el.style.clipPath = `inset(0 0 ${rows[i].height - kept}px 0)`;
+    if (next) slides[i + 1] = -cuts[i];
+    else el.style.marginBottom = `-${cuts[i]}px`;
   });
   rowEls.forEach((el, i) => { el.style.marginTop = slides[i] ? `${slides[i]}px` : ''; });
 }
