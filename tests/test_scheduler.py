@@ -365,6 +365,89 @@ def test_setting_max_parallel_raises_the_cap(store, board_and_repo):
     assert len(runs.started) == 3
 
 
+# -- blocked cards rejoin the queue --------------------------------------------------
+
+
+def test_a_blocked_card_is_requeued_by_start_all(store, board_and_repo):
+    # a run leaves a blocked card in "doing" with a reason code, not in some sixth "blocked"
+    # status - schema.py's STATUSES has no such value
+    board_id, repo_id = board_and_repo
+    card = store.create_card(board_id, repo_id, "blocked card")
+    store.update_card(card["id"], status="doing", blocked_reason_code="TESTS_FAILED")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert card["id"] in runs.started
+
+
+def test_a_blocked_card_with_any_reason_code_is_requeued(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    codes = ["CRASH", "USAGE_LIMIT", "LEASE_CONFLICT", "AGENT_QUESTION", "REVIEW_REJECTED"]
+    ids = []
+    for i, code in enumerate(codes):
+        card = store.create_card(board_id, repo_id, f"c{i}")
+        store.update_card(card["id"], status="doing", blocked_reason_code=code)
+        ids.append(card["id"])
+    store.set_setting("max_parallel", str(len(codes)))
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert set(runs.started) == set(ids)
+
+
+def test_a_blocked_cards_lease_still_conflicts_with_a_running_card(store, board_and_repo):
+    # requeuing does not bypass the lease rule - a blocked card sits waiting exactly like a
+    # fresh todo one would
+    board_id, repo_id = board_and_repo
+    store.set_setting("max_parallel", "5")
+    a = store.create_card(board_id, repo_id, "a", leases=["src/api/*.py"])
+    blocked = store.create_card(board_id, repo_id, "b", leases=["src/api/routes.py"])
+    store.update_card(blocked["id"], status="doing", blocked_reason_code="TESTS_FAILED")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert a["id"] in runs.started
+    assert blocked["id"] not in runs.started
+    assert "lease" in scheduler.schedule_view()["waiting"][blocked["id"]]
+
+
+def test_accepted_and_rejected_cards_are_never_requeued(store, board_and_repo):
+    # the store lets a reason code ride alongside any status (store/api.py's
+    # _check_blocked_invariant) - accepted/rejected must stay excluded regardless
+    board_id, repo_id = board_and_repo
+    accepted = store.create_card(board_id, repo_id, "accepted")
+    store.update_card(accepted["id"], status="accepted", blocked_reason_code=None)
+    rejected = store.create_card(board_id, repo_id, "rejected")
+    store.update_card(rejected["id"], status="rejected", blocked_reason_code=None)
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert runs.started == []
+
+
+def test_a_todo_card_is_still_selected_alongside_a_blocked_one(store, board_and_repo):
+    # existing to-do selection is unchanged by the blocked-card addition
+    board_id, repo_id = board_and_repo
+    store.set_setting("max_parallel", "5")
+    todo = store.create_card(board_id, repo_id, "todo")
+    blocked = store.create_card(board_id, repo_id, "blocked")
+    store.update_card(blocked["id"], status="doing", blocked_reason_code="CRASH")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert set(runs.started) == {todo["id"], blocked["id"]}
+
+
 # -- USAGE_LIMIT parking -------------------------------------------------------------
 
 
