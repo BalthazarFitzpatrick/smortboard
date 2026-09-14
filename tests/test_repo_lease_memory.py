@@ -17,7 +17,6 @@ from smortboard.server import runs as runs_module
 from smortboard.server.app import build_server
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
-
 from tests.test_lease_approve import _call, _run_server
 
 
