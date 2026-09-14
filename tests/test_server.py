@@ -573,3 +573,90 @@ def test_patch_card_refuses_a_malformed_lease(running_server, leases):
     status, body = _request(f"{running_server}/api/cards/{card['id']}", "PATCH", {"leases": leases})
     assert status == 400
     assert "error" in body
+
+
+def _make_card(running_server, board_id, title, **fields):
+    status, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board_id, "repo_id": None, "title": title, **fields},
+    )
+    return status, card
+
+
+def test_patch_card_sets_depends_on(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, upstream = _make_card(running_server, board["id"], "upstream")
+    _, downstream = _make_card(running_server, board["id"], "downstream")
+
+    status, updated = _request(
+        f"{running_server}/api/cards/{downstream['id']}",
+        "PATCH",
+        {"depends_on": [upstream["id"]]},
+    )
+    assert status == 200
+    assert updated["depends_on"] == [upstream["id"]]
+
+    status, fetched = _request(f"{running_server}/api/cards/{downstream['id']}")
+    assert fetched["depends_on"] == [upstream["id"]]
+
+    status, cleared = _request(
+        f"{running_server}/api/cards/{downstream['id']}", "PATCH", {"depends_on": []}
+    )
+    assert status == 200
+    assert cleared["depends_on"] == []
+
+
+def test_post_card_with_depends_on_creates_the_links(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, upstream = _make_card(running_server, board["id"], "upstream")
+
+    status, downstream = _make_card(
+        running_server, board["id"], "downstream", depends_on=[upstream["id"]]
+    )
+    assert status == 201
+    assert downstream["depends_on"] == [upstream["id"]]
+
+
+def test_patch_card_depends_on_unknown_id_is_400_and_changes_nothing(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _make_card(running_server, board["id"], "x")
+
+    status, body = _request(
+        f"{running_server}/api/cards/{card['id']}", "PATCH", {"depends_on": ["nope"]}
+    )
+    assert status == 400
+    assert "error" in body
+    status, fetched = _request(f"{running_server}/api/cards/{card['id']}")
+    assert fetched["depends_on"] == []
+
+
+def test_patch_card_depends_on_self_is_400_and_changes_nothing(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _make_card(running_server, board["id"], "x")
+
+    status, body = _request(
+        f"{running_server}/api/cards/{card['id']}", "PATCH", {"depends_on": [card["id"]]}
+    )
+    assert status == 400
+    assert "error" in body
+    status, fetched = _request(f"{running_server}/api/cards/{card['id']}")
+    assert fetched["depends_on"] == []
+
+
+def test_patch_card_depends_on_cycle_is_400_and_changes_nothing(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, a = _make_card(running_server, board["id"], "a")
+    _, b = _make_card(running_server, board["id"], "b")
+    status, _ = _request(
+        f"{running_server}/api/cards/{b['id']}", "PATCH", {"depends_on": [a["id"]]}
+    )
+    assert status == 200
+
+    status, body = _request(
+        f"{running_server}/api/cards/{a['id']}", "PATCH", {"depends_on": [b["id"]]}
+    )
+    assert status == 400
+    assert "error" in body
+    status, fetched = _request(f"{running_server}/api/cards/{a['id']}")
+    assert fetched["depends_on"] == []

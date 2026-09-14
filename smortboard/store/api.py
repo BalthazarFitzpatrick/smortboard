@@ -266,8 +266,13 @@ class Store:
         leases: list[str] | None = None,
         model: str | None = None,
         ledger_task: str | None = None,
+        depends_on: list[str] | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
+        # validated before any insert - a brand new card can never be part of an existing
+        # cycle or depend on itself (its id does not exist yet), so only existence matters
+        cleaned_deps = list(dict.fromkeys(depends_on or []))
+        self._check_dependency_ids_exist(cleaned_deps)
         card_id = _new_id()
         now = _now()
         self._conn.execute(
@@ -308,6 +313,11 @@ class Store:
             self._conn.execute(
                 "INSERT INTO card_leases (id, card_id, path_glob) VALUES (?, ?, ?)",
                 (_new_id(), card_id, glob),
+            )
+        for dep_id in cleaned_deps:
+            self._conn.execute(
+                "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
+                (card_id, dep_id),
             )
         self._conn.commit()
         return self.get_card(card_id)
@@ -716,6 +726,63 @@ class Store:
         self._conn.commit()
 
     # -- dependencies (card_deps is the single source, queried both ways) ------
+
+    def _check_dependency_ids_exist(self, card_ids: list[str]) -> None:
+        if not card_ids:
+            return
+        placeholders = ",".join("?" * len(card_ids))
+        rows = self._conn.execute(
+            f"SELECT id FROM cards WHERE id IN ({placeholders})", card_ids
+        ).fetchall()
+        found = {row["id"] for row in rows}
+        missing = [dep_id for dep_id in card_ids if dep_id not in found]
+        if missing:
+            raise ValueError(f"no card {missing[0]}")
+
+    def _check_no_dependency_cycle(self, card_id: str, new_deps: list[str]) -> None:
+        """raises ValueError if giving card_id exactly new_deps would create a cycle.
+
+        walks the graph as it would look after the change - card_id's own edges become
+        new_deps, every other card's edges are as stored - and fails if that walk from
+        new_deps ever reaches back to card_id.
+        """
+        graph: dict[str, list[str]] = {card_id: new_deps}
+        for row in self._conn.execute("SELECT card_id, depends_on_card_id FROM card_deps"):
+            if row["card_id"] != card_id:
+                graph.setdefault(row["card_id"], []).append(row["depends_on_card_id"])
+        stack = list(new_deps)
+        seen: set[str] = set()
+        while stack:
+            node = stack.pop()
+            if node == card_id:
+                raise ValueError(f"dependency cycle: {card_id} would depend on itself")
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(graph.get(node, []))
+
+    def set_dependencies(self, card_id: str, depends_on: list[str]) -> dict[str, Any]:
+        """replaces a card's whole dependency list, the same way set_leases replaces leases.
+
+        validated before anything is written: an unknown id, a self-dependency, or a cycle
+        would leave the board unable to schedule cards, so all three are refused outright and
+        nothing changes.
+        """
+        self._card_row(card_id)  # raises NotFoundError on a bad card_id itself
+        cleaned = list(dict.fromkeys(depends_on))
+        if card_id in cleaned:
+            raise ValueError(f"a card cannot depend on itself: {card_id}")
+        self._check_dependency_ids_exist(cleaned)
+        self._check_no_dependency_cycle(card_id, cleaned)
+        self._conn.execute("DELETE FROM card_deps WHERE card_id = ?", (card_id,))
+        for dep_id in cleaned:
+            self._conn.execute(
+                "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
+                (card_id, dep_id),
+            )
+        self._conn.execute("UPDATE cards SET updated_at = ? WHERE id = ?", (_now(), card_id))
+        self._conn.commit()
+        return self.get_card(card_id)
 
     def add_dependency(self, card_id: str, depends_on_card_id: str) -> None:
         self._conn.execute(
