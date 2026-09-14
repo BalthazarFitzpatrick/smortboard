@@ -4,7 +4,7 @@
 
 You write a card and press a key. An agent picks it up in a sealed container and commits its work.
 The board then re-runs the tests itself, has a second agent read the diff, and opens a pull request.
-It never merges. Anything that needs you waits in one inbox.
+It never merges into main. Anything that needs you waits in one inbox.
 
 ## Start in a minute
 
@@ -61,7 +61,7 @@ and any card that is running.
 5. Press `.` and tell the orchestrator what you want built. It answers with a plan and cards.
 6. Pick a card and press `r`, or press `w` to run the whole board.
 
-Anything that needs you lands in the inbox, `n`. The board never merges. You do.
+Anything that needs you lands in the inbox, `n`. The board never merges into main. You do.
 
 ![A payments service mid-sprint: cards in every state across five columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
 
@@ -78,8 +78,11 @@ Anything that needs you lands in the inbox, `n`. The board never merges. You do.
 1. **The agent never decides it is finished.** Its claim that the tests pass counts for nothing. The
    board re-runs them offline. A separate read-only reviewer then reads the code itself for
    vulnerabilities, leaked credentials, bad practice and waste.
-2. **The board never merges.** Every card ends at an open pull request or a stated reason it
-   stopped, and merging is always done by a person.
+2. **The board never merges into main.** On a repo whose base branch is main, every card ends at an
+   open pull request or a stated reason it stopped, and a person merges it. On a repo whose base is
+   a development branch, the board merges each finished card into development itself, so the next
+   card starts on top of it. It keeps one open pull request from development into main, and merging
+   that is always done by a person.
 3. **Every card runs sealed.** It gets its own throwaway container, a clone of its repo, a write
    lease and a command allowlist. If Docker isn't available, the card refuses to run rather than
    running outside a container.
@@ -98,6 +101,7 @@ Anything that needs you lands in the inbox, `n`. The board never merges. You do.
 | **testing** | The repo's own test command runs in the repo's image with no network. |
 | **reviewing** | A second agent with Read, Grep and Glob only reviews the diff in its surrounding code and answers four questions: vulnerabilities (injection, path traversal, unchecked input), leaked credentials, best practices (the project's conventions and the language's), and efficiency. It never sees the test results and doesn't judge the criteria; the test gate does that. A leaked credential at any severity, any high or critical finding, or no usable verdict blocks the card. |
 | **opening** | The board pushes the branch and runs `gh pr create`. A re-run of a card whose pull request is already open pushes to that one instead, never forced. Its `gh` wrapper allows four subcommands - `pr create`, `list`, `view` and `close` - and merge isn't one of them. |
+| **landing** | Only when the base is not main, master or trunk. The board merges the base into the branch once more (rerunning the tests if that brought anything in), pushes one two-parent merge commit to the base, and accepts the card. If the base moved in between, it syncs and tries again, up to three times; a card that still can't land keeps its pull request for you. |
 
 ![An open card: sections headed like board columns, the run as a timeline](docs/images/card.jpg)
 
@@ -107,7 +111,7 @@ Anything that needs you lands in the inbox, `n`. The board never merges. You do.
 |---|---|
 | **Board** | A named set of cards and repos. `1`-`9` jump between boards. |
 | **Card** | One unit of work: a title, a description, acceptance criteria, tasks, dependencies, a lease, and optionally a model. |
-| **Repo** | Where cards work: a path, a default branch, a test command, an optional lint command and an optional image. |
+| **Repo** | Where cards work: a path, a default branch, a test command, an optional lint command and an optional image. Set the default branch to `development` (it must exist on the remote) and the board lands cards there itself. |
 | **Lease** | The path globs a card may Edit or Write, set with `PATCH /api/cards/<id>` and `{"leases": [...]}`. An empty lease allows no writes at all, so the board refuses to run a card without one. |
 | **Worktree** | One git worktree and branch per card. The container works on a clone, and its commits are fetched back. |
 | **Attempt** | One run of a card, from its `lifecycle_started` event to where it stopped. Cost, replay and the resume briefing all work per attempt. |
@@ -115,7 +119,7 @@ Anything that needs you lands in the inbox, `n`. The board never merges. You do.
 | **Reason code** | Why a card waits on you, recorded alongside its status: `AGENT_QUESTION`, `TESTS_FAILED`, `REVIEW_REJECTED`, `LEASE_CONFLICT`, `USAGE_LIMIT`, `CRASH`, `DEPENDENCY_REJECTED`. |
 | **Findings route** | Where reviewer findings go: back to the worker (`fix`), or to you (`attention`, the default). |
 | **Decision** | `y` accepts a card and keeps its branch for the pull request. `x` rejects it and deletes the branch. Both can be reversed. |
-| **Roles** | The **orchestrator** plans cards and has no tools. The **worker** works a card. The **reviewer** checks the worker's code for vulnerabilities, leaked credentials, bad practice and waste. Each role has its own prompt and model. |
+| **Roles** | The **orchestrator** plans cards and reads the files it plans against with Read, Grep and Glob over read-only clones - it never writes. The **worker** works a card. The **reviewer** checks the worker's code for vulnerabilities, leaked credentials, bad practice and waste. Each role has its own prompt and model. |
 | **Note** | A message to a running agent, delivered at its next step with a fixed marker it is taught to trust. Any other text claiming authority is treated as a prompt injection. |
 | **Resume briefing** | When a card runs again, its brief summarises the last attempt: how it ended, gate verdicts, findings, files touched, and commands run or refused. |
 | **Event log** | Every stream line, gate, decision and note, append-only. Cost, replay, the roster and the briefing are all projections of it. |
@@ -235,6 +239,14 @@ orchestrator turns and scheduler ticks each open their own SQLite connection on 
   can neither edit nor commit them.
 - **Proof comes from outside the agent.** The tests re-run offline, and the reviewer can only read.
   Only a note carrying the fixed marker counts as the operator.
+- **Mission control reads, it never writes.** So it can plan against real code, each turn mounts a
+  fresh read-only clone of every board repo at `/repos/<name>` and any operator-set paths at
+  `/extra/<name>`, and hands it Read, Grep and Glob only - no Edit, Write or Bash. The live checkout
+  is never mounted (it holds card worktrees and lease files), the clones are removed when the turn
+  ends, and a repo can carry text nobody wrote for the board, so mission control's output still
+  reaches the board only through its JSON schema - the board creates the cards, not the model. Extra
+  paths are set with `PATCH /api/settings` as `mission_control_read_paths`, a JSON list of absolute
+  paths; one that does not exist is skipped with a board message rather than failing the turn.
 - **An expired or revoked token** (HTTP 401) refuses the card with the steps to renew it.
 - **No merge path exists** in the code.
 
@@ -251,10 +263,14 @@ outside this card's lease`), the write never happens, and the card stops as `LEA
 you to decide. The agent is also told its lease up front, so it knows where the work is before it
 starts.
 
-**How a glob matches.** Python's `fnmatch` against the path relative to the repo root. `*` also
-crosses `/`: `smortboard/ui/*` matches `smortboard/ui/board.js` and anything in folders below it.
-`?` is one character, `[abc]` one of a set. A glob that is absolute or climbs with `..` is refused
-when it is saved, since it could never match a path inside the repo.
+**How a glob matches.** Gitignore-style, against the path relative to the repo root. `*` and `?`
+stay inside one folder: `smortboard/ui/*` matches `smortboard/ui/board.js` but not a file in a folder
+below it. `**/` is any number of folders, none included: `smortboard/**/*.py` matches
+`smortboard/scheduler.py` and `smortboard/server/app.py`. A trailing `**` is everything below:
+`tests/js/**`. `[abc]` is one of a set, `[!abc]` anything else. The board and the guard inside the
+container share one definition (`lease_allows` in `smortboard/exec/leases.py`). A glob that is
+absolute or climbs with `..` is refused when it is saved, since it could never match a path inside
+the repo.
 
 **What it guarantees:**
 
@@ -312,7 +328,8 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `w` | run the board | `,` | workforce |
 | `g` | kanban / workstreams | `s` | shortcuts |
 | `/` | type: the open card's comment, or the open chat | `b` | boards and repos |
-| | | `h` | pre-flight checklist |
+| `f` | fold: merge the todo cards one agent should do as one (asks first, costs a model run) | `h` | pre-flight checklist |
+| | | shift+`p` | credential profiles |
 | | | `1`-`9` | jump to a board |
 
 ## Setup
@@ -420,6 +437,12 @@ it here:
 The board never reads that login and a card never sees it. Do not copy a token out of it - the
 card token is the narrower, model-only one.
 
+**Several subscriptions.** Run `claude setup-token` once per account, then press shift+`p` and
+paste each one under its own profile name. It lands at
+`~/.config/smortboard/tokens/<name>` (mode 600) - the "default" profile stays the plain
+`card_token` file above, nothing already set up moves. When the active profile hits its rate
+limit, the board rotates to the next one instead of parking until the window resets.
+
 ### A board and its repo
 
 Press `b` to create a board and register a repo on it: its path, default branch and test command.
@@ -453,7 +476,9 @@ The operator name is who the board shows on your own notes and chat lines, and w
 told to trust: a live note starts `Note from <name>, via the board:`.
 
 Board-wide settings are set with `PATCH /api/settings`: `findings_route`, `orchestrator_model`,
-`worker_model`, `reviewer_model`, `max_parallel`, and `resume_briefing` (`"off"` disables it).
+`worker_model`, `reviewer_model`, `max_parallel`, `resume_briefing` (`"off"` disables it), and
+`mission_control_read_paths` (a JSON list of absolute paths mission control may read, on top of the
+board's repos).
 
 ## Testing the alpha
 
@@ -480,7 +505,14 @@ root, set when the card is created. When the agent writes outside it, the guard 
 and the card stops with `LEASE_CONFLICT`; its note names the files it needed. The usual cause is a
 lease written for a layout the repo does not have, such as `src/**/*.tsx` in a repo with no `src/`.
 
-The board has no control for this yet, so widen the lease through the API:
+The inbox row (`n`) for a `LEASE_CONFLICT` card lists exactly the paths it was refused writing to
+("wants: ..."), read off its most recent attempt's denials. Pressing **approve** on that row adds
+those paths to the card's existing lease and resumes it - one action, no id to look up and no glob
+to retype. The row keeps its plain answer field too, for when the better call is to tell the agent
+to leave the file alone instead of widening the lease for it.
+
+If the board is unreachable or the widened set needs editing first, the same thing works through
+the API:
 
 1. Read the card's note in the inbox (`n`) for the files it asked for.
 2. Find the card's id: `curl -s 127.0.0.1:8000/api/boards` lists the boards, and

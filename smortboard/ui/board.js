@@ -42,6 +42,15 @@ function renderBoardBar() {
     btn.textContent = board.name;
     bar.appendChild(btn);
   });
+  // fold acts on whichever board is open. built here with the tabs, since this function wipes the
+  // bar - and not a .nav-tab, which shell.js would treat as one more board
+  if (boards.length) {
+    const fold = document.createElement('div');
+    fold.className = 'toggle board-fold';
+    fold.textContent = 'fold (f)';
+    fold.addEventListener('click', () => openFoldConfirm());
+    bar.appendChild(fold);
+  }
 }
 
 async function loadBoards() {
@@ -109,6 +118,35 @@ function refreshBucketNav() {
   const row = document.getElementById('bucket-row');
   bucketsApi = makeBuckets(row, {onExitTop: returnToBoardBar});
 }
+
+function bucketHasCards(bucket) {
+  return bucket.querySelector('.bucket-rows')?.children.length > 0;
+}
+
+// left/right should never park focus on a column with nothing in it. this runs in the capture
+// phase - ahead of makeBuckets' own bubble listener on bucket-row - so it can step aside for a
+// plain adjacent move and only take over once the next column in that direction is empty
+function skipEmptyColumns(evt) {
+  if (evt.code !== 'ArrowLeft' && evt.code !== 'ArrowRight') return;
+  if (withModifier(evt)) return;
+  const currentBucket = evt.target.closest?.('.bucket');
+  if (!currentBucket) return;
+  const buckets = Array.from(document.querySelectorAll('#bucket-row .bucket')).filter(b => !b.hidden);
+  const currentIndex = buckets.indexOf(currentBucket);
+  if (currentIndex === -1) return;
+  const step = evt.code === 'ArrowRight' ? 1 : -1;
+  const adjacent = buckets[currentIndex + step];
+  if (!adjacent || bucketHasCards(adjacent)) return; // a normal move - leave it to the default nav
+  let targetIndex = currentIndex + step;
+  while (buckets[targetIndex] && !bucketHasCards(buckets[targetIndex])) targetIndex += step;
+  // swallow the key either way: a run of empties was crossed, or there is nothing further that
+  // way - neither case is the default nav's plain adjacent move, and falling through would wrap
+  evt.preventDefault();
+  evt.stopPropagation();
+  const target = buckets[targetIndex]?.querySelector('.bucket-rows .row');
+  if (target) { target.focus(); indicateFocus(target); }
+}
+document.addEventListener('keydown', skipEmptyColumns, {capture: true});
 
 function returnToBoardBar() {
   const tab = document.querySelector('.board-bar .nav-tab.active');
@@ -381,6 +419,55 @@ function toggleOverlay(key, build) {
   return menu;
 }
 
+// ---- fold (f) - merge the todo cards one agent should do as one ------------------------------
+
+// ASKS FIRST, every time: a fold is a model run over the whole board, not a free local action
+function openFoldConfirm() {
+  if (!currentBoardId) return;
+  const boardId = currentBoardId;
+  toggleOverlay('KeyF', () => {
+    const note = document.createElement('div');
+    note.className = 'fold-note';
+    note.textContent = 'an agent reads every card and the ledger, then merges the todo cards one '
+      + 'agent should do as one. this costs tokens and takes a few minutes.';
+    const menu = new Menu({
+      title: "fold this board's cards?",
+      sections: [
+        {kind: 'node', node: note},
+        {kind: 'list', items: [{id: 'yes', label: 'yes, fold (y)'}, {id: 'no', label: 'no (n)'}],
+          onPick: item => answerFold(item.id === 'yes', boardId)},
+      ],
+      onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyF') openOverlay = null; },
+    });
+    menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    menu.el?.classList.add('menu-centered');
+    return menu;
+  });
+}
+
+function answerFold(yes, boardId = currentBoardId) {
+  if (openOverlay && openOverlay.key === 'KeyF') { openOverlay.menu.close(); openOverlay = null; }
+  if (yes && boardId) startFold(boardId);
+}
+
+let foldPoll = null;
+
+// the board writes its progress and the result into mission control, so that is where it shows;
+// the cards re-render once the fold is done
+async function startFold(boardId) {
+  const {ok} = await apiOrError(`/api/boards/${boardId}/fold`, {method: 'POST'});
+  drawerFor('right').open();
+  if (!ok) return; // a 409 is a fold already running, whose messages are already there
+  clearInterval(foldPoll);
+  foldPoll = setInterval(async () => {
+    const state = await api(`/api/boards/${boardId}/fold`).catch(() => null);
+    if (state && state.running) return;
+    clearInterval(foldPoll);
+    foldPoll = null;
+    if (currentBoardId === boardId) await onBoardEnter(boardId);
+  }, 3000);
+}
+
 // ---- agent roster (a) -----------------------------------------------------------------------
 
 function openRosterPanel() {
@@ -403,15 +490,11 @@ async function loadRoster(menu) {
     if (!roster.length) {
       const box = document.createElement('div');
       box.className = 'hazard-stripes hazard-placeholder';
-      box.innerHTML = '<span class="hazard-label">no agent is holding a card</span>';
+      box.innerHTML = '<span class="hazard-label">nothing is running - check the inbox (n) for anything waiting</span>';
       menu.refresh([{kind: 'node', node: box}]);
       return;
     }
-    const items = roster.map(r => ({
-      id: r.card_id, label: r.title,
-      stats: r.state === 'blocked' ? `blocked: ${r.reason || ''}` : r.activity,
-      on: r.state === 'working', disabled: r.state === 'blocked',
-    }));
+    const items = roster.map(r => ({id: r.card_id, label: r.title, stats: r.activity, on: true}));
     menu.refresh([{kind: 'list', items, onPick: item => jumpToCard(item.id, roster)}]);
   } catch (err) {
     menu.refresh([{kind: 'list', items: [], empty: `could not load the roster: ${err.message}`}]);
@@ -515,16 +598,52 @@ function usageSection(label, className) {
   return section;
 }
 
+// one row per credential profile inside a window section - a profile the server never sent a
+// window for (no rate_limit_event recorded under it yet) still gets a row, with a zero/empty bar
+// rather than being left out, per the usage-overlay-per-profile card
+function profileRow(profileName, window) {
+  const row = document.createElement('div');
+  row.className = 'usage-profile';
+  row.appendChild(textLine(profileName, 'field-label'));
+  if (window) {
+    const {fraction} = windowMeasure(window);
+    if (fraction != null) row.appendChild(fillBar(fraction, window.status === 'allowed' ? '' : 'warn'));
+    row.appendChild(textLine(windowStats(window), 'stat'));
+  } else {
+    row.appendChild(fillBar(0));
+    row.appendChild(textLine('no usage yet', 'stat'));
+  }
+  return row;
+}
+
+// windows grouped by type, each type a section holding one row per known profile - windows carry
+// no profile of their own before this card, so a window with none reads as the "default" profile
+function windowSections(windows, profileNames) {
+  const byType = new Map();
+  windows.forEach(w => {
+    if (!byType.has(w.type)) byType.set(w.type, new Map());
+    byType.get(w.type).set(w.profile || 'default', w);
+  });
+  return [...byType.entries()].map(([type, byProfile]) => {
+    const section = usageSection(windowLabel(type), 'usage-window');
+    const names = profileNames.length ? profileNames : [...byProfile.keys()];
+    names.forEach(name => section.appendChild(profileRow(name, byProfile.get(name))));
+    // the section total is the sum of the rows it holds, never a figure computed apart from them
+    const total = names.reduce((sum, name) => {
+      const w = byProfile.get(name);
+      const fraction = w ? windowMeasure(w).fraction : null;
+      return sum + (fraction || 0);
+    }, 0);
+    section.appendChild(textLine(`combined: ${Math.round(total * 100)}%`, 'stat'));
+    return section;
+  });
+}
+
 // A CARD'S LANGUAGE: ruled sections with dim labels, and a foot carrying the total - built with
 // createElement so every line is its own element, which is also what the node tests read
 function usageCard(data) {
-  const windowParts = (data.windows || []).map(w => {
-    const section = usageSection(windowLabel(w.type), 'usage-window');
-    const {fraction} = windowMeasure(w);
-    if (fraction != null) section.appendChild(fillBar(fraction, w.status === 'allowed' ? '' : 'warn'));
-    section.appendChild(textLine(windowStats(w), 'stat'));
-    return section;
-  });
+  const profileNames = (data.profiles || []).map(p => p.name);
+  const windowParts = windowSections(data.windows || [], profileNames);
   const modelParts = [];
   const models = data.models || [];
   if (models.length) {
@@ -594,8 +713,8 @@ function openUsagePanel() {
 
 async function loadUsage(menu) {
   try {
-    const data = await api('/api/usage');
-    menu.refresh(usageSections(data));
+    const [data, profiles] = await Promise.all([api('/api/usage'), api('/api/profiles')]);
+    menu.refresh(usageSections({...data, profiles}));
   } catch (err) {
     menu.refresh([{kind: 'list', items: [], empty: `could not load usage: ${err.message}`}]);
   }

@@ -41,7 +41,7 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {computeMasonryLayout, layoutCardSections};`)(SpyMenu, SpyDrawer);
+;return {computeMasonryLayout, layoutCardSections, watchCardSections};`)(SpyMenu, SpyDrawer);
 
 // ---- computeMasonryLayout is pure: no dom, just heights in, positions out --------------------
 
@@ -127,5 +127,47 @@ sections.appendChild(deps); // move deps to the end, after comments
 mod.layoutCardSections(panel);
 assert.equal(deps.style.top, '285px', 'a reordered section is measured in its new document position');
 assert.equal(deps.style.left, '420px', 'reordering can change which column a section lands in');
+
+// ---- a container measured before it has a real box (width 0) is left alone rather than handed a
+// negative column width - (0 - gap) / columns went negative here before the guard, squeezing every
+// section to nothing instead of waiting for a later call with a real measurement
+sections.getBoundingClientRect = () => ({left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0});
+const beforeZeroWidth = status.style.width;
+mod.layoutCardSections(panel);
+assert.equal(status.style.width, beforeZeroWidth, 'a zero-width read should not touch section styles');
+
+// ---- a panel laid out before it had a box is laid out again once it gets one: a resize observer
+// re-runs layout when the container's width lands or a section's height changes, and a closed
+// panel stops being watched
+const observed = [];
+let fire = null;
+globalThis.ResizeObserver = class {
+  constructor(callback) { fire = callback; }
+  observe(el) { observed.push(el); }
+  disconnect() { observed.length = 0; }
+};
+panel.isConnected = true;
+status.style.top = '';
+mod.watchCardSections(panel);
+assert.ok(observed.includes(sections), 'the container is watched for its width');
+assert.ok(observed.includes(status), 'each section is watched for its height');
+sections.getBoundingClientRect = () => ({left: 0, top: 0, right: 0, bottom: 0, width: 800, height: 0});
+fire([]);
+assert.equal(status.style.top, '80px', 'the observer lays the panel out once it has a real width');
+panel.isConnected = false;
+fire([]);
+assert.equal(observed.length, 0, 'a closed panel stops being watched');
+delete globalThis.ResizeObserver;
+
+// ---- the design archive's fifteen panel-layout-N variants restyle .card-sections back to a normal
+// flow list (panel-layouts.css) - masonry's position: absolute must stay scoped away from them, or
+// every archived section collapses to the same top-left point regardless of that flow. layout.css
+// is asserted on as text, the same way this suite already asserts on cardPanelHtml's raw markup:
+// there is no css engine here to resolve the cascade against
+const css = readFileSync(new URL('smortboard/ui/layout.css', root), 'utf8');
+assert.ok(/\.card-panel:not\(\[class\*="panel-layout-"\]\)\s*\.card-section\s*\{[^}]*position:\s*absolute/.test(css),
+  'masonry\'s absolute positioning should be scoped off the design archive panels');
+assert.ok(!/(^|\s)\.card-panel \.card-section\s*\{[^}]*position:\s*absolute/m.test(css),
+  'an unscoped .card-panel .card-section rule should not itself set position: absolute');
 
 console.log('ok');

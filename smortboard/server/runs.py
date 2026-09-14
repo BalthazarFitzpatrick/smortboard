@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from smortboard import profiles
 from smortboard.actions import with_next
 from smortboard.exec.runner import ProcessHandle
 from smortboard.lifecycle import BOARD_AUTHOR, run_card_lifecycle
@@ -208,10 +209,13 @@ class RunRegistry:
     ) -> None:
         store = Store(self._db_path)  # this thread's own connection, never the server's
         try:
+            # self._token_path, if given, is a fixed override (deployment env var or a test) that
+            # always wins; otherwise this resolves to whichever profile rotation left active, so a
+            # profile switch made mid-board takes effect on the very next run without a restart
             result = runner(
                 store,
                 state.card_id,
-                token_path=self._token_path,
+                token_path=profiles.token_path_for_run(self._token_path),
                 on_phase=lambda phase: setattr(state, "phase", phase),
                 pending_notes=lambda: self.pop_pending(state.card_id),
                 stop_requested=lambda: self._is_stopping(state.card_id),
@@ -264,7 +268,9 @@ class Readiness:
         )
 
         docker = docker_available()
-        token = card_token_available(self._token_path)
+        # the active profile's credential, the one a run will use - not the legacy card_token,
+        # which is gone once the default profile is removed
+        token = card_token_available(profiles.token_path_for_run(self._token_path))
         # only checked when docker answers - "the image is missing" is not useful news when the
         # thing that would hold the image is not running
         image = docker and card_image_available()

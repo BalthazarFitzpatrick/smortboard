@@ -3,12 +3,21 @@
 import json
 import re
 import sqlite3
+from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from smortboard.attention import AnswerRefused, answer_card, attention_rows, with_actions
+from smortboard import profiles
+from smortboard.attention import (
+    AnswerRefused,
+    answer_card,
+    approve_lease,
+    attention_rows,
+    with_actions,
+)
+from smortboard.consolidate import FoldRegistry
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.local_repos import detect_default_branch, list_folders
@@ -78,6 +87,8 @@ _ROUTES = [
     (re.compile(r"^/api/tasks/(?P<task_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "POST"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/fold$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/fold$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/conversation$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/conversation$"), "POST"),
     (re.compile(r"^/api/roster$"), "GET"),
@@ -95,7 +106,26 @@ _ROUTES = [
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
     (re.compile(r"^/api/attention$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/answer$"), "POST"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/lease/approve$"), "POST"),
+    (re.compile(r"^/api/profiles$"), "GET"),
+    (re.compile(r"^/api/profiles$"), "POST"),
+    (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)/activate$"), "POST"),
+    (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)$"), "DELETE"),
 ]
+
+# a full claude setup-token is 108 bytes (see README Setup); this is a shape check, not a network
+# call - short enough to catch an empty paste, generous enough to never reject a real token
+_MIN_TOKEN_LENGTH = 80
+_MAX_TOKEN_LENGTH = 4096
+
+
+def _token_shape_problem(token: str) -> str | None:
+    if not token or len(token) < _MIN_TOKEN_LENGTH or len(token) > _MAX_TOKEN_LENGTH:
+        return "that doesn't look like a claude setup-token - check the length and try again."
+    if any(ch.isspace() for ch in token.strip()):
+        return "a token is a single line - remove any internal spaces or line breaks."
+    return None
+
 
 _ROLE_DEFAULTS = {
     "orchestrator": ORCHESTRATOR_PROMPT,
@@ -120,6 +150,11 @@ def _make_handler(
     token_path: str | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """closes over the store instance; http.server wants a class, not an instance"""
+
+    # the message ids each board's mission control already accepted, newest last - a retried or
+    # second-tab send of the same message is answered as done instead of starting another turn
+    accepted_messages: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=500))
+    folds = FoldRegistry(store.path, token_path=token_path)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "smortboard/0.1"
@@ -240,6 +275,11 @@ def _make_handler(
                 self._send_json(200, self._orchestrator_view(params["board_id"]))
             elif "board_id" in params and path.endswith("/orchestrator") and method == "POST":
                 self._handle_orchestrator_post(params["board_id"])
+            elif "board_id" in params and path.endswith("/fold") and method == "GET":
+                store.get_board(params["board_id"])
+                self._send_json(200, self._fold_view(params["board_id"]))
+            elif "board_id" in params and path.endswith("/fold") and method == "POST":
+                self._handle_fold_post(params["board_id"])
             elif "card_id" in params and path.endswith("/conversation") and method == "GET":
                 self._send_json(200, self._conversation_view(params["card_id"]))
             elif "card_id" in params and path.endswith("/conversation") and method == "POST":
@@ -263,8 +303,18 @@ def _make_handler(
                 self._send_json(200, board_costs(store, params["board_id"]))
             elif path == "/api/attention":
                 self._send_json(200, attention_rows(store))
+            elif "card_id" in params and path.endswith("/lease/approve"):
+                self._handle_lease_approve(params["card_id"])
             elif "card_id" in params and path.endswith("/answer"):
                 self._handle_answer(params["card_id"])
+            elif path == "/api/profiles" and method == "GET":
+                self._send_json(200, self._profiles_view())
+            elif path == "/api/profiles" and method == "POST":
+                self._handle_add_profile()
+            elif "profile_name" in params and path.endswith("/activate") and method == "POST":
+                self._handle_activate_profile(params["profile_name"])
+            elif "profile_name" in params and method == "DELETE":
+                self._handle_remove_profile(params["profile_name"])
             elif "card_id" in params and method == "GET":
                 self._send_json(200, store.get_card(params["card_id"]))
             elif "card_id" in params and method == "PATCH":
@@ -360,6 +410,85 @@ def _make_handler(
                 self._send_json(409, {"error": str(exc)})
                 return
             self._send_json(202, state)
+
+        def _handle_lease_approve(self, card_id: str) -> None:
+            """the inbox's one-click reply to a LEASE_CONFLICT: widen the lease by exactly the
+            refused paths and resume. 400 for an empty/invalid path list or a bad glob, 404 for an
+            unknown card, 409 when the card is not blocked on LEASE_CONFLICT or the resume itself
+            is refused (the lease stays widened either way - see attention.approve_lease).
+            """
+            paths = self._read_json().get("paths")
+            try:
+                state = approve_lease(store, runs, card_id, paths)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            except AnswerRefused as exc:
+                self._send_json(409, {"error": str(exc)})
+                return
+            self._send_json(202, state)
+
+        def _profiles_view(self) -> list[dict]:
+            """name, active, present, limited_until only - never the token, per the card's rule"""
+            return [
+                {
+                    "name": row["name"],
+                    "active": row["active"],
+                    "present": row["present"],
+                    "limited_until": row["limited_until"],
+                }
+                for row in profiles.list_profiles()
+            ]
+
+        def _handle_add_profile(self) -> None:
+            """pastes a token straight into its mode-600 file - checked for shape, never echoed"""
+            body = self._read_json()
+            name = (body.get("name") or "").strip()
+            token = body.get("token") or ""
+            problem = _token_shape_problem(token)
+            if problem:
+                self._send_json(400, {"error": problem})
+                return
+            try:
+                profiles.profiles_dir().mkdir(parents=True, exist_ok=True)
+                profiles.profiles_dir().chmod(0o700)
+            except OSError as exc:
+                self._send_json(
+                    400, {"error": f"could not make {profiles.profiles_dir()} mode 700: {exc}"}
+                )
+                return
+            try:
+                profiles.add_profile(name, token)
+            except profiles.ProfileError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            self._send_json(201, self._one_profile_view(name))
+
+        def _one_profile_view(self, name: str) -> dict:
+            for row in self._profiles_view():
+                if row["name"] == name:
+                    return row
+            raise profiles.ProfileError(f"no such profile '{name}'")  # pragma: no cover - defensive
+
+        def _handle_activate_profile(self, name: str) -> None:
+            try:
+                profiles.set_active(name)
+            except profiles.ProfileError as exc:
+                self._send_json(404, {"error": str(exc)})
+                return
+            self._send_json(200, self._one_profile_view(name))
+
+        def _handle_remove_profile(self, name: str) -> None:
+            # remove_profile() does the whole thing itself now: switches active away if needed,
+            # drops the name, and unlinks the token file - nothing left for app.py to do after.
+            try:
+                profiles.remove_profile(name)
+            except profiles.ProfileError as exc:
+                message = str(exc)
+                status = 404 if "no such" in message else 409
+                self._send_json(status, {"error": message})
+                return
+            self._send_status(204)
 
         def _handle_patch_card(self, card_id: str) -> None:
             body = self._read_json()
@@ -475,9 +604,16 @@ def _make_handler(
 
         def _handle_orchestrator_post(self, board_id: str) -> None:
             store.get_board(board_id)
-            message = (self._read_json().get("message") or "").strip()
+            body = self._read_json()
+            message = (body.get("message") or "").strip()
+            client_id = body.get("client_id")
             if not message:
                 self._send_json(400, {"error": "message must not be empty"})
+                return
+            # checked before the turn-in-progress refusal, so a duplicate is told it is done
+            # rather than being kept in the sender's queue to try again
+            if client_id and client_id in accepted_messages[board_id]:
+                self._send_json(200, self._orchestrator_view(board_id))
                 return
             if orchestrator.thinking(board_id):
                 self._send_json(409, {"error": "a turn is already in progress on this board"})
@@ -485,8 +621,25 @@ def _make_handler(
             # stored here, synchronously, so the 202 body already carries it - the thread that
             # runs the turn is told not to store it again
             store.add_orchestrator_message(board_id, "fabian", message)
+            if client_id:
+                accepted_messages[board_id].append(client_id)
             orchestrator.start(board_id, message, message_already_stored=True)
             self._send_json(202, self._orchestrator_view(board_id))
+
+        def _fold_view(self, board_id: str) -> dict:
+            return {"running": folds.running(board_id), "error": folds.error(board_id)}
+
+        def _handle_fold_post(self, board_id: str) -> None:
+            store.get_board(board_id)  # 404 for an unknown board before anything starts
+            if folds.running(board_id):
+                self._send_json(409, {"error": "a fold is already running on this board"})
+                return
+            # stored before the thread starts, so mission control shows it the moment it opens
+            store.add_orchestrator_message(
+                board_id, "board", "fold: reading every card and the ledger - this takes minutes"
+            )
+            folds.start(board_id)
+            self._send_json(202, self._fold_view(board_id))
 
         def _conversation_view(self, card_id: str) -> dict:
             card = store.get_card(card_id)

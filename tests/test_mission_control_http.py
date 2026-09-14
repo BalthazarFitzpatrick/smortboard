@@ -137,6 +137,43 @@ def test_orchestrator_post_while_thinking_is_409(running_server):
     gate.set()
 
 
+def test_the_same_message_id_is_accepted_once(running_server):
+    """a retry or a second tab resending an accepted message must not start a second turn"""
+    base_url, server = running_server
+    board = _board(base_url)
+    runner, gate = _slow_runner_factory()
+    original_start = server.orchestrator.start
+    started = []
+
+    def _patched_start(board_id, message, **kw):
+        started.append(message)
+        return original_start(
+            board_id,
+            message,
+            runner=runner,
+            message_already_stored=kw.get("message_already_stored", False),
+        )
+
+    server.orchestrator.start = _patched_start
+    url = f"{base_url}/api/boards/{board['id']}/orchestrator"
+    body = {"message": "only once", "client_id": "1789-abc-1"}
+
+    status, _ = _request(url, "POST", body)
+    assert status == 202
+    # the same id again while the turn runs: answered as done, not refused and not re-run
+    status, view = _request(url, "POST", body)
+    assert status == 200
+    gate.set()
+    deadline = time.time() + 5
+    while time.time() < deadline and _request(url)[1]["thinking"]:
+        time.sleep(0.02)
+    # and once more after the turn is over
+    status, view = _request(url, "POST", body)
+    assert status == 200
+    assert started == ["only once"]
+    assert [m["body"] for m in view["messages"] if m["author"] == "fabian"] == ["only once"]
+
+
 def test_orchestrator_post_empty_message_is_400(running_server):
     base_url, _server = running_server
     board = _board(base_url)

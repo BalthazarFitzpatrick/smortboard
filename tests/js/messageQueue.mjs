@@ -78,6 +78,81 @@ const loadQueue = () => new Function(`${smort('messageQueue.js')}\n;return creat
   assert.deepEqual(items.map(i => i.body), ['unsent one', 'unsent two'], 'in the order they were written');
   assert.ok(items.every(i => i.state === 'pending' || i.state === 'sending'),
     'neither message is left in a dropped or stuck state');
+  queue.stop();
+  reloaded.stop();
+}
+
+// ---- two tabs on one board: every message is delivered exactly once, however the tabs overlap.
+// this is the loop that re-sent mission control messages every turn: each tab kept its own copy
+// of the queue and wrote it back over the one the other tab had just emptied -----------------------
+{
+  const createMessageQueue = loadQueue();
+  const delivered = [];
+  let busy = true;
+  setTimeout(() => { busy = false; }, 40);
+  // one server both tabs talk to: busy while a turn runs, then accepting
+  const send = body => {
+    if (busy) return Promise.reject(Object.assign(new Error('a turn is in progress'), {busy: true}));
+    delivered.push(body);
+    return Promise.resolve({ok: true});
+  };
+  const opts = {backoffMs: [5], busyRetryMs: 5};
+  const tabOne = createMessageQueue('board-two-tabs', send, opts);
+  tabOne.enqueue('first');
+  tabOne.enqueue('second');
+  // tab two loads while both are still queued
+  const tabTwo = createMessageQueue('board-two-tabs', send, opts);
+  await new Promise(r => setTimeout(r, 200));
+  assert.deepEqual(delivered, ['first', 'second'], 'each message reaches the server once, in order');
+  assert.deepEqual(tabOne.items(), [], 'tab one sees an empty queue');
+  assert.deepEqual(tabTwo.items(), [], 'and so does tab two - nothing left to send again');
+  tabOne.stop();
+  tabTwo.stop();
+}
+
+// ---- a busy refusal is waiting, not failing: the message shows pending, never failed ------------
+{
+  const createMessageQueue = loadQueue();
+  let refusals = 2;
+  const send = () => {
+    if (refusals > 0) {
+      refusals -= 1;
+      return Promise.reject(Object.assign(new Error('a turn is in progress'), {busy: true}));
+    }
+    return Promise.resolve({ok: true});
+  };
+  const seen = new Set();
+  const queue = createMessageQueue('board-busy', send, {
+    onChange: items => items.forEach(it => seen.add(it.state)),
+    busyRetryMs: 5,
+  });
+  queue.enqueue('while thinking');
+  await new Promise(r => setTimeout(r, 60));
+  assert.ok(!seen.has('failed'), 'a turn in progress never paints the message as failed');
+  assert.deepEqual(queue.items(), [], 'it goes out once the turn is over');
+  queue.stop();
+}
+
+// ---- a redraw that throws does not turn a delivered message into a failed one -------------------
+{
+  const createMessageQueue = loadQueue();
+  const delivered = [];
+  const send = body => { delivered.push(body); return Promise.resolve({ok: true}); };
+  const realError = console.error;
+  console.error = () => {};
+  try {
+    const queue = createMessageQueue('board-throwing-redraw', send, {
+      onChange: items => { if (items.some(it => it.state === 'sent')) throw new Error('redraw broke'); },
+      backoffMs: [5],
+    });
+    queue.enqueue('only once');
+    await new Promise(r => setTimeout(r, 40));
+    assert.deepEqual(delivered, ['only once'], 'a broken redraw does not cause a second send');
+    assert.deepEqual(queue.items(), [], 'the delivered message still leaves the queue');
+    queue.stop();
+  } finally {
+    console.error = realError;
+  }
 }
 
 // ---- localStorage being unavailable does not throw - the queue still works in memory ------------

@@ -33,6 +33,7 @@ const CTA_BLOCKED_LABELS = new Map([
   ['TESTS_FAILED', 'Review failure'],
   ['REVIEW_REJECTED', 'Review findings'],
   ['DEPENDENCY_REJECTED', 'Review dependency'],
+  ['MERGE_CONFLICT', 'Resolve conflicts'],
 ]);
 
 // the one action a card wants next, off the same status and reason code cardClasses reads - never
@@ -157,7 +158,10 @@ async function openCardPanel(panel, cardId) {
   panel.innerHTML = cardPanelHtml(card, outcome);
   // the design archive keeps its own historical grid per variant in panel-layouts.css - masonry
   // would fight it for the same inline top/left/width
-  if (!layout) layoutCardSections(panel);
+  if (!layout) {
+    layoutCardSections(panel);
+    watchCardSections(panel);
+  }
 
   // the panel's one .card-sections div is a single-column bucket - reuses the 2D grid nav as a
   // plain vertical list rather than inventing a second focus system for "move between sections"

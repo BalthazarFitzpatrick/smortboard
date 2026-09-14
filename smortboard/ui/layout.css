@@ -9,6 +9,7 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  --shadow-lift: 0 2px 5px rgba(0, 0, 0, 0.35);
 }
 
 .board-bar {
@@ -37,6 +38,23 @@ body {
   background: var(--accent-on);
   color: var(--accent-on-text);
   border-color: var(--cream);
+}
+/* fold sits after the tabs with a gap, since it acts on the open board rather than being one. not
+   at the far right: the settings button and attention count are fixed over that end of the bar */
+.board-bar .board-fold {
+  margin-left: 16px;
+  font-size: var(--font-size, 13px);
+  line-height: 1;
+  padding: 0 14px;
+  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  display: flex;
+  align-items: center;
+}
+.fold-note {
+  max-width: 360px;
+  padding: 6px 0;
+  white-space: normal;
+  line-height: 1.4;
 }
 
 .bucket-row {
@@ -82,7 +100,7 @@ body {
 /* a vanilla border alone let two stacked strips fuse into one shape - a low, tight shadow lifts
    every card off the column ground so the border reads as one surface's edge, not a shared line.
    bucket-rows' own gap keeps the strips from ever touching regardless */
-.card-strip { box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35); }
+.card-strip { box-shadow: var(--shadow-lift); }
 .card-strip.card-working { border-color: var(--fill-good); }
 .card-strip.card-rejected { border-color: var(--fill-warn); }
 /* vanilla is the palest edge, so attention is also the only one that glows: rings stepping down to
@@ -105,7 +123,7 @@ body {
     0 0 0 2px color-mix(in srgb, var(--fill-attention) 60%, transparent),
     0 0 0 4px color-mix(in srgb, var(--fill-attention) 28%, transparent),
     0 0 0 7px color-mix(in srgb, var(--fill-attention) 9%, transparent),
-    0 2px 5px rgba(0, 0, 0, 0.35);
+    var(--shadow-lift);
 }
 /* done is lichen, an edge like every other state: the fills are too flat at card size. measured
    under simulated deuteranopia it stays delta-e 54 from the rejected red, and 2.6x brighter */
@@ -132,9 +150,14 @@ body {
    section instead, so title and the run still read across the whole panel but every other
    section stacks by its own height, one column at a time. */
 .card-panel { --rule-soft: color-mix(in srgb, var(--grey-border) 55%, transparent); }
-.card-panel .card-sections { position: relative; }
+/* the design archive (panel-layouts.css) resets .card-sections back to a flat list for its own
+   normal-flow variants - it was written against the old grid and never learned about masonry, so
+   pulling every .card-section out of flow here bled into it too and stacked all fifteen archived
+   layouts on top of each other. scoped to the live (non-archive) panel only */
+.card-panel:not([class*="panel-layout-"]) .card-sections { position: relative; }
 /* top/left/width land inline from layoutCardSections - this only sets the box model they need */
-.card-panel .card-section { position: absolute; top: 0; left: 0; box-sizing: border-box; }
+.card-panel:not([class*="panel-layout-"]) .card-section { position: absolute; top: 0; left: 0; }
+.card-panel .card-section { box-sizing: border-box; }
 
 .card-panel .field-label { color: var(--text-dim); }
 /* grid children default to min-width: auto, so one long path or url widened a column past the
@@ -330,6 +353,8 @@ body {
 .usage-model { display: flex; flex-direction: column; gap: 4px; }
 .usage-model + .usage-model { margin-top: 8px; }
 .usage-model-name { color: var(--text); }
+.usage-profile { display: flex; flex-direction: column; gap: 4px; }
+.usage-profile + .usage-profile { margin-top: 8px; }
 /* these lines carry the meaning of each bar, so they wrap - ui_base's .stat is one ellipsised line */
 .usage-section .stat { color: var(--text-dim); white-space: normal; overflow: visible; }
 
