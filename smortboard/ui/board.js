@@ -138,6 +138,35 @@ function cardClasses(card) {
   return classes.join(' ');
 }
 
+// a blocked card's CTA names the fix, not the bare reason code - the same instinct next_action_short
+// already applies to the strip's footer, just aimed at the one button that matters
+// a Map, not a plain object: blocked_reason_code is a server string, and a Map has no prototype
+// chain for a stray value like "constructor" to fall through into
+const CTA_BLOCKED_LABELS = new Map([
+  ['CRASH', 'Investigate crash'],
+  ['USAGE_LIMIT', 'Resume run'],
+  ['LEASE_CONFLICT', 'Fix leases'],
+  ['AGENT_QUESTION', 'Answer question'],
+  ['TESTS_FAILED', 'Review failure'],
+  ['REVIEW_REJECTED', 'Review findings'],
+  ['DEPENDENCY_REJECTED', 'Review dependency'],
+]);
+
+// the one action a card wants next, off the same status and reason code cardClasses reads - never
+// a second source of truth for what state a card is in. action is what the CTA's click performs;
+// attention is whether it wears the waiting-on-you treatment
+function ctaFor(card) {
+  if (card.blocked_reason_code) {
+    return {label: CTA_BLOCKED_LABELS.get(card.blocked_reason_code) || 'Needs attention', action: 'open', attention: true};
+  }
+  if (card.review_flag) return {label: 'Needs attention', action: 'open', attention: true};
+  if (card.status === 'doing') return {label: 'Running…', action: 'stop', attention: false};
+  if (card.status === 'checking') return {label: 'Review PR', action: 'open', attention: false};
+  if (card.status === 'accepted') return {label: 'View', action: 'open', attention: false};
+  if (card.status === 'rejected') return {label: 'Rerun', action: 'run', attention: false};
+  return {label: 'Run', action: 'run', attention: false};
+}
+
 function renderBuckets(cards) {
   const row = document.getElementById('bucket-row');
   STATUSES.forEach(status => {
@@ -187,6 +216,23 @@ function renderCardStrip(card) {
       <span class="card-run" hidden></span>
     </div>
   `;
+  // THE ONE BUTTON THAT MATTERS. built with createElement rather than folded into the innerHTML
+  // string above, so it stays a queryable live node - the same reason terminalDom does, see its note
+  const cta = ctaFor(card);
+  const ctaEl = document.createElement('div');
+  ctaEl.className = `card-cta${cta.attention ? ' card-cta-attention' : ''}`;
+  ctaEl.textContent = cta.label;
+  ctaEl.dataset.action = cta.action;
+  ctaEl.addEventListener('click', evt => {
+    // stop here rather than risk the click also reaching whatever expand.js binds on the strip -
+    // a run/stop action popping the card open behind it would read as two things happening at once
+    evt.stopPropagation();
+    if (cta.action === 'run') runFocusedCard(card.id);
+    else if (cta.action === 'stop') stopFocusedCard(card.id);
+    else strip._expander?.open();
+  });
+  strip.appendChild(ctaEl);
+
   // appended rather than templated into the string above: the test dom stub does not parse
   // innerHTML back into a tree (see the same note on terminalDom further down), so a live listener
   // needs a real node - appendChild gives one in the stub and in a real browser alike
@@ -479,8 +525,7 @@ function reportNotReady(missing) {
   menu.el?.classList.add('menu-centered');
 }
 
-async function runFocusedCard() {
-  const cardId = focusedCardId();
+async function runFocusedCard(cardId = focusedCardId()) {
   if (!cardId) return;
 
   const runtime = await api('/api/runtime');
@@ -561,8 +606,7 @@ function followRuns() {
 // ---- stopping a running card (k) ------------------------------------------------------
 
 // same focus source y/x use: the strip under keyboard focus, or the card whose panel is open
-async function stopFocusedCard() {
-  const cardId = actionableCardId();
+async function stopFocusedCard(cardId = actionableCardId()) {
   if (!cardId) return;
   const state = await api(`/api/cards/${cardId}/run`);
   if (!state.running) return; // nothing to stop
