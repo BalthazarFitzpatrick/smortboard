@@ -107,6 +107,11 @@ body {
 /* an expanded column becomes a normal scrolling list, capped to the room the column actually has -
    collapsing it (same button) drops both and it rejoins the page's own scroll */
 .bucket-rows.bucket-rows-expanded { overflow-y: auto; padding-right: 4px; }
+/* a piled column spends its height on cards and piles, not gaps - columns.js reads this gap back */
+.bucket-rows.bucket-rows-piled { gap: 10px; }
+/* a full card cut short to make room for a pile: its own border and title stay, the rest hides -
+   the height lands inline from columns.js's computePileFit */
+.card-strip.card-clipped { overflow: hidden; }
 
 /* collapsed card: a wide flat strip - makeExpander reads its own rect as the animation's starting
    box, so this is the only place that ratio lives */
@@ -154,15 +159,18 @@ body {
    real card edges, not a placeholder box: a few offset layers behind a top face, each nudged by a
    tiny deterministic rotation/jitter (columns.js hashes the card id, never Math.random - a
    re-render must not make the stack twitch). drop shadow, same as any full card */
+/* height lands inline from columns.js's computePileFit (the column's measured leftover); 48px is
+   only the fallback before that runs. face and layers stop 9px short so the edges peek out below */
 .card-pile {
   position: relative;
-  height: 210px;
+  height: 48px;
+  flex: 0 0 auto;
   box-sizing: border-box;
   cursor: pointer;
 }
 .card-pile-layer {
   position: absolute;
-  inset: 0;
+  inset: 0 0 9px 0;
   border: 1px solid var(--grey-border);
   border-radius: var(--radius, 4px);
   background: var(--panel-row);
@@ -170,7 +178,7 @@ body {
 }
 .card-pile-count {
   position: absolute;
-  inset: 0;
+  inset: 0 0 9px 0;
   display: flex;
   align-items: center;
   justify-content: center;

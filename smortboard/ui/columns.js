@@ -104,6 +104,8 @@ window.addEventListener('resize', () => {
 const CARD_STRIP_HEIGHT = 210; // a fanned card's typical height - the budget line for "fits at all"
 const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
 const MIN_PILED_CARDS = 5; // below this, 2 full + pile + 2 full has nothing left to pile - all full
+const MIN_PILE_HEIGHT = 48; // enough for the count line plus the layer edges below it
+const MIN_COVERED_VISIBLE = 60; // a full card overlapped by its neighbour still shows its title band
 
 function stackHeight(count, rowHeight) {
   return count ? count * rowHeight + (count - 1) * BUCKET_ROW_GAP : 0;
@@ -213,7 +215,8 @@ function buildPileRow(cards, status) {
     layer.className = 'card-pile-layer';
     const angle = ((seed % 7) - 3) * 0.7;
     const dx = (seed % 5) - 2;
-    layer.style.transform = `translate(${dx}px, ${-i * 3}px) rotate(${angle}deg)`;
+    // edges peek out below the face, inside the pile's own box - never over a neighbouring row
+    layer.style.transform = `translate(${dx}px, ${i * 3}px) rotate(${angle}deg)`;
     el.appendChild(layer);
   }
   const count = document.createElement('div');
@@ -225,10 +228,55 @@ function buildPileRow(cards, status) {
   return el;
 }
 
-function buildFullRow(card, idx) {
+// a piled column drops fan-item: its -80% margin pulled the card after a pile up over the pile,
+// and its focus slide pushed the bottom pair off screen - computePileFit places these instead
+function buildFullRow(card, idx, fanned = true) {
   const strip = renderCardStrip(card);
   strip.dataset.idx = String(idx);
+  if (!fanned) strip.classList.remove('fan-item');
   return strip;
+}
+
+// pure: rows in order ({type: 'card'|'pile', height, focused} - a pile's height is ignored), the
+// available height and the row gap -> each pile's height and how much to cut off each full card.
+// piles share the leftover; if that leaves a pile under its minimum, one card of each adjacent full
+// pair is cut short from the bottom to pay for it - never the focused one, never past its title band
+function computePileFit(rows, available, gap) {
+  const piles = rows.filter(r => r.type === 'pile').length;
+  const cardsHeight = rows.reduce((sum, r) => sum + (r.type === 'card' ? r.height : 0), 0);
+  const leftover = available - cardsHeight - Math.max(0, rows.length - 1) * gap;
+  const cuts = rows.map(() => 0);
+  if (!piles) return {pileHeight: 0, cuts};
+  if (leftover / piles >= MIN_PILE_HEIGHT) return {pileHeight: Math.floor(leftover / piles), cuts};
+  // the pair's upper card gives way unless it holds focus, then the lower one does
+  const victims = [];
+  rows.forEach((r, i) => {
+    if (r.type === 'card' && rows[i - 1]?.type === 'card') victims.push(rows[i - 1].focused ? i : i - 1);
+  });
+  // smallest card first, so one hitting its floor spills the rest onto the others
+  let remaining = piles * MIN_PILE_HEIGHT - leftover;
+  victims.sort((a, b) => rows[a].height - rows[b].height).forEach((v, k) => {
+    cuts[v] = Math.ceil(Math.max(0, Math.min(rows[v].height - MIN_COVERED_VISIBLE, remaining / (victims.length - k))));
+    remaining -= cuts[v];
+  });
+  return {pileHeight: MIN_PILE_HEIGHT, cuts};
+}
+
+// measures the drawn rows and applies computePileFit - card heights only exist once in the dom.
+// no excursion yet counts as focus on the first card, so the column opens with that one uncut
+function fitPiledColumn(bucketRowsEl) {
+  const focusIdx = String(bucketRowsEl._pile?.focusIndex ?? 0);
+  const rowEls = Array.from(bucketRowsEl.children);
+  const rows = rowEls.map(el => el.classList.contains('card-pile')
+    ? {type: 'pile', height: 0}
+    : {type: 'card', height: el.getBoundingClientRect().height, focused: el.dataset.idx === focusIdx});
+  const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || BUCKET_ROW_GAP;
+  const {pileHeight, cuts} = computePileFit(rows, availableColumnHeight(bucketRowsEl), gap);
+  rowEls.forEach((el, i) => {
+    if (rows[i].type === 'pile') { el.style.height = `${pileHeight}px`; return; }
+    el.classList.toggle('card-clipped', cuts[i] > 0);
+    el.style.height = cuts[i] ? `${rows[i].height - cuts[i]}px` : '';
+  });
 }
 
 // pure: sorted cards, the index currently focused (or null - no excursion yet), and which edge the
@@ -274,13 +322,16 @@ function drawColumn(bucketRowsEl) {
     sorted.forEach((c, idx) => bucketRowsEl.appendChild(buildFullRow(c, idx)));
     bucketRowsEl.style.maxHeight = state.expanded && !state.fits ? `${availableColumnHeight(bucketRowsEl)}px` : '';
     bucketRowsEl.classList.toggle('bucket-rows-expanded', !!state.expanded && !state.fits);
+    bucketRowsEl.classList.remove('bucket-rows-piled');
     return;
   }
   bucketRowsEl.style.maxHeight = '';
   bucketRowsEl.classList.remove('bucket-rows-expanded');
+  bucketRowsEl.classList.add('bucket-rows-piled');
   computePileLayout(sorted, state.focusIndex, state.anchor).forEach(entry => {
-    bucketRowsEl.appendChild(entry.type === 'pile' ? buildPileRow(entry.cards, status) : buildFullRow(entry.card, entry.idx));
+    bucketRowsEl.appendChild(entry.type === 'pile' ? buildPileRow(entry.cards, status) : buildFullRow(entry.card, entry.idx, false));
   });
+  fitPiledColumn(bucketRowsEl);
 }
 
 function focusPileIndex(bucketRowsEl, idx) {
