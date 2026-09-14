@@ -40,7 +40,9 @@ function layoutCardSections(panel) {
   const sections = container ? [...container.querySelectorAll('.card-section')] : [];
   if (!container || !sections.length) return;
   const width = container.getBoundingClientRect().width;
-  const columnCount = width && width < CARD_PANEL_NARROW_PX ? 1 : 2;
+  // nothing sane to measure before the panel has a real box - a later call (resize, reopen) fixes it
+  if (!width || width < 0) return;
+  const columnCount = width < CARD_PANEL_NARROW_PX ? 1 : 2;
   const columnWidth = (width - CARD_PANEL_COL_GAP * (columnCount - 1)) / columnCount;
   const isFull = section => columnCount === 1 || FULL_WIDTH_SECTIONS.has(section.dataset.section);
   sections.forEach(section => { section.style.width = isFull(section) ? '100%' : `${columnWidth}px`; });
@@ -54,6 +56,28 @@ function layoutCardSections(panel) {
     reach = Math.max(reach, bottom);
   });
   container.style.height = `${Math.max(0, reach - CARD_PANEL_ROW_GAP)}px`;
+}
+
+// re-flow whenever the container gets its real width or a section changes height. the one pass at
+// open can run before the expanding panel has a box, which left every section stacked at 0,0, and
+// nothing but a window resize ever laid it out again [coalesced to one pass per frame]
+function watchCardSections(panel) {
+  if (panel.sectionsObserver) panel.sectionsObserver.disconnect();
+  const container = panel.querySelector('.card-sections');
+  if (!container || typeof ResizeObserver === 'undefined') return;
+  let queued = false;
+  const observer = new ResizeObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      if (panel.isConnected) layoutCardSections(panel);
+      else observer.disconnect();
+    });
+  });
+  observer.observe(container);
+  container.querySelectorAll('.card-section').forEach(section => observer.observe(section));
+  panel.sectionsObserver = observer;
 }
 
 // the open panel re-flows on resize. layoutCardSections reads the container's own width to decide

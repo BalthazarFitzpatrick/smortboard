@@ -76,22 +76,18 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 
 mod.buildDrawers();
 
-// ---- agent roster: working (on), blocked (disabled, reason in stats), and empty -----------------
+// ---- agent roster: only cards a run is holding, never a blocked one ------------------------------
 responses.set('/api/roster', stubJson(200, [
   {card_id: 'c1', board_id: 'b1', title: 'ship the thing', state: 'working', reason: null, activity: 'writing tests'},
-  {card_id: 'c2', board_id: 'b1', title: 'fix the bug', state: 'blocked', reason: 'EXPIRED_CREDENTIAL', activity: ''},
 ]));
 {
   const menu = new SpyMenu({title: 'agent roster', sections: []});
   await mod.loadRoster(menu);
   const items = menu.sections[0].items;
-  assert.equal(items.length, 2, 'one row per agent');
+  assert.equal(items.length, 1, 'one row per live run - the blocked card the backend no longer sends is not here either');
   const working = items.find(i => i.id === 'c1');
-  const blocked = items.find(i => i.id === 'c2');
   assert.equal(working.on, true, 'a working row is marked on');
-  assert.equal(working.disabled, undefined ?? false, 'a working row stays pickable');
-  assert.equal(blocked.disabled, true, 'a blocked row is disabled');
-  assert.equal(blocked.stats, 'blocked: EXPIRED_CREDENTIAL', 'a blocked row shows the reason in stats');
+  assert.equal(working.stats, 'writing tests', 'a working row shows its activity in stats');
 }
 
 responses.set('/api/roster', stubJson(200, []));
@@ -99,6 +95,9 @@ responses.set('/api/roster', stubJson(200, []));
   const menu = new SpyMenu({title: 'agent roster', sections: []});
   await mod.loadRoster(menu);
   assert.equal(menu.sections[0].kind, 'node', 'an empty roster renders a node section');
+  const text = menu.sections[0].node.innerHTML;
+  assert.match(text, /nothing is running/, 'the empty state says nothing is running');
+  assert.match(text, /inbox/, 'the empty state points at the inbox for anything waiting');
 }
 
 // ---- usage: a null utilization shows no percentage, a real one does -----------------------------
@@ -192,7 +191,9 @@ mod.sendMissionControl('build the login card');
 await new Promise(r => setTimeout(r, 0));
 const post = calls.find(c => c.path === '/api/boards/b1/orchestrator' && c.opts?.method === 'POST');
 assert.ok(post, 'sending should POST to the board orchestrator route');
-assert.deepEqual(JSON.parse(post.opts.body), {message: 'build the login card'}, 'the post body carries the message');
+const posted = JSON.parse(post.opts.body);
+assert.equal(posted.message, 'build the login card', 'the post body carries the message');
+assert.equal(typeof posted.client_id, 'string', 'and the queue id, so the server can ignore a resend');
 const thinkingLine = mod.mc.log.children.find(c => c.className.includes('author-thinking'));
 assert.ok(thinkingLine, 'a thinking reply shows the dim thinking line');
 // close before the 1500ms poll fires - closing clears mc.poll so the process can exit
