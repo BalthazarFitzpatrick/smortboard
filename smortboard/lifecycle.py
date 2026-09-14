@@ -19,6 +19,7 @@ the next card starts on top of it, and merging development into main stays the o
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +47,7 @@ from smortboard.exec.worktrees import (
 )
 from smortboard.operator import OPERATOR_NAME
 from smortboard.review.decide import accept_card
-from smortboard.review.gates import GateUnavailable, run_test_gate
+from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.integrate import integrate, integration_lock, open_release_request
 from smortboard.review.merge_request import (
     PROTECTED_BRANCHES,
@@ -259,6 +260,56 @@ def _base_for_fresh_cut(store: Store, state: LifecycleResult, repo_path: str, ba
     return base
 
 
+# pytest names a failure as "FAILED path/to/test.py::TestCase::test_name" - the test name is the
+# part after the last "::", which is what a person actually scans for
+_PYTEST_FAILED_RE = re.compile(r"^FAILED\s+(\S+)", re.MULTILINE)
+# ruff names a finding as "path:line:col: CODE message" - path:line plus the code is enough to spot
+_RUFF_ERROR_RE = re.compile(r"^(\S+\.py):(\d+):\d+: (\w+\d*)", re.MULTILINE)
+# how many names the one-liner spells out before folding the rest into "(+N more)"
+_HEADLINE_SHOWN = 2
+
+
+def _failing_tests_headline(output: str) -> str:
+    """the gate's output, boiled down to "tests failed: test_x, test_y (+3 more)" - or the bare
+    "tests failed" once nothing recognisable parses, rather than guessing at a shape it doesn't
+    have. pytest's FAILED lines win when present; ruff's path:line:col lines are the fallback."""
+    names: list[str] = []
+    for match in _PYTEST_FAILED_RE.finditer(output):
+        name = match.group(1).rsplit("::", 1)[-1]
+        if name not in names:
+            names.append(name)
+    if not names:
+        for match in _RUFF_ERROR_RE.finditer(output):
+            path, line, code = match.groups()
+            label = f"{path}:{line} {code}"
+            if label not in names:
+                names.append(label)
+    if not names:
+        return "tests failed"
+    shown = names[:_HEADLINE_SHOWN]
+    extra = len(names) - len(shown)
+    headline = f"tests failed: {', '.join(shown)}"
+    return f"{headline} (+{extra} more)" if extra else headline
+
+
+def _tests_failed_note(command: str, exit_code: int, output: str, after_merging: str = "") -> str:
+    """the stored comment for a TESTS_FAILED block: the parsed headline leads, the full gate
+    command and output stay in the body for whoever opens the details."""
+    context = f" after merging {after_merging} in" if after_merging else ""
+    return (
+        f"{_failing_tests_headline(output)}{context}.\n\n"
+        f"`{command}` exited {exit_code}.\n\n```\n{output}\n```"
+    )
+
+
+# a repo with no test_command is a board setting, not a fault in this run - the pre-flight
+# checklist already explains it once per repo, so the card only needs a pointer back to it
+def _gate_unavailable_note(exc: GateUnavailable) -> str:
+    if isinstance(exc, NoTestCommand):
+        return "repo has no test command - set it in b"
+    return f"The test gate could not run: {exc}"
+
+
 def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
     """the board could not run this card at all - a missing repo, image or credential.
 
@@ -317,14 +368,19 @@ def _sync_and_retest(
         try:
             gate = run_test_gate(store, card_id, tree.path, repo)
         except GateUnavailable as exc:
-            return _refuse(store, state, f"The test gate could not run after merging {base}: {exc}")
+            return _refuse(
+                store,
+                state,
+                _gate_unavailable_note(exc)
+                if isinstance(exc, NoTestCommand)
+                else f"The test gate could not run after merging {base}: {exc}",
+            )
         if not gate.passed:
             return _block(
                 store,
                 state,
                 "TESTS_FAILED",
-                f"`{gate.command}` exited {gate.exit_code} after merging {base} in.\n\n"
-                f"```\n{gate.output}\n```",
+                _tests_failed_note(gate.command, gate.exit_code, gate.output, after_merging=base),
             )
     return None
 
@@ -555,7 +611,7 @@ def run_card_lifecycle(
         try:
             gate = run_test_gate(store, card_id, tree.path, repo)
         except GateUnavailable as exc:
-            return _refuse(store, state, f"The test gate could not run: {exc}")
+            return _refuse(store, state, _gate_unavailable_note(exc))
         if stopped_now():
             return _stopped(store, state)
         if not gate.passed:
@@ -563,7 +619,7 @@ def run_card_lifecycle(
                 store,
                 state,
                 "TESTS_FAILED",
-                f"`{gate.command}` exited {gate.exit_code}.\n\n```\n{gate.output}\n```",
+                _tests_failed_note(gate.command, gate.exit_code, gate.output),
             )
 
         phase("reviewing")

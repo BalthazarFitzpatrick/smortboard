@@ -199,6 +199,16 @@ async function openCardPanel(panel, cardId) {
     }
   });
 
+  // a board note's own primary action, where the CTA does something other than re-open this
+  // already-open panel - run/stop reuse the same handlers the strip's CTA does
+  panel.querySelectorAll('.comment-cta').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.ctaAction;
+      if (action === 'run') runFocusedCard(cardId);
+      else if (action === 'stop') stopFocusedCard(cardId);
+    });
+  });
+
   if (openCard && openCard.cardId === cardId) Object.assign(openCard, {sectionsApi, input});
 }
 
@@ -247,6 +257,37 @@ function sectionHtml(name, label, value) {
   return `<div class="card-section" tabindex="0" data-section="${name}"><div class="field-label">${label}</div><div class="section-value">${value}</div></div>`;
 }
 
+// board-written notes lead with a one-line headline now (lifecycle.py's _note callers write it
+// that way) - everything after the first line is the detail a person opens on purpose, not what
+// they scan past to find the one thing that matters
+const BOARD_COMMENT_AUTHOR = 'smortboard';
+
+function splitCommentHeadline(body) {
+  const text = (body || '').trim();
+  const at = text.indexOf('\n');
+  if (at === -1) return {headline: text, rest: ''};
+  return {headline: text.slice(0, at).trim(), rest: text.slice(at + 1).trim()};
+}
+
+// one board comment: headline, an optional primary action button (only on the card's most recent
+// note, and only when the CTA does something here rather than just re-opening the panel we're
+// already looking at), and the rest closed behind <details> by default
+function renderComment(comment, card, isLatestBoardNote) {
+  const label = `<span class="field-label">${escapeHtml(authorLabel(comment.author))}</span>`;
+  if (comment.author !== BOARD_COMMENT_AUTHOR) {
+    return `<li>${label}<div class="comment-body">${escapeHtml(comment.body)}</div></li>`;
+  }
+  const {headline, rest} = splitCommentHeadline(comment.body);
+  const cta = isLatestBoardNote ? ctaFor(card) : null;
+  const actionBtn = cta && cta.action !== 'open'
+    ? `<button type="button" class="comment-cta" data-cta-action="${escapeHtml(cta.action)}">${escapeHtml(cta.label)}</button>`
+    : '';
+  const details = rest
+    ? `<details class="comment-details"><summary>details</summary><div class="comment-body">${escapeHtml(rest)}</div></details>`
+    : '';
+  return `<li>${label}<div class="comment-headline">${escapeHtml(headline)}</div>${actionBtn}${details}</li>`;
+}
+
 // a list, or a quiet "none" - an empty <ul> drew a label with nothing under it
 function listHtml(items) {
   return items.length ? `<ul>${items.join('')}</ul>` : '<span class="empty">none</span>';
@@ -264,8 +305,12 @@ function cardPanelHtml(card, outcome) {
   // depends_on holds ids only - shown by title when that card is on this board, a short id otherwise
   const deps = (card.depends_on || []).map(d => `<li>${escapeHtml(dependencyLabel(d))}</li>`);
   const attachments = (card.attachments || []).map(a => `<li>${escapeHtml(a.filename)}</li>`);
-  const comments = (card.comments || [])
-    .map(c => `<li><span class="field-label">${escapeHtml(authorLabel(c.author))}</span><div class="comment-body">${escapeHtml(c.body)}</div></li>`);
+  const allComments = card.comments || [];
+  const latestBoardIndex = [...allComments]
+    .map((c, i) => (c.author === BOARD_COMMENT_AUTHOR ? i : -1))
+    .filter(i => i !== -1)
+    .pop();
+  const comments = allComments.map((c, i) => renderComment(c, card, i === latestBoardIndex));
   const status = escapeHtml(card.status) + (card.blocked_reason_code ? ` (${escapeHtml(card.blocked_reason_code)})` : '');
   // the paths its agent may write - an empty lease is why a run gets refused, so say so here
   const globs = (card.leases || []).map(l => escapeHtml(l.path_glob));
