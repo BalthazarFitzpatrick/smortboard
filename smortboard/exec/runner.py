@@ -351,10 +351,15 @@ def classify_result(result_event: dict[str, Any]) -> str | None:
     return None
 
 
+# "allowed_warning" only says a threshold was crossed (0.75 of the week, 0.9 of five hours) and the
+# run goes on; blocking on it stopped cards and mission control at 76% with nothing refused
+_RATE_LIMIT_OK = frozenset({"allowed", "allowed_warning"})
+
+
 def classify_rate_limit(rate_limit_event: dict[str, Any]) -> str | None:
-    """S2: any status other than "allowed" across either window maps to USAGE_LIMIT"""
+    """S2: a refused status in either window maps to USAGE_LIMIT; a warning is not a refusal"""
     info = rate_limit_event.get("rate_limit_info", {})
-    if info.get("status") != "allowed":
+    if info.get("status") not in _RATE_LIMIT_OK:
         return "USAGE_LIMIT"
     return None
 

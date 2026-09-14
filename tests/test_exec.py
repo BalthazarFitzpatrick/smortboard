@@ -189,6 +189,22 @@ def test_classify_rate_limit_event_allowed_is_not_blocked():
     assert classify_rate_limit(event) is None
 
 
+def test_a_threshold_warning_is_not_a_usage_limit():
+    """the exact event recorded on the board at 76% of the week: the run was allowed to continue"""
+    event = {
+        "type": "rate_limit_event",
+        "rate_limit_info": {
+            "status": "allowed_warning",
+            "resetsAt": 1789401600,
+            "rateLimitType": "seven_day",
+            "utilization": 0.76,
+            "isUsingOverage": False,
+            "surpassedThreshold": 0.75,
+        },
+    }
+    assert classify_rate_limit(event) is None
+
+
 def test_lease_conflict_is_not_a_crash():
     """S3: a lease block still ends subtype success, is_error false - a card failure it is not"""
     result_event = {
