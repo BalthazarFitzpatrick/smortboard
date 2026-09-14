@@ -3,6 +3,7 @@
 import json
 import re
 import sqlite3
+from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -120,6 +121,10 @@ def _make_handler(
     token_path: str | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """closes over the store instance; http.server wants a class, not an instance"""
+
+    # the message ids each board's mission control already accepted, newest last - a retried or
+    # second-tab send of the same message is answered as done instead of starting another turn
+    accepted_messages: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=500))
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "smortboard/0.1"
@@ -475,9 +480,16 @@ def _make_handler(
 
         def _handle_orchestrator_post(self, board_id: str) -> None:
             store.get_board(board_id)
-            message = (self._read_json().get("message") or "").strip()
+            body = self._read_json()
+            message = (body.get("message") or "").strip()
+            client_id = body.get("client_id")
             if not message:
                 self._send_json(400, {"error": "message must not be empty"})
+                return
+            # checked before the turn-in-progress refusal, so a duplicate is told it is done
+            # rather than being kept in the sender's queue to try again
+            if client_id and client_id in accepted_messages[board_id]:
+                self._send_json(200, self._orchestrator_view(board_id))
                 return
             if orchestrator.thinking(board_id):
                 self._send_json(409, {"error": "a turn is already in progress on this board"})
@@ -485,6 +497,8 @@ def _make_handler(
             # stored here, synchronously, so the 202 body already carries it - the thread that
             # runs the turn is told not to store it again
             store.add_orchestrator_message(board_id, "operator", message)
+            if client_id:
+                accepted_messages[board_id].append(client_id)
             orchestrator.start(board_id, message, message_already_stored=True)
             self._send_json(202, self._orchestrator_view(board_id))
 
