@@ -144,7 +144,13 @@ def test_usage_reads_the_current_flat_rate_limit_shape_with_no_utilisation(store
     )
     usage = usage_projection(store)
     assert usage["windows"] == [
-        {"type": "five_hour", "status": "allowed", "resets_at": 1789078800, "utilization": None}
+        {
+            "type": "five_hour",
+            "profile": "default",
+            "status": "allowed",
+            "resets_at": 1789078800,
+            "utilization": None,
+        }
     ]
 
 
@@ -188,6 +194,51 @@ def test_usage_keeps_only_the_latest_event_per_window_type(store):
     usage = usage_projection(store)
     assert len(usage["windows"]) == 1
     assert usage["windows"][0]["resets_at"] == 300
+
+
+def test_usage_takes_the_most_recent_event_across_cards_not_by_card_id(store):
+    """regression: list_events_by_kind used to sort by (card_id, seq), which groups by card
+    rather than time - a card whose id sorted alphabetically later could overwrite a genuinely
+    newer event from an earlier-id card, exactly the overcount this card reported. give the
+    later event to the alphabetically-first card_id to prove ordering is now by wall-clock time."""
+    board = store.create_board("b")
+    card_a = store.create_card(board["id"], None, "a")  # sorts before card_z's id
+    card_z = store.create_card(board["id"], None, "z")
+    store.append_event(
+        card_z["id"],
+        "rate_limit_event",
+        {"rate_limit_info": {"status": "allowed", "resetsAt": 100, "rateLimitType": "five_hour"}},
+    )
+    store.append_event(
+        card_a["id"],
+        "rate_limit_event",
+        {"rate_limit_info": {"status": "allowed", "resetsAt": 200, "rateLimitType": "five_hour"}},
+    )
+    usage = usage_projection(store)
+    assert len(usage["windows"]) == 1
+    assert usage["windows"][0]["resets_at"] == 200
+
+
+def test_usage_windows_are_attributed_to_the_recording_profile(store):
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "c")
+    store.append_event(
+        card["id"],
+        "rate_limit_event",
+        {
+            "profile": "alt",
+            "rate_limit_info": {"status": "allowed", "resetsAt": 100, "rateLimitType": "five_hour"},
+        },
+    )
+    store.append_event(
+        card["id"],
+        "rate_limit_event",
+        {"rate_limit_info": {"status": "allowed", "resetsAt": 200, "rateLimitType": "five_hour"}},
+    )
+    usage = usage_projection(store)
+    by_profile = {w["profile"]: w for w in usage["windows"]}
+    assert by_profile["alt"]["resets_at"] == 100
+    assert by_profile["default"]["resets_at"] == 200
 
 
 def test_usage_sums_model_usage_and_cost_across_results(store):
