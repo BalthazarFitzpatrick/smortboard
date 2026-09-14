@@ -1,7 +1,8 @@
-// a run this page did not start still moves its card: the board watches /api/runs and redraws when
-// the set of running cards changes, keeping focus on the card you were on, and never rebuilds the
-// strips under an open card. before this, a card run from the api (or running across a page
-// reload) stayed drawn as doing, blue edge, after it had finished.
+// a card's strip moves to its new column the moment its status changes, whatever changed it: a
+// key, the card's own run, or mission control. todo -> doing and doing -> checking happen mid-run
+// (lifecycle.py), so watching only which cards are "running" missed both - the board now polls
+// every card's status and updated_at and redraws just the strips that moved. an open card's own
+// strip is left alone until it closes; every other strip still redraws while a panel is open.
 // run: node tests/js/follow_runs.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
@@ -22,10 +23,11 @@ function fetchStub(path) {
 installStubDom({fetchImpl: fetchStub});
 globalThis.getComputedStyle = () => ({transform: 'none', getPropertyValue: () => ''});
 
-const card = (id, status) => ({id, title: id, status, blocked_reason_code: null, criteria: [], tasks: []});
+const card = (id, status) =>
+  ({id, title: id, status, blocked_reason_code: null, criteria: [], tasks: [], updated_at: `t-${status}`});
+
 stub('/api/boards', [{id: 'b1', name: 'one', position: 0, created_at: 't'}]);
-stub('/api/boards/b1/cards', [card('c1', 'doing'), card('c2', 'todo')]);
-stub('/api/runs', [{card_id: 'c1', phase: 'running', running: true}]);
+stub('/api/boards/b1/cards', [card('c1', 'todo'), card('c2', 'todo')]);
 
 const boardBar = element('div', 'board-bar');
 boardBar.id = 'board-bar';
@@ -56,31 +58,58 @@ await flush();
 const inColumn = (status, id) => bucketRow
   .querySelector(`.bucket[data-status="${status}"] .bucket-rows`)
   .querySelectorAll('.card-strip').some(s => s.dataset.cardId === id);
+const strip = id => bucketRow.querySelectorAll('.card-strip').find(s => s.dataset.cardId === id);
 const cardFetches = () => calls.filter(p => p === '/api/boards/b1/cards').length;
 
-// ---- the first look only learns what is running; nothing has changed yet, so no redraw
-assert.ok(inColumn('doing', 'c1'), 'c1 starts in doing');
+// ---- nothing has changed yet, so this poll redraws nothing - whether it is the very first look
+// or board.js's own startup (followRuns() fires once on load) already took that first look for us
+assert.ok(inColumn('todo', 'c1'), 'c1 starts in todo');
 let fetched = cardFetches();
-assert.equal(await mod.followRunsOnce(), false, 'the first poll only records the running set');
-assert.equal(await mod.followRunsOnce(), false, 'an unchanged set redraws nothing');
-assert.equal(cardFetches(), fetched);
+assert.equal(await mod.followRunsOnce(), false, 'nothing has changed, so nothing redraws');
+assert.equal(cardFetches(), fetched + 1, 'the poll still asked the server once');
 
-// ---- the run finishes elsewhere: the next poll redraws, and c1 moves to checking
-stub('/api/runs', []);
+// ---- a status write that lands mid-run - not only when the run ends - moves the card within one poll
+stub('/api/boards/b1/cards', [card('c1', 'doing'), card('c2', 'todo')]);
+assert.equal(await mod.followRunsOnce(), true, 'todo -> doing redraws on the very next poll');
+assert.ok(inColumn('doing', 'c1') && !inColumn('todo', 'c1'), 'c1 is drawn in doing now');
+
 stub('/api/boards/b1/cards', [card('c1', 'checking'), card('c2', 'todo')]);
-const c2 = bucketRow.querySelectorAll('.card-strip').find(s => s.dataset.cardId === 'c2');
-c2.focus();
-assert.equal(await mod.followRunsOnce(), true, 'a finished run redraws the board');
+assert.equal(await mod.followRunsOnce(), true, 'doing -> checking redraws on the very next poll too');
 assert.ok(inColumn('checking', 'c1') && !inColumn('doing', 'c1'), 'c1 is drawn in checking now');
-assert.equal(document.activeElement?.dataset?.cardId, 'c2', 'focus stays on the card you were on');
 
-// ---- a run starting elsewhere redraws too, but never under an open card - it waits a tick
-stub('/api/runs', [{card_id: 'c2', phase: 'preparing', running: true}]);
-mod.setOpenCard({cardId: 'c1'});
+// ---- an unchanged board still asks, but redraws nothing
 fetched = cardFetches();
-assert.equal(await mod.followRunsOnce(), false, 'an open card holds the redraw back');
-assert.equal(cardFetches(), fetched);
+assert.equal(await mod.followRunsOnce(), false, 'an unchanged board redraws nothing');
+assert.equal(cardFetches(), fetched + 1);
+
+// ---- keyboard focus follows a redrawn strip that moved, same as any other rebuild
+strip('c2').focus();
+stub('/api/boards/b1/cards', [card('c1', 'checking'), card('c2', 'accepted')]);
+assert.equal(await mod.followRunsOnce(), true, 'an unrelated card moving is still a redraw');
+assert.ok(inColumn('accepted', 'c2'), 'c2 is drawn in accepted now');
+assert.equal(document.activeElement?.dataset?.cardId, 'c2', 'focus stays on the card that moved');
+
+// ---- an open card holds its own redraw back - the strip underneath its panel is never rebuilt
+strip('c1')._probe = 'do not touch';
+mod.setOpenCard({cardId: 'c1'});
+stub('/api/boards/b1/cards', [card('c1', 'accepted'), card('c2', 'accepted')]);
+assert.equal(await mod.followRunsOnce(), false, 'the only change is the open card, so nothing redraws yet');
+assert.equal(strip('c1')._probe, 'do not touch', "the open card's own strip is never rebuilt under the user");
+assert.ok(inColumn('checking', 'c1'), 'the open card visually stays put until it closes');
+
+// ---- with that same panel still open, an unrelated card's status change still moves its strip
+stub('/api/boards/b1/cards', [card('c1', 'accepted'), card('c2', 'rejected')]);
+assert.equal(await mod.followRunsOnce(), true, "another card's change redraws even while a panel is open");
+assert.ok(inColumn('rejected', 'c2'), 'c2 moved to rejected while c1 stayed open');
+assert.equal(strip('c1')._probe, 'do not touch', "the open card's strip is still the same untouched node");
+
+// ---- closing the card lets its own deferred change land on the next poll
 mod.setOpenCard(null);
-assert.equal(await mod.followRunsOnce(), true, 'and it happens on the next tick once the card is closed');
+assert.equal(await mod.followRunsOnce(), true, 'the open card gets its own redraw once it closes');
+assert.ok(inColumn('accepted', 'c1') && !inColumn('checking', 'c1'), 'c1 is finally drawn in accepted');
+
+// ---- a full reload always lands every card in the column of its stored status
+await mod.onBoardEnter('b1');
+assert.ok(inColumn('accepted', 'c1') && inColumn('rejected', 'c2'), 'a full reload matches stored status too');
 
 console.log('ok');

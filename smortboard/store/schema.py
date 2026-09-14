@@ -20,6 +20,10 @@ BLOCKED_REASON_CODES = (
 FINDINGS_ROUTES = ("fix", "attention")
 DEFAULT_FINDINGS_ROUTE = "attention"
 
+# a deleted card is kept as a backup for this many days before it is purged for good - see
+# Store.delete_card, Store.restore_card and Store._purge_expired_backups
+BACKUP_RETENTION_DAYS = 7
+
 _MIGRATIONS: list[str] = [
     # 1: base tables
     """
@@ -182,6 +186,21 @@ _MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_comments_card ON comments (card_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_orchestrator_messages_board
         ON orchestrator_messages (board_id, created_at);
+    """,
+    # 9: card soft-delete. delete_card snapshots a card and its children here before removing it,
+    # so a delete is reversible for BACKUP_RETENTION_DAYS days instead of destroying the card
+    # outright. no foreign keys on card_id/board_id — a backup deliberately outlives the row (and
+    # the board) it describes, so a FK to either would block the very deletes it exists to survive
+    """
+    CREATE TABLE card_backups (
+        id TEXT PRIMARY KEY,
+        card_id TEXT NOT NULL,
+        board_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        deleted_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_card_backups_deleted_at ON card_backups (deleted_at);
     """,
 ]
 
