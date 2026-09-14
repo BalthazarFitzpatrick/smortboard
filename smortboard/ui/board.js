@@ -176,12 +176,11 @@ function runBadge(cardId) {
   return strip ? strip.querySelector('.card-run') : null;
 }
 
-// the CTA button, so the scheduler can correct it for a card whose stored status lags what the
-// queue actually knows - a re-queued blocked card keeps its old 'doing' status, so ctaFor still
-// draws 'Running…' until this overrides it
-function ctaButton(cardId) {
+// the compact action note, so the scheduler can correct it for a card whose stored status lags
+// what the queue actually knows - see scheduler.js's applyScheduleToCards
+function actionNote(cardId) {
   const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
-  return strip ? strip.querySelector('.card-cta') : null;
+  return strip ? strip.querySelector('.card-action') : null;
 }
 
 function showRun(cardId, text, href, detail) {

@@ -49,10 +49,10 @@ function addCardStrip(cardId) {
   const badge = element('span', 'card-run');
   badge.hidden = true;
   foot.appendChild(badge);
+  const note = element('span', 'card-action');
+  note.textContent = 'Running…';
+  foot.appendChild(note);
   strip.appendChild(foot);
-  const cta = element('div', 'card-cta');
-  cta.textContent = 'Running…';
-  strip.appendChild(cta);
   bucketRow.appendChild(strip);
   return strip;
 }
@@ -103,14 +103,15 @@ assert.equal(statusEl.textContent, '1 running - 1 queued');
 assert.equal(badgeText('c1'), 'running', 'a running card carries it on its foot');
 assert.equal(badgeText('c2'), 'queued, 1 of 1', 'a queued card shows its position on its foot');
 
-function ctaText(cardId) {
+function actionText(cardId) {
   return queryAll(bucketRow, `.card-strip[data-card-id="${cardId}"]`)[0]
-    .querySelector('.card-cta').textContent;
+    .querySelector('.card-action').textContent;
 }
-// a re-queued card kept its 'doing' status (see scheduler.py's _is_queueable), so the CTA still
-// read 'Running…' until this landed - the queue corrects it, not the card's own stored status
-assert.equal(ctaText('c2'), 'Queued', 'a queued card says so on its own button, not Running…');
-assert.equal(ctaText('c1'), 'Running…', 'a card actually running keeps its own label');
+// a re-queued card kept its 'doing' status (see scheduler.py's _is_queueable), so the compact
+// note still read 'Running…' until this landed - the queue corrects it, not the card's own
+// stored status
+assert.equal(actionText('c2'), 'Queued', 'a queued card says so on its own note, not Running…');
+assert.equal(actionText('c1'), 'Running…', 'a card actually running keeps its own label');
 
 // ---- a queue of two shows each card's own position, front to back -----------------------------
 

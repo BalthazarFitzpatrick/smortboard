@@ -438,6 +438,17 @@ body {
 .card-foot .stat-action { color: var(--fill-attention); font-weight: 600; }
 .card-next { color: var(--fill-attention); font-weight: 600; margin-bottom: 4px; }
 
+/* ---- the compact action note -----------------------------------------------------------------
+   what 3919ce56 replaced the oversized full-width CTA button with: the same label, in the colour
+   that already marks the card's state elsewhere (its own border, its panel's title rule), bold,
+   left-aligned ahead of the workstream - a note to read, not a button to press. */
+.card-foot .card-action { flex: 0 0 auto; font-weight: 700; text-align: left; }
+.card-foot .card-action-attention { color: var(--fill-attention); }
+.card-foot .card-action-working { color: var(--fill-good); }
+.card-foot .card-action-review { color: var(--kingfisher); }
+.card-foot .card-action-accepted { color: var(--status-good); }
+.card-foot .card-action-quiet { color: var(--text-dim); }
+
 /* ---- the card's short-id --------------------------------------------------------------------
    metadata to say aloud or copy, not a heading - dim, small and monospace so it reads as
    secondary to the title it sits beside rather than competing with it */
@@ -446,32 +457,6 @@ body {
 .card-head .card-id {
   flex: 0 0 auto; color: var(--text-dim); font-family: ui-monospace, "SF Mono", monospace;
   font-size: 0.85em;
-}
-
-/* ---- the primary call to action ------------------------------------------------------------
-   ONE ACTION LEADS. everything else on the strip - workstream, status, run badge - stays quiet
-   text; this is the only filled shape on the card, full width and pinned at its bottom edge so a
-   scan of the board lands on what to press, not on a row of small controls. */
-.card-cta {
-  width: 100%;
-  box-sizing: border-box;
-  margin-top: 10px;
-  padding: 8px 0;
-  text-align: center;
-  font-weight: 600;
-  background: var(--accent-on);
-  color: var(--accent-on-text);
-  border: 2px solid var(--cream);
-  cursor: pointer;
-}
-.card-cta:hover { filter: brightness(1.08); }
-/* a card waiting on the operator wears the glow its border already does, carried onto the one
-   button that is worth pressing about it */
-.card-cta-attention {
-  background: var(--fill-attention);
-  color: var(--bg);
-  border-color: var(--fill-attention);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fill-attention) 35%, transparent);
 }
 
 /* agents and the board write short labelled lines - keep the line breaks instead of one wall */
