@@ -376,6 +376,28 @@ function layoutCardSections(panel) {
   container.style.height = `${Math.max(0, reach - CARD_PANEL_ROW_GAP)}px`;
 }
 
+// re-flow whenever the container gets its real width or a section changes height. the one pass at
+// open can run before the expanding panel has a box, which left every section stacked at 0,0, and
+// nothing but a window resize ever laid it out again [coalesced to one pass per frame]
+function watchCardSections(panel) {
+  if (panel.sectionsObserver) panel.sectionsObserver.disconnect();
+  const container = panel.querySelector('.card-sections');
+  if (!container || typeof ResizeObserver === 'undefined') return;
+  let queued = false;
+  const observer = new ResizeObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      if (panel.isConnected) layoutCardSections(panel);
+      else observer.disconnect();
+    });
+  });
+  observer.observe(container);
+  container.querySelectorAll('.card-section').forEach(section => observer.observe(section));
+  panel.sectionsObserver = observer;
+}
+
 async function openCardPanel(panel, cardId) {
   const [card, outcome] = await Promise.all([
     api(`/api/cards/${cardId}`),
@@ -391,7 +413,10 @@ async function openCardPanel(panel, cardId) {
   panel.innerHTML = cardPanelHtml(card, outcome);
   // the design archive keeps its own historical grid per variant in panel-layouts.css - masonry
   // would fight it for the same inline top/left/width
-  if (!layout) layoutCardSections(panel);
+  if (!layout) {
+    layoutCardSections(panel);
+    watchCardSections(panel);
+  }
 
   // the panel's one .card-sections div is a single-column bucket - reuses the 2D grid nav as a
   // plain vertical list rather than inventing a second focus system for "move between sections"
