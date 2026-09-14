@@ -60,7 +60,9 @@ body {
 .bucket-row {
   flex: 1 1 auto;
   display: flex;
-  gap: 34px;
+  /* 16px, not 34: the gap was eating the columns' width, and a focused card only grows 1.5% a
+     side - a few px, which 16px still clears without touching its neighbour */
+  gap: 16px;
   /* THE CARDS KEEP CLEAR OF THE PARKED SLIVERS. a sliver is an eighth of a drawer, and a drawer is
      85% of its half, so each one eats 0.125 * 0.85 * 50vw = 5.3vw of the edge. inset the cards by
      slightly more than that and a parked drawer never sits on top of a card - it only covers them
@@ -109,9 +111,12 @@ body {
 .bucket-rows.bucket-rows-expanded { overflow-y: auto; padding-right: 4px; }
 /* a piled column spends its height on cards and piles, not gaps - columns.js reads this gap back */
 .bucket-rows.bucket-rows-piled { gap: 10px; }
-/* a full card cut short to make room for a pile: its own border and title stay, the rest hides -
-   the height lands inline from columns.js's computePileFit */
-.card-strip.card-clipped { overflow: hidden; }
+/* a card tucked under the row after it: that row paints over it, and under a pile (shorter than
+   the part it covers) columns.js cuts it to end behind the pile's face, so nothing pokes out */
+.card-strip.card-covered { overflow: hidden; }
+/* the last row has nothing below it to slide over its lower part, so that one is cut short -
+   without a bottom edge, so it reads as running on past the column, not as a small card */
+.card-strip.card-clipped { overflow: hidden; border-bottom: 0; }
 
 /* collapsed card: a wide flat strip - makeExpander reads its own rect as the animation's starting
    box, so this is the only place that ratio lives */
@@ -121,6 +126,11 @@ body {
    every card off the column ground so the border reads as one surface's edge, not a shared line.
    bucket-rows' own gap keeps the strips from ever touching regardless */
 .card-strip { box-shadow: var(--shadow-lift); }
+/* a seventh shorter than ui_base's 1:1.2, so a pile's neighbours leave it room to read as a pile.
+   the fan's overlap scales with it (-80% x 6/7), or an unpiled column would hide more of each card */
+.card-strip { aspect-ratio: 1 / 1.0286; border-radius: 0; }
+.card-strip.fan-item { margin-top: -68.6%; }
+.card-strip.fan-item:first-child { margin-top: 0; }
 .card-strip.card-working { border-color: var(--fill-good); }
 .card-strip.card-rejected { border-color: var(--fill-warn); }
 /* vanilla is the palest edge, so attention is also the only one that glows: rings stepping down to
@@ -156,9 +166,8 @@ body {
 .card-strip:focus { transform: scale(1.03); filter: saturate(1.4) brightness(1.15); z-index: 2; }
 
 /* ---- dense column presentation: a pile standing in for every card the column folded away -------
-   real card edges, not a placeholder box: a few offset layers behind a top face, each nudged by a
-   tiny deterministic rotation/jitter (columns.js hashes the card id, never Math.random - a
-   re-render must not make the stack twitch). drop shadow, same as any full card */
+   real card edges, not a placeholder box: a few layers stacked straight behind a top face, each
+   3px lower than the one above, so only their bottom edges show - the board's square 2px edge */
 /* height lands inline from columns.js's computePileFit (the column's measured leftover); 48px is
    only the fallback before that runs. face and layers stop 9px short so the edges peek out below */
 .card-pile {
@@ -167,27 +176,26 @@ body {
   flex: 0 0 auto;
   box-sizing: border-box;
   cursor: pointer;
+  --pile-edge: var(--grey-border);
 }
-.card-pile-layer {
+/* a pile wears its column's state edge the way a card does: doing, or attention when it holds one */
+.card-pile.card-pile-doing { --pile-edge: var(--fill-good); }
+.card-pile.card-pile-attention { --pile-edge: var(--fill-attention); }
+.card-pile-layer,
+.card-pile-count {
   position: absolute;
   inset: 0 0 9px 0;
-  border: 1px solid var(--grey-border);
-  border-radius: var(--radius, 4px);
+  border: 2px solid var(--pile-edge);
+  border-radius: 0;
   background: var(--panel-row);
   box-shadow: var(--shadow-lift);
 }
 .card-pile-count {
-  position: absolute;
-  inset: 0 0 9px 0;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 1.15em;
-  border: 1px solid var(--grey-border);
-  border-radius: var(--radius, 4px);
-  background: var(--panel-row);
-  box-shadow: var(--shadow-lift);
 }
 .card-pile-count .count-d { color: var(--fill-good); }
 .card-pile-count .count-a { color: var(--fill-attention); }
