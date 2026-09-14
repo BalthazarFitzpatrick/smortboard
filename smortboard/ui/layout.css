@@ -132,9 +132,14 @@ body {
    section instead, so title and the run still read across the whole panel but every other
    section stacks by its own height, one column at a time. */
 .card-panel { --rule-soft: color-mix(in srgb, var(--grey-border) 55%, transparent); }
-.card-panel .card-sections { position: relative; }
+/* the design archive (panel-layouts.css) resets .card-sections back to a flat list for its own
+   normal-flow variants - it was written against the old grid and never learned about masonry, so
+   pulling every .card-section out of flow here bled into it too and stacked all fifteen archived
+   layouts on top of each other. scoped to the live (non-archive) panel only */
+.card-panel:not([class*="panel-layout-"]) .card-sections { position: relative; }
 /* top/left/width land inline from layoutCardSections - this only sets the box model they need */
-.card-panel .card-section { position: absolute; top: 0; left: 0; box-sizing: border-box; }
+.card-panel:not([class*="panel-layout-"]) .card-section { position: absolute; top: 0; left: 0; }
+.card-panel .card-section { box-sizing: border-box; }
 
 .card-panel .field-label { color: var(--text-dim); }
 /* grid children default to min-width: auto, so one long path or url widened a column past the
