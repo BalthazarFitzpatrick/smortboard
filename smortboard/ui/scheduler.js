@@ -53,7 +53,12 @@ function applyScheduleToCards(view) {
   view.running.forEach(id => showRun(id, 'running'));
   const waitingIds = new Set(Object.keys(view.waiting));
   Object.entries(view.waiting).forEach(([id, reason]) => showRun(id, 'waiting', null, reason));
-  view.queued.filter(id => !waitingIds.has(id)).forEach(id => showRun(id, 'queued'));
+  // position is 1-based so "queued, 1 of 3" reads as the front of the line, not the back
+  const total = view.queued.length;
+  view.queued.forEach((id, index) => {
+    if (waitingIds.has(id)) return;
+    showRun(id, `queued, ${index + 1} of ${total}`);
+  });
 }
 
 async function pollSchedule() {
