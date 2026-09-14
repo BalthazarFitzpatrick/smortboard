@@ -50,10 +50,33 @@ _SETTING_KEYS = (
     "auto_switch_profiles",
 )
 
+# writable settings that are not plain strings. mission_control_read_paths is a json list of
+# absolute host paths, parsed by mission_control_read_paths() - get_settings reports it through that
+# tolerant reader as a list, and the settings panel (o) replaces it whole with a list of paths
+_EXTRA_SETTING_KEYS = ("mission_control_read_paths",)
+
 
 def _check_findings_route(value: str | None) -> None:
     if value is not None and value not in FINDINGS_ROUTES:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
+
+
+def _check_read_paths(value: Any) -> list[str]:
+    """each path absolute after ~ expansion, and an existing folder - the message names the one
+    that failed, so the operator knows which row in the panel to fix"""
+    if not isinstance(value, list):
+        raise ValueError(f"mission_control_read_paths must be a list of paths, not {value!r}")
+    resolved = []
+    for raw in value:
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError(f"a read path must be a non-empty string, not {raw!r}")
+        path = Path(raw.strip()).expanduser()
+        if not path.is_absolute():
+            raise ValueError(f"{raw} must be an absolute path")
+        if not path.is_dir():
+            raise ValueError(f"{raw} does not exist or is not a folder")
+        resolved.append(str(path))
+    return resolved
 
 
 def _check_lease_glob(value: Any) -> str:
@@ -438,22 +461,48 @@ class Store:
     def get_settings(self) -> dict[str, Any]:
         rows = self._conn.execute("SELECT key, value FROM settings").fetchall()
         stored = {r["key"]: r["value"] for r in rows}
-        return {key: stored.get(key) for key in _SETTING_KEYS}
+        settings = {key: stored.get(key) for key in _SETTING_KEYS}
+        settings["mission_control_read_paths"] = self.mission_control_read_paths()
+        return settings
 
-    def set_setting(self, key: str, value: str | None) -> dict[str, Any]:
-        """sets a board-wide value, or clears it with None"""
-        if key not in _SETTING_KEYS:
+    def set_setting(self, key: str, value: Any) -> dict[str, Any]:
+        """sets a board-wide value, or clears it with None (or an empty list, for the read paths)"""
+        if key not in _SETTING_KEYS and key not in _EXTRA_SETTING_KEYS:
             raise UnknownFieldError(f"no setting {key!r}")
         if key == "findings_route":
             _check_findings_route(value)
-        if value is None:
+        stored = value
+        # a list is the panel's whole-list replace and is checked path by path; a string is already
+        # json and stored as given, which mission_control_read_paths() reads tolerantly
+        if key == "mission_control_read_paths" and isinstance(value, list):
+            stored = json.dumps(_check_read_paths(value)) if value else None
+        if stored is None:
             self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))
         else:
             self._conn.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, stored)
             )
         self._conn.commit()
         return self.get_settings()
+
+    def mission_control_read_paths(self) -> list[str]:
+        """the operator's extra read-only paths for mission control, parsed from the settings row.
+
+        stored as a json list of absolute host paths. an unset or malformed value is no paths, never
+        an error - a bad value must not stop a turn from running.
+        """
+        row = self._conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("mission_control_read_paths",)
+        ).fetchone()
+        if row is None or not row["value"]:
+            return []
+        try:
+            value = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if not isinstance(value, list):
+            return []
+        return [str(p) for p in value if isinstance(p, str) and p.strip()]
 
     def findings_route(self, card_id: str) -> str:
         """where this card's reviewer findings go.
@@ -679,10 +728,16 @@ class Store:
     # -- dependencies (card_deps is the single source, queried both ways) ------
 
     def _check_dependency_ids_exist(self, card_ids: list[str]) -> None:
-        for dep_id in card_ids:
-            row = self._conn.execute("SELECT id FROM cards WHERE id = ?", (dep_id,)).fetchone()
-            if row is None:
-                raise ValueError(f"no card {dep_id}")
+        if not card_ids:
+            return
+        placeholders = ",".join("?" * len(card_ids))
+        rows = self._conn.execute(
+            f"SELECT id FROM cards WHERE id IN ({placeholders})", card_ids
+        ).fetchall()
+        found = {row["id"] for row in rows}
+        missing = [dep_id for dep_id in card_ids if dep_id not in found]
+        if missing:
+            raise ValueError(f"no card {missing[0]}")
 
     def _check_no_dependency_cycle(self, card_id: str, new_deps: list[str]) -> None:
         """raises ValueError if giving card_id exactly new_deps would create a cycle.

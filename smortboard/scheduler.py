@@ -29,9 +29,21 @@ from pathlib import Path
 from typing import Any
 
 from smortboard import profiles
+from smortboard.actions import with_next
+from smortboard.exec.worktrees import (
+    branch_name,
+    default_branch,
+    fetch_base,
+    has_remote,
+    worktree_path,
+)
 from smortboard.review.merge_request import PullRequestState, pr_view
+from smortboard.review.mergeable import check_mergeable, merge_branch, push_branch
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
+
+# the same author every other board-written comment carries - see lifecycle.BOARD_AUTHOR
+_BOARD_AUTHOR = "smortboard"
 
 # unset means this - operator's own value in settings always wins, see store.api._SETTING_KEYS
 DEFAULT_MAX_PARALLEL = 2
@@ -77,6 +89,72 @@ def _latest_merge_request_url(store: Store, card_id: str) -> str | None:
         return None
     url = events[-1]["payload"].get("url")
     return url or None
+
+
+# a checking card's branch is re-synced with its base no more often than this, per repo - the
+# board has no push signal for "someone merged a PR on this repo" (only for a specific PR's own
+# state, see _dependency_wait above), so this is the timer fallback the spec allows
+_SWEEP_INTERVAL_SECONDS = 5 * 60
+_last_sweep: dict[str, float] = {}
+
+
+def _sweep_checking_prs(store: Store, board_id: str) -> None:
+    """keeps every checking card's branch mergeable with its base while its pull request waits.
+
+    Measured 2026-09-14 (card 59727ba3, PR #112): a branch cut once at the start of a run and
+    never updated drifted 34 commits behind main while its PR waited, and conflicted in four files
+    other PRs had since touched. Behind but still mergeable: merges base in and pushes, so the PR
+    stays current. Behind and conflicting: blocks the card MERGE_CONFLICT with the files, same as
+    lifecycle.py does at hand-over - never touches the pull request either way.
+    """
+    now = time.time()
+    for card in store.list_cards(board_id):
+        if card["status"] != "checking" or card.get("blocked_reason_code"):
+            continue
+        if not _latest_merge_request_url(store, card["id"]):
+            continue  # opening never finished - nothing open to keep current
+        try:
+            repo = store.get_repo(card["repo_id"])
+        except NotFoundError:
+            continue
+        repo_path = repo["path"]
+        last = _last_sweep.get(repo_path, 0.0)
+        if now - last < _SWEEP_INTERVAL_SECONDS:
+            continue
+        _last_sweep[repo_path] = now
+        if not has_remote(repo_path):
+            continue
+        base = default_branch(repo)
+        if not fetch_base(repo_path, base):
+            continue
+        tree = worktree_path(repo_path, card["id"])
+        if not tree.exists():
+            continue  # worktree cleaned up - nothing here to sync
+        branch, base_ref = branch_name(card["id"]), f"origin/{base}"
+        check = check_mergeable(tree, branch, base_ref)
+        if not check.behind:
+            continue  # already current
+        if not check.clean:
+            _flag_merge_conflict(store, card["id"], branch, base_ref, check.conflicting_files)
+            continue
+        merged = merge_branch(tree, base_ref)
+        if not merged.clean:
+            _flag_merge_conflict(store, card["id"], branch, base_ref, merged.conflicting_files)
+        elif merged.merged:
+            push_branch(tree, branch)
+
+
+def _flag_merge_conflict(
+    store: Store, card_id: str, branch: str, base_ref: str, files: list[str]
+) -> None:
+    store.append_event(card_id, "merge_conflict", {"base_ref": base_ref, "files": files})
+    store.update_card(card_id, blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+    note = with_next(
+        f"Merging {base_ref} into {branch} now conflicts in: {', '.join(files) or 'unknown files'}."
+        "\n\nResuming this card lets the worker merge the base branch and resolve them.",
+        "MERGE_CONFLICT",
+    )
+    store.add_comment(card_id, author=_BOARD_AUTHOR, body=note)
 
 
 def _lease_globs(card: dict[str, Any]) -> list[str]:
@@ -273,6 +351,9 @@ class BoardScheduler:
 
         store = Store(self._db_path)
         try:
+            # no push signal for "a PR merged on this repo" exists board-wide, so every tick is
+            # the opportunity to notice one - _sweep_checking_prs throttles itself per repo
+            _sweep_checking_prs(store, self.board_id)
             running_cards = []
             for card_id in running_ids:
                 with contextlib.suppress(NotFoundError):

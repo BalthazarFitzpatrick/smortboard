@@ -17,6 +17,7 @@ from smortboard.attention import (
     attention_rows,
     with_actions,
 )
+from smortboard.consolidate import FoldRegistry
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.local_repos import detect_default_branch, list_folders
@@ -86,6 +87,8 @@ _ROUTES = [
     (re.compile(r"^/api/tasks/(?P<task_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "POST"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/fold$"), "GET"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/fold$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/conversation$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/conversation$"), "POST"),
     (re.compile(r"^/api/roster$"), "GET"),
@@ -151,6 +154,7 @@ def _make_handler(
     # the message ids each board's mission control already accepted, newest last - a retried or
     # second-tab send of the same message is answered as done instead of starting another turn
     accepted_messages: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=500))
+    folds = FoldRegistry(store.path, token_path=token_path)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "smortboard/0.1"
@@ -271,6 +275,11 @@ def _make_handler(
                 self._send_json(200, self._orchestrator_view(params["board_id"]))
             elif "board_id" in params and path.endswith("/orchestrator") and method == "POST":
                 self._handle_orchestrator_post(params["board_id"])
+            elif "board_id" in params and path.endswith("/fold") and method == "GET":
+                store.get_board(params["board_id"])
+                self._send_json(200, self._fold_view(params["board_id"]))
+            elif "board_id" in params and path.endswith("/fold") and method == "POST":
+                self._handle_fold_post(params["board_id"])
             elif "card_id" in params and path.endswith("/conversation") and method == "GET":
                 self._send_json(200, self._conversation_view(params["card_id"]))
             elif "card_id" in params and path.endswith("/conversation") and method == "POST":
@@ -488,17 +497,19 @@ def _make_handler(
             if unknown:
                 self._send_json(400, {"error": f"not writable: {sorted(unknown)}"})
                 return
+            # shapes are checked before anything is written, so a bad depends_on
+            # can't leave a lease change (or vice versa) committed behind a 400
             leases = body.pop("leases", None)
-            if leases is not None:
-                if not isinstance(leases, list):
-                    self._send_json(400, {"error": "leases must be a list of globs"})
-                    return
-                store.set_leases(card_id, leases)
+            if leases is not None and not isinstance(leases, list):
+                self._send_json(400, {"error": "leases must be a list of globs"})
+                return
             depends_on = body.pop("depends_on", None)
+            if depends_on is not None and not isinstance(depends_on, list):
+                self._send_json(400, {"error": "depends_on must be a list of card ids"})
+                return
+            if leases is not None:
+                store.set_leases(card_id, leases)
             if depends_on is not None:
-                if not isinstance(depends_on, list):
-                    self._send_json(400, {"error": "depends_on must be a list of card ids"})
-                    return
                 store.set_dependencies(card_id, depends_on)
             card = store.update_card(card_id, **body) if body else store.get_card(card_id)
             self._send_json(200, card)
@@ -622,6 +633,21 @@ def _make_handler(
                 accepted_messages[board_id].append(client_id)
             orchestrator.start(board_id, message, message_already_stored=True)
             self._send_json(202, self._orchestrator_view(board_id))
+
+        def _fold_view(self, board_id: str) -> dict:
+            return {"running": folds.running(board_id), "error": folds.error(board_id)}
+
+        def _handle_fold_post(self, board_id: str) -> None:
+            store.get_board(board_id)  # 404 for an unknown board before anything starts
+            if folds.running(board_id):
+                self._send_json(409, {"error": "a fold is already running on this board"})
+                return
+            # stored before the thread starts, so mission control shows it the moment it opens
+            store.add_orchestrator_message(
+                board_id, "board", "fold: reading every card and the ledger - this takes minutes"
+            )
+            folds.start(board_id)
+            self._send_json(202, self._fold_view(board_id))
 
         def _conversation_view(self, card_id: str) -> dict:
             card = store.get_card(card_id)

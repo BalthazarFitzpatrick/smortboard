@@ -634,3 +634,169 @@ def test_run_all_on_an_unknown_board_is_a_404(server):
     base, _, _ = server
     status, _ = _call(f"{base}/api/boards/nope/run-all", method="POST")
     assert status == 404
+
+
+# -- keeping a checking card's pr mergeable ------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_sweep_throttle():
+    scheduler_module._last_sweep.clear()
+    yield
+    scheduler_module._last_sweep.clear()
+
+
+def _checking_card(store, board_id, repo_path, tmp_path):
+    """a card in checking, with an open pull request recorded and a worktree on disk - what the
+    sweep needs to have anything to act on. its own repo row, so its path is real and per-test"""
+    repo_path.mkdir(parents=True, exist_ok=True)
+    repo = store.create_repo(board_id, "r", str(repo_path), "main")
+    repo_id = repo["id"]
+    card = store.create_card(board_id, repo_id, "waiting card", leases=["x"])
+    store.update_card(card["id"], status="checking")
+    _merge(store, card["id"], "https://x/pull/9")
+    from smortboard.exec.worktrees import branch_name, worktree_path
+
+    tree = worktree_path(repo_path, card["id"])
+    tree.mkdir(parents=True)
+    return card["id"], tree, branch_name(card["id"])
+
+
+def _stub_git_plumbing(monkeypatch, *, has_remote=True, fetch_ok=True):
+    monkeypatch.setattr(scheduler_module, "has_remote", lambda *a, **k: has_remote)
+    monkeypatch.setattr(scheduler_module, "fetch_base", lambda *a, **k: fetch_ok)
+
+
+def test_a_clean_behind_branch_is_merged_and_pushed(store, board_and_repo, tmp_path, monkeypatch):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    card_id, tree, branch = _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    _stub_git_plumbing(monkeypatch)
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a, **k: MergeSyncResult(clean=True, behind=True),
+    )
+    pushed = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "merge_branch",
+        lambda *a, **k: MergeSyncResult(clean=True, behind=True, merged=True),
+    )
+    monkeypatch.setattr(
+        scheduler_module, "push_branch", lambda repo_path, br, **k: pushed.append(br) or True
+    )
+
+    scheduler_module._sweep_checking_prs(store, board_id)
+
+    assert pushed == [branch]
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] is None
+
+
+def test_a_conflicting_behind_branch_is_flagged_merge_conflict(
+    store, board_and_repo, tmp_path, monkeypatch
+):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    card_id, tree, branch = _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    _stub_git_plumbing(monkeypatch)
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a, **k: MergeSyncResult(
+            clean=False, behind=True, conflicting_files=["a.py", "b.py"]
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler_module, "merge_branch", lambda *a, **k: pytest.fail("must not merge for real")
+    )
+    monkeypatch.setattr(
+        scheduler_module, "push_branch", lambda *a, **k: pytest.fail("must not push a conflict")
+    )
+
+    scheduler_module._sweep_checking_prs(store, board_id)
+
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] == "MERGE_CONFLICT"
+    note = card["comments"][-1]["body"]
+    assert "a.py" in note and "b.py" in note
+    events = [e for e in store.list_events(card_id) if e["kind"] == "merge_conflict"]
+    assert events and events[-1]["payload"]["files"] == ["a.py", "b.py"]
+
+
+def test_a_not_behind_branch_is_left_alone(store, board_and_repo, tmp_path, monkeypatch):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    card_id, tree, branch = _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    _stub_git_plumbing(monkeypatch)
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a, **k: MergeSyncResult(clean=True, behind=False),
+    )
+    monkeypatch.setattr(
+        scheduler_module, "merge_branch", lambda *a, **k: pytest.fail("nothing to merge")
+    )
+
+    scheduler_module._sweep_checking_prs(store, board_id)
+
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] is None
+
+
+def test_the_sweep_is_throttled_per_repo(store, board_and_repo, tmp_path, monkeypatch):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    card_id, tree, branch = _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    _stub_git_plumbing(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a, **k: calls.append(1) or MergeSyncResult(clean=True, behind=False),
+    )
+
+    scheduler_module._sweep_checking_prs(store, board_id)
+    scheduler_module._sweep_checking_prs(store, board_id)
+
+    assert calls == [1]  # the second call landed inside the 5-minute throttle window
+
+
+def test_the_sweep_reads_a_non_main_default_branch(store, board_and_repo, tmp_path, monkeypatch):
+    """a repo pointed at "development" is synced against origin/development, never origin/main"""
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo = store.create_repo(board_id, "r2", str(repo_path), "development")
+    card = store.create_card(board_id, repo["id"], "waiting card", leases=["x"])
+    store.update_card(card["id"], status="checking")
+    _merge(store, card["id"], "https://x/pull/10")
+    from smortboard.exec.worktrees import worktree_path
+
+    worktree_path(repo_path, card["id"]).mkdir(parents=True)
+
+    _stub_git_plumbing(monkeypatch)
+    fetched = []
+    monkeypatch.setattr(
+        scheduler_module, "fetch_base", lambda path, base, **k: fetched.append(base) or True
+    )
+    checked = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda tree, branch, base_ref: (
+            checked.append(base_ref) or MergeSyncResult(clean=True, behind=False)
+        ),
+    )
+
+    scheduler_module._sweep_checking_prs(store, board_id)
+
+    assert fetched == ["development"]
+    assert checked == ["origin/development"]
