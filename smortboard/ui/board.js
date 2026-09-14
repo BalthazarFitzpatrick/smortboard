@@ -100,10 +100,10 @@ async function onBoardEnter(boardId) {
 function renderBuckets(cards) {
   const row = document.getElementById('bucket-row');
   STATUSES.forEach(status => {
-    const bucket = row.querySelector(`.bucket[data-status="${status}"] .bucket-rows`);
+    const bucketEl = row.querySelector(`.bucket[data-status="${status}"]`);
     // a blocked card still belongs to a column: it keeps the status it was in and carries the
     // reason code, so it renders in place with the gold outline rather than vanishing
-    renderBucketColumn(bucket, cards.filter(c => c.status === status));
+    renderBucketColumn(bucketEl, cards.filter(c => c.status === status), status);
   });
   refreshBucketNav();
   // the cream marker glides to whatever took focus, rather than every card drawing its own ring.

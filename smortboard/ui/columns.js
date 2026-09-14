@@ -94,19 +94,16 @@ window.addEventListener('resize', () => {
   }, 150);
 });
 
-// ---- progressive column density: collapse an overflowing column through three tiers -----------
-// tier 1 is renderCardStrip's normal fan card. tier 2 collapses every strip to a title-only chip
-// (same element, a css class). tier 3 additionally folds the doing cards into one aggregate slot
-// and the attention/blocked cards into another, leaving the rest as chips. board.js's renderBuckets
-// calls renderBucketColumn per status column; card_panel.js's renderCardStrip builds every real
-// card, here or collapsed - this file only decides which tier fits and wires the accordion/draw-out
+// ---- dense column presentation: a full column as itself, or two full cards top and bottom with
+// a pile of card-edges holding the rest ---------------------------------------------------------
+// board.js's renderBuckets calls renderBucketColumn per status column, passing the .bucket element
+// (label + rows) and the column's status; card_panel.js's renderCardStrip builds every real card,
+// full-size whether it sits at rest or mid-excursion. presentation only - never touches card status
+// or any stored state, only which cards are drawn full vs folded into a pile right now
 
-const CARD_STRIP_HEIGHT = 210; // a fanned card's typical height - tier 1's own budget line
-// both match layout.css's fixed heights, which cannot read these constants: a chip is two title
-// rows plus padding (.card-chip), an aggregate is "2-title-tall" (.card-aggregate)
-const CHIP_HEIGHT = 58;
-const AGGREGATE_HEIGHT = 112;
+const CARD_STRIP_HEIGHT = 210; // a fanned card's typical height - the budget line for "fits at all"
 const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
+const MIN_PILED_CARDS = 5; // below this, 2 full + pile + 2 full has nothing left to pile - all full
 
 function stackHeight(count, rowHeight) {
   return count ? count * rowHeight + (count - 1) * BUCKET_ROW_GAP : 0;
@@ -116,58 +113,76 @@ function isAttentionCard(card) {
   return !!(card.blocked_reason_code || card.review_flag);
 }
 
-// groups the doing cards into one aggregate slot and the attention/blocked cards into another,
-// each placed where its first member would otherwise have sat - every other card stays a chip.
-// ORDER: leading chips, then the doing aggregate, then the attention/vanilla one, then trailing
-// chips - the fixed order the card asks for, not a second sort keyed off card position
-function buildAggregateItems(cards) {
-  const doingCards = cards.filter(c => c.status === 'doing' && !isAttentionCard(c));
-  const attentionCards = cards.filter(isAttentionCard);
-  const grouped = new Set([...doingCards, ...attentionCards]);
-  const firstGroupedIndex = cards.findIndex(c => grouped.has(c));
-  const leading = firstGroupedIndex === -1 ? cards.filter(c => !grouped.has(c))
-    : cards.slice(0, firstGroupedIndex).filter(c => !grouped.has(c));
-  const trailing = cards.filter(c => !grouped.has(c) && !leading.includes(c));
-  const items = leading.map(card => ({type: 'chip', card}));
-  if (doingCards.length) items.push({type: 'aggregate', status: 'doing', cards: doingCards});
-  if (attentionCards.length) items.push({type: 'aggregate', status: 'attention', cards: attentionCards});
-  trailing.forEach(card => items.push({type: 'chip', card}));
-  return items;
+// one letter per column status, plus attention - accepted borrows 'v' and rejected 'r' so neither
+// collides with attention's own 'a' (ambiguity call, see the PR notes)
+const STATUS_LETTER = {todo: 't', doing: 'd', checking: 'c', accepted: 'v', rejected: 'r'};
+const STATUS_NAME = {todo: 'to do', doing: 'doing', checking: 'checking', accepted: 'accepted', rejected: 'rejected'};
+const LETTER_ORDER = ['d', 'a', 't', 'c', 'v', 'r'];
+
+// doing first, then attention (blocked or flagged), then everything else - stable within each group
+function sortColumnCards(cards) {
+  const rank = card => (card.status === 'doing' && !isAttentionCard(card)) ? 0 : isAttentionCard(card) ? 1 : 2;
+  return [...cards].sort((a, b) => rank(a) - rank(b));
 }
 
-// pure: given a column's cards and the height actually available, picks the tier and the items to
-// render at it. measured against real height (see availableColumnHeight), never a hard-coded card
-// count, per the card's own rule
-function pickColumnPlan(cards, availableHeight) {
-  if (!cards.length) return {tier: 1, items: []};
-  if (stackHeight(cards.length, CARD_STRIP_HEIGHT) <= availableHeight) {
-    return {tier: 1, items: cards.map(card => ({type: 'card', card}))};
-  }
-  const chipItems = cards.map(card => ({type: 'chip', card}));
-  if (stackHeight(cards.length, CHIP_HEIGHT) <= availableHeight) {
-    return {tier: 2, items: chipItems};
-  }
-  return {tier: 3, items: fitAggregateItems(buildAggregateItems(cards), availableHeight)};
+// letter -> count, for a header (every card in the column) or a pile (whatever it holds) alike -
+// a card's letter is 'a' if it needs attention, otherwise its column's own letter
+function letterCounts(cards, status) {
+  const counts = {};
+  cards.forEach(card => {
+    const letter = isAttentionCard(card) ? 'a' : STATUS_LETTER[status];
+    counts[letter] = (counts[letter] || 0) + 1;
+  });
+  return counts;
 }
 
-function itemsHeight(items) {
-  const rows = items.reduce((sum, item) => sum + (item.type === 'aggregate' ? AGGREGATE_HEIGHT : CHIP_HEIGHT), 0);
-  return rows + Math.max(0, items.length - 1) * BUCKET_ROW_GAP;
+// one state present -> the bare number. several -> "d: 3 | a: 2", each count in its state's color
+function countsNode(counts) {
+  const letters = LETTER_ORDER.filter(l => counts[l]);
+  const node = document.createElement('span');
+  node.className = 'bucket-counts';
+  if (letters.length <= 1) {
+    node.textContent = String(Object.values(counts).reduce((a, b) => a + b, 0));
+    return node;
+  }
+  letters.forEach((letter, i) => {
+    if (i) node.appendChild(document.createTextNode(' | '));
+    const span = document.createElement('span');
+    span.className = `count-${letter}`;
+    span.textContent = `${letter}: ${counts[letter]}`;
+    node.appendChild(span);
+  });
+  return node;
 }
 
-// THE WHOLE COLUMN STAYS ON SCREEN. a column of plain cards has nothing for the doing or attention
-// aggregate to hold, so tier 3 alone still ran off the bottom - the chips the height leaves no room
-// for fold into one last "more" aggregate, drawn out one at a time like the others
-function fitAggregateItems(items, availableHeight) {
-  if (itemsHeight(items) <= availableHeight) return items;
-  const kept = [...items];
-  const more = {type: 'aggregate', status: 'more', cards: []};
-  while (itemsHeight([...kept, more]) > availableHeight) {
-    const last = kept.map(item => item.type).lastIndexOf('chip');
-    if (last === -1) break;
-    more.cards.unshift(kept.splice(last, 1)[0].card);
-  }
-  return more.cards.length ? [...kept, more] : kept;
+// column name left, counts right - counts cover the whole column, piled cards included, since they
+// are read off the same `cards` array the pile layout is built from, not off what is drawn full
+function renderColumnHeader(bucketEl, cards, status) {
+  const label = bucketEl.querySelector('.bucket-label');
+  if (!label) return;
+  label.innerHTML = '';
+  const name = document.createElement('span');
+  name.className = 'bucket-name';
+  name.textContent = STATUS_NAME[status] || status;
+  const expandBtn = document.createElement('button');
+  expandBtn.type = 'button';
+  expandBtn.className = 'bucket-expand';
+  expandBtn.addEventListener('click', () => toggleExpand(bucketEl));
+  const right = document.createElement('span');
+  right.className = 'bucket-header-right';
+  right.append(countsNode(letterCounts(cards, status)), expandBtn);
+  label.append(name, right);
+  updateExpandButton(bucketEl);
+}
+
+function updateExpandButton(bucketEl) {
+  const bucketRowsEl = bucketEl.querySelector('.bucket-rows');
+  const expandBtn = bucketEl.querySelector('.bucket-expand');
+  const state = bucketRowsEl?._pile;
+  if (!expandBtn || !state) return;
+  const pileable = !state.fits && state.sorted.length >= MIN_PILED_CARDS;
+  expandBtn.hidden = !pileable;
+  expandBtn.textContent = state.expanded ? 'collapse' : 'expand';
 }
 
 // the room a column actually has below its own top, down to the viewport's bottom edge - real
@@ -177,100 +192,177 @@ function availableColumnHeight(bucketRowsEl) {
   return Math.max(0, (window.innerHeight || 0) - top - 24);
 }
 
-function aggregateLabel(status) {
-  return status === 'doing' || status === 'more' ? status : 'attention';
+// deterministic per card id (a hash, never Math.random) so a re-render does not twitch the pile
+function hashSeed(id) {
+  let h = 0;
+  const s = String(id);
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
 }
 
-// the 2-title-tall placeholder: only a status label and a count, per the card - never a real card's
-// own title or body. 'row' so buckets.js's roving-tabindex nav treats it like any other focusable
-function renderAggregateRow(item) {
+// a stack of real card edges behind the top one - a few offset layers, tiny deterministic jitter
+function buildPileRow(cards, status) {
   const el = document.createElement('div');
-  el.className = `row card-aggregate card-aggregate-${item.status}`;
+  el.className = 'row card-pile';
   el.tabIndex = -1;
-  el.dataset.aggregateStatus = item.status;
-  const label = document.createElement('span');
-  label.className = 'aggregate-label';
-  label.textContent = aggregateLabel(item.status);
-  const count = document.createElement('span');
-  count.className = 'aggregate-count';
-  count.textContent = String(item.cards.length);
-  el.append(label, count);
-  el._cards = item.cards.slice();
+  el.dataset.pile = 'true';
+  const layers = Math.min(cards.length, 4);
+  for (let i = layers - 1; i >= 0; i--) {
+    const seed = hashSeed(cards[i].id);
+    const layer = document.createElement('div');
+    layer.className = 'card-pile-layer';
+    const angle = ((seed % 7) - 3) * 0.7;
+    const dx = (seed % 5) - 2;
+    layer.style.transform = `translate(${dx}px, ${-i * 3}px) rotate(${angle}deg)`;
+    el.appendChild(layer);
+  }
+  const count = document.createElement('div');
+  count.className = 'card-pile-count';
+  count.appendChild(countsNode(letterCounts(cards, status)));
+  el.appendChild(count);
+  el.addEventListener('click', () => expandColumnFor(el));
+  el._cards = cards;
   return el;
 }
 
-// fan-item is base.css's stacked-deck look for tier 1 only - a chip (collapsed or, mid-accordion,
-// briefly expanded) sits in a plain list among its still-collapsed siblings, and the -80% margin
-// that makes a fan a fan would just pile every chip on top of the first one
-function markChip(strip) {
-  strip.classList.remove('fan-item');
-  strip.classList.add('card-chip');
-}
-
-// tracks which strip is expanded out of its column's collapsed tier, so a second focus elsewhere
-// collapses the first back down - accordion, one card open at a time, per the card
-let expandedChipStrip = null;
-
-function collapseChip(strip) {
-  if (strip && strip !== expandedChipStrip) return;
-  if (strip) strip.classList.add('card-chip');
-  if (expandedChipStrip === strip) expandedChipStrip = null;
-}
-
-// the focused strip fans out to its normal size; whatever was expanded before collapses back to a
-// chip. a tier 1 strip (never carries card-chip) is left alone - there is nothing to accordion
-function expandChip(strip) {
-  if (!strip.classList.contains('card-chip') && strip !== expandedChipStrip) return;
-  if (expandedChipStrip && expandedChipStrip !== strip) collapseChip(expandedChipStrip);
-  strip.classList.remove('card-chip');
-  expandedChipStrip = strip;
-}
-
-// focusing an aggregate reveals its next card, one at a time, as a real (collapsed) chip inserted
-// just before the placeholder - and decrements the count. the placeholder itself is removed, its
-// spot taken by the newly drawn chip, once its count reaches zero
-function drawFromAggregate(aggregateEl) {
-  const cards = aggregateEl._cards;
-  if (!cards || !cards.length) return;
-  const card = cards.shift();
+function buildFullRow(card, idx) {
   const strip = renderCardStrip(card);
-  markChip(strip);
-  aggregateEl.parentNode.insertBefore(strip, aggregateEl);
-  aggregateEl.querySelector('.aggregate-count').textContent = String(cards.length);
-  if (!cards.length) aggregateEl.remove();
-  refreshBucketNav();
-  strip.focus();
-  indicateFocus(strip);
+  strip.dataset.idx = String(idx);
+  return strip;
 }
 
-// wires the accordion (expand the focused chip, collapse the last one) and the aggregate draw-out
-// on top of buckets.js's own roving focus - ONCE PER ELEMENT, NOT PER RENDER. renderBucketColumn
-// runs on every board switch and poll; the persistent .bucket-rows node survives each of those
-// (only its children are replaced), so a plain addEventListener here would stack a duplicate
-// listener per render - and a duplicate handler drew a whole aggregate out in one focus instead
-// of one card at a time, which is how this got caught
+// pure: sorted cards, the index currently focused (or null - no excursion yet), and which edge the
+// excursion started from -> the ordered list of rows to draw. at rest (or at either edge) the
+// fixed first two and last two are full and everything between is one pile. mid-excursion, the
+// anchor's own pair (the edge the user came from) stays full and fixed while the OTHER pair moves
+// with focus - a top-anchored excursion piles passed cards at the top, a bottom-anchored one piles
+// them at the bottom, and the shrinking middle pile sits between the two moving/fixed pairs either way
+function computePileLayout(sorted, focusIndex, anchor) {
+  const n = sorted.length;
+  const inMiddle = focusIndex != null && anchor && focusIndex >= 2 && focusIndex <= n - 3;
+  const out = [];
+  const card = idx => ({type: 'card', idx, card: sorted[idx]});
+  const pile = (from, to) => { if (to >= from) out.push({type: 'pile', cards: sorted.slice(from, to + 1)}); };
+  if (!inMiddle) {
+    out.push(card(0), card(1));
+    pile(2, n - 3);
+    out.push(card(n - 2), card(n - 1));
+    return out;
+  }
+  if (anchor === 'top') {
+    pile(0, focusIndex - 2);
+    out.push(card(focusIndex - 1), card(focusIndex));
+    pile(focusIndex + 1, n - 3);
+    out.push(card(n - 2), card(n - 1));
+  } else {
+    out.push(card(0), card(1));
+    pile(2, focusIndex - 1);
+    out.push(card(focusIndex), card(focusIndex + 1));
+    pile(focusIndex + 2, n - 1);
+  }
+  return out;
+}
+
+// redraws bucketRowsEl from its own _pile state - expanded and "fits anyway" both mean every card
+// full in one plain list; otherwise the excursion-aware split above
+function drawColumn(bucketRowsEl) {
+  const state = bucketRowsEl._pile;
+  bucketRowsEl.innerHTML = '';
+  if (!state) return;
+  const {sorted, status} = state;
+  if (state.expanded || state.fits || sorted.length < MIN_PILED_CARDS) {
+    sorted.forEach((c, idx) => bucketRowsEl.appendChild(buildFullRow(c, idx)));
+    bucketRowsEl.style.maxHeight = state.expanded && !state.fits ? `${availableColumnHeight(bucketRowsEl)}px` : '';
+    bucketRowsEl.classList.toggle('bucket-rows-expanded', !!state.expanded && !state.fits);
+    return;
+  }
+  bucketRowsEl.style.maxHeight = '';
+  bucketRowsEl.classList.remove('bucket-rows-expanded');
+  computePileLayout(sorted, state.focusIndex, state.anchor).forEach(entry => {
+    bucketRowsEl.appendChild(entry.type === 'pile' ? buildPileRow(entry.cards, status) : buildFullRow(entry.card, entry.idx));
+  });
+}
+
+function focusPileIndex(bucketRowsEl, idx) {
+  bucketRowsEl.children.forEach(row => { row.tabIndex = -1; });
+  const target = bucketRowsEl.children.find(row => row.dataset.idx === String(idx));
+  if (!target) return;
+  target.tabIndex = 0;
+  target.focus();
+  indicateFocus(target);
+}
+
+// ArrowDown/Up inside a piled column, intercepted ahead of buckets.js's own roving nav (see
+// wireColumnFocus) so a press draws the next card off the pile instead of landing focus on the
+// pile itself. idx 0 going up, or the last idx going down, falls through untouched - buckets.js's
+// default nav exits the column (onExitTop) or clamps in place, same as any other column
+function handlePileKey(bucketRowsEl, evt) {
+  const state = bucketRowsEl._pile;
+  if (!state || state.expanded || state.fits || state.sorted.length < MIN_PILED_CARDS) return;
+  if (evt.key !== 'ArrowDown' && evt.key !== 'ArrowUp') return;
+  const n = state.sorted.length;
+  const row = evt.target.closest?.('[data-idx]');
+  const idx = row ? Number(row.dataset.idx) : (state.focusIndex ?? 0);
+  const dir = evt.key === 'ArrowDown' ? 1 : -1;
+  if (dir === 1 && idx >= n - 1) return;
+  if (dir === -1 && idx <= 0) return;
+  const nextIdx = idx + dir;
+  const nextInMiddle = nextIdx >= 2 && nextIdx <= n - 3;
+  let anchor = state.anchor;
+  if (!nextInMiddle) anchor = null;
+  else if (!anchor) anchor = idx <= 1 ? 'top' : idx >= n - 2 ? 'bottom' : (dir === 1 ? 'top' : 'bottom');
+  state.focusIndex = nextIdx;
+  state.anchor = anchor;
+  evt.preventDefault();
+  evt.stopPropagation();
+  drawColumn(bucketRowsEl);
+  focusPileIndex(bucketRowsEl, nextIdx);
+}
+
+function toggleExpand(bucketEl) {
+  const bucketRowsEl = bucketEl.querySelector('.bucket-rows');
+  const state = bucketRowsEl?._pile;
+  if (!state) return;
+  state.expanded = !state.expanded;
+  drawColumn(bucketRowsEl);
+  updateExpandButton(bucketEl);
+  refreshBucketNav();
+}
+
+function expandColumnFor(pileEl) {
+  const bucketRowsEl = pileEl.closest('.bucket-rows');
+  const state = bucketRowsEl?._pile;
+  if (!state) return;
+  state.expanded = true;
+  drawColumn(bucketRowsEl);
+  const bucketEl = bucketRowsEl.closest('.bucket');
+  if (bucketEl) updateExpandButton(bucketEl);
+  refreshBucketNav();
+}
+
+// wires the pile key interception and keeps _pile.focusIndex in step with plain (mouse/tab) focus
+// moves - ONCE PER ELEMENT, NOT PER RENDER. renderBucketColumn runs on every board switch and poll;
+// the persistent .bucket-rows node survives each of those (only its children are replaced), so a
+// plain addEventListener here would stack a duplicate listener per render
 function wireColumnFocus(bucketRowsEl) {
   if (bucketRowsEl._densityWired) return;
   bucketRowsEl._densityWired = true;
+  bucketRowsEl.addEventListener('keydown', evt => handlePileKey(bucketRowsEl, evt), {capture: true});
   bucketRowsEl.addEventListener('focusin', evt => {
-    const row = evt.target.closest('.row');
-    if (!row) return;
-    if (row.classList.contains('card-aggregate')) { drawFromAggregate(row); return; }
-    expandChip(row);
+    const row = evt.target.closest?.('[data-idx]');
+    if (row && bucketRowsEl._pile) bucketRowsEl._pile.focusIndex = Number(row.dataset.idx);
   });
 }
 
-// builds one status column at whichever tier its available height picks, replacing bucketRowsEl's
-// contents - card_panel.js's renderCardStrip renders every real card, tier 1 or collapsed alike
-function renderBucketColumn(bucketRowsEl, cards) {
-  bucketRowsEl.innerHTML = '';
-  expandedChipStrip = null;
-  const {items} = pickColumnPlan(cards, availableColumnHeight(bucketRowsEl));
-  items.forEach(item => {
-    if (item.type === 'aggregate') { bucketRowsEl.appendChild(renderAggregateRow(item)); return; }
-    const strip = renderCardStrip(item.card);
-    if (item.type === 'chip') markChip(strip);
-    bucketRowsEl.appendChild(strip);
-  });
+// builds one status column - every card full if it fits (or expanded, or too few to pile), else
+// two full top, a pile, two full bottom - replacing bucketEl's header and rows. card_panel.js's
+// renderCardStrip renders every real card, full-size whether at rest or mid-excursion
+function renderBucketColumn(bucketEl, cards, status) {
+  const bucketRowsEl = bucketEl.querySelector('.bucket-rows');
+  const sorted = sortColumnCards(cards);
+  const fits = stackHeight(sorted.length, CARD_STRIP_HEIGHT) <= availableColumnHeight(bucketRowsEl);
+  bucketRowsEl._pile = {sorted, status, fits, focusIndex: null, anchor: null, expanded: bucketRowsEl._pile?.expanded || false};
+  renderColumnHeader(bucketEl, cards, status);
+  drawColumn(bucketRowsEl);
   wireColumnFocus(bucketRowsEl);
 }
