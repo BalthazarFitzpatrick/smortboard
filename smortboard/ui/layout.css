@@ -130,6 +130,10 @@ body {
 .card-strip.card-accepted { border-color: var(--status-good); }
 /* focus is indicate.js's gliding marker, not a ring drawn by each card */
 .card-strip:focus-visible { outline: none; }
+/* the focused card is the one being read: a touch larger and its own colours a step more intense.
+   transform keeps the fan's 140ms slide, and indicate.js re-places its marker once this settles */
+.card-strip { transition: transform 140ms, filter 140ms; }
+.card-strip:focus { transform: scale(1.03); filter: saturate(1.4) brightness(1.15); z-index: 2; }
 
 /* ---- progressive column density: tier 2/3 chips and tier 3's aggregate placeholder -----------
    the chip is the same .card-strip renderCardStrip always builds - only a class away from the
