@@ -107,6 +107,7 @@ _ROUTES = [
     (re.compile(r"^/api/attention$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/answer$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/lease/approve$"), "POST"),
+    (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)/lease/(?P<lease_id>[^/]+)$"), "DELETE"),
     (re.compile(r"^/api/profiles$"), "GET"),
     (re.compile(r"^/api/profiles$"), "POST"),
     (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)/activate$"), "POST"),
@@ -222,6 +223,8 @@ def _make_handler(
                 self._handle_create_repo(params["board_id"])
             elif "repo_id" in params and method == "PATCH":
                 self._handle_patch_repo(params["repo_id"])
+            elif "lease_id" in params and method == "DELETE":
+                self._handle_forget_lease(params["repo_id"], params["lease_id"])
             elif path == "/api/cards" and method == "POST":
                 body = self._read_json()
                 card = store.create_card(**body)
@@ -416,8 +419,14 @@ def _make_handler(
             refused paths and resume. 400 for an empty/invalid path list or a bad glob, 404 for an
             unknown card, 409 when the card is not blocked on LEASE_CONFLICT or the resume itself
             is refused (the lease stays widened either way - see attention.approve_lease).
+
+            `remember: true` also adds the same paths to the repo's remembered globs, so a later
+            card on this repo is never asked again - always the operator's explicit tick, never
+            implied by a plain approve.
             """
-            paths = self._read_json().get("paths")
+            body = self._read_json()
+            paths = body.get("paths")
+            remember = bool(body.get("remember"))
             try:
                 state = approve_lease(store, runs, card_id, paths)
             except ValueError as exc:
@@ -426,7 +435,15 @@ def _make_handler(
             except AnswerRefused as exc:
                 self._send_json(409, {"error": str(exc)})
                 return
+            if remember:
+                repo_id = store.get_card(card_id)["repo_id"]
+                if repo_id:
+                    store.remember_lease_paths(repo_id, paths)
             self._send_json(202, state)
+
+        def _handle_forget_lease(self, repo_id: str, lease_id: str) -> None:
+            """the boards panel's remove on one remembered glob - see Store.forget_lease_path"""
+            self._send_json(200, store.forget_lease_path(repo_id, lease_id))
 
         def _profiles_view(self) -> list[dict]:
             """name, active, present, limited_until only - never the token, per the card's rule"""
