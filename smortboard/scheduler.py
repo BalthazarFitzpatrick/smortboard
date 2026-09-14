@@ -98,9 +98,8 @@ def globs_may_overlap(a: str, b: str) -> bool:
 
 def _leases_conflict(globs_a: list[str], globs_b: list[str]) -> bool:
     # AN EMPTY LEASE TOUCHES NOTHING, NOT EVERYTHING. the hook the lease compiles to
-    # (exec/leases.py) is `any(fnmatch(rel, glob) for glob in globs)` - over an empty list that is
-    # False for every path. the lifecycle refuses such a card before its agent runs, so this only
-    # keeps it from holding anyone else up
+    # (exec/leases.py lease_allows) is False for every path over an empty list. the lifecycle
+    # refuses such a card before its agent runs, so this only keeps it from holding anyone else up
     if not globs_a or not globs_b:
         return False
     return any(globs_may_overlap(a, b) for a in globs_a for b in globs_b)
