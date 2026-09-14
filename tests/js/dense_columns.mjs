@@ -44,6 +44,18 @@ function card(id, status, extra = {}) {
     'doing group first, then attention, then the rest, each group in its original order');
 }
 
+// ---- within doing: a card a live agent actually holds ranks above one the board only retries
+// on a timer (9bd5a207) ----------------------------------------------------------------------
+
+{
+  const held = card('h1', 'doing', {blocked_reason_code: 'API_UNREACHABLE', handled_by_board: true});
+  const live1 = card('l1', 'doing');
+  const live2 = card('l2', 'doing');
+  const sorted = mod.sortColumnCards([held, live1, live2]);
+  assert.deepEqual(sorted.map(c => c.id), ['l1', 'l2', 'h1'],
+    'a card a live agent holds sorts above one the board is only retrying automatically');
+}
+
 // ---- buildColumn: a bucket element (label + rows), the height buildColumn's caller wants --------
 
 function buildColumn(availableHeight, cards, status = 'todo') {

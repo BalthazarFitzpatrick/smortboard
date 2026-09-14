@@ -132,7 +132,6 @@ const plain = mod.renderCardStrip({id: 'w2', title: 't', status: 'todo'});
 assert.ok(plain.innerHTML.includes('<span class="card-action card-action-quiet" title="">Run</span>'),
   'a quiet card still shows its status note');
 
-// ---- every card shows its 8-char short-id, muted/monospace metadata beside the title
+// ---- the overview no longer shows the short-id (9bd5a207) - it moved into the opened detail
 const idCard = mod.renderCardStrip({id: '6a05dc01-4225-4f11-9167-77ff40069c8a', title: 't', status: 'todo'});
-assert.ok(idCard.innerHTML.includes('<span class="card-id">6a05dc01</span>'),
-  'the card shows the first 8 chars of its id as a card-id span');
+assert.ok(!idCard.innerHTML.includes('card-id'), 'the overview strip carries no short-id span');

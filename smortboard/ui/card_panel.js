@@ -64,6 +64,30 @@ function shortId(id) {
   return String(id).slice(0, 8);
 }
 
+const SUMMARY_WORD_LIMIT = 14;
+// an ALL-CAPS line ending in a colon - "GOAL:", "OUT OF SCOPE:", "RULES:" - is a section header,
+// not content, so it never survives into the overview's one-line summary
+const SECTION_HEADER_RE = /^[A-Z][A-Z ]*:$/;
+
+// the overview's plain <=14-word summary (9bd5a207): strips section headers and bullet markers,
+// keeps the first content it finds, cut to the word limit. the opened card panel still shows the
+// full description untouched - this is a derived view, never a second stored field
+function summarizeDescription(description) {
+  const words = [];
+  for (const rawLine of String(description || '').split('\n')) {
+    const line = rawLine.trim();
+    if (!line || SECTION_HEADER_RE.test(line)) continue;
+    const cleaned = line.replace(/^[-*]\s*/, '');
+    for (const word of cleaned.split(/\s+/)) {
+      if (!word) continue;
+      words.push(word);
+      if (words.length >= SUMMARY_WORD_LIMIT) break;
+    }
+    if (words.length >= SUMMARY_WORD_LIMIT) break;
+  }
+  return words.join(' ');
+}
+
 // the compact note's colour follows the action it names, not a flat grey line - attention wins
 // (the same red the card's own border wears), otherwise doing/running reads as the working green,
 // checking/accepted borrow the colour their own column state already uses elsewhere, and a plain
@@ -96,9 +120,9 @@ function renderCardStrip(card) {
   const actionHtml = `<span class="card-action ${actionClass}" ` +
     `title="${escapeHtml(card.blocked_reason_code || card.next_action || '')}">${escapeHtml(label)}</span>`;
   strip.innerHTML = `
-    <div class="card-head"><div class="card-title">${escapeHtml(card.title)}</div><span class="card-id">${escapeHtml(shortId(card.id))}</span></div>
+    <div class="card-head"><div class="card-title">${escapeHtml(card.title)}</div></div>
     <div class="h-divider"></div>
-    <div class="card-body">${escapeHtml(card.description || '')}</div>
+    <div class="card-body">${escapeHtml(summarizeDescription(card.description))}</div>
     <div class="h-divider"></div>
     <div class="card-foot">
       ${actionHtml}
@@ -114,7 +138,9 @@ function renderCardStrip(card) {
   overflow.className = 'toggle card-overflow';
   overflow.title = 'edit, delete, change model, move status';
   overflow.textContent = '⋯';
-  overflow.onclick = () => openCardOverflowMenu(card.id, overflow);
+  // stop here - strip.addEventListener('click', open) (ui_base's expander) would otherwise also
+  // open the card behind the menu, since a plain click bubbles up from this child
+  overflow.onclick = evt => { evt.stopPropagation(); openCardOverflowMenu(card.id, overflow); };
   strip.appendChild(overflow);
   const expander = makeExpander(strip, {
     // THREE TIMES THE DEFAULT WIDTH. at 1:3 an open card was a narrow column that wrapped every
@@ -316,7 +342,7 @@ function cardPanelHtml(card, outcome) {
   const next = card.next_action ? `<div class="card-next">next: ${escapeHtml(card.next_action)}</div>` : '';
   return `
     <div class="card-sections">
-      ${sectionHtml('title', 'title', escapeHtml(card.title))}
+      ${sectionHtml('title', 'title', `${escapeHtml(card.title)} <span class="card-id">${escapeHtml(shortId(card.id))}</span>`)}
       ${sectionHtml('workstream', 'workstream', escapeHtml(card.workstream || '') || '<span class="empty">none</span>')}
       ${sectionHtml('status', 'status', `${next}${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div><div class="card-model">lease: ${lease}</div>`)}
       ${outcomeSectionHtml(outcome, card)}
