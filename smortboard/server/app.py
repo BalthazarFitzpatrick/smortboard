@@ -30,6 +30,7 @@ from smortboard.orchestrator import (
 from smortboard.preflight import run_preflight
 from smortboard.prompts import ROLES
 from smortboard.pulls import open_pull_requests
+from smortboard.repo_image import build_repo_image
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
@@ -65,6 +66,7 @@ _ROUTES = [
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "POST"),
     (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)$"), "PATCH"),
+    (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)/image/build$"), "POST"),
     (re.compile(r"^/api/cards$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "PATCH"),
@@ -226,6 +228,8 @@ def _make_handler(
                 self._handle_create_repo(params["board_id"])
             elif "repo_id" in params and method == "PATCH":
                 self._handle_patch_repo(params["repo_id"])
+            elif "repo_id" in params and path.endswith("/image/build") and method == "POST":
+                self._handle_build_repo_image(params["repo_id"])
             elif "lease_id" in params and method == "DELETE":
                 self._handle_forget_lease(params["repo_id"], params["lease_id"])
             elif path == "/api/cards" and method == "POST":
@@ -617,6 +621,20 @@ def _make_handler(
             if "image" in body:
                 repo = store.set_repo_image(repo_id, body["image"])
             self._send_json(200, repo)
+
+        def _handle_build_repo_image(self, repo_id: str) -> None:
+            """builds this repo's own test image and sets it as the repo's image on success.
+
+            404 for an unknown repo; 400 with the build's log tail on a failed or unrecognised
+            build - the operator reads the reason in the panel, not a terminal.
+            """
+            repo = store.get_repo(repo_id)
+            result = build_repo_image(repo)
+            if not result.ok:
+                self._send_json(400, {"error": result.log, "stack": result.stack})
+                return
+            updated = store.set_repo_image(repo_id, result.tag)
+            self._send_json(200, {**updated, "build_log": result.log})
 
         def _handle_patch_task(self, task_id: str) -> None:
             # only "done" is exposed here - add_task/remove_task stay store-only, for a human
