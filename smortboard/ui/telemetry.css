@@ -20,3 +20,16 @@
 .cost-rows .progress-row { margin: 0; }
 .cost-foot { flex-direction: column; align-items: flex-start; gap: 4px; }
 .cost-foot .cost-note { color: var(--text-dim); }
+
+/* the redesigned summary 1db20994 asked for: the total leads, then one box per outcome group,
+   both readable before a scan ever reaches the per-board table below them */
+.cost-total { font-size: 1.1em; }
+.cost-groups { display: flex; gap: 14px; margin-top: 4px; }
+.cost-group {
+  flex: 1 1 0; display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--cream); padding: 8px 10px; font-variant-numeric: tabular-nums;
+}
+.cost-group-title { color: var(--text-dim); }
+.cost-group-figure { font-weight: 600; }
+.cost-group-accepted { border-color: var(--status-good); }
+.cost-group-refused { border-color: var(--fill-warn); }

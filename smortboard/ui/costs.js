@@ -6,6 +6,11 @@ function costPerPrLabel(row) {
   return row.cost_per_pr_usd == null ? null : `${formatUsd(row.cost_per_pr_usd)} / pr`;
 }
 
+// an em dash rather than a divide-by-zero when a group holds no cards yet
+function costPerPrCell(costPerPr) {
+  return costPerPr == null ? '—' : formatUsd(costPerPr);
+}
+
 function plural(count, word) {
   return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
@@ -15,6 +20,18 @@ function costCell(text, cls = '') {
   cell.className = cls;
   cell.textContent = text;
   return cell;
+}
+
+// one outcome group (accepted / refused): card count, total spend, spend per pr - the redesigned
+// summary 1db20994 asked for, read straight off outcome_groups so an empty group never divides by
+// zero, it just shows the dash
+function costGroupBox(title, group) {
+  const box = document.createElement('div');
+  box.className = `cost-group cost-group-${title}`;
+  box.appendChild(costCell(`${title} · ${plural(group.cards, 'card')}`, 'cost-group-title'));
+  box.appendChild(costCell(formatUsd(group.cost_usd), 'cost-group-figure'));
+  box.appendChild(costCell(`${costPerPrCell(group.cost_per_pr_usd)} / pr`, 'cost-group-figure'));
+  return box;
 }
 
 const COST_COLUMNS = ['board', 'share', 'spend', 'runs', 'accepted', 'prs', 'per pr', 'on refusals'];
@@ -80,6 +97,18 @@ function costsOverviewSections(data) {
   const total = data.totals.cost_usd || 0;
   const card = document.createElement('div');
   card.className = 'usage-card usage-wide cost-card';
+
+  // the total leads, then the two outcome groups - what a scan of the panel needs first, before
+  // the per-board detail table below it
+  card.appendChild(costCell(`total cost: ${formatUsd(total)}`, 'field-label cost-total'));
+  const groups = data.outcome_groups || {accepted: {cards: 0, cost_usd: 0, cost_per_pr_usd: null},
+    refused: {cards: 0, cost_usd: 0, cost_per_pr_usd: null}};
+  const groupsRow = document.createElement('div');
+  groupsRow.className = 'cost-groups';
+  groupsRow.append(costGroupBox('accepted', groups.accepted), costGroupBox('refused', groups.refused));
+  card.appendChild(groupsRow);
+  card.appendChild(textLine('', 'h-divider'));
+
   const rows = document.createElement('div');
   rows.className = 'cost-rows';
   const head = document.createElement('div');
