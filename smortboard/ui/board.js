@@ -33,7 +33,9 @@ const BINDINGS = [
   {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card', group: 'panels'},
   {code: 'KeyD', label: 'd', action: 'morning digest: pull requests and open questions', group: 'panels'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
-  {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts', group: 'panels'},
+  // one binding row for both: the letter acts on a card elsewhere in this table, shift on the
+  // board - see keyboard_bindings.mjs's frozen count of codes, which a second KeyP row would break
+  {code: 'KeyP', label: 'p / shift+p', action: 'p: orchestrator, worker and reviewer prompts. shift+p: credential profiles', group: 'panels'},
   {code: 'KeyB', label: 'b', action: 'boards and repos: create a board, register a repo', group: 'panels'},
   {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
   {code: 'KeyH', label: 'h', action: 'pre-flight checklist: what is missing before a card can run', group: 'panels'},
@@ -1930,6 +1932,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'Delete') { deleteCard(); return; }
   if (evt.code === 'KeyT') { toggleReplay(); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
+  if (evt.code === 'KeyP' && evt.shiftKey) { evt.preventDefault(); toggleProfilesPanel(); return; }
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
   if (evt.code === 'KeyN') { toggleInboxPanel(); return; }
   if (evt.code === 'KeyH') { evt.preventDefault(); togglePreflightPanel(); return; }
