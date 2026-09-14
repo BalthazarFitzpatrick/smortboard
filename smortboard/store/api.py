@@ -61,6 +61,25 @@ def _check_findings_route(value: str | None) -> None:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
 
 
+def _check_positive_int(name: str, value: Any) -> None:
+    """unset (None) means no cap; anything else must be a positive whole number - zero, a
+    negative number and anything that does not parse as one are all refused. a numeric string
+    passes too (store.set_setting is called directly with one in a few places, same as the
+    settings table always stored these as text before this check existed)."""
+    if value is None:
+        return
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
+    if isinstance(value, str):
+        if not value.strip().lstrip("-").isdigit():
+            raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
+        value = int(value)
+    elif not isinstance(value, int):
+        raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
+
+
 def _check_read_paths(value: Any) -> list[str]:
     """each path absolute after ~ expansion, and an existing folder - the message names the one
     that failed, so the operator knows which row in the panel to fix"""
@@ -151,6 +170,15 @@ class Store:
     def list_boards(self) -> list[dict[str, Any]]:
         rows = self._conn.execute("SELECT * FROM boards ORDER BY position").fetchall()
         return [_row_to_dict(r) for r in rows]
+
+    def set_board_max_parallel(self, board_id: str, value: int | None) -> dict[str, Any]:
+        """this board's own cap, on top of the global one - None means no board-specific limit,
+        just the global max_parallel setting, exactly as if this column never existed"""
+        self.get_board(board_id)  # 404 for an unknown board rather than a silent no-op update
+        _check_positive_int("max_parallel", value)
+        self._conn.execute("UPDATE boards SET max_parallel = ? WHERE id = ?", (value, board_id))
+        self._conn.commit()
+        return self.get_board(board_id)
 
     # -- repos ---------------------------------------------------------------
 
@@ -521,6 +549,8 @@ class Store:
             raise UnknownFieldError(f"no setting {key!r}")
         if key == "findings_route":
             _check_findings_route(value)
+        if key == "max_parallel":
+            _check_positive_int("max_parallel", value)
         stored = value
         # a list is the panel's whole-list replace and is checked path by path; a string is already
         # json and stored as given, which mission_control_read_paths() reads tolerantly

@@ -244,6 +244,21 @@ def _max_parallel(store: Store) -> int:
     return value if value > 0 else DEFAULT_MAX_PARALLEL
 
 
+def _board_max_parallel(store: Store, board_id: str) -> int | None:
+    """this board's own cap, or None for no board-specific limit - only the global one applies"""
+    try:
+        raw = store.get_board(board_id).get("max_parallel")
+    except NotFoundError:
+        return None
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _dependency_wait(store: Store, card: dict[str, Any], repo_path: str | Path) -> str | None:
     """None once every dependency's pull request is actually MERGED on GitHub.
 
@@ -404,10 +419,19 @@ class BoardScheduler:
             for card_id in running_ids:
                 with contextlib.suppress(NotFoundError):
                     running_cards.append(store.get_card(card_id))
-            slots = _max_parallel(store) - len(running_ids)
-            # a card started by hand holds its lease too, but not one of this board's slots
+            # THE GLOBAL CAP IS ONE SEAT COUNT SHARED ACROSS EVERY BOARD - runs.active() is the one
+            # RunRegistry every BoardScheduler shares, so it is the only place that count can come
+            # from. a fake with no .active() (most scheduler tests) falls back to this board's own
+            # running set, exactly the old single-board behaviour.
             active = getattr(self._runs, "active", None)
-            for state in active() if active else []:
+            active_states = list(active()) if active else None
+            global_running = len(active_states) if active_states is not None else len(running_ids)
+            slots = _max_parallel(store) - global_running
+            board_cap = _board_max_parallel(store, self.board_id)
+            if board_cap is not None:
+                slots = min(slots, board_cap - len(running_ids))
+            # a card started by hand holds its lease too, but not one of this board's slots
+            for state in active_states or []:
                 if state.card_id not in running_ids:
                     with contextlib.suppress(NotFoundError):
                         running_cards.append(store.get_card(state.card_id))
