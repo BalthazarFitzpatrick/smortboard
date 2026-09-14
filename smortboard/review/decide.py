@@ -15,6 +15,7 @@ from smortboard.exec.worktrees import (
     branch_diff,
     branch_exists,
     branch_name,
+    default_branch,
     delete_branch,
     destroy_worktree,
     worktree_path,
@@ -105,7 +106,7 @@ def reject_card(
     pr_url = card_outcome(store, card_id)["pr_url"]
     if card.get("repo_id"):
         repo = store.get_repo(card["repo_id"])
-        path, base = repo["path"], repo.get("default_branch") or "main"
+        path, base = repo["path"], default_branch(repo)
         if branch_exists(path, card_id):
             diff = branch_diff(path, base, branch_name(card_id))
             if diff:

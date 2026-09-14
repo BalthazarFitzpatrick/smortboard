@@ -471,3 +471,50 @@ def test_set_leases_refuses_a_glob_the_guard_could_never_match(store, glob):
 def test_set_leases_on_a_missing_card_is_not_found(store):
     with pytest.raises(NotFoundError):
         store.set_leases("nope", ["src/**"])
+
+
+def test_an_existing_database_migrates_to_merge_conflict(tmp_path):
+    """a board.db stuck at migration 10 (no MERGE_CONFLICT yet) gets the wider CHECK constraint
+    without losing any of its cards, tasks, criteria or leases - the CHECK can't be ALTERed in
+    sqlite, so migration 11 recreates the table and this proves the copy is lossless"""
+    import sqlite3
+
+    from smortboard.store.schema import _MIGRATIONS
+
+    db_path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys = ON")
+    for script in _MIGRATIONS[:10]:
+        conn.executescript(script)
+    conn.execute("PRAGMA user_version = 10")
+    conn.execute(
+        "INSERT INTO boards (id, name, position, created_at) VALUES ('b1','Phase 1',0,'t')"
+    )
+    conn.execute(
+        "INSERT INTO repos (id, board_id, name, path, default_branch) "
+        "VALUES ('r1','b1','repo','/repo','main')"
+    )
+    conn.execute(
+        "INSERT INTO cards (id, board_id, repo_id, title, status, position, created_at, updated_at) "
+        "VALUES ('c1','b1','r1','old card','checking',0,'t','t')"
+    )
+    conn.execute(
+        "INSERT INTO card_tasks (id, card_id, position, text) VALUES ('t1','c1',0,'do it')"
+    )
+    conn.execute("INSERT INTO card_leases (id, card_id, path_glob) VALUES ('l1','c1','src/**')")
+    conn.commit()
+    conn.close()
+
+    with Store(db_path) as store:
+        card = store.get_card("c1")
+        assert card["title"] == "old card"
+        assert card["status"] == "checking"
+        assert card["tasks"][0]["text"] == "do it"
+        assert card["leases"][0]["path_glob"] == "src/**"
+
+        # the new reason code the migration exists for actually works now
+        store.update_card("c1", blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+        assert store.get_card("c1")["blocked_reason_code"] == "MERGE_CONFLICT"
+
+        with pytest.raises(BlockedReasonInvalidError):
+            store.update_card("c1", blocked_reason_code="NOT_A_REAL_REASON")

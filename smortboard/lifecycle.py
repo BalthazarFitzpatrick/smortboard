@@ -36,6 +36,7 @@ from smortboard.exec.worktrees import (
     branch_diff,
     branch_exists,
     create_worktree,
+    default_branch,
     existing_worktree,
     fetch_base,
     has_remote,
@@ -48,6 +49,7 @@ from smortboard.review.merge_request import (
     branch_has_commits,
     open_merge_request,
 )
+from smortboard.review.mergeable import sync_with_base
 from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
 from smortboard.store.api import Store
 
@@ -328,7 +330,7 @@ def run_card_lifecycle(
     if not _lease_globs(card):
         return _refuse(store, state, NO_LEASE_NOTE)
     repo = store.get_repo(card["repo_id"])
-    base = repo.get("default_branch") or "main"
+    base = default_branch(repo)
 
     try:
         runtime = backend or require_card_runtime(token_path)
@@ -479,6 +481,39 @@ def run_card_lifecycle(
     store.update_card(card_id, status="checking")
 
     phase("opening")
+    # measured 2026-09-14 (card 59727ba3, PR #112): a branch cut once and never updated drifted 34
+    # commits behind main while its PR waited, and conflicted in four files other PRs had since
+    # touched. one more sync right before the PR is opened is what this closes
+    merge_result = sync_with_base(tree.path, base)
+    if merge_result is not None and not merge_result.clean:
+        base_ref = f"origin/{base}"
+        store.append_event(
+            card_id,
+            "merge_conflict",
+            {"base_ref": base_ref, "files": merge_result.conflicting_files},
+        )
+        return _block(
+            store,
+            state,
+            "MERGE_CONFLICT",
+            f"Merging {base_ref} into {tree.branch} conflicts in: "
+            f"{', '.join(merge_result.conflicting_files) or 'unknown files'}.\n\n"
+            "Resuming this card lets the worker merge the base branch and resolve them.",
+        )
+    if merge_result is not None and merge_result.merged:
+        try:
+            gate = run_test_gate(store, card_id, tree.path, repo)
+        except GateUnavailable as exc:
+            return _refuse(store, state, f"The test gate could not run after merging {base}: {exc}")
+        if not gate.passed:
+            return _block(
+                store,
+                state,
+                "TESTS_FAILED",
+                f"`{gate.command}` exited {gate.exit_code} after merging {base} in.\n\n"
+                f"```\n{gate.output}\n```",
+            )
+
     try:
         request = open_merge_request(store, card_id, repo["path"], tree.branch, base=base)
     except MergeRequestUnavailable as exc:

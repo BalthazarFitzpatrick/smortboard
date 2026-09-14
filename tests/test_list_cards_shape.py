@@ -56,4 +56,6 @@ def test_indexes_migration_applies(store):
         row[0] for row in store._conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
     }
     assert {"idx_cards_board", "idx_comments_card", "idx_card_deps_dependent"} <= names
-    assert current_version(store._conn) == 10
+    # at least the version this test was written against - not pinned exactly, so a later
+    # migration does not need to keep editing a number that was never this test's point
+    assert current_version(store._conn) >= 10
