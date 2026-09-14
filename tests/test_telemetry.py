@@ -90,7 +90,8 @@ def test_roster_phase_activity_wins_over_the_last_tool_use(store, phase, activit
     assert rows[0]["activity"] == activity
 
 
-def test_roster_lists_working_before_blocked_and_carries_the_reason(store):
+def test_roster_lists_only_the_running_card_not_the_blocked_one(store):
+    """a blocked card belongs to the attention inbox, not the roster - it holds no live run"""
     board = store.create_board("b")
     running = store.create_card(board["id"], None, "running")
     store.update_card(running["id"], status="doing")
@@ -98,28 +99,16 @@ def test_roster_lists_working_before_blocked_and_carries_the_reason(store):
     store.update_card(blocked["id"], status="doing", blocked_reason_code="USAGE_LIMIT")
 
     rows = roster_rows(store, [{"card_id": running["id"], "phase": "running"}])
-    assert [r["card_id"] for r in rows] == [running["id"], blocked["id"]]
+    assert [r["card_id"] for r in rows] == [running["id"]]
     assert rows[0]["state"] == "working"
-    assert rows[1]["state"] == "blocked"
-    assert rows[1]["reason"] == "USAGE_LIMIT"
-    assert rows[1]["activity"] == "blocked: USAGE_LIMIT"
 
 
-def test_roster_is_empty_when_nothing_is_running_or_blocked(store):
+def test_roster_is_empty_when_nothing_is_running(store):
     board = store.create_board("b")
     store.create_card(board["id"], None, "idle in todo")
+    blocked = store.create_card(board["id"], None, "blocked")
+    store.update_card(blocked["id"], status="doing", blocked_reason_code="USAGE_LIMIT")
     assert roster_rows(store, []) == []
-
-
-def test_a_card_mid_retry_is_not_double_counted(store):
-    """a card can be both status=doing/blocked_reason_code set AND actively running a retry - the
-    run wins so it is not listed twice"""
-    board = store.create_board("b")
-    card = store.create_card(board["id"], None, "retrying")
-    store.update_card(card["id"], status="doing", blocked_reason_code="TESTS_FAILED")
-    rows = roster_rows(store, [{"card_id": card["id"], "phase": "running"}])
-    assert len(rows) == 1
-    assert rows[0]["state"] == "working"
 
 
 # -- usage ------------------------------------------------------------------
