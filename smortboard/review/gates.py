@@ -37,6 +37,14 @@ class GateUnavailable(RuntimeError):
     """the gate cannot run: no Docker, or the repo declares no test command"""
 
 
+class NoTestCommand(GateUnavailable):
+    """the repo has no test_command - a repo-level setting, not a fault in this card's run.
+
+    its own subclass so the caller can show a one-line pointer at the repo setting instead of
+    the boilerplate explanation, which the pre-flight checklist already carries once per repo.
+    """
+
+
 @dataclass
 class GateResult:
     passed: bool
@@ -111,7 +119,7 @@ def run_test_gate(
     repo = _current_repo(store, repo)
     command = (repo or {}).get("test_command")
     if not command:
-        raise GateUnavailable(
+        raise NoTestCommand(
             "This repo declares no test_command, so there is nothing to check the card against. "
             "Set one on the repo - it is also what scopes the card's own Bash allowlist."
         )
