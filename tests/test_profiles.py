@@ -10,6 +10,7 @@ the suite. The autouse fixture below is what keeps every write in this file on a
 
 from __future__ import annotations
 
+import json
 import time
 from types import SimpleNamespace
 
@@ -247,6 +248,69 @@ def test_earliest_reset_ignores_a_window_that_already_passed():
     profiles.add_profile("second", token="t")
     profiles.mark_limited("second", now + 60)
     assert profiles.earliest_reset() == pytest.approx(now + 60)
+
+
+# -- handle_usage_limit: one transaction, not four ------------------------------------
+
+
+def test_handle_usage_limit_is_a_single_load_and_save(monkeypatch):
+    profiles.add_profile("second", token="t")
+    load_calls = []
+    save_calls = []
+    real_load, real_save = profiles._load_state, profiles._save_state
+    monkeypatch.setattr(profiles, "_load_state", lambda: load_calls.append(1) or real_load())
+    monkeypatch.setattr(
+        profiles, "_save_state", lambda state: save_calls.append(1) or real_save(state)
+    )
+    profiles.handle_usage_limit(time.time() + 3600)
+    assert len(load_calls) == 1
+    assert len(save_calls) == 1
+
+
+def test_handle_usage_limit_rotates_and_reports_the_switch():
+    profiles.add_profile("second", token="t")
+    resets_at = time.time() + 3600
+    result = profiles.handle_usage_limit(resets_at)
+    assert result["rotated"] is True
+    assert result["next_profile"] == "second"
+    # default is still limited - earliest_reset reports its still-future window, unused by the
+    # scheduler in this branch (it only consults earliest_reset once nothing is left to switch to)
+    assert result["earliest_reset"] == pytest.approx(resets_at)
+    assert profiles.active_profile() == "second"
+    assert profiles.is_limited("default")
+
+
+def test_handle_usage_limit_with_every_profile_limited_reports_the_earliest_reset():
+    profiles.add_profile("second", token="t")
+    now = time.time()
+    first = profiles.handle_usage_limit(now + 100, now=now)
+    assert first["next_profile"] == "second"
+    second = profiles.handle_usage_limit(now + 50, now=now)
+    assert second["next_profile"] is None
+    assert second["earliest_reset"] == pytest.approx(min(now + 100, now + 50))
+
+
+def test_handle_usage_limit_on_a_single_profile_board_writes_no_state_file():
+    result = profiles.handle_usage_limit(time.time() + 3600)
+    assert result == {"rotated": False, "next_profile": None, "earliest_reset": None}
+    assert not profiles.state_path().exists()
+
+
+# -- _save_state: atomic write, no half-written json on a crash -----------------------
+
+
+def test_save_state_leaves_no_stray_tmp_file_behind():
+    profiles.add_profile("second", token="t")
+    leftovers = list(profiles.state_path().parent.glob(f"{profiles.state_path().name}.tmp-*"))
+    assert leftovers == []
+
+
+def test_save_state_replaces_the_file_rather_than_appending():
+    profiles.add_profile("second", token="t")
+    profiles.add_profile("third", token="t")
+    # a rename-based write can only ever leave the last full write in place, never a partial one
+    data = json.loads(profiles.state_path().read_text())
+    assert data["profiles"] == ["default", "second", "third"]
 
 
 # -- scheduler integration: USAGE_LIMIT rotates instead of only parking ---------------

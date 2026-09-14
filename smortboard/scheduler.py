@@ -340,29 +340,24 @@ class BoardScheduler:
         profile is not, switches to it and resumes `card_id` itself - USAGE_LIMIT blocks a manual
         run for a human, but here there is another credential to try before giving up like that.
 
-        With only the implicit "default" profile configured (has_multiple_profiles() False) this
-        never calls mark_limited/set_active at all, so a single-credential board never grows a
-        profiles.json - see the module docstring on smortboard/profiles.py for why that matters.
+        profiles.handle_usage_limit does the mark-and-rotate as one load-mutate-save transaction
+        (see its docstring) rather than this method making several separate profiles calls that
+        each hit disk - with only the implicit "default" profile configured it stays a pure read,
+        so a single-credential board never grows a profiles.json.
         """
         store = Store(self._db_path)
         try:
             resets_at = _latest_reset(store)
-            rotate = profiles.has_multiple_profiles()
-            next_profile = None
-            if rotate:
-                profiles.mark_limited(profiles.active_profile(), resets_at)
-                next_profile = profiles.next_available()
-                if next_profile is not None:
-                    profiles.set_active(next_profile)
+            result = profiles.handle_usage_limit(resets_at)
         finally:
             store.close()
 
-        if next_profile is not None:
+        if result["next_profile"] is not None:
             with self._lock:
                 if card_id not in self._queue and card_id not in self._running:
                     self._queue.insert(0, card_id)
         else:
-            fallback = profiles.earliest_reset() if rotate else None
+            fallback = result["earliest_reset"] if result["rotated"] else None
             with self._lock:
                 self._paused_until = fallback or resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
         self._tick()
