@@ -428,7 +428,10 @@ registers it, it doesn't create it. Its image must already contain its toolchain
 gate is offline. smortboard's own image is `docker/repo.Dockerfile`.
 
 The test command is the gate, so give it everything your CI checks - for a Python repo, something
-like `uv run --no-sync ruff format --check --extend-exclude .claude . && uv run --no-sync pytest -q`.
+like `uv run --no-sync ruff format --check --no-cache --extend-exclude .claude . && uv run --no-sync pytest -q -p no:cacheprovider`.
+The gate mounts the worktree read-only, so ruff and pytest must not write their caches into it -
+without `--no-cache` and `-p no:cacheprovider` the gate fails on `Read-only file system` before a
+single test runs.
 A gate that runs less than CI lets a card open a pull request that fails CI. `--extend-exclude
 .claude` skips the board's own hooks inside the card's worktree.
 
