@@ -10,16 +10,22 @@ screenshot is evidence for the operator, not a gate the work has to pass.
 
 THE THROWAWAY BOARD IS A SUBPROCESS, NOT AN IN-PROCESS SERVER. The live board may be serving the
 operator on this same host right now, and the two must never share a thread, a socket, or the
-asset-resolution globals smortboard.server.assets keeps at module scope. Running it from the
-card's worktree (PYTHONPATH ahead of the installed package) is what makes the screenshot show the
-card's own ui/ changes rather than whatever the host process already has loaded - this repo's
-screenshot feature never touches backend python itself, only smortboard/ui/, so reusing the host's
-own interpreter and its already-installed dependencies is safe.
+asset-resolution globals smortboard.server.assets keeps at module scope.
+
+THE SUBPROCESS NEVER EXECUTES THE WORKTREE'S PYTHON. diff_touches_ui only checks whether a diff
+touches smortboard/ui/, not that it touches only that - a two-file diff can carry a ui/ line and a
+backend change together, and both gates only ever ran that backend change inside docker with tests
+and a reviewer watching, never live on the host. So the throwaway board runs a fresh copy of the
+HOST's own smortboard package (already the trusted code this process itself is running), with only
+smortboard/ui/ - plain css/js/html, never imported, only served to a browser - overlaid from the
+worktree. That overlay is what makes the screenshot show the card's own ui/ changes; nothing else
+about the worktree is ever read into the process that runs.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -53,6 +59,25 @@ PAGE_TIMEOUT_MS = 15_000
 # only ever opened - the board and its throwaway peer both bind loopback only, never a network
 # interface a screenshot run could reach out further than the machine it is on
 LOCALHOST = "127.0.0.1"
+
+
+# files a host package copy never needs - build artifacts, not source the board would serve
+_STAGE_IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
+
+
+def _stage_host_backend(worktree_path: str | Path, stage_dir: Path) -> None:
+    """copies the HOST's own smortboard package into stage_dir, then overlays smortboard/ui/ from
+    the worktree - the only part of the worktree this ever reads.
+
+    `Path(__file__)` here resolves inside this same module, i.e. the host's own checkout, never
+    the worktree's copy of screenshot.py - so this always stages the code already trusted to run
+    on this host, regardless of what a card changed.
+    """
+    host_package = Path(__file__).resolve().parents[1]
+    staged_package = stage_dir / "smortboard"
+    shutil.copytree(host_package, staged_package, ignore=_STAGE_IGNORE)
+    shutil.rmtree(staged_package / "ui")
+    shutil.copytree(Path(worktree_path) / "smortboard" / "ui", staged_package / "ui")
 
 
 class ScreenshotUnavailable(RuntimeError):
@@ -125,11 +150,12 @@ def _wait_until_ready(base_url: str, deadline: float) -> bool:
 
 
 class ThrowawayBoard:
-    """one `smortboard` process, serving the worktree's own code on a free port with a temp db.
+    """one `smortboard` process, serving the HOST's own backend with the worktree's smortboard/ui/
+    overlaid on top, on a free port with a temp db.
 
     Used as a context manager: the process is up and answering /health by the time `with` hands
-    back control, and is killed and its temp db removed on the way out, success or failure either
-    way.
+    back control, and is killed, its temp db removed, and its staged code deleted on the way out,
+    success or failure either way.
     """
 
     def __init__(self, worktree_path: str | Path) -> None:
@@ -138,44 +164,53 @@ class ThrowawayBoard:
         self.base_url = f"http://{LOCALHOST}:{self.port}"
         self._db_fd, self._db_path = tempfile.mkstemp(prefix="smortboard-screenshot-", suffix=".db")
         os.close(self._db_fd)
+        self._stage_dir: str | None = None
         self._process: subprocess.Popen | None = None
 
     def __enter__(self) -> ThrowawayBoard:
-        env = dict(os.environ)
-        existing = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = (
-            os.pathsep.join([self.worktree_path, existing]) if existing else self.worktree_path
-        )
-        self._process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "smortboard.cli",
-                "--host",
-                LOCALHOST,
-                "--port",
-                str(self.port),
-                "--db",
-                self._db_path,
-                "--no-browser",
-            ],
-            cwd=self.worktree_path,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if not _wait_until_ready(self.base_url, time.monotonic() + BOARD_READY_TIMEOUT_SECONDS):
-            stderr = self._process.stderr.read() if self._process.stderr else ""
-            self._stop()
-            raise ScreenshotUnavailable(
-                f"the throwaway board never answered /health: {stderr}".strip()
+        self._stage_dir = tempfile.mkdtemp(prefix="smortboard-screenshot-stage-")
+        try:
+            _stage_host_backend(self.worktree_path, Path(self._stage_dir))
+            env = dict(os.environ)
+            existing = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = (
+                os.pathsep.join([self._stage_dir, existing]) if existing else self._stage_dir
             )
+            self._process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "smortboard.cli",
+                    "--host",
+                    LOCALHOST,
+                    "--port",
+                    str(self.port),
+                    "--db",
+                    self._db_path,
+                    "--no-browser",
+                ],
+                cwd=self._stage_dir,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if not _wait_until_ready(self.base_url, time.monotonic() + BOARD_READY_TIMEOUT_SECONDS):
+                stderr = self._process.stderr.read() if self._process.stderr else ""
+                self._stop()
+                raise ScreenshotUnavailable(
+                    f"the throwaway board never answered /health: {stderr}".strip()
+                )
+        except Exception:
+            shutil.rmtree(self._stage_dir, ignore_errors=True)
+            raise
         return self
 
     def __exit__(self, *exc_info: object) -> None:
         self._stop()
         Path(self._db_path).unlink(missing_ok=True)
+        if self._stage_dir is not None:
+            shutil.rmtree(self._stage_dir, ignore_errors=True)
 
     def _stop(self) -> None:
         if self._process is None:
