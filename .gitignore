@@ -45,7 +45,3 @@ __pycache__/
 .claude/settings.local.json
 # card worktrees - full repo copies the board cuts per card; ruff and git status reached into them
 .claude/worktrees/
-
-# ledgers live in the private dev_ledgers repo, symlinked in
-TASKS.jsonl
-WORKLOG.md
