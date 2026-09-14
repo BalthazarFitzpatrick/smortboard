@@ -60,8 +60,9 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
   'KeyG', 'KeyW', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
+  'KeyE', 'KeyJ', 'Delete',
   'KeyT', 'KeyS',
-  'KeyP', 'KeyN', 'KeyH', 'KeyB', 'Slash', 'Comma', 'Period',
+  'KeyP', 'KeyN', 'KeyH', 'KeyO', 'KeyB', 'Slash', 'Comma', 'Period',
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
 const boundCodes = mod.BINDINGS.map(b => b.code);
 CONTRACT_KEYS.forEach(code => assert.ok(boundCodes.includes(code), `${code} must be in BINDINGS`));

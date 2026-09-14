@@ -83,6 +83,17 @@ body {
 .card-strip.card-rejected { border-color: var(--fill-warn); }
 /* vanilla is the palest edge, so attention is also the only one that glows: rings stepping down to
    nothing, outside the border so the card's content does not move */
+/* the ⋯ trigger sits over the card's own corner rather than pushing the title over - the strip is
+   the positioning context, same trick the fan layout's transform already gives it for free, stated
+   explicitly here since a plain (non-transformed) strip needs it too */
+.card-strip { position: relative; }
+.card-strip .card-overflow {
+  position: absolute; top: 4px; right: 6px;
+  padding: 0 6px; height: auto; line-height: 1.4; font-weight: 700; cursor: pointer;
+}
+/* clears the ⋯ sitting over the same corner rather than letting a long title run under it */
+.card-strip .card-title { padding-right: 26px; box-sizing: border-box; }
+
 .card-strip.card-attention, .expand-panel.card-attention {
   border-color: var(--fill-attention);
   box-shadow:
@@ -109,34 +120,15 @@ body {
 
 /* ---- the open card ------------------------------------------------------------------------
    TWO-UP, A STATE EDGE, THE RUN AS A TIMELINE - operator's pick on 2026-09-10 from fifteen previews.
-   open sections in a two-column grid; the title and the run span both columns. no section is a
-   box: each is headed like a board column, and the gaps between them are what read as the boxes */
+   MASONRY, NOT A GRID ROW: a css grid (or flex) row ties every cell in it to the tallest cell's
+   box, which is exactly the blank gap a shorter neighbour used to sit in. board.js's
+   layoutCardSections measures every section and places it right under its own column's last
+   section instead, so title and the run still read across the whole panel but every other
+   section stacks by its own height, one column at a time. */
 .card-panel { --rule-soft: color-mix(in srgb, var(--grey-border) 55%, transparent); }
-.card-panel .card-sections {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 30px 40px;
-  grid-template-areas:
-    "title title" "status workstream" "outcome outcome"
-    "description criteria" "tasks deps" "comments attachments";
-}
-.card-panel [data-section="title"] { grid-area: title; }
-.card-panel [data-section="workstream"] { grid-area: workstream; }
-.card-panel [data-section="status"] { grid-area: status; }
-.card-panel [data-section="outcome"] { grid-area: outcome; }
-.card-panel [data-section="description"] { grid-area: description; }
-.card-panel [data-section="tasks"] { grid-area: tasks; }
-.card-panel [data-section="criteria"] { grid-area: criteria; }
-.card-panel [data-section="deps"] { grid-area: deps; }
-.card-panel [data-section="attachments"] { grid-area: attachments; }
-.card-panel [data-section="comments"] { grid-area: comments; }
-/* one column once the panel is too narrow for two to hold a sentence */
-@media (max-width: 760px) {
-  .card-panel .card-sections {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "title" "status" "workstream" "outcome" "description" "criteria" "tasks" "deps"
-      "attachments" "comments";
-  }
-}
+.card-panel .card-sections { position: relative; }
+/* top/left/width land inline from layoutCardSections - this only sets the box model they need */
+.card-panel .card-section { position: absolute; top: 0; left: 0; box-sizing: border-box; }
 
 .card-panel .field-label { color: var(--text-dim); }
 /* grid children default to min-width: auto, so one long path or url widened a column past the
@@ -259,6 +251,16 @@ body {
   font-family: inherit; font-size: inherit;
 }
 
+/* ---- the new-messages pill: ui_base's count badge, reused rather than a primitive of our own.
+   following (pinned to the newest line) is the default; scrolling up stops it, and this is what
+   says lines arrived without moving the view. sits centred just above the input, out of the log's
+   own scroll area, and only a click target when the count badge has something to show */
+.terminal-jump {
+  align-self: center; flex: 0 0 auto; cursor: pointer;
+  background: none; border: none; padding: 0; font-family: inherit; font-size: inherit;
+}
+.terminal-jump[hidden] { display: none; }
+
 /* ---- prompt editor (p) - orchestrator/worker/reviewer role prompts -----------------------------
    rides .modal-backdrop / .panel-floating, the same pair expand.js and the menus use - see board.js
    for why this is not a Menu (arrow/enter/escape would fight the textarea) */
@@ -341,3 +343,41 @@ body {
   white-space: pre-line;
 }
 .comment-body { line-height: 1.4; }
+
+/* ---- settings (o): the top-right button and the panel it opens ------------------------------
+   NOT inside #board-bar - board.js's renderBoardBar() wipes it on every board list load, the same
+   gotcha the attention indicator (inbox.js) already found. fixed beside that indicator instead,
+   inset far enough that a two-digit attention count never runs under it. */
+.settings-button {
+  position: fixed;
+  z-index: 5;
+  top: 6px;
+  right: calc(var(--inset-x, 15px) + 60px);
+  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size, 13px);
+}
+
+.settings-panel {
+  width: min(520px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+
+.settings-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+
+.settings-section {
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

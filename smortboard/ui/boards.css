@@ -25,7 +25,9 @@
   padding: 4px 0;
   flex-wrap: wrap;
 }
-.board-row.on .board-name { color: var(--cream); font-weight: 600; }
+/* same "opened" treatment smolsmort gives an open dataset: border-color and text colour only */
+.board-row.on { border: 2px solid var(--lichen-deep); }
+.board-row.on .board-name { color: var(--lichen); font-weight: 600; }
 .board-name { flex: 1 1 auto; }
 .board-delete { color: var(--text-dim); }
 .board-delete-confirm {
@@ -60,8 +62,12 @@
   flex-direction: column;
   gap: 6px;
 }
+/* repos always render under the open board, so this is the same opened treatment as .board-row.on */
+.repo-row.on { border-color: var(--lichen-deep); }
 .repo-row-head { display: flex; justify-content: space-between; gap: 10px; }
 .repo-name { color: var(--cream); font-weight: 600; }
+.repo-row.on .repo-name { color: var(--lichen); }
+.repo-row.on .field-label { color: var(--lichen); }
 .repo-path { word-break: break-all; }
 .repo-edit-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .repo-edit-test, .repo-edit-image { flex: 1 1 160px; }
