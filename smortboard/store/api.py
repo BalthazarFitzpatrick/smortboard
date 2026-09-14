@@ -215,17 +215,67 @@ class Store:
         self._conn.commit()
         return self.get_repo(repo_id)
 
-    def get_repo(self, repo_id: str) -> dict[str, Any]:
+    def get_repo_row(self, repo_id: str) -> dict[str, Any]:
+        """the repos row alone, with no remembered_leases query - get_repo's own building block,
+        so remember_lease_paths/forget_lease_path don't pay for a list they throw away"""
         row = self._conn.execute("SELECT * FROM repos WHERE id = ?", (repo_id,)).fetchone()
         if row is None:
             raise NotFoundError(f"no repo {repo_id}")
         return _row_to_dict(row)
 
+    def get_repo(self, repo_id: str) -> dict[str, Any]:
+        repo = self.get_repo_row(repo_id)
+        repo["remembered_leases"] = self.remembered_leases(repo_id)
+        return repo
+
     def list_repos(self, board_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT * FROM repos WHERE board_id = ? ORDER BY name", (board_id,)
         ).fetchall()
+        repos = [_row_to_dict(r) for r in rows]
+        for repo in repos:
+            repo["remembered_leases"] = self.remembered_leases(repo["id"])
+        return repos
+
+    def remembered_leases(self, repo_id: str) -> list[dict[str, Any]]:
+        """the repo's remembered globs, oldest first - approved once from the inbox with
+        "remember for this repo" ticked, permitted on every card on this repo since"""
+        rows = self._conn.execute(
+            "SELECT * FROM repo_remembered_leases WHERE repo_id = ? ORDER BY created_at, rowid",
+            (repo_id,),
+        ).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+    def remember_lease_paths(self, repo_id: str, globs: list[str]) -> list[dict[str, Any]]:
+        """adds paths to the repo's remembered globs, skipping ones already there.
+
+        Always an explicit operator choice - the "remember for this repo" tick on a lease
+        approval is the only caller, never something a card or a run triggers on its own.
+        """
+        self.get_repo_row(repo_id)  # raises NotFoundError on a bad id
+        cleaned = [_check_lease_glob(glob) for glob in globs]
+        existing = {row["path_glob"] for row in self.remembered_leases(repo_id)}
+        now = _now()
+        for glob in cleaned:
+            if glob in existing:
+                continue
+            self._conn.execute(
+                "INSERT INTO repo_remembered_leases (id, repo_id, path_glob, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (_new_id(), repo_id, glob, now),
+            )
+            existing.add(glob)
+        self._conn.commit()
+        return self.remembered_leases(repo_id)
+
+    def forget_lease_path(self, repo_id: str, lease_id: str) -> list[dict[str, Any]]:
+        """removes one remembered glob - the boards panel's undo for remember_lease_paths"""
+        self.get_repo_row(repo_id)  # raises NotFoundError on a bad id
+        self._conn.execute(
+            "DELETE FROM repo_remembered_leases WHERE id = ? AND repo_id = ?", (lease_id, repo_id)
+        )
+        self._conn.commit()
+        return self.remembered_leases(repo_id)
 
     def delete_board(self, board_id: str) -> None:
         """removes a board, its repos, and every card on it.

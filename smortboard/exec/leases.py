@@ -67,6 +67,9 @@ if not file_path:
 
 lease = json.loads(Path(__file__).with_name("lease.json").read_text())
 globs = lease["path_globs"]
+# a repo's remembered globs (see Store.remember_lease_paths) - approved once from the inbox,
+# permitted on every card on this repo since, alongside its own lease rather than instead of it
+remembered = lease.get("remembered_globs") or []
 # a container mounts the guards outside the repo, so there the root comes from lease.json
 repo_root = Path(lease.get("root") or Path(__file__).resolve().parents[1])
 
@@ -75,7 +78,7 @@ try:
 except ValueError:
     rel = Path(file_path)
 
-if lease_allows(str(rel), globs):
+if lease_allows(str(rel), globs) or lease_allows(str(rel), remembered):
     sys.exit(0)
 
 print(f"{prefix} {rel} is outside this card's lease", file=sys.stderr)
@@ -88,6 +91,7 @@ def write_lease_settings(
     worktree_path: str | Path,
     path_globs: list[str],
     *,
+    remembered_globs: list[str] | None = None,
     python: str = sys.executable,
     guard_dir: str | None = None,
     root: str | None = None,
@@ -96,6 +100,10 @@ def write_lease_settings(
 
     also wires bash_guard's PreToolUse:Bash guard, so every card gets both guards from one
     --settings file. returns the settings.json path, which the runner passes via `--settings`.
+
+    `remembered_globs` is the card's repo's remembered list (see Store.remembered_leases) - a
+    second, separate list the guard also allows against, so removing one from the repo later
+    never has to touch a single card's own lease rows.
 
     `python`, `guard_dir` and `root` are the interpreter, this .claude dir and the repo as the
     RUNNER sees them. A container mounts them elsewhere and has its own interpreter, and a hook
@@ -106,7 +114,7 @@ def write_lease_settings(
     claude_dir = worktree_path / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
 
-    lease = {"path_globs": path_globs}
+    lease = {"path_globs": path_globs, "remembered_globs": remembered_globs or []}
     if root:
         lease["root"] = root
     (claude_dir / "lease.json").write_text(json.dumps(lease, indent=2))
