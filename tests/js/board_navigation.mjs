@@ -130,3 +130,8 @@ assert.ok(acting.innerHTML.includes('class="stat stat-action" title="LEASE_CONFL
   'the strip footer shows the short action');
 const plain = mod.renderCardStrip({id: 'w2', title: 't', status: 'todo'});
 assert.ok(plain.innerHTML.includes('<span class="stat">todo</span>'), 'a quiet card still shows its status');
+
+// ---- every card shows its 8-char short-id, muted/monospace metadata beside the title
+const idCard = mod.renderCardStrip({id: '6a05dc01-4225-4f11-9167-77ff40069c8a', title: 't', status: 'todo'});
+assert.ok(idCard.innerHTML.includes('<span class="card-id">6a05dc01</span>'),
+  'the card shows the first 8 chars of its id as a card-id span');
