@@ -87,6 +87,10 @@ responses.set('/api/costs', stubJson(200, {
     cost_per_pr_usd: 1.01,
   },
   orchestrator_turns_counted: false,
+  outcome_groups: {
+    accepted: {cards: 1, cost_usd: 0.13, cost_per_pr_usd: 0.13},
+    refused: {cards: 2, cost_usd: 0.88, cost_per_pr_usd: 0.44},
+  },
 }));
 
 mod.openCostsOverviewPanel();
@@ -94,6 +98,11 @@ await new Promise(r => setTimeout(r, 0));
 const menu = mod.overlayRef().menu;
 assert.equal(menu.title, 'cost overview');
 const text = flatText({children: menu.sections.map(s => s.node || {children: []})}).join(' | ');
+// the total and the two outcome groups lead, before the per-board table
+assert.match(text, /total cost: \$1\.01/);
+assert.match(text, /accepted · 1 card \| \$0\.13 \| \$0\.13 \/ pr/);
+assert.match(text, /refused · 2 cards \| \$0\.88 \| \$0\.44 \/ pr/);
+assert.ok(text.indexOf('total cost') < text.indexOf('board | share'), 'the total sits above the board table');
 // one row per board, costliest first, the figures in column order under a header row
 assert.equal(menu.sections.length, 1, 'a single card, no separate jump list');
 assert.match(text, /board \| share \| spend \| runs \| accepted \| prs \| per pr \| on refusals/);
