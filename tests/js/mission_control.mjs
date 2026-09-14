@@ -4,10 +4,10 @@
 // run: node tests/js/mission_control.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element} from './dom_stub.mjs';
+import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 const responses = new Map();
@@ -373,3 +373,7 @@ document._dispatch('keydown', {code: 'Comma', key: ',', target: strip, preventDe
 assert.ok(!mod.drawers.left.isOpen(), 'the same , closes the drawer it opened');
 
 console.log('ok');
+// the workforce drawer's own rotate/poll timers (wf.rotate, wf.poll) are not proven cleared by
+// the , close above, unlike mc.poll - rather than guess at board.js's close handler, end the
+// process explicitly so a leftover timer cannot hang `node tests/js/mission_control.mjs`
+process.exit(0);
