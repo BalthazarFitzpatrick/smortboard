@@ -101,12 +101,14 @@ overflow.onclick();
 menus[0].pick('delete');
 assert.equal(menus.length, 2, 'delete should open a second, confirming menu');
 assert.equal(menus[1].opts.title, 'delete this card?');
-assert.equal(calls.length, 0, 'no request should fire before the confirm is answered');
+// opening the card for edit above already fetched it; what must not have happened is a write
+const writes = () => calls.filter(c => c.opts?.method && c.opts.method !== 'GET');
+assert.equal(writes().length, 0, 'no request should fire before the confirm is answered');
 
 // ---- "keep it" leaves the card alone
 menus[1].pick('keep');
 await flush();
-assert.equal(calls.length, 0, "keep it should not call the api");
+assert.equal(writes().length, 0, "keep it should not call the api");
 
 // ---- confirming actually deletes it
 menus = [];
