@@ -399,7 +399,8 @@ def run_preflight(
     checks = [
         _docker_check(),
         _image_check(),
-        _token_check(token_path),
+        # the credential the next run will use, which follows the active profile
+        _token_check(profiles.token_path_for_run(token_path)),
         *_profile_checks(),
         _gh_check(run),
         _git_check(),

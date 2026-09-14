@@ -268,7 +268,9 @@ class Readiness:
         )
 
         docker = docker_available()
-        token = card_token_available(self._token_path)
+        # the active profile's credential, the one a run will use - not the legacy card_token,
+        # which is gone once the default profile is removed
+        token = card_token_available(profiles.token_path_for_run(self._token_path))
         # only checked when docker answers - "the image is missing" is not useful news when the
         # thing that would hold the image is not running
         image = docker and card_image_available()
