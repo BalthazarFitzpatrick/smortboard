@@ -18,7 +18,11 @@ function stubJson(status, body) {
 function fetchStub(path, opts) {
   calls.push({path, opts});
   const resp = responses.get(path);
-  return Promise.resolve(resp || stubJson(404, {error: 'no stub for ' + path}));
+  // a function stub is called fresh per request with that request's opts, so a test can fail the
+  // first POST and succeed the next one - proving a retry actually happened, without a GET (the
+  // drawer's own load) consuming the same one-shot failure
+  const resolved = typeof resp === 'function' ? resp(opts) : resp;
+  return Promise.resolve(resolved || stubJson(404, {error: 'no stub for ' + path}));
 }
 
 installStubDom({fetchImpl: fetchStub});
@@ -56,12 +60,17 @@ function SpyDrawer(opts) {
   };
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('board.js')].join('\n;\n');
+// a spy wrapping ui_base's real indicateBadge, so the follow-pill tests below can assert on the
+// exact count passed rather than guess at indicate.js's own rendering markup
+const badgeSpySrc = 'const __badgeCalls = []; const __rawIndicateBadge = indicateBadge; ' +
+  'indicateBadge = (host, n) => { __badgeCalls.push(n); return __rawIndicateBadge(host, n); };';
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), badgeSpySrc, uiBase('shell.js'),
+  smort('messageQueue.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {
-  loadRoster, jumpToCard, usageSections, sendMissionControl, renderMissionControl, mc,
-  resolveWorkforceTarget, loadWorkforce, wf, buildDrawers, drawers, onBoardEnter,
-  boardIdRef: () => currentBoardId,
+  loadRoster, jumpToCard, usageSections, sendMissionControl, renderMissionControl, mc, mcQueueFor,
+  resolveWorkforceTarget, loadWorkforce, wf, buildDrawers, drawers, onBoardEnter, createMessageQueue,
+  boardIdRef: () => currentBoardId, __badgeCalls,
 };`)(SpyMenu, SpyDrawer);
 
 mod.buildDrawers();
@@ -176,7 +185,10 @@ responses.set('/api/boards/b1/orchestrator', stubJson(202, {
   plan: null, thinking: true, error: null, model: 'opus',
 }));
 mod.mc.input.value = 'build the login card';
-await mod.sendMissionControl('build the login card');
+// sendMissionControl hands off to the send queue and returns right away - the queue itself does
+// the network call, on the next microtask turn rather than inside this function
+mod.sendMissionControl('build the login card');
+await new Promise(r => setTimeout(r, 0));
 const post = calls.find(c => c.path === '/api/boards/b1/orchestrator' && c.opts?.method === 'POST');
 assert.ok(post, 'sending should POST to the board orchestrator route');
 assert.deepEqual(JSON.parse(post.opts.body), {message: 'build the login card'}, 'the post body carries the message');
@@ -184,6 +196,127 @@ const thinkingLine = mod.mc.log.children.find(c => c.className.includes('author-
 assert.ok(thinkingLine, 'a thinking reply shows the dim thinking line');
 // close before the 1500ms poll fires - closing clears mc.poll so the process can exit
 mod.drawers.right.close();
+
+// ---- chat log follow: pinned to the newest line by default, a pill once you scroll up -----------
+// mission control replaces its whole log on every redraw, so this also proves the pill survives
+// that rebuild instead of just a single appended line
+{
+  const log = mod.mc.log;
+  const jump = mod.mc.jump;
+  const render = messages => mod.renderMissionControl({messages, thinking: false, error: null, model: 'opus'});
+  const line = (author, body) => ({author, body, cards: []});
+  const scrollUp = () => {
+    log.scrollHeight = 100; log.clientHeight = 40; log.scrollTop = 20;
+    log._listeners.scroll.forEach(fn => fn());
+  };
+  const pressDown = () => log._listeners.keydown.forEach(fn => fn({code: 'ArrowDown'}));
+
+  // following (the default): a redraw with a new line pins the view to the newest and no pill shows
+  log.scrollHeight = 100; log.clientHeight = 40; log.scrollTop = 0;
+  render([line('orchestrator', 'line one')]);
+  assert.equal(log.scrollTop, log.scrollHeight, 'following keeps the newest line in view');
+  assert.equal(jump.hidden, true, 'the pill stays hidden while following');
+  assert.equal(mod.__badgeCalls.at(-1), 0, 'the badge reads zero while following');
+
+  // once scrolled up, a line arriving must not move the offset, and must raise the pill's count
+  scrollUp();
+  const offsetWhileReading = log.scrollTop;
+  render([line('orchestrator', 'line one'), line('orchestrator', 'line two')]);
+  assert.equal(log.scrollTop, offsetWhileReading, 'a line arriving while scrolled up leaves the offset alone');
+  assert.equal(jump.hidden, false, 'the pill shows once something new arrived while scrolled up');
+  assert.equal(mod.__badgeCalls.at(-1), 1, 'one new line raises the count to one');
+
+  // a redraw that repeats the same messages (a poll with nothing new) must not inflate the count
+  const callsBeforeRepeat = mod.__badgeCalls.length;
+  render([line('orchestrator', 'line one'), line('orchestrator', 'line two')]);
+  assert.equal(log.scrollTop, offsetWhileReading, 'a redraw with nothing new still leaves the offset alone');
+  assert.equal(mod.__badgeCalls.length, callsBeforeRepeat, 'nothing new means no badge update at all');
+
+  // the pill jumps to the newest line and resumes following
+  jump._listeners.click.forEach(fn => fn());
+  assert.equal(log.scrollTop, log.scrollHeight, 'the pill jumps to the newest line');
+  assert.equal(jump.hidden, true, 'the pill hides once it has resumed following');
+
+  // scrolling up again restarts the count from zero, not from wherever it left off
+  scrollUp();
+  render([line('orchestrator', 'line one'), line('orchestrator', 'line two'), line('orchestrator', 'line three')]);
+  assert.equal(jump.hidden, false, 'scrolling up and a new line shows the pill again');
+  assert.equal(mod.__badgeCalls.at(-1), 1, 'the count restarts from zero rather than continuing from before');
+
+  // focusing the log and pressing down twice jumps to the newest line and resumes following
+  pressDown();
+  assert.equal(jump.hidden, false, 'one down does not jump yet');
+  pressDown();
+  assert.equal(log.scrollTop, log.scrollHeight, 'down-down jumps to the newest line');
+  assert.equal(jump.hidden, true, 'down-down resumes following');
+
+  // sending a message jumps to the newest line and resumes following even while scrolled up
+  scrollUp();
+  render([line('orchestrator', 'line one'), line('orchestrator', 'line two'), line('orchestrator', 'line three'), line('orchestrator', 'line four')]);
+  assert.equal(jump.hidden, false, 'scrolled up with something new, ahead of the send below');
+  responses.set('/api/boards/b1/orchestrator', stubJson(200, {
+    messages: [
+      line('orchestrator', 'line one'), line('orchestrator', 'line two'),
+      line('orchestrator', 'line three'), line('orchestrator', 'line four'),
+      line('operator', 'jump please'),
+    ],
+    thinking: false, error: null, model: 'opus',
+  }));
+  await mod.sendMissionControl('jump please');
+  assert.equal(log.scrollTop, log.scrollHeight, 'sending a message jumps to the newest line');
+  assert.equal(jump.hidden, true, 'and resumes following');
+}
+
+// ---- mission control never loses a message: a failed send stays queued, shows its own state, and
+// is delivered once the request succeeds - without the operator resending anything by hand --------
+responses.set('/api/boards/b2/cards', stubJson(200, []));
+let b2PostAttempts = 0;
+responses.set('/api/boards/b2/orchestrator', opts => {
+  // the drawer's own GET (on open, and any poll) always succeeds - only the POST this test is
+  // exercising fails once, so opening the drawer cannot eat the one-shot failure by accident
+  if (opts?.method !== 'POST') {
+    return stubJson(200, {messages: [], plan: null, thinking: false, error: null, model: 'opus'});
+  }
+  b2PostAttempts += 1;
+  if (b2PostAttempts === 1) return stubJson(500, {error: 'boom'});
+  return stubJson(200, {
+    messages: [{id: 'm1', author: 'operator', body: 'retry me', created_at: '', cards: []}],
+    plan: null, thinking: false, error: null, model: 'opus',
+  });
+});
+await mod.onBoardEnter('b2');
+mod.drawers.right.open();
+await new Promise(r => setTimeout(r, 0));
+
+mod.sendMissionControl('retry me');
+await new Promise(r => setTimeout(r, 0));
+const queueLine = mod.mc.log.children.find(c => c.dataset.queueId);
+assert.ok(queueLine, 'a message not yet confirmed by the server draws its own queued line');
+assert.ok(queueLine.className.includes('queue-failed'),
+  'a failed attempt is shown as failed, not silently dropped');
+const stateBadge = queueLine.children.find(c => c.className === 'terminal-state');
+assert.equal(stateBadge.textContent, 'failed', 'the line names its own state');
+
+await new Promise(r => setTimeout(r, 700)); // past the queue's backoff - the retry should have landed
+assert.equal(b2PostAttempts, 2, 'the second attempt is the queue retrying on its own, not a resend by hand');
+assert.ok(!mod.mc.log.children.some(c => c.dataset.queueId),
+  'once delivered the queued line is gone - the confirmed transcript replaced it');
+assert.ok(mod.mc.log.children.some(c => c.className.includes('author-operator') && !c.dataset.queueId),
+  'the message now comes from the confirmed transcript, in the order it was sent');
+mod.drawers.right.close();
+
+// ---- a reload keeps an unsent message: a fresh queue against the same board id picks the
+// message straight back up, without the operator retyping it -------------------------------------
+{
+  const b2Queue = mod.mcQueueFor('b2');
+  assert.deepEqual(b2Queue.items(), [], 'nothing left queued for b2 after the retry test above');
+  const neverResolves = () => new Promise(() => {}); // stands in for "still offline"
+  const before = mod.createMessageQueue('reload-key', neverResolves, {backoffMs: [10_000]});
+  before.enqueue('still here after reload');
+  const after = mod.createMessageQueue('reload-key', neverResolves, {backoffMs: [10_000]});
+  assert.deepEqual(after.items().map(i => i.body), ['still here after reload'],
+    'a fresh queue instance against the same key - standing in for a page reload - keeps the unsent message');
+}
 
 // ---- workforce target: the focused card wins over the roster ------------------------------------
 const strip = element('div', 'card-strip');

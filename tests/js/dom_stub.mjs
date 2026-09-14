@@ -92,6 +92,20 @@ export function element(tag, className = '') {
       if (html === '') { el.children.forEach(c => { c.parentNode = null; }); el.children = []; }
     },
   });
+  // a textarea's growth math needs just enough geometry to be meaningful: clientHeight tracks the
+  // visible box (one unit per row), scrollHeight tracks the content (one unit per line the value
+  // actually breaks into) - a real browser's own units, not these, drive the real thing
+  // a test that stands in for a scrolled log assigns both directly, and that assignment wins
+  let rows = 1;
+  const geometry = {};
+  Object.defineProperty(el, 'rows', {get: () => rows, set: v => { rows = v; }});
+  Object.defineProperty(el, 'clientHeight', {
+    get: () => geometry.clientHeight ?? rows * 20, set: v => { geometry.clientHeight = v; },
+  });
+  Object.defineProperty(el, 'scrollHeight', {
+    get: () => geometry.scrollHeight ?? ((el.value.match(/\n/g) || []).length + 1) * 20,
+    set: v => { geometry.scrollHeight = v; },
+  });
   return el;
 }
 
@@ -117,6 +131,8 @@ export function installStubDom({fetchImpl} = {}) {
     addEventListener() {}, removeEventListener() {},
   };
   globalThis.requestAnimationFrame = fn => fn();
+  // ui_base's indicate.js reads a marker's transform; no layout here, so nothing is ever moved
+  globalThis.getComputedStyle = () => ({transform: 'none', getPropertyValue: () => ''});
   globalThis.localStorage = {
     getItem: k => (k in store ? store[k] : null),
     setItem: (k, v) => { store[k] = v; },
