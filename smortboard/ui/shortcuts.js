@@ -42,6 +42,7 @@ const BINDINGS = [
   {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
   {code: 'KeyH', label: 'h', action: 'pre-flight checklist: what is missing before a card can run', group: 'panels'},
   {code: 'KeyO', label: 'o', action: 'settings: mission control preferences', group: 'panels'},
+  {code: 'KeyV', label: 'v', action: 'pull requests: every open one across every board, in merge order', group: 'panels'},
   {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent', group: 'panels'},
   {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator', group: 'panels'},
   ...Array.from({length: 9}, (_, i) => ({
@@ -170,6 +171,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyN') { toggleInboxPanel(); return; }
   if (evt.code === 'KeyH') { evt.preventDefault(); togglePreflightPanel(); return; }
   if (evt.code === 'KeyO') { evt.preventDefault(); toggleSettingsPanel(); return; }
+  if (evt.code === 'KeyV') { evt.preventDefault(); togglePullsPanel(); return; }
   // preventDefault: the panel focuses its first input, and the key that opened it typed itself there
   if (evt.code === 'KeyB') { evt.preventDefault(); toggleBoardsPanel(); return; }
   // opening a drawer leaves focus on the board, so the key that opened it also closes it
