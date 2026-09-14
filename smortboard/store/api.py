@@ -3,12 +3,13 @@
 import json
 import sqlite3
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
 from smortboard.store.schema import (
+    BACKUP_RETENTION_DAYS,
     BLOCKED_REASON_CODES,
     DEFAULT_FINDINGS_ROUTE,
     FINDINGS_ROUTES,
@@ -92,6 +93,7 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         migrate(self._conn)
+        self._purge_expired_backups()
 
     def close(self) -> None:
         self._conn.close()
@@ -501,8 +503,12 @@ class Store:
         this used to be a single DELETE against cards, which raised FOREIGN KEY constraint failed
         for any card that had ever been commented on, given a task, or run - so it worked in a test
         that deleted a bare card and failed on every real one.
+
+        the card is snapshotted into card_backups first (see _backup_card), so this delete is
+        reversible through restore_card for BACKUP_RETENTION_DAYS days rather than destructive.
         """
-        self._card_row(card_id)
+        card = self.get_card(card_id)  # raises NotFoundError; doubles as the backup snapshot
+        self._backup_card(card)
         for table in self._CARD_CHILDREN:
             self._conn.execute(f"DELETE FROM {table} WHERE card_id = ?", (card_id,))
         # a dependency edge names a card at either end, so both directions have to go
@@ -511,6 +517,140 @@ class Store:
             (card_id, card_id),
         )
         self._conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+        self._conn.commit()
+
+    def _backup_card(self, card: dict[str, Any]) -> None:
+        """writes one card_backups row holding everything restore_card needs to recreate the card
+        exactly: its own fields plus tasks, criteria, leases, comments and dependency edges."""
+        deps = self._conn.execute(
+            "SELECT card_id, depends_on_card_id FROM card_deps "
+            "WHERE card_id = ? OR depends_on_card_id = ?",
+            (card["id"], card["id"]),
+        ).fetchall()
+        card_fields = (
+            "id",
+            "board_id",
+            "repo_id",
+            "title",
+            "workstream",
+            "status",
+            "blocked_reason_code",
+            "description",
+            "position",
+            "review_flag",
+            "model",
+            "findings_route",
+            "created_at",
+            "updated_at",
+        )
+        payload = {
+            "card": {field: card[field] for field in card_fields},
+            "tasks": card["tasks"],
+            "criteria": card["criteria"],
+            "leases": card["leases"],
+            "comments": card["comments"],
+            "deps": [dict(row) for row in deps],
+        }
+        self._conn.execute(
+            "INSERT INTO card_backups (id, card_id, board_id, payload_json, deleted_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (_new_id(), card["id"], card["board_id"], json.dumps(payload), _now()),
+        )
+
+    def restore_card(self, backup_id: str) -> dict[str, Any]:
+        """undoes delete_card: recreates the card with its original id, fields, tasks, criteria,
+        leases, comments and dependencies, then removes the backup - a card that has been restored
+        is live again, not still pending purge."""
+        row = self._conn.execute("SELECT * FROM card_backups WHERE id = ?", (backup_id,)).fetchone()
+        if row is None:
+            raise NotFoundError(f"no card backup {backup_id}")
+        payload = json.loads(row["payload_json"])
+        card = payload["card"]
+        self._conn.execute(
+            """
+            INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
+                blocked_reason_code, description, position, review_flag, model, findings_route,
+                created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                card["id"],
+                card["board_id"],
+                card["repo_id"],
+                card["title"],
+                card["workstream"],
+                card["status"],
+                card["blocked_reason_code"],
+                card["description"],
+                card["position"],
+                card["review_flag"],
+                card["model"],
+                card["findings_route"],
+                card["created_at"],
+                card["updated_at"],
+            ),
+        )
+        for task in payload["tasks"]:
+            self._conn.execute(
+                "INSERT INTO card_tasks (id, card_id, position, text, done) VALUES (?, ?, ?, ?, ?)",
+                (task["id"], task["card_id"], task["position"], task["text"], task["done"]),
+            )
+        for criterion in payload["criteria"]:
+            self._conn.execute(
+                "INSERT INTO card_criteria (id, card_id, position, text) VALUES (?, ?, ?, ?)",
+                (criterion["id"], criterion["card_id"], criterion["position"], criterion["text"]),
+            )
+        for lease in payload["leases"]:
+            self._conn.execute(
+                "INSERT INTO card_leases (id, card_id, path_glob) VALUES (?, ?, ?)",
+                (lease["id"], lease["card_id"], lease["path_glob"]),
+            )
+        for comment in payload["comments"]:
+            self._conn.execute(
+                "INSERT INTO comments (id, card_id, author, body, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    comment["id"],
+                    comment["card_id"],
+                    comment["author"],
+                    comment["body"],
+                    comment["created_at"],
+                ),
+            )
+        for dep in payload["deps"]:
+            # the other end of the edge may itself be gone (deleted and not restored) - restore
+            # what still resolves rather than fail the whole card over one missing edge
+            both_exist = (
+                self._conn.execute(
+                    "SELECT COUNT(*) FROM cards WHERE id IN (?, ?)",
+                    (dep["card_id"], dep["depends_on_card_id"]),
+                ).fetchone()[0]
+                == 2
+            )
+            if both_exist:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
+                    (dep["card_id"], dep["depends_on_card_id"]),
+                )
+        self._conn.execute("DELETE FROM card_backups WHERE id = ?", (backup_id,))
+        self._conn.commit()
+        return self.get_card(card["id"])
+
+    def list_card_backups(self, board_id: str) -> list[dict[str, Any]]:
+        """every backup still within its retention window for this board, newest first - without
+        the payload, which is only ever read back whole by restore_card"""
+        rows = self._conn.execute(
+            "SELECT id, card_id, board_id, deleted_at FROM card_backups "
+            "WHERE board_id = ? ORDER BY deleted_at DESC",
+            (board_id,),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def _purge_expired_backups(self) -> None:
+        """drops backups past BACKUP_RETENTION_DAYS. run on every store open, since there is no
+        separate background scheduler for it here - see the phase 2 plan"""
+        cutoff = (datetime.now(UTC) - timedelta(days=BACKUP_RETENTION_DAYS)).isoformat()
+        self._conn.execute("DELETE FROM card_backups WHERE deleted_at < ?", (cutoff,))
         self._conn.commit()
 
     # -- dependencies (card_deps is the single source, queried both ways) ------

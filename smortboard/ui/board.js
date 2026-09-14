@@ -20,6 +20,9 @@ const BINDINGS = [
   {code: 'KeyY', label: 'y', action: 'accept the focused card', group: 'cards'},
   {code: 'KeyX', label: 'x', action: 'reject the focused card', group: 'cards'},
   {code: 'KeyM', label: 'm', action: "cycle the card's model", group: 'cards'},
+  {code: 'KeyE', label: 'e', action: 'edit: open the focused card', group: 'cards'},
+  {code: 'KeyJ', label: 'j', action: 'move the focused card to another status', group: 'cards'},
+  {code: 'Delete', label: 'del', action: 'delete the focused card, with confirmation', group: 'cards'},
   {code: 'KeyT', label: 't', action: "run replay: scrub the focused card's run step by step", group: 'cards'},
   {code: 'Slash', label: '/', action: "type: the open card's comment, or the open chat", group: 'cards'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
@@ -34,6 +37,7 @@ const BINDINGS = [
   {code: 'KeyB', label: 'b', action: 'boards and repos: create a board, register a repo', group: 'panels'},
   {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
   {code: 'KeyH', label: 'h', action: 'pre-flight checklist: what is missing before a card can run', group: 'panels'},
+  {code: 'KeyO', label: 'o', action: 'settings: mission control preferences', group: 'panels'},
   {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent', group: 'panels'},
   {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator', group: 'panels'},
   ...Array.from({length: 9}, (_, i) => ({
@@ -103,6 +107,9 @@ function renderEmptyState(empty) {
 
 async function onBoardEnter(boardId) {
   currentBoardId = boardId;
+  // a fresh board has its own cards under these ids - forget the old board's snapshot so
+  // followRunsOnce learns this one before it starts diffing against it
+  followedCardStates = null;
   const cards = await api(`/api/boards/${boardId}/cards`);
   renderBuckets(cards);
   // mission control is per-board, so a board switch while it is open reloads its conversation
@@ -136,10 +143,17 @@ function renderBuckets(cards) {
     cards.filter(c => c.status === status)
       .forEach(card => bucket.appendChild(renderCardStrip(card)));
   });
-  bucketsApi = makeBuckets(row, {onExitTop: returnToBoardBar});
+  refreshBucketNav();
   // the cream marker glides to whatever took focus, rather than every card drawing its own ring.
   // focusin rather than a per-card handler, so it also catches focus arriving by click or by tab
   row.addEventListener('focusin', evt => indicateFocus(evt.target));
+}
+
+// rebinds the 2D grid nav to whatever is currently in the buckets - a full renderBuckets always
+// needs this, and so does a targeted redrawCardStrip that moved a strip to a new bucket
+function refreshBucketNav() {
+  const row = document.getElementById('bucket-row');
+  bucketsApi = makeBuckets(row, {onExitTop: returnToBoardBar});
 }
 
 function renderCardStrip(card) {
@@ -147,6 +161,8 @@ function renderCardStrip(card) {
   strip.className = cardClasses(card);
   strip.tabIndex = -1;
   strip.dataset.cardId = card.id;
+  // openMoveStatusMenu reads this back to grey out the column the card is already in
+  strip.dataset.status = card.status;
   // a card, not a strip: a title band at the top, a rule, the description with the room, and the
   // secondary facts sitting on the floor. ui_base draws the rule with .h-divider - the parent
   // spaces its children and the rule only draws the line
@@ -166,6 +182,15 @@ function renderCardStrip(card) {
       <span class="card-run" hidden></span>
     </div>
   `;
+  // appended rather than templated into the string above: the test dom stub does not parse
+  // innerHTML back into a tree (see the same note on terminalDom further down), so a live listener
+  // needs a real node - appendChild gives one in the stub and in a real browser alike
+  const overflow = document.createElement('span');
+  overflow.className = 'toggle card-overflow';
+  overflow.title = 'edit, delete, change model, move status';
+  overflow.textContent = '⋯';
+  overflow.onclick = () => openCardOverflowMenu(card.id, overflow);
+  strip.appendChild(overflow);
   const expander = makeExpander(strip, {
     // THREE TIMES THE DEFAULT WIDTH. at 1:3 an open card was a narrow column that wrapped every
     // line of its outcome; makeExpander keeps the height and sizes width from the ratio, so 1:1
@@ -208,6 +233,60 @@ function returnToBoardBar() {
 
 // ---- card panel -------------------------------------------------------------------
 
+// ---- masonry: a section stacks beneath its own column's actual bottom, not a shared css-grid row
+// height. a grid row (or a flex row) ties every cell in it to the tallest cell's box, leaving blank
+// space under a shorter neighbour - this replaces that with real measurement instead -------------
+
+const CARD_PANEL_ROW_GAP = 30; // vertical space between stacked sections - the old grid's row-gap
+const CARD_PANEL_COL_GAP = 40; // horizontal space between columns - the old grid's column-gap
+const CARD_PANEL_NARROW_PX = 760; // the width the two-column layout used to fold to one at
+// title and the run read across the whole panel; every other section sits in a column
+const FULL_WIDTH_SECTIONS = new Set(['title', 'outcome']);
+
+// pure: given each item's own height (and whether it spans every column), returns where it lands.
+// a full-width item syncs every column to one shared reach first, same as a css row would, but a
+// column item only ever waits on the column it is actually going into
+function computeMasonryLayout(items, columnCount, gap) {
+  const reach = new Array(columnCount).fill(0);
+  return items.map(item => {
+    if (item.full) {
+      const top = Math.max(...reach);
+      const bottom = top + item.height + gap;
+      reach.fill(bottom);
+      return {column: null, top, bottom};
+    }
+    const column = reach.indexOf(Math.min(...reach));
+    const top = reach[column];
+    const bottom = top + item.height + gap;
+    reach[column] = bottom;
+    return {column, top, bottom};
+  });
+}
+
+// the dom side: measure each section at its column's width (a section wraps differently at half
+// width than at full width, so width has to land before height is read), run the pure layout
+// above, then place every section with an inline top/left and size the container to what was used
+function layoutCardSections(panel) {
+  const container = panel.querySelector('.card-sections');
+  const sections = container ? [...container.querySelectorAll('.card-section')] : [];
+  if (!container || !sections.length) return;
+  const width = container.getBoundingClientRect().width;
+  const columnCount = width && width < CARD_PANEL_NARROW_PX ? 1 : 2;
+  const columnWidth = (width - CARD_PANEL_COL_GAP * (columnCount - 1)) / columnCount;
+  const isFull = section => columnCount === 1 || FULL_WIDTH_SECTIONS.has(section.dataset.section);
+  sections.forEach(section => { section.style.width = isFull(section) ? '100%' : `${columnWidth}px`; });
+  const items = sections.map(section => ({full: isFull(section), height: section.getBoundingClientRect().height}));
+  const placed = computeMasonryLayout(items, columnCount, CARD_PANEL_ROW_GAP);
+  let reach = 0;
+  sections.forEach((section, i) => {
+    const {column, top, bottom} = placed[i];
+    section.style.top = `${top}px`;
+    section.style.left = column ? `${column * (columnWidth + CARD_PANEL_COL_GAP)}px` : '0px';
+    reach = Math.max(reach, bottom);
+  });
+  container.style.height = `${Math.max(0, reach - CARD_PANEL_ROW_GAP)}px`;
+}
+
 async function openCardPanel(panel, cardId) {
   const [card, outcome] = await Promise.all([
     api(`/api/cards/${cardId}`),
@@ -221,6 +300,9 @@ async function openCardPanel(panel, cardId) {
   const layout = /^layout-(\d+)$/.exec(card.workstream || '');
   if (layout) panel.classList.add(`panel-layout-${layout[1]}`);
   panel.innerHTML = cardPanelHtml(card, outcome);
+  // the design archive keeps its own historical grid per variant in panel-layouts.css - masonry
+  // would fight it for the same inline top/left/width
+  if (!layout) layoutCardSections(panel);
 
   // the panel's one .card-sections div is a single-column bucket - reuses the 2D grid nav as a
   // plain vertical list rather than inventing a second focus system for "move between sections"
@@ -417,24 +499,50 @@ function pollRun(cardId) {
   }, RUN_POLL_MS);
 }
 
-// A RUN THIS PAGE DID NOT START STILL MOVES ITS CARD. pollRun only follows a run started with r on
-// this page; one started by the api, or already running when the page was reloaded, left its card
-// drawn as doing after it had finished. so the board watches which cards are running and redraws
-// whenever that set changes
+// A CARD CAN CHANGE COLUMN MID-RUN, NOT ONLY WHEN THE RUN ENDS. todo -> doing and doing -> checking
+// happen inside lifecycle.py while the run is still going, and whatever wrote the change (this
+// page's own run, another run, a key, mission control) already committed it before we asked. so
+// the board polls every card's status and updated_at and redraws only the strips that moved -
+// leaving every other strip, and the DOM in general, untouched
 const FOLLOW_RUNS_MS = 4000;
-let followedRunIds = null;
+let followedCardStates = null; // Map<card id, `${status}|${updated_at}`> as of the last poll
+
+// swaps one card's strip for a freshly rendered one in its (possibly new) bucket, and refocuses it
+// if it held focus - the open card's own strip is never passed in here, see followRunsOnce
+function redrawCardStrip(card) {
+  const old = document.querySelector(`.card-strip[data-card-id="${card.id}"]`);
+  const bucket = document.querySelector(`.bucket[data-status="${card.status}"] .bucket-rows`);
+  if (!old || !bucket) return;
+  const hadFocus = old.contains(document.activeElement);
+  const strip = renderCardStrip(card);
+  bucket.appendChild(strip);
+  old.remove();
+  if (hadFocus) { strip.focus(); indicateFocus(strip); }
+}
 
 async function followRunsOnce() {
-  let active;
-  try { active = await api('/api/runs'); } catch (err) { return false; } // server restarting
-  const ids = new Set(active.map(r => r.card_id));
-  const before = followedRunIds;
-  const changed = before && (ids.size !== before.size || [...ids].some(id => !before.has(id)));
-  if (!changed) { followedRunIds = ids; return false; }
-  // never rebuild the strips under an open card or a half-typed line - try again next tick
-  if (openCard || document.activeElement?.matches?.('input, textarea')) return false;
-  followedRunIds = ids;
-  if (currentBoardId) await reloadBoardKeepingFocus();
+  if (!currentBoardId) return false;
+  let cards;
+  try { cards = await api(`/api/boards/${currentBoardId}/cards`); } catch (err) { return false; } // server restarting
+  const states = new Map(cards.map(c => [c.id, `${c.status}|${c.updated_at}`]));
+  const before = followedCardStates;
+  if (!before) { followedCardStates = states; return false; } // the first poll only learns where things stand
+
+  const next = new Map(before);
+  const toRedraw = [];
+  cards.forEach(card => {
+    const state = states.get(card.id);
+    if (before.get(card.id) === state) return;
+    // the open card keeps its panel - its entry is left stale here so the next poll sees it as
+    // changed again, and it gets its redraw once the card closes
+    if (openCard && openCard.cardId === card.id) return;
+    toRedraw.push(card);
+    next.set(card.id, state);
+  });
+  followedCardStates = next;
+  if (!toRedraw.length) return false;
+  toRedraw.forEach(redrawCardStrip);
+  refreshBucketNav();
   return true;
 }
 
@@ -443,13 +551,6 @@ function followRuns() {
     // unref where it exists: the browser has none, and a test process must not stay alive for this
     setTimeout(followRuns, FOLLOW_RUNS_MS)?.unref?.();
   });
-}
-
-async function reloadBoardKeepingFocus() {
-  const focusedId = focusedCardId();
-  await onBoardEnter(currentBoardId);
-  const strip = focusedId && document.querySelector(`.card-strip[data-card-id="${focusedId}"]`);
-  if (strip) { strip.focus(); indicateFocus(strip); }
 }
 
 // ---- stopping a running card (k) ------------------------------------------------------
@@ -572,6 +673,78 @@ async function acceptOrRejectCard(action) {
 // monospace and 2px lines. styling lives in layout.css as configuration, same rule board.js
 // states at the top of this file
 
+// following (pinned to the newest line) is the default. scrolling up stops it - new lines then
+// leave the view alone and ui_base's count badge, sitting above the input, says how many arrived.
+// the pill, focusing the log and pressing down twice, or sending a message all jump back down and
+// resume following. keyed by the log element so mission control and workforce track independently
+const followState = new WeakMap();
+
+function nearBottom(log) {
+  // a few px of slack absorbs the sub-pixel rounding some browsers report on scrollTop
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 4;
+}
+
+// indicateBadge renders the number; the pill showing only while there is one to show is ours to
+// guarantee regardless of what indicateBadge does internally with a host at zero
+function updateBadge(state) {
+  indicateBadge(state.jump, state.count);
+  state.jump.hidden = state.count === 0;
+}
+
+// the one place "jump to the newest line and resume following" happens, so the pill, down-down
+// and sending a message all land on identical behaviour rather than three near-duplicates
+function scrollToBottom(log) {
+  log.scrollTop = log.scrollHeight;
+  const state = followState.get(log);
+  if (!state) return;
+  state.following = true;
+  state.count = 0;
+  updateBadge(state);
+}
+
+// a single new line arriving on top of what is already rendered (a send, a poll error) - as
+// opposed to a full redraw, which settles itself in redrawLog below
+function settleAfterAppend(log) {
+  const state = followState.get(log);
+  if (!state || state.following) { scrollToBottom(log); return; }
+  state.count += 1;
+  updateBadge(state);
+}
+
+// mission control and workforce both replace their whole log on every redraw instead of diffing
+// it, so the pill counts the growth across the rebuild rather than once per appended line, and the
+// scroll offset (which a real browser drops to 0 the moment the log empties) is put back by hand
+function redrawLog(log, fill) {
+  const state = followState.get(log);
+  const before = state ? state.rendered || 0 : 0;
+  const savedScrollTop = log.scrollTop;
+  log.innerHTML = '';
+  fill();
+  if (!state) return;
+  state.rendered = log.children.length;
+  if (state.following) { scrollToBottom(log); return; }
+  log.scrollTop = savedScrollTop;
+  const added = Math.max(0, state.rendered - before);
+  if (added) { state.count += added; updateBadge(state); }
+}
+
+function initFollow(log, jump) {
+  followState.set(log, {following: true, count: 0, jump, rendered: 0});
+  jump.hidden = true;
+  jump.addEventListener('click', () => scrollToBottom(log));
+  log.addEventListener('scroll', () => {
+    const state = followState.get(log);
+    if (nearBottom(log)) scrollToBottom(log);
+    else state.following = false;
+  });
+  let downStreak = 0;
+  log.addEventListener('keydown', evt => {
+    if (evt.code !== 'ArrowDown') { downStreak = 0; return; }
+    downStreak += 1;
+    if (downStreak >= 2) { downStreak = 0; scrollToBottom(log); }
+  });
+}
+
 // built with createElement/appendChild rather than innerHTML, so the refs below are live nodes -
 // the test dom stub does not parse innerHTML strings back into a tree, and a real browser doesn't
 // care either way
@@ -605,6 +778,13 @@ function terminalDom(promptGlyph) {
   log.className = 'terminal-log';
   log.tabIndex = 0;
 
+  // ui_base's count badge, reused as the new-messages pill rather than a primitive of our own
+  const jump = document.createElement('button');
+  jump.type = 'button';
+  jump.className = 'terminal-jump count-badge';
+  jump.setAttribute('aria-label', 'jump to the newest line');
+  initFollow(log, jump);
+
   const inputRow = document.createElement('div');
   inputRow.className = 'terminal-input-row';
   const prompt = document.createElement('span');
@@ -615,7 +795,7 @@ function terminalDom(promptGlyph) {
   input.rows = 1;
   inputRow.append(prompt, input);
 
-  wrap.append(header, subheader, log, inputRow);
+  wrap.append(header, subheader, log, jump, inputRow);
   return wrap;
 }
 
@@ -626,21 +806,22 @@ function authorLabel(author) {
 }
 
 // author drives the line's colour class; cls overrides it for board/error/thinking lines whose
-// author name (e.g. "orchestrator") shouldn't paint the same as an authored message would
+// author name (e.g. "orchestrator") shouldn't paint the same as an authored message would.
+// a bare append with no scroll or pill side effects - a single new line settles itself with
+// settleAfterAppend below, a full redraw settles once for the whole batch with redrawLog
 function appendLine(log, author, body, cls) {
   const line = document.createElement('div');
   line.className = `terminal-line author-${cls || author}`;
   line.innerHTML = `<div class="terminal-author">${escapeHtml(authorLabel(author))}</div>` +
     `<div class="terminal-body">${escapeHtml(body)}</div>`;
   log.appendChild(line);
-  log.scrollTop = log.scrollHeight;
   return line;
 }
 
 // enter sends, shift+enter is left alone so the textarea's own newline behaviour handles it.
 // escape leaves typing and hands focus back to the board, with the drawer still open - , and .
-// work again from there
-function wireTerminalInput(input, log, onSend) {
+// work again from there. onClear (optional) lets a composer re-collapse once its own text is gone
+function wireTerminalInput(input, log, onSend, onClear) {
   input.addEventListener('keydown', evt => {
     if (evt.code === 'Escape') { evt.stopPropagation(); input.blur(); reenterIfFocusLost(); return; }
     if (evt.code === 'Enter' && !evt.shiftKey) {
@@ -648,22 +829,43 @@ function wireTerminalInput(input, log, onSend) {
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
+      onClear?.();
       onSend(text);
     }
   });
 }
 
+// mission control's composer line cap comes from the operator's global config (a window global
+// the server can inject before this script loads) - unset or invalid falls back to 6
+function composerMaxLines() {
+  const configured = window.smortboardConfig?.composerMaxLines;
+  return Number.isInteger(configured) && configured > 0 ? configured : 6;
+}
+
+// grows the composer by one row per wrapped or broken line, up to maxLinesFn(). resetting to one
+// row before measuring means the loop only ever adds the rows actually needed, so there is nothing
+// to snap back from after the first character - and scrollHeight still exceeding the box beyond
+// the cap is exactly what leaves the textarea's own internal scrolling to take over
+function growComposer(input, maxLinesFn) {
+  const max = maxLinesFn();
+  input.rows = 1;
+  while (input.scrollHeight > input.clientHeight && input.rows < max) input.rows += 1;
+}
+
 // ---- mission control (.) - the orchestrator's chat for the current board ------------------------
 
-const mc = {header: null, cycle: null, log: null, input: null, poll: null};
+const mc = {header: null, cycle: null, log: null, jump: null, input: null, poll: null};
 
 function buildMissionControlDom(drawer) {
   const term = terminalDom('>');
   drawer.body.appendChild(term);
   mc.header = term.querySelector('.terminal-title');
   mc.log = term.querySelector('.terminal-log');
+  mc.jump = term.querySelector('.terminal-jump');
   mc.input = term.querySelector('.terminal-input');
-  wireTerminalInput(mc.input, mc.log, sendMissionControl);
+  const resizeComposer = () => growComposer(mc.input, composerMaxLines);
+  mc.input.addEventListener('input', resizeComposer);
+  wireTerminalInput(mc.input, mc.log, sendMissionControl, resizeComposer);
 }
 
 async function openMissionControl() {
@@ -680,6 +882,7 @@ async function loadMissionControl() {
     mc.header.textContent = 'mission control';
     mc.log.innerHTML = '';
     appendLine(mc.log, 'board', 'no board selected', 'board');
+    scrollToBottom(mc.log); // a fresh panel, not a new line arriving mid-read
     return;
   }
   try {
@@ -689,22 +892,24 @@ async function loadMissionControl() {
     mc.header.textContent = 'mission control';
     mc.log.innerHTML = '';
     appendLine(mc.log, 'board', `could not reach the orchestrator: ${err.message}`, 'error');
+    scrollToBottom(mc.log);
   }
 }
 
 // justFinished marks a poll result, the only moment a newly-created card should pull the board
 function renderMissionControl(data, {justFinished = false} = {}) {
   mc.header.textContent = `mission control - ${data.model || '?'}`;
-  mc.log.innerHTML = '';
-  (data.messages || []).forEach(m => {
-    appendLine(mc.log, m.author, m.body);
-    if (m.cards && m.cards.length) {
-      appendLine(mc.log, 'board', `created: ${m.cards.map(c => c.title).join(', ')}`, 'board');
-    }
+  redrawLog(mc.log, () => {
+    (data.messages || []).forEach(m => {
+      appendLine(mc.log, m.author, m.body);
+      if (m.cards && m.cards.length) {
+        appendLine(mc.log, 'board', `created: ${m.cards.map(c => c.title).join(', ')}`, 'board');
+      }
+    });
+    if (data.error) appendLine(mc.log, 'board', data.error, 'error');
+    if (data.thinking) appendLine(mc.log, 'orchestrator', 'orchestrator is thinking', 'thinking');
   });
-  if (data.error) appendLine(mc.log, 'board', data.error, 'error');
   if (data.thinking) {
-    appendLine(mc.log, 'orchestrator', 'orchestrator is thinking', 'thinking');
     mc.poll = setTimeout(pollMissionControl, 1500);
     return;
   }
@@ -721,28 +926,31 @@ async function pollMissionControl() {
     renderMissionControl(data, {justFinished: true});
   } catch (err) {
     appendLine(mc.log, 'board', `lost contact with the orchestrator: ${err.message}`, 'error');
+    settleAfterAppend(mc.log);
   }
 }
 
 async function sendMissionControl(text) {
-  if (!currentBoardId) { appendLine(mc.log, 'board', 'no board selected', 'error'); return; }
+  if (!currentBoardId) { appendLine(mc.log, 'board', 'no board selected', 'error'); settleAfterAppend(mc.log); return; }
   appendLine(mc.log, 'fabian', text);
+  scrollToBottom(mc.log); // sending always jumps to the newest line and resumes following
   try {
     const res = await fetch(`/api/boards/${currentBoardId}/orchestrator`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
     });
     const body = await res.json().catch(() => null);
-    if (res.status === 409) { appendLine(mc.log, 'board', (body && body.error) || 'already thinking', 'error'); return; }
-    if (!res.ok) { appendLine(mc.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error'); return; }
+    if (res.status === 409) { appendLine(mc.log, 'board', (body && body.error) || 'already thinking', 'error'); settleAfterAppend(mc.log); return; }
+    if (!res.ok) { appendLine(mc.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error'); settleAfterAppend(mc.log); return; }
     renderMissionControl(body);
   } catch (err) {
     appendLine(mc.log, 'board', `could not reach the orchestrator: ${err.message}`, 'error');
+    settleAfterAppend(mc.log);
   }
 }
 
 // ---- workforce (,) - one card's agent chat -------------------------------------------------------
 
-const wf = {header: null, cycle: null, count: null, subheader: null, log: null, input: null,
+const wf = {header: null, cycle: null, count: null, subheader: null, log: null, jump: null, input: null,
   poll: null, rotate: null, prev: null, next: null, cardId: null, working: [], index: 0, pinned: false};
 
 // MALL CAM: with no card focused or open, the workforce is not pinned to one - it rotates through
@@ -757,6 +965,7 @@ function buildWorkforceDom(drawer) {
   wf.count = term.querySelector('.terminal-count');
   wf.subheader = term.querySelector('.terminal-subheader');
   wf.log = term.querySelector('.terminal-log');
+  wf.jump = term.querySelector('.terminal-jump');
   wf.input = term.querySelector('.terminal-input');
   wireTerminalInput(wf.input, wf.log, sendWorkforce);
   wf.prev = term.querySelector('.terminal-prev');
@@ -801,6 +1010,7 @@ async function loadWorkforce(resolved) {
     wf.cycle.hidden = true;
     wf.log.innerHTML = '';
     appendLine(wf.log, 'board', 'no card is focused and no agent is running', 'board');
+    scrollToBottom(wf.log); // a fresh panel, not a new line arriving mid-read
     return;
   }
   await renderWorkforceConversation();
@@ -843,20 +1053,21 @@ async function renderWorkforceConversation() {
     const data = await api(`/api/cards/${wf.cardId}/conversation`);
     wf.subheader.textContent = DELIVERY_LABEL[data.delivery] || DELIVERY_LABEL.next_run;
     wf.header.textContent = `${data.title} - ${data.running ? `running - ${data.phase || '...'}` : 'idle'}`;
-    wf.log.innerHTML = '';
-    (data.messages || []).forEach(m => appendLine(wf.log, m.author, m.body));
+    redrawLog(wf.log, () => (data.messages || []).forEach(m => appendLine(wf.log, m.author, m.body)));
     if (data.running && drawers.left && drawers.left.isOpen()) {
       wf.poll = setTimeout(renderWorkforceConversation, 2000);
     }
   } catch (err) {
     wf.header.textContent = 'workforce';
     appendLine(wf.log, 'board', `could not load conversation: ${err.message}`, 'error');
+    settleAfterAppend(wf.log);
   }
 }
 
 async function sendWorkforce(text) {
   if (!wf.cardId) return;
   appendLine(wf.log, 'fabian', text);
+  scrollToBottom(wf.log); // sending always jumps to the newest line and resumes following
   try {
     const res = await fetch(`/api/cards/${wf.cardId}/conversation`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
@@ -864,6 +1075,7 @@ async function sendWorkforce(text) {
     const body = await res.json().catch(() => null);
     if (!res.ok) {
       appendLine(wf.log, 'board', (body && body.error) || `request failed (${res.status})`, 'error');
+      settleAfterAppend(wf.log);
       return;
     }
     if (body && body.delivery) {
@@ -872,6 +1084,7 @@ async function sendWorkforce(text) {
     }
   } catch (err) {
     appendLine(wf.log, 'board', `could not reach the agent: ${err.message}`, 'error');
+    settleAfterAppend(wf.log);
   }
 }
 
@@ -1015,8 +1228,7 @@ function modelLabel(model) {
 
 // cycles default -> haiku -> sonnet -> opus -> default. a model set outside the cycle (a full id)
 // steps back to the default, so the key always lands somewhere the next press can leave
-async function cycleCardModel() {
-  const cardId = actionableCardId();
+async function cycleCardModel(cardId = actionableCardId()) {
   if (!cardId) return;
   try {
     const card = await api(`/api/cards/${cardId}`);
@@ -1031,6 +1243,115 @@ async function cycleCardModel() {
   } catch (err) {
     showRun(cardId, "can't change model", null, err.message);
   }
+}
+
+// ---- card overflow menu (...) - edit, delete, change model, move status ---------------------------
+// the four actions any card can take. change model reuses cycleCardModel above as-is; edit reuses
+// the same open-to-edit the strip's own Enter/Space already does - the panel is where every field
+// on a card lives, so there is nothing further to build for it. delete and move-status are new.
+
+function editCard(cardId = actionableCardId()) {
+  if (!cardId || (openCard && openCard.cardId === cardId)) return;
+  document.querySelector(`.card-strip[data-card-id="${cardId}"]`)?._expander?.open();
+}
+
+const STATUS_LABELS = {todo: 'to do', doing: 'doing', checking: 'checking', accepted: 'accepted', rejected: 'rejected'};
+
+// a direct status write, unlike y/x which call the accept/reject routes and their gates - this is
+// the manual override for every other move a card can make
+async function moveCardStatus(cardId, status) {
+  try {
+    await api(`/api/cards/${cardId}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({status}),
+    });
+  } catch (err) {
+    showRun(cardId, "can't move", null, err.message);
+    return;
+  }
+  if (currentBoardId) await onBoardEnter(currentBoardId);
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  if (strip) { strip.focus(); indicateFocus(strip); }
+}
+
+function openMoveStatusMenu(cardId = actionableCardId()) {
+  if (!cardId) return;
+  const current = document.querySelector(`.card-strip[data-card-id="${cardId}"]`)?.dataset.status;
+  const menu = new Menu({
+    title: 'move to',
+    sections: [{
+      kind: 'list',
+      items: STATUSES.map(s => ({id: s, label: STATUS_LABELS[s] || s, disabled: s === current})),
+      onPick: item => { menu.close(); moveCardStatus(cardId, item.id); },
+    }],
+  });
+  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
+  return menu;
+}
+
+// same two-item confirm shape as the stop-a-run menu above - a destructive action states the
+// consequence and makes the operator pick "keep it" over actually saying delete
+function openDeleteConfirm(cardId) {
+  const menu = new Menu({
+    title: 'delete this card?',
+    sections: [{
+      kind: 'list',
+      items: [
+        {id: 'delete', label: 'delete the card'},
+        {id: 'keep', label: 'keep it'},
+      ],
+      onPick: item => {
+        menu.close();
+        if (item.id === 'delete') doDeleteCard(cardId);
+      },
+    }],
+  });
+  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
+}
+
+async function doDeleteCard(cardId) {
+  // close its panel first, same order acceptOrRejectCard closes before moving a card elsewhere
+  if (openCard && openCard.cardId === cardId) openCard.expander.close();
+  try {
+    await api(`/api/cards/${cardId}`, {method: 'DELETE'});
+  } catch (err) {
+    showRun(cardId, "can't delete", null, err.message);
+    return;
+  }
+  if (currentBoardId) await onBoardEnter(currentBoardId);
+  returnToBoardBar();
+}
+
+function deleteCard(cardId = actionableCardId()) {
+  if (cardId) openDeleteConfirm(cardId);
+}
+
+// the ⋯ trigger on a card strip - always acts on that card, not whatever is focused, so a click
+// on card B's menu never touches card A even while A holds keyboard focus
+function openCardOverflowMenu(cardId, anchor) {
+  const menu = new Menu({
+    title: 'card actions',
+    sections: [{
+      kind: 'list',
+      items: [
+        {id: 'edit', label: 'edit'},
+        {id: 'model', label: 'change model'},
+        {id: 'status', label: 'move status'},
+        {id: 'delete', label: 'delete'},
+      ],
+      onPick: item => {
+        menu.close();
+        if (item.id === 'edit') editCard(cardId);
+        else if (item.id === 'model') cycleCardModel(cardId);
+        else if (item.id === 'status') openMoveStatusMenu(cardId);
+        else if (item.id === 'delete') deleteCard(cardId);
+      },
+    }],
+  });
+  const rect = anchor.getBoundingClientRect();
+  menu.openAt({x: rect.left, y: rect.bottom});
+  return menu;
 }
 
 // ---- usage (u) --------------------------------------------------------------------------------
@@ -1463,11 +1784,15 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyY') { acceptOrRejectCard('accept'); return; }
   if (evt.code === 'KeyX') { acceptOrRejectCard('reject'); return; }
   if (evt.code === 'KeyM') { cycleCardModel(); return; }
+  if (evt.code === 'KeyE') { editCard(); return; }
+  if (evt.code === 'KeyJ') { openMoveStatusMenu(); return; }
+  if (evt.code === 'Delete') { deleteCard(); return; }
   if (evt.code === 'KeyT') { toggleReplay(); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
   if (evt.code === 'KeyN') { toggleInboxPanel(); return; }
   if (evt.code === 'KeyH') { evt.preventDefault(); togglePreflightPanel(); return; }
+  if (evt.code === 'KeyO') { evt.preventDefault(); toggleSettingsPanel(); return; }
   // preventDefault: the panel focuses its first input, and the key that opened it typed itself there
   if (evt.code === 'KeyB') { evt.preventDefault(); toggleBoardsPanel(); return; }
   // opening a drawer leaves focus on the board, so the key that opened it also closes it
@@ -1480,6 +1805,20 @@ document.addEventListener('keydown', evt => {
     const board = boards[index];
     if (board) activateTab(board.id);
   }
+});
+
+// the open panel re-flows on resize. layoutCardSections reads the container's own width to decide
+// its column count and each section's measured height, and a resize is the one moment either can
+// go stale - a design-archive panel-layout-N keeps its own grid and is left alone, same as on open
+// debounced: a window drag fires dozens of resize events, each of which would force a synchronous
+// reflow of the container and every section - one settled layout pass is enough
+let resizeLayoutTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeLayoutTimer);
+  resizeLayoutTimer = setTimeout(() => {
+    const panel = document.querySelector('.card-panel');
+    if (panel && !/panel-layout-\d+/.test(panel.className)) layoutCardSections(panel);
+  }, 150);
 });
 
 // FOCUS STARTS ON THE BOARD BAR, per the brief. returnToBoardBar was wired only to onExitTop, so

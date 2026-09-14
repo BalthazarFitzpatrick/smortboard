@@ -84,6 +84,8 @@ await flush(); await flush();
 assert.ok(mod.bp.backdrop.parentNode, 'the panel is attached once opened');
 assert.equal(mod.bp.boardListEl.querySelectorAll('.board-row').length, 1, 'the one existing board renders');
 assert.equal(mod.bp.boardListEl.querySelector('.board-name').textContent, 'alpha');
+assert.ok(mod.bp.boardListEl.querySelector('.board-row').classList.contains('on'),
+  'the open board carries the opened treatment');
 assert.equal(mod.bp.repoListEl.querySelectorAll('.repo-row').length, 0, 'no repos yet on this board');
 
 // ---- typing in the board-name input never fires a board shortcut ----------------------------------
@@ -104,6 +106,9 @@ assert.deepEqual(JSON.parse(postCall.opts.body), {name: 'beta'});
 assert.equal(mod.boardsRef().length, 2, 'the board bar list now has both boards');
 assert.equal(mod.bp.boardListEl.querySelectorAll('.board-row').length, 2, 'the panel list also refreshed');
 assert.equal(mod.bp.boardNameInput.value, '', 'the name input clears after a successful create');
+const [rowA, rowB] = [...mod.bp.boardListEl.querySelectorAll('.board-row')];
+assert.ok(!rowA.classList.contains('on'), 'the opened treatment leaves the old board');
+assert.ok(rowB.classList.contains('on'), 'the opened treatment moves to the newly created board');
 
 // ---- registering a repo refreshes the repo list under the current board ---------------------------
 Object.keys(mod.bp.repoFields).forEach(k => { mod.bp.repoFields[k].value = ''; });
@@ -120,6 +125,8 @@ const repoPostCall = calls.find(c => c.path === '/api/boards/b2/repos' && c.opts
 assert.ok(repoPostCall, 'enter in a repo field should POST the repo');
 assert.equal(mod.bp.repoListEl.querySelectorAll('.repo-row').length, 1, 'the new repo renders without a reload');
 assert.equal(mod.bp.repoListEl.querySelector('.repo-name').textContent, 'smortboard');
+assert.ok(mod.bp.repoListEl.querySelector('.repo-row').classList.contains('on'),
+  'a repo on the open board carries the opened treatment too');
 
 // ---- a refusal renders inline instead of clearing the form -----------------------------------------
 stub('/api/boards/b2/repos', 'POST', 400, {error: 'path does not exist: /nope'});
