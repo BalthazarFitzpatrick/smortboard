@@ -9,7 +9,13 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from smortboard.attention import AnswerRefused, answer_card, attention_rows, with_actions
+from smortboard.attention import (
+    AnswerRefused,
+    answer_card,
+    approve_lease,
+    attention_rows,
+    with_actions,
+)
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.local_repos import detect_default_branch, list_folders
@@ -96,6 +102,7 @@ _ROUTES = [
     (re.compile(r"^/ui/(?P<name>.+)$"), "GET"),
     (re.compile(r"^/api/attention$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/answer$"), "POST"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/lease/approve$"), "POST"),
 ]
 
 _ROLE_DEFAULTS = {
@@ -268,6 +275,8 @@ def _make_handler(
                 self._send_json(200, board_costs(store, params["board_id"]))
             elif path == "/api/attention":
                 self._send_json(200, attention_rows(store))
+            elif "card_id" in params and path.endswith("/lease/approve"):
+                self._handle_lease_approve(params["card_id"])
             elif "card_id" in params and path.endswith("/answer"):
                 self._handle_answer(params["card_id"])
             elif "card_id" in params and method == "GET":
@@ -361,6 +370,23 @@ def _make_handler(
                 return
             try:
                 state = answer_card(store, runs, card_id, message)
+            except AnswerRefused as exc:
+                self._send_json(409, {"error": str(exc)})
+                return
+            self._send_json(202, state)
+
+        def _handle_lease_approve(self, card_id: str) -> None:
+            """the inbox's one-click reply to a LEASE_CONFLICT: widen the lease by exactly the
+            refused paths and resume. 400 for an empty/invalid path list or a bad glob, 404 for an
+            unknown card, 409 when the card is not blocked on LEASE_CONFLICT or the resume itself
+            is refused (the lease stays widened either way - see attention.approve_lease).
+            """
+            paths = self._read_json().get("paths")
+            try:
+                state = approve_lease(store, runs, card_id, paths)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             except AnswerRefused as exc:
                 self._send_json(409, {"error": str(exc)})
                 return

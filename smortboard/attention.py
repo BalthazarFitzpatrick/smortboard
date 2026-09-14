@@ -17,6 +17,11 @@ from smortboard.actions import next_action, short_action
 from smortboard.lifecycle import BOARD_AUTHOR
 from smortboard.scheduler import conflicting_run
 from smortboard.store.api import Store
+from smortboard.telemetry import card_telemetry
+
+# a lease only ever guards writes - a refused Bash call says nothing about a path to widen for
+_LEASE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
+_WORKSPACE_PREFIX = "/workspace/"
 
 RESUMABLE_REASONS = frozenset(
     {"AGENT_QUESTION", "TESTS_FAILED", "REVIEW_REJECTED", "CRASH", "LEASE_CONFLICT"}
@@ -127,6 +132,58 @@ def answer_card(store: Store, runs: Any, card_id: str, message: str) -> dict[str
     return runs.start(card_id).as_dict()
 
 
+def lease_conflict_wants(store: Store, card_id: str) -> list[str]:
+    """the repo-relative paths a card's most recent attempt was refused writing to.
+
+    Only Edit/Write/NotebookEdit refusals count - a lease guards writes, so a refused Bash call
+    is never a path to widen for. The container mounts the repo at /workspace, so a target is
+    made repo-relative by stripping that prefix. Deduplicated, order preserved.
+    """
+    attempts = card_telemetry(store, card_id)["attempts"]
+    if not attempts:
+        return []
+    wants: list[str] = []
+    for refusal in attempts[-1]["refusals"]:
+        if refusal.get("tool") not in _LEASE_TOOLS:
+            continue
+        target = refusal.get("target") or ""
+        if target.startswith(_WORKSPACE_PREFIX):
+            target = target[len(_WORKSPACE_PREFIX) :]
+        if target and target not in wants:
+            wants.append(target)
+    return wants
+
+
+def approve_lease(store: Store, runs: Any, card_id: str, paths: list[str]) -> dict[str, Any]:
+    """the inbox's one-click reply to a LEASE_CONFLICT: widen the lease by exactly the paths the
+    card was refused, then resume it the same way answer_card does.
+
+    Raises ValueError for an empty/invalid path list or an invalid glob (both belong as a 400),
+    NotFoundError for an unknown card (store.get_card raises it), and AnswerRefused when the card
+    is not blocked on LEASE_CONFLICT (409) or when the lease is widened but the resume itself is
+    refused by a running conflicting card - the lease stays widened either way, since a person
+    approved exactly those paths and a later resume should not have to be asked again.
+    """
+    if not isinstance(paths, list) or not paths:
+        raise ValueError("paths must be a non-empty list of globs")
+
+    card = store.get_card(card_id)
+    if card.get("blocked_reason_code") != "LEASE_CONFLICT":
+        raise AnswerRefused("this card is not blocked on a lease conflict")
+
+    existing = [lease["path_glob"] for lease in card.get("leases") or []]
+    widened = existing + [path for path in paths if path not in existing]
+    store.set_leases(card_id, widened)
+
+    message = f"lease widened to include: {', '.join(paths)}"
+    try:
+        return answer_card(store, runs, card_id, message)
+    except AnswerRefused as exc:
+        raise AnswerRefused(
+            f"lease widened, but not resumed yet: {exc} - answer again once it finishes"
+        ) from exc
+
+
 def attention_rows(store: Store) -> list[dict[str, Any]]:
     """one row per card across every board that is waiting on fabian, oldest first"""
     rows = []
@@ -136,20 +193,21 @@ def attention_rows(store: Store) -> list[dict[str, Any]]:
             if reason is None:
                 continue
             answerable = reason in RESUMABLE_REASONS
-            rows.append(
-                {
-                    "card_id": card["id"],
-                    "board_id": board["id"],
-                    "board_name": board["name"],
-                    "title": card["title"],
-                    "reason": reason,
-                    "question": _question_for(store, card),
-                    "since": card["updated_at"],
-                    "answerable": answerable,
-                    # the call to action, for every row; hint repeats it where no answer box shows
-                    "action": next_action(reason) or "",
-                    "hint": "" if answerable else (next_action(reason) or ""),
-                }
-            )
+            row = {
+                "card_id": card["id"],
+                "board_id": board["id"],
+                "board_name": board["name"],
+                "title": card["title"],
+                "reason": reason,
+                "question": _question_for(store, card),
+                "since": card["updated_at"],
+                "answerable": answerable,
+                # the call to action, for every row; hint repeats it where no answer box shows
+                "action": next_action(reason) or "",
+                "hint": "" if answerable else (next_action(reason) or ""),
+            }
+            if reason == "LEASE_CONFLICT":
+                row["wants"] = lease_conflict_wants(store, card["id"])
+            rows.append(row)
     rows.sort(key=lambda r: r["since"])
     return rows
