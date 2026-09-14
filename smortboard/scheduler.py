@@ -344,11 +344,20 @@ class BoardScheduler:
         (see its docstring) rather than this method making several separate profiles calls that
         each hit disk - with only the implicit "default" profile configured it stays a pure read,
         so a single-credential board never grows a profiles.json.
+
+        auto_switch_profiles=off skips the rotation half: the profile is still marked limited (so
+        it is skipped once switching resumes), but the board parks until the reset exactly as it
+        did before profiles existed, instead of rotating credentials on the operator's behalf.
         """
         store = Store(self._db_path)
         try:
             resets_at = _latest_reset(store)
-            result = profiles.handle_usage_limit(resets_at)
+            auto_switch = store.get_settings().get("auto_switch_profiles") != "off"
+            if auto_switch:
+                result = profiles.handle_usage_limit(resets_at)
+            else:
+                profiles.mark_limited(profiles.active_profile(), resets_at)
+                result = {"rotated": False, "next_profile": None, "earliest_reset": None}
         finally:
             store.close()
 
