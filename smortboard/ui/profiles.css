@@ -1,0 +1,58 @@
+/* credential profiles (shift+p): the panel it opens. every visual primitive - toggle,
+   panel-floating, h-divider, field-label, text-field, hazard stripes - comes from base.css; this
+   file only positions and colors them for the profile list and its add form. */
+
+.profiles-panel {
+  width: min(560px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+
+.profile-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+
+.profile-row {
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--grey-border);
+}
+
+.profile-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.profile-name { color: var(--cream); font-weight: 600; }
+.profile-name.profile-active { color: var(--lichen-milk); }
+
+.profile-active-label { color: var(--lichen-milk); }
+
+.profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.profile-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+}
+.profile-add-name { flex: 0 1 140px; }
+.profile-add-token { flex: 1 1 auto; }
+
+.profile-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.profile-status.profile-error { color: var(--status-warn); }

@@ -90,7 +90,8 @@ def test_roster_phase_activity_wins_over_the_last_tool_use(store, phase, activit
     assert rows[0]["activity"] == activity
 
 
-def test_roster_lists_working_before_blocked_and_carries_the_reason(store):
+def test_roster_lists_only_the_running_card_not_the_blocked_one(store):
+    """a blocked card belongs to the attention inbox, not the roster - it holds no live run"""
     board = store.create_board("b")
     running = store.create_card(board["id"], None, "running")
     store.update_card(running["id"], status="doing")
@@ -98,28 +99,16 @@ def test_roster_lists_working_before_blocked_and_carries_the_reason(store):
     store.update_card(blocked["id"], status="doing", blocked_reason_code="USAGE_LIMIT")
 
     rows = roster_rows(store, [{"card_id": running["id"], "phase": "running"}])
-    assert [r["card_id"] for r in rows] == [running["id"], blocked["id"]]
+    assert [r["card_id"] for r in rows] == [running["id"]]
     assert rows[0]["state"] == "working"
-    assert rows[1]["state"] == "blocked"
-    assert rows[1]["reason"] == "USAGE_LIMIT"
-    assert rows[1]["activity"] == "blocked: USAGE_LIMIT"
 
 
-def test_roster_is_empty_when_nothing_is_running_or_blocked(store):
+def test_roster_is_empty_when_nothing_is_running(store):
     board = store.create_board("b")
     store.create_card(board["id"], None, "idle in todo")
+    blocked = store.create_card(board["id"], None, "blocked")
+    store.update_card(blocked["id"], status="doing", blocked_reason_code="USAGE_LIMIT")
     assert roster_rows(store, []) == []
-
-
-def test_a_card_mid_retry_is_not_double_counted(store):
-    """a card can be both status=doing/blocked_reason_code set AND actively running a retry - the
-    run wins so it is not listed twice"""
-    board = store.create_board("b")
-    card = store.create_card(board["id"], None, "retrying")
-    store.update_card(card["id"], status="doing", blocked_reason_code="TESTS_FAILED")
-    rows = roster_rows(store, [{"card_id": card["id"], "phase": "running"}])
-    assert len(rows) == 1
-    assert rows[0]["state"] == "working"
 
 
 # -- usage ------------------------------------------------------------------
@@ -144,7 +133,13 @@ def test_usage_reads_the_current_flat_rate_limit_shape_with_no_utilisation(store
     )
     usage = usage_projection(store)
     assert usage["windows"] == [
-        {"type": "five_hour", "status": "allowed", "resets_at": 1789078800, "utilization": None}
+        {
+            "type": "five_hour",
+            "profile": "default",
+            "status": "allowed",
+            "resets_at": 1789078800,
+            "utilization": None,
+        }
     ]
 
 
@@ -188,6 +183,51 @@ def test_usage_keeps_only_the_latest_event_per_window_type(store):
     usage = usage_projection(store)
     assert len(usage["windows"]) == 1
     assert usage["windows"][0]["resets_at"] == 300
+
+
+def test_usage_takes_the_most_recent_event_across_cards_not_by_card_id(store):
+    """regression: list_events_by_kind used to sort by (card_id, seq), which groups by card
+    rather than time - a card whose id sorted alphabetically later could overwrite a genuinely
+    newer event from an earlier-id card, exactly the overcount this card reported. give the
+    later event to the alphabetically-first card_id to prove ordering is now by wall-clock time."""
+    board = store.create_board("b")
+    card_a = store.create_card(board["id"], None, "a")  # sorts before card_z's id
+    card_z = store.create_card(board["id"], None, "z")
+    store.append_event(
+        card_z["id"],
+        "rate_limit_event",
+        {"rate_limit_info": {"status": "allowed", "resetsAt": 100, "rateLimitType": "five_hour"}},
+    )
+    store.append_event(
+        card_a["id"],
+        "rate_limit_event",
+        {"rate_limit_info": {"status": "allowed", "resetsAt": 200, "rateLimitType": "five_hour"}},
+    )
+    usage = usage_projection(store)
+    assert len(usage["windows"]) == 1
+    assert usage["windows"][0]["resets_at"] == 200
+
+
+def test_usage_windows_are_attributed_to_the_recording_profile(store):
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "c")
+    store.append_event(
+        card["id"],
+        "rate_limit_event",
+        {
+            "profile": "alt",
+            "rate_limit_info": {"status": "allowed", "resetsAt": 100, "rateLimitType": "five_hour"},
+        },
+    )
+    store.append_event(
+        card["id"],
+        "rate_limit_event",
+        {"rate_limit_info": {"status": "allowed", "resetsAt": 200, "rateLimitType": "five_hour"}},
+    )
+    usage = usage_projection(store)
+    by_profile = {w["profile"]: w for w in usage["windows"]}
+    assert by_profile["alt"]["resets_at"] == 100
+    assert by_profile["default"]["resets_at"] == 200
 
 
 def test_usage_sums_model_usage_and_cost_across_results(store):
