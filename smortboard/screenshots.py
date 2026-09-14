@@ -1,13 +1,7 @@
-"""one playwright screenshot of the running board, taken on the HOST - never inside a container.
+"""one playwright screenshot of the running board, taken on the HOST, never inside a container.
 
-Mission control never gets a browser tool and never touches the filesystem: it only asks for a
-screenshot through a field in its JSON reply (see smortboard.orchestrator). This module is what
-the board itself calls, on the host, to honour that ask - chromium, headless, one page, one PNG.
-
-Only a loopback url is ever fetched. A repo's readme, a card's own text, or mission control's
-reply itself could all name any url they like; `validate_board_url` refuses anything that is not
-127.0.0.1/localhost BEFORE a browser is ever launched, so there is no path from untrusted text to
-an outbound fetch.
+mission control only asks for a screenshot via its JSON reply; this module does the honouring -
+chromium headless, one page, one PNG, loopback-only urls validated before any browser launches.
 """
 
 from __future__ import annotations
@@ -45,10 +39,9 @@ def validate_board_url(url: str) -> str:
 
 
 def _playwright_taker(url: str, out_path: Path) -> None:
-    """the real taker: chromium headless, one page, one full-page png.
+    """chromium headless, one page, one full-page png.
 
-    imported lazily so a board that never takes a screenshot never needs playwright's browser
-    binaries installed just to start up.
+    imported lazily so a board that never screenshots never needs the browser binaries.
     """
     from playwright.sync_api import sync_playwright
 
@@ -67,10 +60,9 @@ def take_board_screenshot(
     out_dir: str | Path,
     taker: ScreenshotTaker | None = None,
 ) -> Path:
-    """validates `url`, then writes exactly one PNG into `out_dir` and returns its path.
+    """validates `url`, writes exactly one PNG into `out_dir`, returns its path.
 
-    `out_dir` is the turn's own scratch directory - the caller owns its lifetime (one per turn,
-    cleaned up after), so a screenshot from one message can never be mistaken for another's.
+    `out_dir` is the caller's own scratch directory for this turn only.
     """
     validate_board_url(url)
     out_dir = Path(out_dir)

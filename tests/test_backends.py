@@ -383,6 +383,14 @@ def test_container_backend_real_docker_smoke(tmp_path):
     assert result.returncode == 0
 
 
+def test_config_base_honours_xdg_config_home(tmp_path, monkeypatch):
+    """profiles.py builds its own paths from this - a token file and a profile file must land
+    under the same tree"""
+    monkeypatch.setattr(backends.os, "name", "posix")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert backends.config_base() == tmp_path
+
+
 def test_the_default_token_path_is_honoured(tmp_path, monkeypatch):
     """exercises card_token_path()'s default branch, which nothing reached before - ruff caught an
     undefined constant on that line that the whole suite had walked straight past."""
