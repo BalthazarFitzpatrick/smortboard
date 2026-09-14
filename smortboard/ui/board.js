@@ -27,6 +27,7 @@ const BINDINGS = [
   {code: 'Slash', label: '/', action: "type: the open card's comment, or the open chat", group: 'cards'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
   {code: 'KeyW', label: 'w', action: 'run the board: start / stop the queue', group: 'cards'},
+  {code: 'KeyF', label: 'f', action: 'fold: merge the todo cards one agent should do as one (asks first)', group: 'cards'},
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
   {code: 'KeyI', label: 'i', action: 'cost telemetry: card attempts, or the board cost table', group: 'panels'},
   {code: 'KeyC', label: 'c', action: 'cost overview: spend across every board', group: 'panels'},
@@ -82,6 +83,15 @@ function renderBoardBar() {
     btn.textContent = board.name;
     bar.appendChild(btn);
   });
+  // fold acts on whichever board is open. built here with the tabs, since this function wipes the
+  // bar - and not a .nav-tab, which shell.js would treat as one more board
+  if (boards.length) {
+    const fold = document.createElement('div');
+    fold.className = 'toggle board-fold';
+    fold.textContent = 'fold (f)';
+    fold.addEventListener('click', () => openFoldConfirm());
+    bar.appendChild(fold);
+  }
 }
 
 async function loadBoards() {
@@ -1334,6 +1344,55 @@ function toggleOverlay(key, build) {
   return menu;
 }
 
+// ---- fold (f) - merge the todo cards one agent should do as one ------------------------------
+
+// ASKS FIRST, every time: a fold is a model run over the whole board, not a free local action
+function openFoldConfirm() {
+  if (!currentBoardId) return;
+  const boardId = currentBoardId;
+  toggleOverlay('KeyF', () => {
+    const note = document.createElement('div');
+    note.className = 'fold-note';
+    note.textContent = 'an agent reads every card and the ledger, then merges the todo cards one '
+      + 'agent should do as one. this costs tokens and takes a few minutes.';
+    const menu = new Menu({
+      title: "fold this board's cards?",
+      sections: [
+        {kind: 'node', node: note},
+        {kind: 'list', items: [{id: 'yes', label: 'yes, fold (y)'}, {id: 'no', label: 'no (n)'}],
+          onPick: item => answerFold(item.id === 'yes', boardId)},
+      ],
+      onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyF') openOverlay = null; },
+    });
+    menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    menu.el?.classList.add('menu-centered');
+    return menu;
+  });
+}
+
+function answerFold(yes, boardId = currentBoardId) {
+  if (openOverlay && openOverlay.key === 'KeyF') { openOverlay.menu.close(); openOverlay = null; }
+  if (yes && boardId) startFold(boardId);
+}
+
+let foldPoll = null;
+
+// the board writes its progress and the result into mission control, so that is where it shows;
+// the cards re-render once the fold is done
+async function startFold(boardId) {
+  const {ok} = await apiOrError(`/api/boards/${boardId}/fold`, {method: 'POST'});
+  drawerFor('right').open();
+  if (!ok) return; // a 409 is a fold already running, whose messages are already there
+  clearInterval(foldPoll);
+  foldPoll = setInterval(async () => {
+    const state = await api(`/api/boards/${boardId}/fold`).catch(() => null);
+    if (state && state.running) return;
+    clearInterval(foldPoll);
+    foldPoll = null;
+    if (currentBoardId === boardId) await onBoardEnter(boardId);
+  }, 3000);
+}
+
 // ---- agent roster (a) -----------------------------------------------------------------------
 
 function openRosterPanel() {
@@ -1947,6 +2006,13 @@ function withModifier(evt) {
 
 document.addEventListener('keydown', evt => {
   if (withModifier(evt)) return;
+  // the fold question owns y and n while it is open - y is otherwise accept, and accepting the
+  // focused card while answering "fold?" would be the worst possible misread
+  if (openOverlay && openOverlay.key === 'KeyF' && (evt.code === 'KeyY' || evt.code === 'KeyN')) {
+    evt.preventDefault();
+    answerFold(evt.code === 'KeyY');
+    return;
+  }
   // the shortcut overlay owns left/right while it is open, ahead of the focus-recovery below -
   // otherwise a lost-focus reentry would eat the very same arrow press as a card move
   if (openOverlay && openOverlay.key === 'KeyS' && (evt.code === 'ArrowLeft' || evt.code === 'ArrowRight')) {
@@ -1976,6 +2042,7 @@ document.addEventListener('keydown', evt => {
 
   if (evt.code === 'KeyG') { grouped = !grouped; return; }
   if (evt.code === 'KeyW') { toggleRunAll(); return; }
+  if (evt.code === 'KeyF') { openFoldConfirm(); return; }
   if (evt.code === 'KeyU') { openUsagePanel(); return; }
   if (evt.code === 'KeyI') { openTelemetryPanel(); return; }
   if (evt.code === 'KeyC') { openCostsOverviewPanel(); return; }
