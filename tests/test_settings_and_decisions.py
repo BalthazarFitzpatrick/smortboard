@@ -60,6 +60,29 @@ def test_an_unknown_route_or_setting_is_refused(store, card_id):
         store.set_setting("theme", "dark")
 
 
+def test_max_parallel_refuses_zero_negatives_and_non_numbers(store, card_id):
+    for bad in (0, -1, "0", "-3", "two", 1.5, True):
+        with pytest.raises(ValueError):
+            store.set_setting("max_parallel", bad)
+    store.set_setting("max_parallel", 3)  # a good value still works after the bad ones refused
+    assert (
+        store.get_settings()["max_parallel"] == "3"
+    )  # settings are stored as text, like every other one
+    store.set_setting("max_parallel", None)  # null clears it back to the scheduler's default
+    assert store.get_settings()["max_parallel"] is None
+
+
+def test_a_board_max_parallel_refuses_zero_negatives_and_non_numbers(store):
+    board = store.create_board("b2")
+    for bad in (0, -1, 1.5, True):
+        with pytest.raises(ValueError):
+            store.set_board_max_parallel(board["id"], bad)
+    updated = store.set_board_max_parallel(board["id"], 1)
+    assert updated["max_parallel"] == 1
+    cleared = store.set_board_max_parallel(board["id"], None)
+    assert cleared["max_parallel"] is None
+
+
 def test_mission_control_read_paths_add_refuse_remove(store, tmp_path):
     folder = tmp_path / "screenshots"
     folder.mkdir()
