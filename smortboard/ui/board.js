@@ -183,6 +183,11 @@ function renderBuckets(cards) {
   row.addEventListener('focusin', evt => indicateFocus(evt.target));
 }
 
+// the first 8 chars of the id - short enough to say in conversation, long enough not to collide
+function shortId(id) {
+  return String(id).slice(0, 8);
+}
+
 // rebinds the 2D grid nav to whatever is currently in the buckets - a full renderBuckets always
 // needs this, and so does a targeted redrawCardStrip that moved a strip to a new bucket
 function refreshBucketNav() {
@@ -206,7 +211,7 @@ function renderCardStrip(card) {
     ? `<span class="stat stat-action" title="${escapeHtml(card.blocked_reason_code || card.next_action || '')}">${escapeHtml(stat)}</span>`
     : `<span class="stat">${escapeHtml(stat)}</span>`;
   strip.innerHTML = `
-    <div class="card-head"><div class="card-title">${escapeHtml(card.title)}</div></div>
+    <div class="card-head"><div class="card-title">${escapeHtml(card.title)}</div><span class="card-id">${escapeHtml(shortId(card.id))}</span></div>
     <div class="h-divider"></div>
     <div class="card-body">${escapeHtml(card.description || '')}</div>
     <div class="h-divider"></div>
