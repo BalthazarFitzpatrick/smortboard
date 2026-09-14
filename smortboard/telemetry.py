@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from smortboard import profiles
 from smortboard.exec.runner import classify_rate_limit, classify_result
 from smortboard.store.api import Store
 
@@ -124,12 +125,16 @@ def _window_from_rate_limit_event(payload: dict[str, Any]) -> list[dict[str, Any
     "rateLimitType"}}. older builds nested per-window figures under "unifiedWindows". never invent
     a number neither shape provided.
     """
+    # "default" for a run recorded before profile attribution existed (runner.py stamps every new
+    # rate_limit_event with the profile active when it landed) - never invented for an old event
+    profile = payload.get("profile") or profiles.DEFAULT_PROFILE
     info = payload.get("rate_limit_info") or {}
     unified = info.get("unifiedWindows")
     if isinstance(unified, dict):
         return [
             {
                 "type": window_type,
+                "profile": profile,
                 "status": window.get("status") or info.get("status"),
                 "resets_at": window.get("resetsAt"),
                 "utilization": window.get("utilization"),
@@ -142,6 +147,7 @@ def _window_from_rate_limit_event(payload: dict[str, Any]) -> list[dict[str, Any
     return [
         {
             "type": window_type,
+            "profile": profile,
             "status": info.get("status"),
             "resets_at": info.get("resetsAt"),
             "utilization": None,
@@ -151,12 +157,13 @@ def _window_from_rate_limit_event(payload: dict[str, Any]) -> list[dict[str, Any
 
 def usage_projection(store: Store) -> dict[str, Any]:
     rate_events = store.list_events_by_kind(["rate_limit_event"])
-    latest_by_type: dict[str, dict[str, Any]] = {}
+    latest_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for event in rate_events:
         for window in _window_from_rate_limit_event(event["payload"]):
-            # later events overwrite earlier ones per type - list_events_by_kind is oldest first
-            latest_by_type[window["type"]] = window
-    windows = list(latest_by_type.values())
+            # later events overwrite earlier ones per (window type, profile) - list_events_by_kind
+            # is oldest first by wall-clock time, so the last write per key is the true latest
+            latest_by_key[(window["type"], window["profile"])] = window
+    windows = list(latest_by_key.values())
 
     result_events = store.list_events_by_kind(["result"])
     models: dict[str, dict[str, float]] = {}

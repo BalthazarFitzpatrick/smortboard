@@ -15,12 +15,14 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from smortboard import profiles
 from smortboard.exec.backends import card_image, docker_available, read_card_token
 from smortboard.exec.runner import build_command, run_process
 from smortboard.operator import OPERATOR_NAME
@@ -100,6 +102,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "leases": {"type": "array", "items": {"type": "string"}},
                     "depends_on": {"type": "array", "items": {"type": "string"}},
                     "model": {"type": ["string", "null"]},
+                    "task_id": {"type": ["string", "null"]},
                 },
                 "required": [
                     "title",
@@ -110,6 +113,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "leases",
                     "depends_on",
                     "model",
+                    "task_id",
                 ],
             },
         },
@@ -144,9 +148,7 @@ _BOARD_AUTHOR = "board"
 class OrchestratorRunner(Protocol):
     """a turn: a prompt and a model in, the raw response text out. tests inject a fake.
 
-    `screenshot_path` is set only on the one re-run that follows a screenshot ask - its parent
-    directory is what the real runner mounts read-only, so the model can see the image it asked
-    for. every other call leaves it None, same as before this existed.
+    `screenshot_path` is set only on the re-run after a screenshot ask, so the model can see it.
     """
 
     def __call__(
@@ -196,12 +198,91 @@ def _short_id(card_id: str) -> str:
     return card_id[:8]
 
 
+# read on the host from the default branch, never the live checkout, so a card's uncommitted
+# ledger edits never leak in; the root TASKS.jsonl is usually a symlink, hence dev_ledger first
+_LEDGER_PATHS = ("dev_ledger/TASKS.jsonl", "TASKS.jsonl")
+_OPEN_TASK_LIMIT = 80
+_LAYOUT_LIMIT = 60
+
+
+def _git_show(path: str, ref: str, rel: str) -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "-C", path, "show", f"{ref}:{rel}"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def _open_tasks(repo: dict[str, Any], links: dict[str, str]) -> list[dict[str, Any]]:
+    """the repo's not-done ledger tasks, trimmed for the prompt, each marked with its card if any"""
+    for rel in _LEDGER_PATHS:
+        rows = []
+        for line in (_git_show(repo["path"], repo["default_branch"], rel) or "").splitlines():
+            try:
+                task = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(task, dict):
+                rows.append(task)
+        if rows:
+            break
+    else:
+        return []
+    tasks = []
+    for task in rows:
+        if task.get("status") == "done":
+            continue
+        task_id = str(task.get("id"))
+        linked = links.get(task_id)
+        tasks.append(
+            {
+                "id": task_id,
+                "title": str(task.get("title") or "")[:160],
+                "status": task.get("status"),
+                "criteria": str(task.get("acceptance_criteria") or "")[:240],
+                "linked_card": _short_id(linked) if linked else None,
+            }
+        )
+        if len(tasks) >= _OPEN_TASK_LIMIT:
+            break
+    return tasks
+
+
+def _layout(repo: dict[str, Any]) -> list[str]:
+    """the repo's folders two levels deep with file counts, so leases name real paths"""
+    listing = _git_show_tree(repo["path"], repo["default_branch"])
+    counts: dict[str, int] = {}
+    for path in listing:
+        parts = path.split("/")
+        key = parts[0] if len(parts) == 1 else "/".join(parts[: min(2, len(parts) - 1)]) + "/"
+        counts[key] = counts.get(key, 0) + 1
+    entries = [f"{k} ({n})" if k.endswith("/") else k for k, n in sorted(counts.items())]
+    return entries[:_LAYOUT_LIMIT]
+
+
+def _git_show_tree(path: str, ref: str) -> list[str]:
+    try:
+        out = subprocess.run(
+            ["git", "-C", path, "ls-tree", "-r", "--name-only", ref],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return out.stdout.split() if out.returncode == 0 else []
+
+
 def _snapshot_repos(store: Store, board_id: str) -> list[dict[str, Any]]:
     return [
         {
             "name": r["name"],
             "default_branch": r["default_branch"],
             "test_command": r["test_command"],
+            "layout": _layout(r),
+            "open_tasks": _open_tasks(r, store.ledger_links(r["id"])),
         }
         for r in store.list_repos(board_id)
     ]
@@ -241,10 +322,22 @@ def build_board_snapshot(store: Store, board_id: str) -> dict[str, Any]:
     }
 
 
+# in the turn prompt rather than ORCHESTRATOR_PROMPT: a stored prompt replaces the code default
+_LEDGER_RULES = (
+    "Each repo carries `layout` (its folders with file counts) and `open_tasks` (the not-done tasks "
+    "of its dev_ledger/TASKS.jsonl). To turn a ledger task into a card, set the card's `task_id` to "
+    "that task's id; a task with a `linked_card` already has a card, so never propose it again. "
+    "Set `task_id` to null for a card that is not a ledger task. Write leases over real paths from "
+    "`layout`, gitignore-style: `*` stays inside one folder, `**/` is any depth, none included."
+)
+
+
 def build_turn_prompt(snapshot: dict[str, Any], message: str) -> str:
     return (
         "Board snapshot:\n"
         + json.dumps(snapshot, indent=2)
+        + "\n\n"
+        + _LEDGER_RULES
         + f"\n\n{OPERATOR_NAME}'s new message:\n"
         + message
     )
@@ -287,9 +380,7 @@ def _apply_screenshot_rerun(
 ) -> tuple[str, str, list[Any], str | None]:
     """takes exactly one screenshot for this message and re-runs the turn once with it readable.
 
-    ANY failure here - a refused url, a browser that never comes up, a re-run that raises or comes
-    back unparseable - degrades to `fallback` (the first reply) plus a warning, rather than losing
-    the whole turn over an auxiliary look at the screen.
+    any failure here degrades to `fallback` (the first reply) plus a warning, not a lost turn.
     """
     shots_dir = Path(tempfile.mkdtemp(prefix="smortboard-shots-"))
     try:
@@ -346,14 +437,10 @@ def run_orchestrator_turn(
     store its reply and the new plan. a failed or unparseable run stores a board error message
     instead and leaves the plan untouched.
 
-    `store_message=False` for the http path, which stores operator's message itself before handing
-    the turn to its own thread - so a 202 response can already show it, without a race against the
-    thread doing it a moment later.
-
-    a `screenshot` in the reply triggers exactly one re-run: `board_url` (default the board's own
-    loopback address) is screenshotted via `screenshot_taker` (real playwright in production, a
-    fake in every test) and the turn is re-run once with the image readable. the intermediate
-    "let me look" reply is never shown to operator - only the re-run's reply, plan and cards are."""
+    `store_message=False` skips the store for the http path, which already stored it itself.
+    a `screenshot` in the reply triggers exactly one re-run with the image readable; the
+    intermediate "let me look" reply is never shown to operator - only the re-run's reply is.
+    """
     if store_message:
         store.add_orchestrator_message(board_id, "operator", message)
 
@@ -407,6 +494,19 @@ def run_orchestrator_turn(
         model, warning = _clean_model(spec.get("model"))
         if warning:
             warnings.append(warning)
+        task_id = spec.get("task_id")
+        task_id = str(task_id).strip() or None if task_id is not None else None
+        if task_id and not repo_id:
+            warnings.append(f'"{title}" names ledger task {task_id} but has no repo, so no link')
+            task_id = None
+        if task_id:
+            holder = store.ledger_links(repo_id).get(task_id)
+            if holder:
+                warnings.append(
+                    f"task {task_id} is already on card {_short_id(holder)}, "
+                    f'so "{title}" was not created'
+                )
+                continue
         if not spec.get("leases"):
             warnings.append(
                 f'"{title}" has no lease, so the board will not run it until one is set'
@@ -421,6 +521,7 @@ def run_orchestrator_turn(
             tasks=list(spec.get("tasks") or []),
             leases=list(spec.get("leases") or []),
             model=model,
+            ledger_task=task_id,
         )
         created_by_title[title] = card["id"]
         created_summaries.append({"id": card["id"], "title": title})
@@ -506,11 +607,13 @@ class OrchestratorRegistry:
     ) -> None:
         store = Store(self._db_path)  # this thread's own connection, never the server's
         try:
+            # the active profile, resolved per turn as card runs do, so a shift+p switch reaches
+            # mission control too [a fixed override still wins]
             result = run_orchestrator_turn(
                 store,
                 board_id,
                 message,
-                token_path=self._token_path,
+                token_path=profiles.token_path_for_run(self._token_path),
                 runner=runner,
                 store_message=not message_already_stored,
             )

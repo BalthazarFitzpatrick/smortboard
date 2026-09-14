@@ -37,6 +37,8 @@ CARD_WRITABLE_FIELDS = {
 # smortboard.scheduler.DEFAULT_MAX_PARALLEL
 # resume_briefing gates lifecycle.py's resume briefing - "off" disables it, unset means on
 # gate_timeout_seconds caps the test gate - unset means review.gates.GATE_TIMEOUT_SECONDS (600)
+# auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - "off" parks the board until
+# the reset instead (the pre-profiles behaviour), unset means on
 _SETTING_KEYS = (
     "findings_route",
     "orchestrator_model",
@@ -45,6 +47,7 @@ _SETTING_KEYS = (
     "max_parallel",
     "resume_briefing",
     "gate_timeout_seconds",
+    "auto_switch_profiles",
 )
 
 
@@ -239,6 +242,7 @@ class Store:
         criteria: list[str] | None = None,
         leases: list[str] | None = None,
         model: str | None = None,
+        ledger_task: str | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
         card_id = _new_id()
@@ -246,9 +250,9 @@ class Store:
         self._conn.execute(
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
-                blocked_reason_code, description, position, review_flag, model, created_at,
-                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                blocked_reason_code, description, position, review_flag, model, ledger_task,
+                created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -262,6 +266,7 @@ class Store:
                 position,
                 int(review_flag),
                 model,
+                ledger_task,
                 now,
                 now,
             ),
@@ -283,6 +288,14 @@ class Store:
             )
         self._conn.commit()
         return self.get_card(card_id)
+
+    def ledger_links(self, repo_id: str) -> dict[str, str]:
+        """which of this repo's ledger tasks already have a card: task id -> card id"""
+        rows = self._conn.execute(
+            "SELECT ledger_task, id FROM cards WHERE repo_id = ? AND ledger_task IS NOT NULL",
+            (repo_id,),
+        ).fetchall()
+        return {row["ledger_task"]: row["id"] for row in rows}
 
     def _card_row(self, card_id: str) -> sqlite3.Row:
         row = self._conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
@@ -874,10 +887,13 @@ class Store:
 
     def list_events_by_kind(self, kinds: list[str]) -> list[dict[str, Any]]:
         """every event of these kinds, across every card - usage is board-agnostic, see the
-        /api/usage contract. ordered oldest first, same as list_events"""
+        /api/usage contract. ordered oldest first BY WALL-CLOCK TIME across cards - `seq` only
+        orders events within one card, so `ORDER BY card_id, seq` grouped by card instead of time
+        and let a stale event from an alphabetically-later card_id win telemetry's "latest wins"
+        merge (usage_projection, scheduler._latest_reset)."""
         placeholders = ", ".join("?" for _ in kinds)
         rows = self._conn.execute(
-            f"SELECT * FROM events WHERE kind IN ({placeholders}) ORDER BY card_id, seq", kinds
+            f"SELECT * FROM events WHERE kind IN ({placeholders}) ORDER BY created_at, seq", kinds
         ).fetchall()
         events = []
         for row in rows:
