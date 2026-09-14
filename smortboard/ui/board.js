@@ -195,6 +195,35 @@ function refreshBucketNav() {
   bucketsApi = makeBuckets(row, {onExitTop: returnToBoardBar});
 }
 
+function bucketHasCards(bucket) {
+  return bucket.querySelector('.bucket-rows')?.children.length > 0;
+}
+
+// left/right should never park focus on a column with nothing in it. this runs in the capture
+// phase - ahead of makeBuckets' own bubble listener on bucket-row - so it can step aside for a
+// plain adjacent move and only take over once the next column in that direction is empty
+function skipEmptyColumns(evt) {
+  if (evt.code !== 'ArrowLeft' && evt.code !== 'ArrowRight') return;
+  if (withModifier(evt)) return;
+  const currentBucket = evt.target.closest?.('.bucket');
+  if (!currentBucket) return;
+  const buckets = Array.from(document.querySelectorAll('#bucket-row .bucket')).filter(b => !b.hidden);
+  const currentIndex = buckets.indexOf(currentBucket);
+  if (currentIndex === -1) return;
+  const step = evt.code === 'ArrowRight' ? 1 : -1;
+  const adjacent = buckets[currentIndex + step];
+  if (!adjacent || bucketHasCards(adjacent)) return; // a normal move - leave it to the default nav
+  let targetIndex = currentIndex + step;
+  while (buckets[targetIndex] && !bucketHasCards(buckets[targetIndex])) targetIndex += step;
+  // swallow the key either way: a run of empties was crossed, or there is nothing further that
+  // way - neither case is the default nav's plain adjacent move, and falling through would wrap
+  evt.preventDefault();
+  evt.stopPropagation();
+  const target = buckets[targetIndex]?.querySelector('.bucket-rows .row');
+  if (target) { target.focus(); indicateFocus(target); }
+}
+document.addEventListener('keydown', skipEmptyColumns, {capture: true});
+
 function renderCardStrip(card) {
   const strip = document.createElement('div');
   strip.className = cardClasses(card);
