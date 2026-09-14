@@ -83,8 +83,10 @@ setResponse('GET', '/api/cards/c1/outcome', 200, {});
 const overflow = strip.querySelector('.card-overflow');
 assert.ok(overflow, 'the strip should render a ... trigger');
 
-overflow.onclick();
+let stopped = false;
+overflow.onclick({stopPropagation: () => { stopped = true; }});
 assert.equal(menus.length, 1, 'clicking ... should open exactly one menu');
+assert.ok(stopped, 'the click must not bubble to the strip and also open the card behind the menu');
 const overflowItems = menus[0].opts.sections[0].items.map(i => i.id);
 assert.deepEqual(overflowItems, ['edit', 'model', 'status', 'delete'],
   'the menu should offer edit, change model, move status and delete');
@@ -97,7 +99,7 @@ assert.equal(backdrops().length, 0, 'closed back down before the next assertion'
 
 // ---- picking delete opens a confirm; nothing is deleted before that confirm is answered
 menus = [];
-overflow.onclick();
+overflow.onclick({stopPropagation(){}});
 menus[0].pick('delete');
 assert.equal(menus.length, 2, 'delete should open a second, confirming menu');
 assert.equal(menus[1].opts.title, 'delete this card?');
@@ -112,7 +114,7 @@ assert.equal(writes().length, 0, "keep it should not call the api");
 
 // ---- confirming actually deletes it
 menus = [];
-overflow.onclick();
+overflow.onclick({stopPropagation(){}});
 menus[0].pick('delete');
 menus[1].pick('delete');
 await flush();
@@ -146,7 +148,7 @@ calls.length = 0;
 setResponse('GET', '/api/cards/c1', 200, {id: 'c1', model: null});
 setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', model: 'haiku'});
 menus = [];
-overflow.onclick();
+overflow.onclick({stopPropagation(){}});
 menus[0].pick('model');
 await flush();
 const modelPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');

@@ -46,7 +46,8 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {cardPanelHtml, acceptOrRejectCard, showRun, runBadge, splitCommentHeadline};`)(SpyMenu, SpyDrawer);
+;return {cardPanelHtml, acceptOrRejectCard, showRun, runBadge, splitCommentHeadline,
+  summarizeDescription, renderCardStrip};`)(SpyMenu, SpyDrawer);
 
 // ---- a full outcome renders summary, the finding, the PR link, and not the "not run yet" text
 // (cardPanelHtml is the actual render, the same string openCardPanel assigns to panel.innerHTML -
@@ -131,5 +132,45 @@ assert.equal(badge.hidden, false, 'the badge should show');
 assert.equal(badge.textContent, "can't accept",
   'a 409 should name the refused action - a bare "refused" read as the labels swapped');
 assert.equal(badge.title, 'card not in checking', 'the badge title should carry the server error');
+
+// ---- summarizeDescription: strips section headers and bullets, cuts to 14 words (9bd5a207) ----
+
+assert.equal(
+  mod.summarizeDescription('GOAL:\n- Reverse the oversized CTA and restore a compact status note.'),
+  'Reverse the oversized CTA and restore a compact status note.',
+  'the GOAL: header is dropped, its bullet content becomes the plain summary',
+);
+// section headers past the first are dropped too, but their own content still fills the word
+// budget if the first section left room - the summary is a word budget, not a "first section only"
+assert.equal(
+  mod.summarizeDescription('GOAL:\n- short goal\n\nSCOPE:\n- more detail here'),
+  'short goal more detail here',
+);
+const longLine = Array.from({length: 20}, (_, i) => `word${i}`).join(' ');
+assert.equal(mod.summarizeDescription(longLine).split(' ').length, 14, 'cut to at most 14 words');
+assert.equal(mod.summarizeDescription(''), '', 'an empty description summarizes to nothing');
+assert.equal(mod.summarizeDescription('RULES:\nCSS/view-side only.'), 'CSS/view-side only.',
+  'any all-caps header line is dropped, not only GOAL:');
+
+// ---- the overview strip shows the summary, not the raw description, and carries no short-id ----
+
+const overviewStrip = mod.renderCardStrip({
+  id: 'abcdef01-2222-3333-4444-555555555555', title: 't', status: 'todo',
+  description: 'GOAL:\n- keep it short',
+});
+assert.ok(overviewStrip.innerHTML.includes('keep it short'), 'the overview shows the summary');
+assert.ok(!overviewStrip.innerHTML.includes('GOAL:'), 'the overview never shows the GOAL: prefix');
+assert.ok(!overviewStrip.innerHTML.includes('card-id'), 'the overview carries no short-id span');
+
+// ---- the opened detail panel shows the full description and the short-id (9bd5a207) ------------
+
+const detailCard = {
+  id: 'abcdef01-2222-3333-4444-555555555555', title: 't', status: 'todo',
+  description: 'GOAL:\n- keep it short\n\nSCOPE:\n- and the rest of it too',
+  tasks: [], criteria: [], deps: [], attachments: [], comments: [],
+};
+const detailHtml = mod.cardPanelHtml(detailCard, {});
+assert.ok(detailHtml.includes('abcdef01'), 'the opened detail shows the short-id');
+assert.ok(detailHtml.includes('and the rest of it too'), 'the opened detail shows the full description');
 
 console.log('ok');

@@ -128,9 +128,21 @@ const STATUS_LETTER = {todo: 't', doing: 'd', checking: 'c', accepted: 'v', reje
 const STATUS_NAME = {todo: 'to do', doing: 'doing', checking: 'checking', accepted: 'accepted', rejected: 'rejected'};
 const LETTER_ORDER = ['d', 'a', 't', 'c', 'v', 'r'];
 
-// doing first, then attention (blocked or flagged), then everything else - stable within each group
+// a doing card actually held by a live agent right now, as opposed to one the board is only
+// retrying on a timer - handled_by_board reads as working elsewhere (cardClasses, isAttentionCard)
+// but nobody is at the wheel for it this instant, so within the doing column it sorts below a card
+// an agent is really running
+function isActiveDoing(card) {
+  return card.status === 'doing' && !isAttentionCard(card) && !card.handled_by_board;
+}
+
+// within the doing column: an active agent first, then a card the board is only retrying, then
+// attention (blocked or flagged) - elsewhere: doing first, then attention, then everything else.
+// stable within each group
 function sortColumnCards(cards) {
-  const rank = card => (card.status === 'doing' && !isAttentionCard(card)) ? 0 : isAttentionCard(card) ? 1 : 2;
+  const rank = card => isActiveDoing(card) ? 0
+    : (card.status === 'doing' && !isAttentionCard(card)) ? 1
+    : isAttentionCard(card) ? 2 : 3;
   return [...cards].sort((a, b) => rank(a) - rank(b));
 }
 
