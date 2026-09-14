@@ -46,7 +46,7 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {cardPanelHtml, acceptOrRejectCard, showRun, runBadge};`)(SpyMenu, SpyDrawer);
+;return {cardPanelHtml, acceptOrRejectCard, showRun, runBadge, splitCommentHeadline};`)(SpyMenu, SpyDrawer);
 
 // ---- a full outcome renders summary, the finding, the PR link, and not the "not run yet" text
 // (cardPanelHtml is the actual render, the same string openCardPanel assigns to panel.innerHTML -
@@ -87,9 +87,35 @@ const waiting = mod.cardPanelHtml({...card, next_action: 'Press r to run it agai
 assert.ok(waiting.includes('<div class="card-next">next: Press r to run it again.</div>'),
   'the panel should say what to do next');
 assert.ok(!html1.includes('card-next'), 'a card with no action shows no next line');
-// comments keep their own block, so their line breaks survive
-const commented = mod.cardPanelHtml({...card, comments: [{author: 'smortboard', body: 'a\nb'}]}, outcome);
+// a fabian comment keeps its own block, so its line breaks survive
+const commented = mod.cardPanelHtml({...card, comments: [{author: 'fabian', body: 'a\nb'}]}, outcome);
 assert.ok(commented.includes('<div class="comment-body">a\nb</div>'), 'a comment body is its own block');
+
+// a board comment leads with its first line and closes the rest behind details
+const boardNoted = mod.cardPanelHtml(
+  {...card, comments: [{author: 'smortboard', body: 'tests failed: test_x\n\nfull output here'}]},
+  outcome,
+);
+assert.ok(boardNoted.includes('<div class="comment-headline">tests failed: test_x</div>'),
+  'a board note leads with its one-liner');
+assert.ok(boardNoted.includes('<details class="comment-details"><summary>details</summary>'),
+  'the rest of a board note is closed behind details by default');
+assert.ok(boardNoted.includes('full output here'), 'the full body is still there, just folded');
+
+// only the latest board note gets the primary action button - an older one is history, not a CTA
+const rejectedCard = {...card, status: 'rejected', comments: [
+  {author: 'smortboard', body: 'first note\n\ndetail'},
+  {author: 'smortboard', body: 'review findings\n\nfull findings'},
+]};
+const rejectedHtml = mod.cardPanelHtml(rejectedCard, outcome);
+const ctaButtons = (rejectedHtml.match(/class="comment-cta"/g) || []).length;
+assert.equal(ctaButtons, 1, 'exactly one comment carries the primary action button');
+assert.ok(rejectedHtml.includes('data-cta-action="run">Rerun</button>'),
+  "a rejected card's latest note offers Rerun, the same action the strip's CTA offers");
+
+// ---- splitCommentHeadline: the first line leads, everything after is the detail
+assert.deepEqual(mod.splitCommentHeadline('one line only'), {headline: 'one line only', rest: ''});
+assert.deepEqual(mod.splitCommentHeadline('head\n\nbody\nmore'), {headline: 'head', rest: 'body\nmore'});
 
 // ---- a 409 from accept shows a refused badge with the server's error, and does not throw
 const strip = element('div', 'card-strip');
