@@ -178,8 +178,13 @@ def _real_runner(
     token_path: str | Path | None,
     system_prompt: str,
     read_paths: list[str],
+    schema: dict[str, Any] = ORCHESTRATOR_JSON_SCHEMA,
+    role: str = "orchestrator",
 ) -> OrchestratorRunner:
     """the production runner: a throwaway container, same handoff as the reviewer's.
+
+    `schema` and `role` let another board-level turn (consolidate.py's fold) reuse it with its own
+    reply shape and its own container name, so it never collides with a mission control turn.
 
     Per turn it takes a fresh read-only clone of each board repo and mounts the operator's extra
     read paths, so mission control can open the files it plans against. The clones live in a temp
@@ -203,7 +208,7 @@ def _real_runner(
                 budget_usd=budget_usd,
                 system_prompt=system_prompt,
             )
-            claude_cmd += ["--json-schema", json.dumps(ORCHESTRATOR_JSON_SCHEMA)]
+            claude_cmd += ["--json-schema", json.dumps(schema)]
             # read-only by allowlist as well as by mount: nothing that could write, shell out or
             # reach the network is admitted
             for tool in ORCHESTRATOR_DISALLOWED_TOOLS:
@@ -220,7 +225,7 @@ def _real_runner(
                 shot_mount = ["-v", f"{Path(screenshot_path).parent}:{CONTAINER_SHOTS_DIR}:ro"]
             # -w on the mount parent, never inside a clone: a repo's own .claude/settings.json must
             # not apply through --setting-sources project. named so the turn can be stopped.
-            name = container_name("orchestrator", board_id)
+            name = container_name(role, board_id)
             cmd = [
                 "docker",
                 "run",
