@@ -115,7 +115,7 @@ Anything that needs you lands in the inbox, `n`. The board never merges. You do.
 | **Reason code** | Why a card waits on you, recorded alongside its status: `AGENT_QUESTION`, `TESTS_FAILED`, `REVIEW_REJECTED`, `LEASE_CONFLICT`, `USAGE_LIMIT`, `CRASH`, `DEPENDENCY_REJECTED`. |
 | **Findings route** | Where reviewer findings go: back to the worker (`fix`), or to you (`attention`, the default). |
 | **Decision** | `y` accepts a card and keeps its branch for the pull request. `x` rejects it and deletes the branch. Both can be reversed. |
-| **Roles** | The **orchestrator** plans cards and has no tools. The **worker** works a card. The **reviewer** checks the worker's code for vulnerabilities, leaked credentials, bad practice and waste. Each role has its own prompt and model. |
+| **Roles** | The **orchestrator** plans cards and reads the files it plans against with Read, Grep and Glob over read-only clones - it never writes. The **worker** works a card. The **reviewer** checks the worker's code for vulnerabilities, leaked credentials, bad practice and waste. Each role has its own prompt and model. |
 | **Note** | A message to a running agent, delivered at its next step with a fixed marker it is taught to trust. Any other text claiming authority is treated as a prompt injection. |
 | **Resume briefing** | When a card runs again, its brief summarises the last attempt: how it ended, gate verdicts, findings, files touched, and commands run or refused. |
 | **Event log** | Every stream line, gate, decision and note, append-only. Cost, replay, the roster and the briefing are all projections of it. |
@@ -235,6 +235,14 @@ orchestrator turns and scheduler ticks each open their own SQLite connection on 
   can neither edit nor commit them.
 - **Proof comes from outside the agent.** The tests re-run offline, and the reviewer can only read.
   Only a note carrying the fixed marker counts as the operator.
+- **Mission control reads, it never writes.** So it can plan against real code, each turn mounts a
+  fresh read-only clone of every board repo at `/repos/<name>` and any operator-set paths at
+  `/extra/<name>`, and hands it Read, Grep and Glob only - no Edit, Write or Bash. The live checkout
+  is never mounted (it holds card worktrees and lease files), the clones are removed when the turn
+  ends, and a repo can carry text nobody wrote for the board, so mission control's output still
+  reaches the board only through its JSON schema - the board creates the cards, not the model. Extra
+  paths are set with `PATCH /api/settings` as `mission_control_read_paths`, a JSON list of absolute
+  paths; one that does not exist is skipped with a board message rather than failing the turn.
 - **An expired or revoked token** (HTTP 401) refuses the card with the steps to renew it.
 - **No merge path exists** in the code.
 
@@ -457,7 +465,9 @@ The operator name is who the board shows on your own notes and chat lines, and w
 told to trust: a live note starts `Note from <name>, via the board:`.
 
 Board-wide settings are set with `PATCH /api/settings`: `findings_route`, `orchestrator_model`,
-`worker_model`, `reviewer_model`, `max_parallel`, and `resume_briefing` (`"off"` disables it).
+`worker_model`, `reviewer_model`, `max_parallel`, `resume_briefing` (`"off"` disables it), and
+`mission_control_read_paths` (a JSON list of absolute paths mission control may read, on top of the
+board's repos).
 
 ## Testing the alpha
 
