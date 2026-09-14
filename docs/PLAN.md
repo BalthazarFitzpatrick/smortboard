@@ -2,8 +2,8 @@
 
 ## Context
 
-Fabian wants to get good at defining work precisely and then leaving it alone. Today that means
-hand-running Claude Code sessions, hand-cutting worktrees (wowtomate already carries three under
+The operator wants to get good at defining work precisely and then leaving it alone. Today that means
+hand-running Claude Code sessions, hand-cutting worktrees (a consumer project already carries three under
 `.claude/worktrees/`), and hand-tracking state in `TASKS.jsonl`. It works, but it demands presence:
 the work only moves while he is watching it.
 
@@ -288,7 +288,7 @@ review setting per card with a global override: findings auto-fixed by the worke
   through attention
 worker summary and reviewer verdict rendered on the card
 merge request: push the branch and OPEN THE PULL REQUEST with gh, title and body written. never
-  merge - that is Fabian's, and the hook refuses it anyway
+  merge - that is the operator's, and the hook refuses it anyway
 rejection: destroy the worktree, cut fresh from base, attach a read-only diff of the attempt
 dependent cards of a rejected card take the attention colour for review
 ```
@@ -342,7 +342,7 @@ Two things this cost, both found by running it rather than by testing it:
   store and editable in the UI.
 - Orchestrator ledger: its own plan, reconciled against cards on each update. Cards stay ground
   truth; the ledger is how it plans rather than how it records.
-- Orchestrator creates cards directly; Fabian amends.
+- Orchestrator creates cards directly; the operator amends.
 - `.` toggles the panel; workforce drawer ships as hazard-striped placeholder.
 
 **Ships when:** a conversation in Mission Control produces cards on the board that pass Phase 3.
@@ -355,7 +355,7 @@ Depends on S2.
 - Dependency-ordered scheduling.
 - Seat contention parks a card as `USAGE_LIMIT` rather than failing it.
 - Resume briefing: a card resuming after a break is handed its event log's summary — what changed,
-  what is next, which file to open — instead of re-ingesting the worktree. Toggleable per Fabian's
+  what is next, which file to open — instead of re-ingesting the worktree. Toggleable per the operator's
   §2 request.
 - **Agent roster** — a named button in the top bar, key `a`, opening a popup listing every agent
   currently holding a card.
@@ -519,7 +519,7 @@ get a runtime.
 
 ### A card is a feature, not an edit
 
-A card is a unit of work with an outcome and a list of tasks that get there: *"wowtomate needs a new
+A card is a unit of work with an outcome and a list of tasks that get there: *"the consumer project needs a new
 tab, here is what it shows, here is how it behaves."* Not *"change this sentence."*
 
 That is a design choice, and it is also the cheaper one, which is not obvious. **The token cost of a
@@ -636,4 +636,4 @@ summary rather than letting it re-derive.
   stop and ask permission to create a branch instead of working. Phase 2 must decide explicitly what
   a card inherits (`--setting-sources`, `--system-prompt`) rather than letting it be ambient.
 - **ui_base gating** — every phase's UI depends on ui_base landing first. Additive components mean
-  wowtomate needs no pin bump, but a signature change would break it.
+  the consumer project needs no pin bump, but a signature change would break it.
