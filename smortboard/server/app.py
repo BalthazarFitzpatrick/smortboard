@@ -470,20 +470,15 @@ def _make_handler(
             self._send_json(200, self._one_profile_view(name))
 
         def _handle_remove_profile(self, name: str) -> None:
-            # remove_profile() only drops the name from state - it never unlinks the token file,
-            # since profiles.py cannot be edited under this card's lease. the file removal happens
-            # here instead, once the state write itself has succeeded.
-            path = profiles.profile_path(name)
+            # remove_profile() does the whole thing itself now: switches active away if needed,
+            # drops the name, and unlinks the token file - nothing left for app.py to do after.
             try:
                 profiles.remove_profile(name)
             except profiles.ProfileError as exc:
                 message = str(exc)
-                status = (
-                    409 if "switch to another" in message else 404 if "no such" in message else 400
-                )
+                status = 404 if "no such" in message else 409
                 self._send_json(status, {"error": message})
                 return
-            path.unlink(missing_ok=True)
             self._send_status(204)
 
         def _handle_patch_card(self, card_id: str) -> None:

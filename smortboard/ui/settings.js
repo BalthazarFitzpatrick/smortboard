@@ -3,15 +3,55 @@
 // built from the same modal-backdrop / panel-floating pair as preflight.js and inbox.js - nothing
 // here needs arrow/enter/escape hijacked from the document, so it stays out of Menu.
 //
-// SETTINGS_SECTIONS IS EMPTY ON PURPOSE. scope toggles, snapshot options and the rest arrive as
-// later cards, each pushing a {label, node} entry here - this card only proves the button, the
-// key and an extensible panel exist.
+// scope toggles, snapshot options and the rest arrive as later cards, each pushing a
+// {label, node} entry here.
 //
-// relies on globals board.js already defines: reenterIfFocusLost.
+// relies on globals board.js already defines: reenterIfFocusLost, api, apiOrError.
 
 const st = {backdrop: null, panel: null, listEl: null};
 
-const SETTINGS_SECTIONS = [];
+// auto_switch_profiles: unset/"on" rotates credentials on USAGE_LIMIT (smortboard/profiles.py);
+// "off" parks the board until the reset instead, the pre-profiles behaviour. the toggle reads its
+// state from GET /api/settings on open (buildAutoSwitchToggle -> loadAutoSwitchToggle), same as
+// every board setting - there is no client-side default, an unset key just renders as checked.
+function buildAutoSwitchToggle() {
+  const wrap = document.createElement('label');
+  wrap.className = 'settings-toggle-row';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.className = 'settings-auto-switch-checkbox';
+  box.checked = true;
+  const text = document.createElement('span');
+  text.textContent = 'switch credential profiles automatically on a usage limit';
+  wrap.append(box, text);
+
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    const {ok} = await apiOrError('/api/settings', {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({auto_switch_profiles: box.checked ? null : 'off'}),
+    });
+    box.disabled = false;
+    if (!ok) box.checked = !box.checked; // revert on a failed save
+  });
+
+  loadAutoSwitchToggle(box);
+  return wrap;
+}
+
+async function loadAutoSwitchToggle(box) {
+  try {
+    const settings = await api('/api/settings');
+    box.checked = settings.auto_switch_profiles !== 'off';
+  } catch {
+    // leave the default (checked) - a failed load is not worth blocking the panel on
+  }
+}
+
+const SETTINGS_SECTIONS = [
+  {label: 'credential profiles', node: buildAutoSwitchToggle()},
+];
 
 function settingsHazardPlaceholder(text) {
   const box = document.createElement('div');

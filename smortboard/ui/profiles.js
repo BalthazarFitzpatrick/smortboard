@@ -75,13 +75,13 @@ function buildProfileRow(row) {
     actions.appendChild(activateBtn);
   }
 
-  if (row.name !== 'default') {
-    const removeBtn = document.createElement('span');
-    removeBtn.className = 'profile-remove toggle';
-    removeBtn.textContent = 'remove';
-    removeBtn.onclick = () => removeProfile(row.name, removeBtn, status);
-    actions.appendChild(removeBtn);
-  }
+  // any profile can be removed now, "default" included - the server refuses only the last
+  // remaining one, and removing the active profile switches active away first
+  const removeBtn = document.createElement('span');
+  removeBtn.className = 'profile-remove toggle';
+  removeBtn.textContent = 'remove';
+  removeBtn.onclick = () => removeProfile(row.name, removeBtn, status);
+  actions.appendChild(removeBtn);
 
   rowEl.append(head, actions);
   return rowEl;

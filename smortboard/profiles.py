@@ -60,7 +60,12 @@ def _default_state() -> dict[str, Any]:
 def _load_state() -> dict[str, Any]:
     """a pure read - an absent or corrupt file is just the default state, never written back here.
     see the module docstring: this is called on every scheduler tick, so it must never turn a
-    single-profile board into one with a state file on disk."""
+    single-profile board into one with a state file on disk.
+
+    an existing state file's "profiles" list is trusted as-is, "default" included: once "default"
+    has been deliberately removed, a state file exists and no longer names it, so it must not be
+    re-inserted here on every load - only a MISSING file (never touched) falls back to the
+    single-default board."""
     path = state_path()
     if not path.is_file():
         return _default_state()
@@ -71,9 +76,7 @@ def _load_state() -> dict[str, Any]:
     state = _default_state()
     state["active"] = data.get("active") or DEFAULT_PROFILE
     names = data.get("profiles")
-    state["profiles"] = list(names) if names else [DEFAULT_PROFILE]
-    if DEFAULT_PROFILE not in state["profiles"]:
-        state["profiles"].insert(0, DEFAULT_PROFILE)
+    state["profiles"] = list(names) if names else []
     state["limits"] = dict(data.get("limits") or {})
     return state
 
@@ -184,18 +187,45 @@ def add_profile(name: str, token: str | None = None) -> Path:
         return path
 
 
-def remove_profile(name: str) -> None:
-    if name == DEFAULT_PROFILE:
-        raise ProfileError("the 'default' profile cannot be removed")
+def _pick_replacement(state: dict[str, Any], exclude: str, now: float) -> str | None:
+    """a profile to switch to once `exclude` is removed, preferring one that is not rate-limited
+    right now - falls back to any other configured profile if every remaining one is limited"""
+    remaining = [name for name in state["profiles"] if name != exclude]
+    if not remaining:
+        return None
+    for name in remaining:
+        limited_until = (state["limits"].get(name) or {}).get("limited_until")
+        if not (limited_until and limited_until > now):
+            return name
+    return remaining[0]
+
+
+def remove_profile(name: str, now: float | None = None) -> None:
+    """removes a profile by name - "default" and the active profile included.
+
+    Removing the active profile first switches active to another configured profile (preferring
+    one that is not currently rate-limited), then removes it - no more "switch to another one
+    first" for the operator to do by hand. Only the LAST remaining profile is refused, since a
+    board always needs exactly one active credential.
+
+    Also unlinks the profile's token file - moved here from server/app.py's
+    _handle_remove_profile, which cannot see this module's lock and previously did the unlink
+    after the state write itself had already succeeded, as two separate steps.
+    """
+    now = time.time() if now is None else now
     with _STATE_LOCK:
         state = _load_state()
         if name not in state["profiles"]:
             raise ProfileError(f"no such profile '{name}'")
+        if len(state["profiles"]) <= 1:
+            raise ProfileError(f"'{name}' is the last remaining profile and cannot be removed")
         if state["active"] == name:
-            raise ProfileError(f"'{name}' is the active profile - switch to another one first")
+            replacement = _pick_replacement(state, name, now)
+            state["active"] = replacement  # always set: len(profiles) > 1 guarantees one exists
         state["profiles"].remove(name)
         state["limits"].pop(name, None)
         _save_state(state)
+    profile_path(name).unlink(missing_ok=True)
 
 
 def set_active(name: str) -> None:
