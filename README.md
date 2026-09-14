@@ -325,6 +325,7 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `g` | kanban / workstreams | `s` | shortcuts |
 | `/` | type: the open card's comment, or the open chat | `b` | boards and repos |
 | | | `h` | pre-flight checklist |
+| | | shift+`p` | credential profiles |
 | | | `1`-`9` | jump to a board |
 
 ## Setup
@@ -432,6 +433,12 @@ it here:
 The board never reads that login and a card never sees it. Do not copy a token out of it - the
 card token is the narrower, model-only one.
 
+**Several subscriptions.** Run `claude setup-token` once per account, then press shift+`p` and
+paste each one under its own profile name. It lands at
+`~/.config/smortboard/tokens/<name>` (mode 600) - the "default" profile stays the plain
+`card_token` file above, nothing already set up moves. When the active profile hits its rate
+limit, the board rotates to the next one instead of parking until the window resets.
+
 ### A board and its repo
 
 Press `b` to create a board and register a repo on it: its path, default branch and test command.
@@ -494,7 +501,14 @@ root, set when the card is created. When the agent writes outside it, the guard 
 and the card stops with `LEASE_CONFLICT`; its note names the files it needed. The usual cause is a
 lease written for a layout the repo does not have, such as `src/**/*.tsx` in a repo with no `src/`.
 
-The board has no control for this yet, so widen the lease through the API:
+The inbox row (`n`) for a `LEASE_CONFLICT` card lists exactly the paths it was refused writing to
+("wants: ..."), read off its most recent attempt's denials. Pressing **approve** on that row adds
+those paths to the card's existing lease and resumes it - one action, no id to look up and no glob
+to retype. The row keeps its plain answer field too, for when the better call is to tell the agent
+to leave the file alone instead of widening the lease for it.
+
+If the board is unreachable or the widened set needs editing first, the same thing works through
+the API:
 
 1. Read the card's note in the inbox (`n`) for the files it asked for.
 2. Find the card's id: `curl -s 127.0.0.1:8000/api/boards` lists the boards, and

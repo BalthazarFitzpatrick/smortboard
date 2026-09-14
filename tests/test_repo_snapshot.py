@@ -108,3 +108,37 @@ def test_a_repo_that_will_not_clone_warns_and_is_skipped(tmp_path):
         assert any("gone" in w for w in snapshot.warnings)
     finally:
         snapshot.cleanup()
+
+
+def test_a_repo_name_with_a_separator_is_refused_before_any_clone(tmp_path):
+    # a "../" or "/" in a repo name could escape the temp dir - it must be skipped, never cloned
+    cloned = []
+
+    def _record(source, branch, dest):
+        cloned.append(dest)
+
+    snapshot = build_repo_snapshot(
+        [{"name": "../evil", "path": "/x", "default_branch": "main"}], [], cloner=_record
+    )
+    try:
+        assert cloned == []
+        assert snapshot.mount_args == []
+        assert any("unsafe name" in w for w in snapshot.warnings)
+    finally:
+        snapshot.cleanup()
+
+
+def test_two_extra_paths_sharing_a_basename_both_mount_without_collision(tmp_path):
+    a = tmp_path / "a" / "screens"
+    b = tmp_path / "b" / "screens"
+    a.mkdir(parents=True)
+    b.mkdir(parents=True)
+    snapshot = build_repo_snapshot([], [str(a), str(b)])
+    try:
+        targets = [m.split(":")[-2] for m in snapshot.mount_args if m.startswith(str(tmp_path))]
+        # both landed, on distinct targets - the second was disambiguated, not dropped
+        assert f"{EXTRA_MOUNT}/screens" in targets
+        assert f"{EXTRA_MOUNT}/screens-2" in targets
+        assert snapshot.warnings == []
+    finally:
+        snapshot.cleanup()
