@@ -189,7 +189,38 @@ function growComposer(input, maxLinesFn) {
 
 // ---- mission control (.) - the orchestrator's chat for the current board ------------------------
 
-const mc = {header: null, cycle: null, log: null, jump: null, input: null, poll: null, queues: new Map()};
+const mc = {header: null, cycle: null, log: null, jump: null, input: null, poll: null, queues: new Map(), mode: 'planning'};
+
+// shift+tab toggles mission control between planning (talk only, no card written) and managing
+// (acts on what it proposes) - remembered per board, since a plan mid-thought on one board should
+// not silently start acting because another board was left in managing. default: planning.
+function missionControlModeKey(boardId) { return `mission-control-mode-${boardId}`; }
+
+function loadMissionControlMode(boardId) {
+  try {
+    const stored = localStorage.getItem(missionControlModeKey(boardId));
+    return stored === 'manage' ? 'manage' : 'planning';
+  } catch {
+    return 'planning'; // a blocked/unavailable localStorage still gets a working default
+  }
+}
+
+function saveMissionControlMode(boardId, mode) {
+  try { localStorage.setItem(missionControlModeKey(boardId), mode); } catch { /* per-viewer convenience only */ }
+}
+
+function toggleMissionControlMode() {
+  if (!currentBoardId) return;
+  mc.mode = mc.mode === 'manage' ? 'planning' : 'manage';
+  saveMissionControlMode(currentBoardId, mc.mode);
+  renderMissionControlHeader();
+}
+
+function renderMissionControlHeader() {
+  if (!mc.header) return;
+  const label = mc.mode === 'manage' ? 'managing' : 'planning';
+  mc.header.textContent = `mission control - ${label} - ${mc.lastModel || '?'}`;
+}
 
 // one send queue per board, so a reload or a board switch resumes the right backlog rather than
 // mixing boards together. lazy: the first call for a board both creates the queue and, via
@@ -214,9 +245,10 @@ function mcQueueFor(boardId) {
 // server can ignore a message it already accepted. a 409 (a turn in progress) rejects as busy -
 // the message waits as pending - and any other failure rejects plainly and is retried as failed
 async function sendMissionControlMessage(boardId, text, clientId) {
+  const mode = boardId === currentBoardId ? mc.mode : loadMissionControlMode(boardId);
   const res = await fetch(`/api/boards/${boardId}/orchestrator`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({message: text, client_id: clientId}),
+    body: JSON.stringify({message: text, client_id: clientId, mode}),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
@@ -265,6 +297,10 @@ function buildMissionControlDom(drawer) {
   const resizeComposer = () => growComposer(mc.input, composerMaxLines);
   mc.input.addEventListener('input', resizeComposer);
   wireTerminalInput(mc.input, mc.log, sendMissionControl, resizeComposer);
+  // shift+tab, not plain tab: tab still moves focus normally everywhere else in the input
+  mc.input.addEventListener('keydown', evt => {
+    if (evt.code === 'Tab' && evt.shiftKey) { evt.preventDefault(); toggleMissionControlMode(); }
+  });
 }
 
 async function openMissionControl() {
@@ -284,6 +320,7 @@ async function loadMissionControl() {
     scrollToBottom(mc.log); // a fresh panel, not a new line arriving mid-read
     return;
   }
+  mc.mode = loadMissionControlMode(currentBoardId);
   try {
     const data = await api(`/api/boards/${currentBoardId}/orchestrator`);
     renderMissionControl(data);
@@ -297,7 +334,8 @@ async function loadMissionControl() {
 
 // justFinished marks a poll result, the only moment a newly-created card should pull the board
 function renderMissionControl(data, {justFinished = false} = {}) {
-  mc.header.textContent = `mission control - ${data.model || '?'}`;
+  mc.lastModel = data.model;
+  renderMissionControlHeader();
   redrawLog(mc.log, () => {
     (data.messages || []).forEach(m => {
       appendLine(mc.log, m.author, m.body);
