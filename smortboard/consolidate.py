@@ -25,9 +25,14 @@ from smortboard.orchestrator import (
     _short_id,
     _snapshot_repos,
 )
+from smortboard.scheduler import globs_may_overlap
 from smortboard.store.api import Store, _check_lease_glob
 
 FOLDABLE_STATUS = "todo"
+# one agent's worth of work: a group past either cap is refused by the board, whatever the model
+# proposed, so a fold never turns a queue of small cards into one card nobody can finish
+MAX_GROUP_CARDS = 4
+MAX_GROUP_CRITERIA = 12
 # a fold reads the whole board once, so it gets more room than a mission control turn
 FOLD_BUDGET_USD = 2.00
 _BOARD_AUTHOR = "board"
@@ -39,10 +44,16 @@ FOLD_PROMPT = (
     "rediscovering what the last one learned. Find the todo cards that one agent should do as one "
     "card, and propose each such group with the merged card's title, description, criteria and "
     "leases.\n\n"
-    "Group cards only where they share code - overlapping leases, the same files or module named - "
-    "or where one card is a slice of another. Leave unrelated cards alone, however small. Never "
-    "group cards from different repos. Only cards whose status is todo may be grouped; the others "
-    "are listed so you can see what is already being worked on.\n\n"
+    "Each todo card lists `overlaps`: the other todo cards whose leases the board found "
+    "overlapping. Those can never run at the same time, so they already queue one agent after "
+    "another on the same files - that queue is what a fold removes. Only cards that overlap may be "
+    "grouped, and the board refuses any group with a card that shares no lease with the rest. "
+    "Prefer folding several small cards among an overlap set; keep each merged card to one "
+    f"agent's worth of work - at most {MAX_GROUP_CARDS} cards and {MAX_GROUP_CRITERIA} criteria, "
+    "which the board enforces - and split a large overlap set into several groups rather than one "
+    "big card. Leave out cards that contradict each other, and cards that are each large already. "
+    "Only cards whose status is todo may be grouped; the others are listed so you can see what is "
+    "already being worked on.\n\n"
     "The merged card loses nothing: every criterion of every card in the group survives, combined "
     "only where two say the same thing. Its leases cover every file any of the cards needed. Write "
     "the description in the board's shape - GOAL, SCOPE, OUT OF SCOPE and RULES sections with "
@@ -78,11 +89,22 @@ FOLD_JSON_SCHEMA = {
 }
 
 
+def _leases_overlap(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """whether two cards could write the same file - the scheduler's own test for never running
+    them at once, so an overlap here is exactly a pair that queues"""
+    return a["repo_id"] == b["repo_id"] and any(
+        globs_may_overlap(x["path_glob"], y["path_glob"]) for x in a["leases"] for y in b["leases"]
+    )
+
+
 def build_fold_snapshot(store: Store, board_id: str) -> dict[str, Any]:
-    """every card on the board, the foldable ones in full, plus each repo's layout and open ledger"""
+    """every card on the board, the foldable ones in full with the todo cards their leases overlap,
+    plus each repo's layout and open ledger"""
     names = {repo["id"]: repo["name"] for repo in store.list_repos(board_id)}
+    every = store.list_cards(board_id)
+    todo = [card for card in every if card["status"] == FOLDABLE_STATUS]
     cards = []
-    for card in store.list_cards(board_id):
+    for card in every:
         entry: dict[str, Any] = {
             "id": _short_id(card["id"]),
             "title": card["title"],
@@ -96,6 +118,11 @@ def build_fold_snapshot(store: Store, board_id: str) -> dict[str, Any]:
                 "criteria": [criterion["text"] for criterion in card["criteria"]],
                 "leases": [lease["path_glob"] for lease in card["leases"]],
                 "ledger_task": card["ledger_task"],
+                "overlaps": [
+                    _short_id(other["id"])
+                    for other in todo
+                    if other["id"] != card["id"] and _leases_overlap(card, other)
+                ],
             }
         cards.append(entry)
     return {"repos": _snapshot_repos(store, board_id), "cards": cards}
@@ -187,7 +214,9 @@ def apply_folds(store: Store, board_id: str, groups: list[Any]) -> list[str]:
     """the board's side of a fold: one line per proposed group saying what happened to it.
 
     a group keeps only cards that are on this board, todo, on the first member's repo and not
-    already folded by an earlier group; fewer than two left and it is not folded at all
+    already folded by an earlier group; fewer than two left and it is not folded at all. then the
+    board's own limits, whatever the model said: at most MAX_GROUP_CARDS cards and
+    MAX_GROUP_CRITERIA criteria, and every card sharing a lease with another member
     """
     cards = {card["id"]: card for card in store.list_cards(board_id)}
     by_short = {_short_id(card_id): card_id for card_id in cards}
@@ -210,8 +239,27 @@ def apply_folds(store: Store, board_id: str, groups: list[Any]) -> list[str]:
             else:
                 members.append(card)
         title = str(group.get("title") or "").strip()
+        proposed = [c for c in group.get("criteria") or [] if str(c).strip()]
+        criteria = len(proposed) or sum(len(member["criteria"]) for member in members)
+        loose = [
+            _short_id(member["id"])
+            for member in members
+            if not any(_leases_overlap(member, other) for other in members if other is not member)
+        ]
         if len(members) < 2 or not title:
             line = f'not folded: "{title or "untitled"}" - fewer than two todo cards to fold'
+        elif len(members) > MAX_GROUP_CARDS:
+            line = (
+                f'not folded: "{title}" - {len(members)} cards is more than one agent\'s worth '
+                f"(at most {MAX_GROUP_CARDS})"
+            )
+        elif criteria > MAX_GROUP_CRITERIA:
+            line = (
+                f'not folded: "{title}" - {criteria} criteria is more than one agent\'s worth '
+                f"(at most {MAX_GROUP_CRITERIA})"
+            )
+        elif loose:
+            line = f'not folded: "{title}" - {", ".join(loose)} shares no lease with the rest'
         else:
             line = _fold(store, board_id, members, group, title)
             used.update(member["id"] for member in members)
