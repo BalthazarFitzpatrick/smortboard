@@ -90,6 +90,14 @@ async function onBoardEnter(boardId) {
   if (typeof createMessageQueue === 'function') mcQueueFor(boardId);
   // mission control is per-board, so a board switch while it is open reloads its conversation
   if (drawers.right && drawers.right.isOpen()) loadMissionControl();
+  // MALL CAM ENTERS ON ITS OWN. a board just focus-selected (rather than a specific card opened)
+  // has nothing focused on it yet, so a stale pin from the board just left would otherwise survive
+  // the switch and show a card that no longer belongs to this board's roster. clearing it here
+  // means the next time workforce opens (already open or not), resolveWorkforceTarget falls back
+  // to cycling this board's own active cards, exactly the state a focus-selected board should open
+  // into - without forcing the drawer open itself, which would fight its own toggle key
+  resetWorkforceTarget();
+  if (drawers.left && drawers.left.isOpen()) await loadWorkforce();
 }
 
 // ---- buckets of card strips -------------------------------------------------------

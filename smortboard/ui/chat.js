@@ -385,8 +385,32 @@ const wf = {header: null, cycle: null, count: null, subheader: null, log: null, 
   poll: null, rotate: null, prev: null, next: null, cardId: null, working: [], index: 0, pinned: false};
 
 // MALL CAM: with no card focused or open, the workforce is not pinned to one - it rotates through
-// every working card on its own, like a security monitor. arrows still step it by hand
-const MALL_CAM_SECONDS = 8;
+// every working card on its own, like a security monitor. prev/next still step it by hand, which
+// pins it (see cycleWorkforce) - a manual move is the operator taking over, not another beat of
+// the same timer
+const DEFAULT_MALL_CAM_SECONDS = 10; // settings.js's own placeholder mirrors this by eye
+let mallCamSeconds = DEFAULT_MALL_CAM_SECONDS;
+
+// settings.js writes mall_cam_interval_seconds; read fresh whenever a cycle is (re)armed, so a
+// changed setting takes effect on the very next advance rather than waiting for a reload
+async function loadMallCamSeconds() {
+  try {
+    const settings = await api('/api/settings');
+    const raw = Number(settings.mall_cam_interval_seconds);
+    mallCamSeconds = Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MALL_CAM_SECONDS;
+  } catch {
+    mallCamSeconds = DEFAULT_MALL_CAM_SECONDS; // a failed read keeps the board moving on the default
+  }
+}
+
+// a board switch (cf90bacc) clears any pin left over from the board just departed - not a close,
+// just forgetting the target, so the next open (or a live reload) resolves fresh for this board
+function resetWorkforceTarget() {
+  clearTimeout(wf.rotate);
+  wf.pinned = false;
+  wf.cardId = null;
+  wf.working = [];
+}
 
 function buildWorkforceDom(drawer) {
   const term = terminalDom('$');
@@ -448,7 +472,7 @@ async function loadWorkforce(resolved) {
 }
 
 // the header's mode: "pinned" to the card you are on, or the mall cam and where it is in its round
-function updateWorkforceCycle() {
+async function updateWorkforceCycle() {
   const rotating = !wf.pinned && wf.working.length > 1;
   wf.cycle.hidden = false;
   if (wf.prev) wf.prev.hidden = !rotating;
@@ -457,14 +481,18 @@ function updateWorkforceCycle() {
   else wf.count.textContent = rotating ? `mall cam ${wf.index + 1}/${wf.working.length}` : 'mall cam';
   clearTimeout(wf.rotate);
   if (rotating && drawers.left && drawers.left.isOpen()) {
-    wf.rotate = setTimeout(() => cycleWorkforce(1), MALL_CAM_SECONDS * 1000);
+    await loadMallCamSeconds();
+    wf.rotate = setTimeout(() => cycleWorkforce(1, {manual: false}), mallCamSeconds * 1000);
   }
 }
 
-function cycleWorkforce(delta) {
+// manual (prev/next, or a click) pins the drawer to the card it lands on - RULES: any manual
+// navigation stops the auto-cycle, same as focusing a card or opening one already does
+function cycleWorkforce(delta, {manual = true} = {}) {
   if (wf.pinned || wf.working.length < 2) return;
   wf.index = (wf.index + delta + wf.working.length) % wf.working.length;
   wf.cardId = wf.working[wf.index].card_id;
+  if (manual) wf.pinned = true;
   renderWorkforceConversation();
 }
 

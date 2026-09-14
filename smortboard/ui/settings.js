@@ -322,6 +322,76 @@ SETTINGS_SECTIONS.push({
   onOpen: loadParallelSection,
 });
 
+// ---- mall cam interval (cf90bacc): how long the workforce drawer holds each active card before -
+// advancing to the next one, when it is cycling rather than pinned to one card. empty means chat.js's
+// own default (10s) - same empty-is-default convention buildGlobalParallelRow already uses
+
+const mallCam = {input: null, status: null};
+
+function mallCamParseInput(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null; // empty means "use the default"
+  const value = Number(trimmed);
+  return Number.isInteger(value) && value > 0 ? value : undefined; // undefined marks it invalid
+}
+
+function buildMallCamSection() {
+  const row = document.createElement('div');
+  row.className = 'boards-create-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'numeric';
+  input.className = 'board-name-input text-field settings-parallel-input';
+  input.placeholder = String(DEFAULT_MALL_CAM_SECONDS);
+  const status = document.createElement('span');
+  status.className = 'boards-status';
+
+  async function save() {
+    const value = mallCamParseInput(input.value);
+    if (value === undefined) {
+      status.textContent = 'must be a positive whole number';
+      status.className = 'boards-status boards-error';
+      return;
+    }
+    const {ok, body} = await apiOrError('/api/settings', {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mall_cam_interval_seconds: value}),
+    });
+    status.textContent = ok ? 'saved' : (body && body.error) || 'could not save';
+    status.className = ok ? 'boards-status' : 'boards-status boards-error';
+  }
+
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    save();
+  });
+  input.addEventListener('blur', save);
+
+  row.append(input, status);
+  Object.assign(mc, {input, status});
+  return row;
+}
+
+async function loadMallCamSection() {
+  try {
+    const settings = await api('/api/settings');
+    mc.input.value = settings.mall_cam_interval_seconds == null ? '' : String(settings.mall_cam_interval_seconds);
+    mc.status.textContent = '';
+  } catch (err) {
+    mc.status.textContent = `could not load: ${err.message}`;
+    mc.status.className = 'boards-status boards-error';
+  }
+}
+
+SETTINGS_SECTIONS.push({
+  label: 'mall cam: seconds per card while auto-cycling the workforce drawer',
+  node: buildMallCamSection(),
+  onOpen: loadMallCamSection,
+});
+
 function buildSettingsSection(section) {
   const box = document.createElement('div');
   box.className = 'settings-section';
