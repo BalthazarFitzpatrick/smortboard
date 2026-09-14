@@ -23,7 +23,7 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {pickColumnPlan, buildAggregateItems, renderBucketColumn};`)(SpyMenu, SpyDrawer);
+;return {pickColumnPlan, buildAggregateItems, renderBucketColumn, itemsHeight};`)(SpyMenu, SpyDrawer);
 
 function card(id, status, extra = {}) {
   return {id, title: `card ${id}`, status, workstream: '', ...extra};
@@ -39,7 +39,7 @@ function card(id, status, extra = {}) {
 }
 
 {
-  // ten cards: too tall for full fan cards (10*210+9*18=2262) but chips fit (10*56+9*18=722)
+  // ten cards: too tall for full fan cards (10*210+9*18=2262) but chips fit (10*58+9*18=742)
   const cards = Array.from({length: 10}, (_, i) => card(i, 'todo'));
   const plan = mod.pickColumnPlan(cards, 800);
   assert.equal(plan.tier, 2, 'overflowing tier 1 but fitting as chips lands on tier 2');
@@ -47,10 +47,25 @@ function card(id, status, extra = {}) {
 }
 
 {
-  // thirty cards: even chips overflow (30*56+29*18=2202) against a small viewport
+  // thirty cards: even chips overflow (30*58+29*18=2262) against a small viewport
   const cards = Array.from({length: 30}, (_, i) => card(i, 'todo'));
   const plan = mod.pickColumnPlan(cards, 400);
   assert.equal(plan.tier, 3, 'overflowing chips too falls through to tier 3');
+}
+
+{
+  // a column of plain cards has nothing for the doing or attention aggregate to hold: the chips
+  // that do not fit go into one last "more" aggregate, so the whole column stays on screen
+  const plain = Array.from({length: 20}, (_, i) => card(`t${i}`, 'todo'));
+  const waiting = Array.from({length: 3}, (_, i) => card(`a${i}`, 'todo', {review_flag: true}));
+  const plan = mod.pickColumnPlan([...plain, ...waiting], 400);
+  assert.equal(plan.tier, 3);
+  assert.ok(mod.itemsHeight(plan.items) <= 400, 'the column fits the height it was given');
+  assert.deepEqual(plan.items.map(i => i.status || i.type), ['chip', 'chip', 'attention', 'more']);
+  assert.deepEqual(plan.items.slice(0, 2).map(i => i.card.id), ['t0', 't1'], 'the first chips keep their order');
+  const more = plan.items[3];
+  assert.equal(more.cards.length, 18, 'every card that did not fit is in the "more" aggregate');
+  assert.equal(more.cards[0].id, 't2', 'and drawn out in board order');
 }
 
 // ---- buildAggregateItems: doing first, then attention/vanilla, chips otherwise ----------------

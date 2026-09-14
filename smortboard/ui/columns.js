@@ -102,9 +102,10 @@ window.addEventListener('resize', () => {
 // card, here or collapsed - this file only decides which tier fits and wires the accordion/draw-out
 
 const CARD_STRIP_HEIGHT = 210; // a fanned card's typical height - tier 1's own budget line
-const CHIP_HEIGHT = 56; // two title-text rows plus the strip's usual padding, see layout.css
-const AGGREGATE_HEIGHT = CHIP_HEIGHT * 2; // "2-title-tall", per the card's own wording - matches
-// .card-aggregate's fixed height in layout.css, which cannot read this constant
+// both match layout.css's fixed heights, which cannot read these constants: a chip is two title
+// rows plus padding (.card-chip), an aggregate is "2-title-tall" (.card-aggregate)
+const CHIP_HEIGHT = 58;
+const AGGREGATE_HEIGHT = 112;
 const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
 
 function stackHeight(count, rowHeight) {
@@ -146,7 +147,27 @@ function pickColumnPlan(cards, availableHeight) {
   if (stackHeight(cards.length, CHIP_HEIGHT) <= availableHeight) {
     return {tier: 2, items: chipItems};
   }
-  return {tier: 3, items: buildAggregateItems(cards)};
+  return {tier: 3, items: fitAggregateItems(buildAggregateItems(cards), availableHeight)};
+}
+
+function itemsHeight(items) {
+  const rows = items.reduce((sum, item) => sum + (item.type === 'aggregate' ? AGGREGATE_HEIGHT : CHIP_HEIGHT), 0);
+  return rows + Math.max(0, items.length - 1) * BUCKET_ROW_GAP;
+}
+
+// THE WHOLE COLUMN STAYS ON SCREEN. a column of plain cards has nothing for the doing or attention
+// aggregate to hold, so tier 3 alone still ran off the bottom - the chips the height leaves no room
+// for fold into one last "more" aggregate, drawn out one at a time like the others
+function fitAggregateItems(items, availableHeight) {
+  if (itemsHeight(items) <= availableHeight) return items;
+  const kept = [...items];
+  const more = {type: 'aggregate', status: 'more', cards: []};
+  while (itemsHeight([...kept, more]) > availableHeight) {
+    const last = kept.map(item => item.type).lastIndexOf('chip');
+    if (last === -1) break;
+    more.cards.unshift(kept.splice(last, 1)[0].card);
+  }
+  return more.cards.length ? [...kept, more] : kept;
 }
 
 // the room a column actually has below its own top, down to the viewport's bottom edge - real
@@ -157,7 +178,7 @@ function availableColumnHeight(bucketRowsEl) {
 }
 
 function aggregateLabel(status) {
-  return status === 'doing' ? 'doing' : 'attention';
+  return status === 'doing' || status === 'more' ? status : 'attention';
 }
 
 // the 2-title-tall placeholder: only a status label and a count, per the card - never a real card's

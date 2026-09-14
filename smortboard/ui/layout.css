@@ -142,6 +142,7 @@ body {
 }
 .card-strip.card-chip .h-divider,
 .card-strip.card-chip .card-body,
+.card-strip.card-chip .card-id,
 .card-strip.card-chip .card-foot,
 .card-strip.card-chip .card-cta,
 .card-strip.card-chip .card-overflow {
