@@ -3,7 +3,22 @@
 // selector support (tag, .class, [attr="val"], #id, single descendant combinator) for board.js's
 // own querySelector calls plus what shell.js / buckets.js / expand.js need internally.
 
+import {readFileSync} from 'node:fs';
+
 export class Element {}
+
+// ui_base's assets: a sibling ../smortui checkout when developing the two repos in lockstep, else
+// the installed package's own copy (UI_BASE_ASSETS_DIR, set by test_js_suite.py) - so the same
+// test runs unchanged on a machine with the sibling checkout and inside the gate container, which
+// has neither the checkout nor a fetchable one
+export function uiBaseAsset(root, name) {
+  try {
+    return readFileSync(new URL(`../smortui/ui_base/assets/${name}`, root), 'utf8');
+  } catch (err) {
+    if (err.code !== 'ENOENT' || !process.env.UI_BASE_ASSETS_DIR) throw err;
+    return readFileSync(`${process.env.UI_BASE_ASSETS_DIR}/${name}`, 'utf8');
+  }
+}
 
 function compoundMatch(el, compound) {
   if (compound.startsWith('#')) return el.id === compound.slice(1);
