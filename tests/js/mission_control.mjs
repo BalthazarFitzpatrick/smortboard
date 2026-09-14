@@ -60,13 +60,17 @@ function SpyDrawer(opts) {
   };
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+// a spy wrapping ui_base's real indicateBadge, so the follow-pill tests below can assert on the
+// exact count passed rather than guess at indicate.js's own rendering markup
+const badgeSpySrc = 'const __badgeCalls = []; const __rawIndicateBadge = indicateBadge; ' +
+  'indicateBadge = (host, n) => { __badgeCalls.push(n); return __rawIndicateBadge(host, n); };';
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), badgeSpySrc, uiBase('shell.js'),
   smort('messageQueue.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {
   loadRoster, jumpToCard, usageSections, sendMissionControl, renderMissionControl, mc, mcQueueFor,
   resolveWorkforceTarget, loadWorkforce, wf, buildDrawers, drawers, onBoardEnter, createMessageQueue,
-  boardIdRef: () => currentBoardId,
+  boardIdRef: () => currentBoardId, __badgeCalls,
 };`)(SpyMenu, SpyDrawer);
 
 mod.buildDrawers();
@@ -192,6 +196,76 @@ const thinkingLine = mod.mc.log.children.find(c => c.className.includes('author-
 assert.ok(thinkingLine, 'a thinking reply shows the dim thinking line');
 // close before the 1500ms poll fires - closing clears mc.poll so the process can exit
 mod.drawers.right.close();
+
+// ---- chat log follow: pinned to the newest line by default, a pill once you scroll up -----------
+// mission control replaces its whole log on every redraw, so this also proves the pill survives
+// that rebuild instead of just a single appended line
+{
+  const log = mod.mc.log;
+  const jump = mod.mc.jump;
+  const render = messages => mod.renderMissionControl({messages, thinking: false, error: null, model: 'opus'});
+  const line = (author, body) => ({author, body, cards: []});
+  const scrollUp = () => {
+    log.scrollHeight = 100; log.clientHeight = 40; log.scrollTop = 20;
+    log._listeners.scroll.forEach(fn => fn());
+  };
+  const pressDown = () => log._listeners.keydown.forEach(fn => fn({code: 'ArrowDown'}));
+
+  // following (the default): a redraw with a new line pins the view to the newest and no pill shows
+  log.scrollHeight = 100; log.clientHeight = 40; log.scrollTop = 0;
+  render([line('orchestrator', 'line one')]);
+  assert.equal(log.scrollTop, log.scrollHeight, 'following keeps the newest line in view');
+  assert.equal(jump.hidden, true, 'the pill stays hidden while following');
+  assert.equal(mod.__badgeCalls.at(-1), 0, 'the badge reads zero while following');
+
+  // once scrolled up, a line arriving must not move the offset, and must raise the pill's count
+  scrollUp();
+  const offsetWhileReading = log.scrollTop;
+  render([line('orchestrator', 'line one'), line('orchestrator', 'line two')]);
+  assert.equal(log.scrollTop, offsetWhileReading, 'a line arriving while scrolled up leaves the offset alone');
+  assert.equal(jump.hidden, false, 'the pill shows once something new arrived while scrolled up');
+  assert.equal(mod.__badgeCalls.at(-1), 1, 'one new line raises the count to one');
+
+  // a redraw that repeats the same messages (a poll with nothing new) must not inflate the count
+  const callsBeforeRepeat = mod.__badgeCalls.length;
+  render([line('orchestrator', 'line one'), line('orchestrator', 'line two')]);
+  assert.equal(log.scrollTop, offsetWhileReading, 'a redraw with nothing new still leaves the offset alone');
+  assert.equal(mod.__badgeCalls.length, callsBeforeRepeat, 'nothing new means no badge update at all');
+
+  // the pill jumps to the newest line and resumes following
+  jump._listeners.click.forEach(fn => fn());
+  assert.equal(log.scrollTop, log.scrollHeight, 'the pill jumps to the newest line');
+  assert.equal(jump.hidden, true, 'the pill hides once it has resumed following');
+
+  // scrolling up again restarts the count from zero, not from wherever it left off
+  scrollUp();
+  render([line('orchestrator', 'line one'), line('orchestrator', 'line two'), line('orchestrator', 'line three')]);
+  assert.equal(jump.hidden, false, 'scrolling up and a new line shows the pill again');
+  assert.equal(mod.__badgeCalls.at(-1), 1, 'the count restarts from zero rather than continuing from before');
+
+  // focusing the log and pressing down twice jumps to the newest line and resumes following
+  pressDown();
+  assert.equal(jump.hidden, false, 'one down does not jump yet');
+  pressDown();
+  assert.equal(log.scrollTop, log.scrollHeight, 'down-down jumps to the newest line');
+  assert.equal(jump.hidden, true, 'down-down resumes following');
+
+  // sending a message jumps to the newest line and resumes following even while scrolled up
+  scrollUp();
+  render([line('orchestrator', 'line one'), line('orchestrator', 'line two'), line('orchestrator', 'line three'), line('orchestrator', 'line four')]);
+  assert.equal(jump.hidden, false, 'scrolled up with something new, ahead of the send below');
+  responses.set('/api/boards/b1/orchestrator', stubJson(200, {
+    messages: [
+      line('orchestrator', 'line one'), line('orchestrator', 'line two'),
+      line('orchestrator', 'line three'), line('orchestrator', 'line four'),
+      line('fabian', 'jump please'),
+    ],
+    thinking: false, error: null, model: 'opus',
+  }));
+  await mod.sendMissionControl('jump please');
+  assert.equal(log.scrollTop, log.scrollHeight, 'sending a message jumps to the newest line');
+  assert.equal(jump.hidden, true, 'and resumes following');
+}
 
 // ---- mission control never loses a message: a failed send stays queued, shows its own state, and
 // is delivered once the request succeeds - without the operator resending anything by hand --------
