@@ -884,10 +884,13 @@ class Store:
 
     def list_events_by_kind(self, kinds: list[str]) -> list[dict[str, Any]]:
         """every event of these kinds, across every card - usage is board-agnostic, see the
-        /api/usage contract. ordered oldest first, same as list_events"""
+        /api/usage contract. ordered oldest first BY WALL-CLOCK TIME across cards - `seq` only
+        orders events within one card, so `ORDER BY card_id, seq` grouped by card instead of time
+        and let a stale event from an alphabetically-later card_id win telemetry's "latest wins"
+        merge (usage_projection, scheduler._latest_reset)."""
         placeholders = ", ".join("?" for _ in kinds)
         rows = self._conn.execute(
-            f"SELECT * FROM events WHERE kind IN ({placeholders}) ORDER BY card_id, seq", kinds
+            f"SELECT * FROM events WHERE kind IN ({placeholders}) ORDER BY created_at, seq", kinds
         ).fetchall()
         events = []
         for row in rows:
