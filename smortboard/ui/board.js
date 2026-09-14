@@ -93,18 +93,17 @@ async function onBoardEnter(boardId) {
 }
 
 // ---- buckets of card strips -------------------------------------------------------
-// per-card classes, CTA and the strip itself live in card_panel.js - this is only the five-column
-// shell that hangs each rendered strip in its bucket
+// per-card classes, CTA and the strip itself live in card_panel.js; the tier a column renders at
+// (full cards, title chips, or chips plus aggregates) is columns.js's renderBucketColumn - this is
+// only the five-column shell that hands each status's cards to it
 
 function renderBuckets(cards) {
   const row = document.getElementById('bucket-row');
   STATUSES.forEach(status => {
     const bucket = row.querySelector(`.bucket[data-status="${status}"] .bucket-rows`);
-    bucket.innerHTML = '';
     // a blocked card still belongs to a column: it keeps the status it was in and carries the
     // reason code, so it renders in place with the gold outline rather than vanishing
-    cards.filter(c => c.status === status)
-      .forEach(card => bucket.appendChild(renderCardStrip(card)));
+    renderBucketColumn(bucket, cards.filter(c => c.status === status));
   });
   refreshBucketNav();
   // the cream marker glides to whatever took focus, rather than every card drawing its own ring.

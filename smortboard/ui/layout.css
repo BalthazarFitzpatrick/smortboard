@@ -131,6 +131,50 @@ body {
 /* focus is indicate.js's gliding marker, not a ring drawn by each card */
 .card-strip:focus-visible { outline: none; }
 
+/* ---- progressive column density: tier 2/3 chips and tier 3's aggregate placeholder -----------
+   the chip is the same .card-strip renderCardStrip always builds - only a class away from the
+   full fan card, so focus, the CTA and every other wire-up column.js relies on stay intact.
+   58px = the two title-text rows plus this padding, columns.js's CHIP_HEIGHT budgets the same */
+.card-strip.card-chip {
+  height: 58px;
+  padding-top: 10px;
+  overflow: hidden;
+}
+.card-strip.card-chip .h-divider,
+.card-strip.card-chip .card-body,
+.card-strip.card-chip .card-foot,
+.card-strip.card-chip .card-cta,
+.card-strip.card-chip .card-overflow {
+  display: none;
+}
+.card-strip.card-chip .card-head {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* the aggregate placeholder: a status label and a count, nothing else - 112px is two chips tall.
+   doing wears the same green edge a working card does; attention/blocked stays vanilla on purpose,
+   so a folded column of waiting cards does not read as one giant attention ring */
+.card-aggregate {
+  height: 112px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--grey-border);
+  border-radius: var(--radius, 4px);
+  box-shadow: var(--shadow-lift);
+  cursor: pointer;
+}
+.card-aggregate-doing { border-color: var(--fill-good); }
+.card-aggregate .aggregate-label { color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.card-aggregate .aggregate-count { font-weight: 700; font-size: 1.3em; }
+.card-aggregate:focus-visible { outline: none; }
+
 
 .expand-panel .card-panel {
   padding: 22px 28px;

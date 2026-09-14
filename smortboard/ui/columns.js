@@ -93,3 +93,163 @@ window.addEventListener('resize', () => {
     if (panel && !/panel-layout-\d+/.test(panel.className)) layoutCardSections(panel);
   }, 150);
 });
+
+// ---- progressive column density: collapse an overflowing column through three tiers -----------
+// tier 1 is renderCardStrip's normal fan card. tier 2 collapses every strip to a title-only chip
+// (same element, a css class). tier 3 additionally folds the doing cards into one aggregate slot
+// and the attention/blocked cards into another, leaving the rest as chips. board.js's renderBuckets
+// calls renderBucketColumn per status column; card_panel.js's renderCardStrip builds every real
+// card, here or collapsed - this file only decides which tier fits and wires the accordion/draw-out
+
+const CARD_STRIP_HEIGHT = 210; // a fanned card's typical height - tier 1's own budget line
+const CHIP_HEIGHT = 56; // two title-text rows plus the strip's usual padding, see layout.css
+const AGGREGATE_HEIGHT = CHIP_HEIGHT * 2; // "2-title-tall", per the card's own wording - matches
+// .card-aggregate's fixed height in layout.css, which cannot read this constant
+const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
+
+function stackHeight(count, rowHeight) {
+  return count ? count * rowHeight + (count - 1) * BUCKET_ROW_GAP : 0;
+}
+
+function isAttentionCard(card) {
+  return !!(card.blocked_reason_code || card.review_flag);
+}
+
+// groups the doing cards into one aggregate slot and the attention/blocked cards into another,
+// each placed where its first member would otherwise have sat - every other card stays a chip.
+// ORDER: leading chips, then the doing aggregate, then the attention/vanilla one, then trailing
+// chips - the fixed order the card asks for, not a second sort keyed off card position
+function buildAggregateItems(cards) {
+  const doingCards = cards.filter(c => c.status === 'doing' && !isAttentionCard(c));
+  const attentionCards = cards.filter(isAttentionCard);
+  const grouped = new Set([...doingCards, ...attentionCards]);
+  const firstGroupedIndex = cards.findIndex(c => grouped.has(c));
+  const leading = firstGroupedIndex === -1 ? cards.filter(c => !grouped.has(c))
+    : cards.slice(0, firstGroupedIndex).filter(c => !grouped.has(c));
+  const trailing = cards.filter(c => !grouped.has(c) && !leading.includes(c));
+  const items = leading.map(card => ({type: 'chip', card}));
+  if (doingCards.length) items.push({type: 'aggregate', status: 'doing', cards: doingCards});
+  if (attentionCards.length) items.push({type: 'aggregate', status: 'attention', cards: attentionCards});
+  trailing.forEach(card => items.push({type: 'chip', card}));
+  return items;
+}
+
+// pure: given a column's cards and the height actually available, picks the tier and the items to
+// render at it. measured against real height (see availableColumnHeight), never a hard-coded card
+// count, per the card's own rule
+function pickColumnPlan(cards, availableHeight) {
+  if (!cards.length) return {tier: 1, items: []};
+  if (stackHeight(cards.length, CARD_STRIP_HEIGHT) <= availableHeight) {
+    return {tier: 1, items: cards.map(card => ({type: 'card', card}))};
+  }
+  const chipItems = cards.map(card => ({type: 'chip', card}));
+  if (stackHeight(cards.length, CHIP_HEIGHT) <= availableHeight) {
+    return {tier: 2, items: chipItems};
+  }
+  return {tier: 3, items: buildAggregateItems(cards)};
+}
+
+// the room a column actually has below its own top, down to the viewport's bottom edge - real
+// measurement, taken fresh per render since a window resize or drawer changes it
+function availableColumnHeight(bucketRowsEl) {
+  const top = bucketRowsEl.getBoundingClientRect().top;
+  return Math.max(0, (window.innerHeight || 0) - top - 24);
+}
+
+function aggregateLabel(status) {
+  return status === 'doing' ? 'doing' : 'attention';
+}
+
+// the 2-title-tall placeholder: only a status label and a count, per the card - never a real card's
+// own title or body. 'row' so buckets.js's roving-tabindex nav treats it like any other focusable
+function renderAggregateRow(item) {
+  const el = document.createElement('div');
+  el.className = `row card-aggregate card-aggregate-${item.status}`;
+  el.tabIndex = -1;
+  el.dataset.aggregateStatus = item.status;
+  const label = document.createElement('span');
+  label.className = 'aggregate-label';
+  label.textContent = aggregateLabel(item.status);
+  const count = document.createElement('span');
+  count.className = 'aggregate-count';
+  count.textContent = String(item.cards.length);
+  el.append(label, count);
+  el._cards = item.cards.slice();
+  return el;
+}
+
+// fan-item is base.css's stacked-deck look for tier 1 only - a chip (collapsed or, mid-accordion,
+// briefly expanded) sits in a plain list among its still-collapsed siblings, and the -80% margin
+// that makes a fan a fan would just pile every chip on top of the first one
+function markChip(strip) {
+  strip.classList.remove('fan-item');
+  strip.classList.add('card-chip');
+}
+
+// tracks which strip is expanded out of its column's collapsed tier, so a second focus elsewhere
+// collapses the first back down - accordion, one card open at a time, per the card
+let expandedChipStrip = null;
+
+function collapseChip(strip) {
+  if (strip && strip !== expandedChipStrip) return;
+  if (strip) strip.classList.add('card-chip');
+  if (expandedChipStrip === strip) expandedChipStrip = null;
+}
+
+// the focused strip fans out to its normal size; whatever was expanded before collapses back to a
+// chip. a tier 1 strip (never carries card-chip) is left alone - there is nothing to accordion
+function expandChip(strip) {
+  if (!strip.classList.contains('card-chip') && strip !== expandedChipStrip) return;
+  if (expandedChipStrip && expandedChipStrip !== strip) collapseChip(expandedChipStrip);
+  strip.classList.remove('card-chip');
+  expandedChipStrip = strip;
+}
+
+// focusing an aggregate reveals its next card, one at a time, as a real (collapsed) chip inserted
+// just before the placeholder - and decrements the count. the placeholder itself is removed, its
+// spot taken by the newly drawn chip, once its count reaches zero
+function drawFromAggregate(aggregateEl) {
+  const cards = aggregateEl._cards;
+  if (!cards || !cards.length) return;
+  const card = cards.shift();
+  const strip = renderCardStrip(card);
+  markChip(strip);
+  aggregateEl.parentNode.insertBefore(strip, aggregateEl);
+  aggregateEl.querySelector('.aggregate-count').textContent = String(cards.length);
+  if (!cards.length) aggregateEl.remove();
+  refreshBucketNav();
+  strip.focus();
+  indicateFocus(strip);
+}
+
+// wires the accordion (expand the focused chip, collapse the last one) and the aggregate draw-out
+// on top of buckets.js's own roving focus - ONCE PER ELEMENT, NOT PER RENDER. renderBucketColumn
+// runs on every board switch and poll; the persistent .bucket-rows node survives each of those
+// (only its children are replaced), so a plain addEventListener here would stack a duplicate
+// listener per render - and a duplicate handler drew a whole aggregate out in one focus instead
+// of one card at a time, which is how this got caught
+function wireColumnFocus(bucketRowsEl) {
+  if (bucketRowsEl._densityWired) return;
+  bucketRowsEl._densityWired = true;
+  bucketRowsEl.addEventListener('focusin', evt => {
+    const row = evt.target.closest('.row');
+    if (!row) return;
+    if (row.classList.contains('card-aggregate')) { drawFromAggregate(row); return; }
+    expandChip(row);
+  });
+}
+
+// builds one status column at whichever tier its available height picks, replacing bucketRowsEl's
+// contents - card_panel.js's renderCardStrip renders every real card, tier 1 or collapsed alike
+function renderBucketColumn(bucketRowsEl, cards) {
+  bucketRowsEl.innerHTML = '';
+  expandedChipStrip = null;
+  const {items} = pickColumnPlan(cards, availableColumnHeight(bucketRowsEl));
+  items.forEach(item => {
+    if (item.type === 'aggregate') { bucketRowsEl.appendChild(renderAggregateRow(item)); return; }
+    const strip = renderCardStrip(item.card);
+    if (item.type === 'chip') markChip(strip);
+    bucketRowsEl.appendChild(strip);
+  });
+  wireColumnFocus(bucketRowsEl);
+}
