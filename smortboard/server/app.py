@@ -32,7 +32,7 @@ from smortboard.prompts import ROLES
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
-from smortboard.scheduler import SchedulerRegistry, conflicting_run
+from smortboard.scheduler import SchedulerRegistry, conflicting_run, relabel_stale_crashes
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import (
@@ -856,6 +856,10 @@ def build_server(
 ) -> HTTPServer:
     # a new board has no runs, so any card still mid-run lost the last board process under it
     recovered = recover_orphaned_runs(store)
+    # one-time: a CRASH card blocked before the classifier learned session-limit/api-unreachable
+    # wording becomes USAGE_LIMIT/API_UNREACHABLE instead, so it is picked up by the auto-retry
+    # paths rather than sitting mislabeled
+    relabel_stale_crashes(store)
     # single-threaded: the store's sqlite3 connection is bound to the thread that opened it. card
     # runs are the exception and get their own thread and their own connection - see runs.py
     runs = RunRegistry(store.path, token_path=token_path)
