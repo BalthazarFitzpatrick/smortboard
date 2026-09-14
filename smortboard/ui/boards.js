@@ -339,8 +339,47 @@ function renderRepoRow(repo) {
   }));
   editRow.append(testInput, imageInput, save, status);
 
-  row.append(head, path, editRow);
+  row.append(head, path, editRow, renderRememberedLeases(repo));
   return row;
+}
+
+// remembered globs approved once from the inbox (see lease/approve's remember flag) - every
+// later card on this repo writes them with no LEASE_CONFLICT, until removed here
+function renderRememberedLeases(repo) {
+  const box = document.createElement('div');
+  box.className = 'repo-remembered-leases';
+  const label = document.createElement('div');
+  label.className = 'field-label';
+  label.textContent = 'remembered lease paths';
+  box.appendChild(label);
+
+  const leases = repo.remembered_leases || [];
+  if (!leases.length) {
+    const empty = document.createElement('div');
+    empty.className = 'field-label repo-remembered-leases-empty';
+    empty.textContent = 'none remembered yet';
+    box.appendChild(empty);
+    return box;
+  }
+  leases.forEach(lease => {
+    const item = document.createElement('div');
+    item.className = 'repo-remembered-lease-row';
+    const glob = document.createElement('span');
+    glob.className = 'repo-remembered-lease-glob';
+    glob.textContent = lease.path_glob;
+    const remove = document.createElement('span');
+    remove.className = 'toggle repo-remembered-lease-remove';
+    remove.textContent = 'remove';
+    remove.onclick = () => forgetRememberedLease(repo.id, lease.id);
+    item.append(glob, remove);
+    box.appendChild(item);
+  });
+  return box;
+}
+
+async function forgetRememberedLease(repoId, leaseId) {
+  await apiOrError(`/api/repos/${repoId}/lease/${leaseId}`, {method: 'DELETE'});
+  renderRepoList();
 }
 
 async function saveRepoEdit(repoId, testCommand, image, statusEl) {
