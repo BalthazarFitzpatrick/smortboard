@@ -11,11 +11,12 @@ waiting longest surfaces first, same as any other inbox.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from smortboard.actions import next_action, short_action
 from smortboard.lifecycle import BOARD_AUTHOR
-from smortboard.scheduler import conflicting_run
+from smortboard.scheduler import API_UNREACHABLE_MAX_RETRIES, _latest_reset, conflicting_run
 from smortboard.store.api import Store
 from smortboard.telemetry import card_telemetry
 
@@ -37,6 +38,35 @@ RESUMABLE_REASONS = frozenset(
 # the model's limit, so an answer would only be spent confusing the agent on its next run.
 # DEPENDENCY_REJECTED is not this card's fault - a message to it cannot un-reject the dependency;
 # accept_card already clears it automatically once the dependency comes back (see review/decide.py)
+
+
+def _format_retry_at(retry_at: float | None) -> str:
+    if retry_at is None:
+        return "once its automatic retry runs"
+    when = datetime.fromtimestamp(retry_at, tz=UTC).strftime("%H:%M UTC")
+    return f"retry at {when}"
+
+
+def handled_by_board(store: Store, card: dict[str, Any]) -> str | None:
+    """the inbox note for a card the board is already retrying on its own, or None once it needs
+    a real decision - a spent automatic attempt (API_UNREACHABLE's three retries, MERGE_CONFLICT's
+    one resume) returns None so the card falls back into the inbox instead of hiding forever."""
+    reason = card.get("blocked_reason_code")
+    card_id = card["id"]
+    if reason == "API_UNREACHABLE":
+        attempts = [e for e in store.list_events(card_id) if e["kind"] == "api_unreachable_retry"]
+        if len(attempts) >= API_UNREACHABLE_MAX_RETRIES:
+            return None
+        retry_at = attempts[-1]["payload"].get("retry_at") if attempts else None
+        return _format_retry_at(retry_at)
+    if reason == "USAGE_LIMIT":
+        return _format_retry_at(_latest_reset(store))
+    if reason == "MERGE_CONFLICT":
+        attempted = any(
+            e["kind"] == "merge_conflict_auto_resume" for e in store.list_events(card_id)
+        )
+        return None if attempted else "resuming automatically"
+    return None
 
 
 def _flag_reason(store: Store, card_id: str) -> str:
@@ -92,11 +122,16 @@ def waiting_reason(store: Store, card: dict[str, Any]) -> str | None:
 
 def with_actions(store: Store, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """each card gains next_action and next_action_short - None unless it waits on a person - so
-    the board can say what to do on the strip itself, not only in the inbox"""
+    the board can say what to do on the strip itself, not only in the inbox. Also handled_by_board
+    and next: set while the board is retrying the block itself, so the card view can say so instead
+    of reading as unattended."""
     for card in cards:
         reason = waiting_reason(store, card)
         card["next_action"] = next_action(reason)
         card["next_action_short"] = short_action(reason)
+        next_note = handled_by_board(store, card)
+        card["handled_by_board"] = next_note is not None
+        card["next"] = next_note
     return cards
 
 
@@ -198,6 +233,11 @@ def attention_rows(store: Store) -> list[dict[str, Any]]:
         for card in store.list_cards(board["id"]):
             reason = waiting_reason(store, card)
             if reason is None:
+                continue
+            # the board is already retrying this one itself - it stays on the board (the card's
+            # own strip still shows handled_by_board and next) but drops out of the inbox until
+            # its automatic attempts are spent
+            if handled_by_board(store, card) is not None:
                 continue
             answerable = reason in RESUMABLE_REASONS
             row = {
