@@ -1578,16 +1578,52 @@ function usageSection(label, className) {
   return section;
 }
 
+// one row per credential profile inside a window section - a profile the server never sent a
+// window for (no rate_limit_event recorded under it yet) still gets a row, with a zero/empty bar
+// rather than being left out, per the usage-overlay-per-profile card
+function profileRow(profileName, window) {
+  const row = document.createElement('div');
+  row.className = 'usage-profile';
+  row.appendChild(textLine(profileName, 'field-label'));
+  if (window) {
+    const {fraction} = windowMeasure(window);
+    if (fraction != null) row.appendChild(fillBar(fraction, window.status === 'allowed' ? '' : 'warn'));
+    row.appendChild(textLine(windowStats(window), 'stat'));
+  } else {
+    row.appendChild(fillBar(0));
+    row.appendChild(textLine('no usage yet', 'stat'));
+  }
+  return row;
+}
+
+// windows grouped by type, each type a section holding one row per known profile - windows carry
+// no profile of their own before this card, so a window with none reads as the "default" profile
+function windowSections(windows, profileNames) {
+  const byType = new Map();
+  windows.forEach(w => {
+    if (!byType.has(w.type)) byType.set(w.type, new Map());
+    byType.get(w.type).set(w.profile || 'default', w);
+  });
+  return [...byType.entries()].map(([type, byProfile]) => {
+    const section = usageSection(windowLabel(type), 'usage-window');
+    const names = profileNames.length ? profileNames : [...byProfile.keys()];
+    names.forEach(name => section.appendChild(profileRow(name, byProfile.get(name))));
+    // the section total is the sum of the rows it holds, never a figure computed apart from them
+    const total = names.reduce((sum, name) => {
+      const w = byProfile.get(name);
+      const fraction = w ? windowMeasure(w).fraction : null;
+      return sum + (fraction || 0);
+    }, 0);
+    section.appendChild(textLine(`combined: ${Math.round(total * 100)}%`, 'stat'));
+    return section;
+  });
+}
+
 // A CARD'S LANGUAGE: ruled sections with dim labels, and a foot carrying the total - built with
 // createElement so every line is its own element, which is also what the node tests read
 function usageCard(data) {
-  const windowParts = (data.windows || []).map(w => {
-    const section = usageSection(windowLabel(w.type), 'usage-window');
-    const {fraction} = windowMeasure(w);
-    if (fraction != null) section.appendChild(fillBar(fraction, w.status === 'allowed' ? '' : 'warn'));
-    section.appendChild(textLine(windowStats(w), 'stat'));
-    return section;
-  });
+  const profileNames = (data.profiles || []).map(p => p.name);
+  const windowParts = windowSections(data.windows || [], profileNames);
   const modelParts = [];
   const models = data.models || [];
   if (models.length) {
@@ -1657,8 +1693,8 @@ function openUsagePanel() {
 
 async function loadUsage(menu) {
   try {
-    const data = await api('/api/usage');
-    menu.refresh(usageSections(data));
+    const [data, profiles] = await Promise.all([api('/api/usage'), api('/api/profiles')]);
+    menu.refresh(usageSections({...data, profiles}));
   } catch (err) {
     menu.refresh([{kind: 'list', items: [], empty: `could not load usage: ${err.message}`}]);
   }

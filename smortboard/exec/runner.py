@@ -525,6 +525,14 @@ def run_process(
             continue
         # the orchestrator passes no store: it has no card of its own, only a board-wide turn
         if store is not None:
+            # attribute the window figure to whichever credential earned it - telemetry has no
+            # other record of which profile a past run used (see usage_projection)
+            if event.get("type") == "rate_limit_event":
+                # imported here, not at module level - profiles.py imports smortboard.exec.backends,
+                # which imports this module, so a top-level import would be circular
+                from smortboard import profiles
+
+                event = {**event, "profile": profiles.active_profile()}
             store.append_event(card_id, event.get("type", "unknown"), event)
 
         if event.get("type") == "result":
