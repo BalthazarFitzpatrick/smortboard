@@ -493,16 +493,24 @@ def _make_handler(
         def _handle_patch_card(self, card_id: str) -> None:
             body = self._read_json()
             # the store's own list - a second copy here went stale and refused `model` with a 400
-            unknown = set(body) - CARD_WRITABLE_FIELDS - {"leases"}
+            unknown = set(body) - CARD_WRITABLE_FIELDS - {"leases", "depends_on"}
             if unknown:
                 self._send_json(400, {"error": f"not writable: {sorted(unknown)}"})
                 return
+            # shapes are checked before anything is written, so a bad depends_on
+            # can't leave a lease change (or vice versa) committed behind a 400
             leases = body.pop("leases", None)
+            if leases is not None and not isinstance(leases, list):
+                self._send_json(400, {"error": "leases must be a list of globs"})
+                return
+            depends_on = body.pop("depends_on", None)
+            if depends_on is not None and not isinstance(depends_on, list):
+                self._send_json(400, {"error": "depends_on must be a list of card ids"})
+                return
             if leases is not None:
-                if not isinstance(leases, list):
-                    self._send_json(400, {"error": "leases must be a list of globs"})
-                    return
                 store.set_leases(card_id, leases)
+            if depends_on is not None:
+                store.set_dependencies(card_id, depends_on)
             card = store.update_card(card_id, **body) if body else store.get_card(card_id)
             self._send_json(200, card)
 
