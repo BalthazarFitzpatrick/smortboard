@@ -13,7 +13,7 @@ from smortboard import lifecycle
 from smortboard.exec.runner import RunResult
 from smortboard.exec.worktrees import WorktreeInfo
 from smortboard.operator import OPERATOR_NAME
-from smortboard.review.gates import GateResult, GateUnavailable
+from smortboard.review.gates import GateResult, GateUnavailable, NoTestCommand
 from smortboard.review.merge_request import MergeRequestResult
 from smortboard.review.reviewer import ReviewFinding, ReviewResult
 from smortboard.store.api import Store
@@ -700,3 +700,64 @@ def test_a_clean_but_not_behind_merge_skips_the_extra_gate(board, monkeypatch):
     result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
     assert result.phase == "opened"
     assert gate_calls == [1]  # only the normal testing-phase gate, no extra one after merge
+
+
+# ---- TESTS_FAILED's note: a one-line headline in front of the full gate output ------------------
+
+
+def test_pytest_failures_name_the_tests_that_failed():
+    output = (
+        "FAILED tests/test_x.py::test_x - AssertionError\n"
+        "FAILED tests/test_y.py::TestCase::test_y - ValueError\n"
+        "FAILED tests/test_z.py::test_z\n"
+        "FAILED tests/test_w.py::test_w\n"
+        "FAILED tests/test_v.py::test_v\n"
+    )
+    assert lifecycle._failing_tests_headline(output) == "tests failed: test_x, test_y (+3 more)"
+
+
+def test_ruff_findings_are_the_fallback_when_pytest_names_nothing():
+    output = (
+        "src/thing.py:12:4: F401 'os' imported but unused\nsrc/other.py:3:1: E501 line too long\n"
+    )
+    assert lifecycle._failing_tests_headline(output) == (
+        "tests failed: src/thing.py:12 F401, src/other.py:3 E501"
+    )
+
+
+def test_unparseable_gate_output_falls_back_to_the_bare_line():
+    assert lifecycle._failing_tests_headline("some unrelated crash trace\n") == "tests failed"
+
+
+def test_a_failing_test_gate_leads_its_note_with_the_parsed_headline(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(
+        monkeypatch,
+        passed=False,
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "run_test_gate",
+        lambda *a, **k: GateResult(
+            passed=False, command="pytest", exit_code=1, output="FAILED tests/test_x.py::test_x\n"
+        ),
+    )
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any(b.startswith("tests failed: test_x") for b in bodies)
+    assert any("FAILED tests/test_x.py::test_x" in b for b in bodies), "full output stays in body"
+
+
+def test_no_test_command_gets_a_short_pointer_at_the_repo_setting(board, monkeypatch):
+    """the long explanation lives in the pre-flight checklist now, once per repo - the card only
+    needs to say where to fix it"""
+    store, card_id = board
+    _stub_gates(monkeypatch)
+
+    def _unavailable(*a, **k):
+        raise NoTestCommand("This repo declares no test_command, so there is nothing to check.")
+
+    monkeypatch.setattr(lifecycle, "run_test_gate", _unavailable)
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.phase == "refused"
+    assert result.refusal == "repo has no test command - set it in b"
