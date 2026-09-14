@@ -239,6 +239,7 @@ class Store:
         criteria: list[str] | None = None,
         leases: list[str] | None = None,
         model: str | None = None,
+        ledger_task: str | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
         card_id = _new_id()
@@ -246,9 +247,9 @@ class Store:
         self._conn.execute(
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
-                blocked_reason_code, description, position, review_flag, model, created_at,
-                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                blocked_reason_code, description, position, review_flag, model, ledger_task,
+                created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -262,6 +263,7 @@ class Store:
                 position,
                 int(review_flag),
                 model,
+                ledger_task,
                 now,
                 now,
             ),
@@ -283,6 +285,14 @@ class Store:
             )
         self._conn.commit()
         return self.get_card(card_id)
+
+    def ledger_links(self, repo_id: str) -> dict[str, str]:
+        """which of this repo's ledger tasks already have a card: task id -> card id"""
+        rows = self._conn.execute(
+            "SELECT ledger_task, id FROM cards WHERE repo_id = ? AND ledger_task IS NOT NULL",
+            (repo_id,),
+        ).fetchall()
+        return {row["ledger_task"]: row["id"] for row in rows}
 
     def _card_row(self, card_id: str) -> sqlite3.Row:
         row = self._conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
