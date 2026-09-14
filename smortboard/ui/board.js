@@ -1525,12 +1525,18 @@ document.addEventListener('keydown', evt => {
   }
 });
 
-// THE OPEN PANEL RE-FLOWS ON RESIZE. layoutCardSections reads the container's own width to decide
+// the open panel re-flows on resize. layoutCardSections reads the container's own width to decide
 // its column count and each section's measured height, and a resize is the one moment either can
 // go stale - a design-archive panel-layout-N keeps its own grid and is left alone, same as on open
+// debounced: a window drag fires dozens of resize events, each of which would force a synchronous
+// reflow of the container and every section - one settled layout pass is enough
+let resizeLayoutTimer = null;
 window.addEventListener('resize', () => {
-  const panel = document.querySelector('.card-panel');
-  if (panel && !/panel-layout-\d+/.test(panel.className)) layoutCardSections(panel);
+  clearTimeout(resizeLayoutTimer);
+  resizeLayoutTimer = setTimeout(() => {
+    const panel = document.querySelector('.card-panel');
+    if (panel && !/panel-layout-\d+/.test(panel.className)) layoutCardSections(panel);
+  }, 150);
 });
 
 // FOCUS STARTS ON THE BOARD BAR, per the brief. returnToBoardBar was wired only to onExitTop, so
