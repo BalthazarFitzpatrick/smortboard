@@ -4,6 +4,42 @@
 // back into board.js globals (openCard, currentBoardId, api, showRun, actionableCardId,
 // returnToBoardBar, onBoardEnter, escapeHtml) the same way every other split file does.
 
+// ---- PR references as real links, wherever a card or a chat line shows one ------------------
+// display only: this never touches card state, it only decides how a pr_url (or, once a card
+// carries its own repo_url, a bare pr number) turns into an <a> instead of dead text. lives here
+// (not board.js) because card_panel.js loads before chat.js, which also calls linkifyPrRefs
+
+function isPrUrl(value) {
+  return typeof value === 'string' && /^https?:\/\//.test(value);
+}
+
+// a full url renders as itself; a bare number needs the card's own repo_url to become a link at
+// all - with neither, the ref still shows (as plain text) rather than vanishing or breaking
+function prAnchorHtml(ref, repoUrl) {
+  if (ref === null || ref === undefined || ref === '') return '';
+  const url = isPrUrl(ref) ? ref : (repoUrl ? `${String(repoUrl).replace(/\/+$/, '')}/pull/${ref}` : null);
+  const label = isPrUrl(ref) ? ref : `#${ref}`;
+  return url
+    ? `<a class="pr-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`
+    : escapeHtml(label);
+}
+
+// a PR url sitting inside a longer line (a worker summary, a comment, a chat message) - matched
+// lazily up to the first /pull/<number> so the rest of the sentence is untouched and still escaped
+const PR_URL_IN_TEXT_RE = /https?:\/\/\S+?\/pull\/\d+/g;
+
+function linkifyPrRefs(text) {
+  if (!text) return '';
+  const str = String(text);
+  let out = '';
+  let last = 0;
+  for (const match of str.matchAll(PR_URL_IN_TEXT_RE)) {
+    out += escapeHtml(str.slice(last, match.index)) + prAnchorHtml(match[0]);
+    last = match.index + match[0].length;
+  }
+  return out + escapeHtml(str.slice(last));
+}
+
 // ---- buckets of card strips: per-card classes, CTA and the strip itself ---------------------
 
 function cardClasses(card) {
@@ -252,7 +288,7 @@ function outcomeSectionHtml(outcome, card = {}) {
   const parts = [];
   if (outcome.summary) {
     const waiting = !outcome.tests && ATTENTION_CODES.has(card.blocked_reason_code);
-    parts.push(`<div class="outcome-part outcome-summary" data-state="${waiting ? 'attention' : 'ok'}">${escapeHtml(outcome.summary)}</div>`);
+    parts.push(`<div class="outcome-part outcome-summary" data-state="${waiting ? 'attention' : 'ok'}">${linkifyPrRefs(outcome.summary)}</div>`);
   }
   if (outcome.tests) {
     const t = outcome.tests;
@@ -268,7 +304,7 @@ function outcomeSectionHtml(outcome, card = {}) {
     parts.push(`<div class="outcome-part outcome-review" data-ok="${r.approved}" data-state="${reviewState}"><span class="verdict">${r.approved ? 'approved' : 'not approved'}</span>${r.error ? `: ${escapeHtml(r.error)}` : ''}${findings ? `<ul class="outcome-findings">${findings}</ul>` : ''}</div>`);
   }
   if (outcome.pr_url) {
-    parts.push(`<div class="outcome-part outcome-pr" data-state="ok"><a href="${escapeHtml(outcome.pr_url)}" target="_blank" rel="noreferrer">${escapeHtml(outcome.pr_url)}</a></div>`);
+    parts.push(`<div class="outcome-part outcome-pr" data-state="ok">${prAnchorHtml(outcome.pr_url, card.repo_url)}</div>`);
   }
   if (working && !outcome.pr_url) parts.push(workingPart);
   parts.push(`<div class="outcome-route">findings route: ${escapeHtml(outcome.findings_route || '')}, fix rounds: ${outcome.fix_rounds ?? 0}</div>`);
@@ -298,7 +334,7 @@ function splitCommentHeadline(body) {
 function renderComment(comment, card, isLatestBoardNote) {
   const label = `<span class="field-label">${escapeHtml(authorLabel(comment.author))}</span>`;
   if (comment.author !== BOARD_COMMENT_AUTHOR) {
-    return `<li>${label}<div class="comment-body">${escapeHtml(comment.body)}</div></li>`;
+    return `<li>${label}<div class="comment-body">${linkifyPrRefs(comment.body)}</div></li>`;
   }
   const {headline, rest} = splitCommentHeadline(comment.body);
   const cta = isLatestBoardNote ? ctaFor(card) : null;
@@ -306,9 +342,9 @@ function renderComment(comment, card, isLatestBoardNote) {
     ? `<button type="button" class="comment-cta" data-cta-action="${escapeHtml(cta.action)}">${escapeHtml(cta.label)}</button>`
     : '';
   const details = rest
-    ? `<details class="comment-details"><summary>details</summary><div class="comment-body">${escapeHtml(rest)}</div></details>`
+    ? `<details class="comment-details"><summary>details</summary><div class="comment-body">${linkifyPrRefs(rest)}</div></details>`
     : '';
-  return `<li>${label}<div class="comment-headline">${escapeHtml(headline)}</div>${actionBtn}${details}</li>`;
+  return `<li>${label}<div class="comment-headline">${linkifyPrRefs(headline)}</div>${actionBtn}${details}</li>`;
 }
 
 // a list, or a quiet "none" - an empty <ul> drew a label with nothing under it

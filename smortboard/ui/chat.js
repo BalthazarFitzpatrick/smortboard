@@ -148,7 +148,7 @@ function appendLine(log, author, body, cls) {
   const line = document.createElement('div');
   line.className = `terminal-line author-${cls || author}`;
   line.innerHTML = `<div class="terminal-author">${escapeHtml(authorLabel(author))}</div>` +
-    `<div class="terminal-body">${escapeHtml(body)}</div>`;
+    `<div class="terminal-body">${linkifyPrRefs(body)}</div>`;
   log.appendChild(line);
   return line;
 }
