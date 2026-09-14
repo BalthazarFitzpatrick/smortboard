@@ -460,10 +460,49 @@ class BoardScheduler:
                 self._handle_usage_limit(card_id)
             elif reason == "API_UNREACHABLE":
                 self._handle_api_unreachable(card_id)
+            elif reason == "MERGE_CONFLICT":
+                self._handle_merge_conflict(card_id)
             else:
                 self._tick()
 
         return _on_finish
+
+    def _handle_merge_conflict(self, card_id: str) -> None:
+        """resumes a MERGE_CONFLICT card exactly once, automatically, through the same path an
+        inbox answer uses (attention.answer_card) - the note tells the worker which base to merge
+        and which files it conflicts in. A second MERGE_CONFLICT on the same card (the resume's own
+        attempt failed to resolve it) is left for the operator - never retried twice."""
+        # imported here, not at module level: attention.py imports conflicting_run from this
+        # module, so a top-level import here would be circular
+        from smortboard.attention import AnswerRefused, answer_card
+
+        store = Store(self._db_path)
+        try:
+            already_tried = any(
+                e["kind"] == "merge_conflict_auto_resume" for e in store.list_events(card_id)
+            )
+            if already_tried:
+                store.add_comment(
+                    card_id,
+                    author=_BOARD_AUTHOR,
+                    body="merge conflict again after the automatic resume - left for the operator.",
+                )
+                return
+            merge_events = [e for e in store.list_events(card_id) if e["kind"] == "merge_conflict"]
+            payload = merge_events[-1]["payload"] if merge_events else {}
+            base_ref = payload.get("base_ref", "the base branch")
+            files = payload.get("files") or []
+            store.append_event(card_id, "merge_conflict_auto_resume", {"files": files})
+            note = (
+                f"Resuming automatically: merge {base_ref} into this branch and resolve the "
+                f"conflicts in: {', '.join(files) or 'the listed files'}. Then commit the result."
+            )
+            # still blocked - the operator sees it in the inbox like any other refusal
+            with contextlib.suppress(AnswerRefused):
+                answer_card(store, self._runs, card_id, note)
+        finally:
+            store.close()
+        self._tick()
 
     def _handle_api_unreachable(self, card_id: str) -> None:
         """retries an API_UNREACHABLE card itself, with backoff 2/10/30 minutes. After

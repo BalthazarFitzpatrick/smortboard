@@ -41,7 +41,14 @@ class FakeRuns:
         self.started.append(card_id)
         if on_finish is not None:
             self._callbacks[card_id] = on_finish
-        return SimpleNamespace(card_id=card_id, running=True)
+        state = SimpleNamespace(card_id=card_id, running=True)
+        state.as_dict = lambda: {"card_id": card_id, "running": True}
+        return state
+
+    def get(self, card_id):
+        # matches RunRegistry.get()'s shape for attention.answer_card - nothing is ever mid-run
+        # from this fake's own perspective once .start() has returned
+        return None
 
     def finish(self, card_id, blocked_reason_code=None):
         callback = self._callbacks.pop(card_id, None)
@@ -627,6 +634,56 @@ def test_relabel_stale_crashes_leaves_a_genuine_crash_alone(store, board_and_rep
 
     assert scheduler_module.relabel_stale_crashes(store) == []
     assert store.get_card(a["id"])["blocked_reason_code"] == "CRASH"
+
+
+# -- MERGE_CONFLICT auto-resume -------------------------------------------------------
+
+
+def test_a_merge_conflict_is_resumed_automatically_once(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.append_event(
+        a["id"], "merge_conflict", {"base_ref": "origin/development", "files": ["x.py"]}
+    )
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    # mirrors what lifecycle._block already wrote before this card's run finished
+    store.update_card(a["id"], blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+    runs.finish(a["id"], blocked_reason_code="MERGE_CONFLICT")
+
+    # answer_card resumed it through runs.start - the same path an inbox answer uses
+    assert a["id"] in runs.started
+    assert store.get_card(a["id"])["blocked_reason_code"] is None
+    kinds = [e["kind"] for e in store.list_events(a["id"])]
+    assert "merge_conflict_auto_resume" in kinds
+    comments = store.get_card(a["id"])["comments"]
+    assert any("Resuming automatically" in c["body"] for c in comments)
+
+
+def test_a_second_merge_conflict_on_the_same_card_is_left_for_the_operator(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.append_event(
+        a["id"], "merge_conflict", {"base_ref": "origin/development", "files": ["x.py"]}
+    )
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    runs.finish(a["id"], blocked_reason_code="MERGE_CONFLICT")
+    runs.started.clear()
+
+    # the resumed run conflicts again
+    store.update_card(a["id"], blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+    scheduler._handle_merge_conflict(a["id"])
+
+    assert a["id"] not in runs.started  # never retried twice for the same conflict
+    retries = [e for e in store.list_events(a["id"]) if e["kind"] == "merge_conflict_auto_resume"]
+    assert len(retries) == 1
+    comments = store.get_card(a["id"])["comments"]
+    assert any("left for the operator" in c["body"] for c in comments)
 
 
 # -- stop ---------------------------------------------------------------------------
