@@ -103,6 +103,15 @@ export function element(tag, className = '') {
       },
     },
   });
+  // a getter, not a plain field: siblings are added and removed constantly (a column re-render
+  // replaces its whole child list), so this has to read parentNode.children fresh each time
+  Object.defineProperty(el, 'previousElementSibling', {
+    get() {
+      if (!el.parentNode) return null;
+      const idx = el.parentNode.children.indexOf(el);
+      return idx > 0 ? el.parentNode.children[idx - 1] : null;
+    },
+  });
   // like a browser: `el.innerHTML = ''` empties the element, which is how a column is redrawn.
   // other markup is kept as a string only - nothing here parses it
   let html = '';

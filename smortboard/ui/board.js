@@ -386,6 +386,12 @@ async function acceptOrRejectCard(action) {
   // column behind a panel still standing over it
   if (openCard) openCard.expander.close();
 
+  // FOCUS STAYS IN THE SOURCE COLUMN, never rides along into the destination one - capture where
+  // it belongs (the card above, or which column to hop left from) before the move erases both
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  const aboveCardId = strip?.previousElementSibling?.dataset.cardId || null;
+  const oldStatus = strip?.closest('.bucket')?.dataset.status || null;
+
   const {ok, body} = await apiOrError(`/api/cards/${cardId}/${action}`, {method: 'POST'});
   // NAME THE ACTION THAT WAS REFUSED. a bare "refused" beside the card's own "accepted" read as
   // the two labels swapped
@@ -396,14 +402,26 @@ async function acceptOrRejectCard(action) {
   const from = document.querySelector(`.card-strip[data-card-id="${cardId}"]`)
     ?.getBoundingClientRect();
   if (currentBoardId) await onBoardEnter(currentBoardId);
-  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
-  if (strip) {
-    if (from) slideFrom(strip, from);
-    strip.focus();
-    indicateFocus(strip);
-  }
+  const moved = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  if (from && moved) slideFrom(moved, from);
+  focusAfterColumnExit(aboveCardId, oldStatus);
   // no badge on success: the foot's status already says accepted or rejected, and the border says it
   // in colour - a second "accepted" beside the first was noise
+}
+
+// where focus lands once a card leaves its column: the card that stood directly above it there,
+// else the topmost card of the nearest non-empty column to the left (skipping empty ones, never
+// wrapping right). when neither exists, focus is parked on nothing rather than falling through to
+// the card's new column or the board bar
+function focusAfterColumnExit(aboveCardId, oldStatus) {
+  const above = aboveCardId && document.querySelector(`.card-strip[data-card-id="${aboveCardId}"]`);
+  if (above) { above.focus(); indicateFocus(above); return; }
+  const buckets = Array.from(document.querySelectorAll('#bucket-row .bucket')).filter(b => !b.hidden);
+  let index = buckets.findIndex(b => b.dataset.status === oldStatus) - 1;
+  while (index >= 0 && !bucketHasCards(buckets[index])) index -= 1;
+  const landing = index >= 0 ? buckets[index].querySelector('.bucket-rows .row') : null;
+  if (landing) { landing.focus(); indicateFocus(landing); return; }
+  document.activeElement?.blur?.();
 }
 
 // ---- overlay panels (menu.js-backed) - the key that opens also closes ---------------------------
