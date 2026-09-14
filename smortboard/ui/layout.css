@@ -39,6 +39,23 @@ body {
   color: var(--accent-on-text);
   border-color: var(--cream);
 }
+/* fold sits after the tabs with a gap, since it acts on the open board rather than being one. not
+   at the far right: the settings button and attention count are fixed over that end of the bar */
+.board-bar .board-fold {
+  margin-left: 16px;
+  font-size: var(--font-size, 13px);
+  line-height: 1;
+  padding: 0 14px;
+  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  display: flex;
+  align-items: center;
+}
+.fold-note {
+  max-width: 360px;
+  padding: 6px 0;
+  white-space: normal;
+  line-height: 1.4;
+}
 
 .bucket-row {
   flex: 1 1 auto;
