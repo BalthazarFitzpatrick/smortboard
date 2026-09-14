@@ -30,10 +30,12 @@ const BINDINGS = [
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
   {code: 'KeyI', label: 'i', action: 'cost telemetry: card attempts, or the board cost table', group: 'panels'},
   {code: 'KeyC', label: 'c', action: 'cost overview: spend across every board', group: 'panels'},
-  {code: 'KeyA', label: 'a', action: 'agent roster: jump to a working or blocked card', group: 'panels'},
+  {code: 'KeyA', label: 'a', action: 'agent roster: jump to a card an agent is working on', group: 'panels'},
   {code: 'KeyD', label: 'd', action: 'morning digest: pull requests and open questions', group: 'panels'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
-  {code: 'KeyP', label: 'p', action: 'edit the orchestrator, worker and reviewer prompts', group: 'panels'},
+  // one binding row for both: the letter acts on a card elsewhere in this table, shift on the
+  // board - see keyboard_bindings.mjs's frozen count of codes, which a second KeyP row would break
+  {code: 'KeyP', label: 'p / shift+p', action: 'p: orchestrator, worker and reviewer prompts. shift+p: credential profiles', group: 'panels'},
   {code: 'KeyB', label: 'b', action: 'boards and repos: create a board, register a repo', group: 'panels'},
   {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
   {code: 'KeyH', label: 'h', action: 'pre-flight checklist: what is missing before a card can run', group: 'panels'},
@@ -356,7 +358,9 @@ function layoutCardSections(panel) {
   const sections = container ? [...container.querySelectorAll('.card-section')] : [];
   if (!container || !sections.length) return;
   const width = container.getBoundingClientRect().width;
-  const columnCount = width && width < CARD_PANEL_NARROW_PX ? 1 : 2;
+  // nothing sane to measure before the panel has a real box - a later call (resize, reopen) fixes it
+  if (!width || width < 0) return;
+  const columnCount = width < CARD_PANEL_NARROW_PX ? 1 : 2;
   const columnWidth = (width - CARD_PANEL_COL_GAP * (columnCount - 1)) / columnCount;
   const isFull = section => columnCount === 1 || FULL_WIDTH_SECTIONS.has(section.dataset.section);
   sections.forEach(section => { section.style.width = isFull(section) ? '100%' : `${columnWidth}px`; });
@@ -370,6 +374,28 @@ function layoutCardSections(panel) {
     reach = Math.max(reach, bottom);
   });
   container.style.height = `${Math.max(0, reach - CARD_PANEL_ROW_GAP)}px`;
+}
+
+// re-flow whenever the container gets its real width or a section changes height. the one pass at
+// open can run before the expanding panel has a box, which left every section stacked at 0,0, and
+// nothing but a window resize ever laid it out again [coalesced to one pass per frame]
+function watchCardSections(panel) {
+  if (panel.sectionsObserver) panel.sectionsObserver.disconnect();
+  const container = panel.querySelector('.card-sections');
+  if (!container || typeof ResizeObserver === 'undefined') return;
+  let queued = false;
+  const observer = new ResizeObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      if (panel.isConnected) layoutCardSections(panel);
+      else observer.disconnect();
+    });
+  });
+  observer.observe(container);
+  container.querySelectorAll('.card-section').forEach(section => observer.observe(section));
+  panel.sectionsObserver = observer;
 }
 
 async function openCardPanel(panel, cardId) {
@@ -387,7 +413,10 @@ async function openCardPanel(panel, cardId) {
   panel.innerHTML = cardPanelHtml(card, outcome);
   // the design archive keeps its own historical grid per variant in panel-layouts.css - masonry
   // would fight it for the same inline top/left/width
-  if (!layout) layoutCardSections(panel);
+  if (!layout) {
+    layoutCardSections(panel);
+    watchCardSections(panel);
+  }
 
   // the panel's one .card-sections div is a single-column bucket - reuses the 2D grid nav as a
   // plain vertical list rather than inventing a second focus system for "move between sections"
@@ -1327,15 +1356,11 @@ async function loadRoster(menu) {
     if (!roster.length) {
       const box = document.createElement('div');
       box.className = 'hazard-stripes hazard-placeholder';
-      box.innerHTML = '<span class="hazard-label">no agent is holding a card</span>';
+      box.innerHTML = '<span class="hazard-label">nothing is running - check the inbox (n) for anything waiting</span>';
       menu.refresh([{kind: 'node', node: box}]);
       return;
     }
-    const items = roster.map(r => ({
-      id: r.card_id, label: r.title,
-      stats: r.state === 'blocked' ? `blocked: ${r.reason || ''}` : r.activity,
-      on: r.state === 'working', disabled: r.state === 'blocked',
-    }));
+    const items = roster.map(r => ({id: r.card_id, label: r.title, stats: r.activity, on: true}));
     menu.refresh([{kind: 'list', items, onPick: item => jumpToCard(item.id, roster)}]);
   } catch (err) {
     menu.refresh([{kind: 'list', items: [], empty: `could not load the roster: ${err.message}`}]);
@@ -1576,16 +1601,52 @@ function usageSection(label, className) {
   return section;
 }
 
+// one row per credential profile inside a window section - a profile the server never sent a
+// window for (no rate_limit_event recorded under it yet) still gets a row, with a zero/empty bar
+// rather than being left out, per the usage-overlay-per-profile card
+function profileRow(profileName, window) {
+  const row = document.createElement('div');
+  row.className = 'usage-profile';
+  row.appendChild(textLine(profileName, 'field-label'));
+  if (window) {
+    const {fraction} = windowMeasure(window);
+    if (fraction != null) row.appendChild(fillBar(fraction, window.status === 'allowed' ? '' : 'warn'));
+    row.appendChild(textLine(windowStats(window), 'stat'));
+  } else {
+    row.appendChild(fillBar(0));
+    row.appendChild(textLine('no usage yet', 'stat'));
+  }
+  return row;
+}
+
+// windows grouped by type, each type a section holding one row per known profile - windows carry
+// no profile of their own before this card, so a window with none reads as the "default" profile
+function windowSections(windows, profileNames) {
+  const byType = new Map();
+  windows.forEach(w => {
+    if (!byType.has(w.type)) byType.set(w.type, new Map());
+    byType.get(w.type).set(w.profile || 'default', w);
+  });
+  return [...byType.entries()].map(([type, byProfile]) => {
+    const section = usageSection(windowLabel(type), 'usage-window');
+    const names = profileNames.length ? profileNames : [...byProfile.keys()];
+    names.forEach(name => section.appendChild(profileRow(name, byProfile.get(name))));
+    // the section total is the sum of the rows it holds, never a figure computed apart from them
+    const total = names.reduce((sum, name) => {
+      const w = byProfile.get(name);
+      const fraction = w ? windowMeasure(w).fraction : null;
+      return sum + (fraction || 0);
+    }, 0);
+    section.appendChild(textLine(`combined: ${Math.round(total * 100)}%`, 'stat'));
+    return section;
+  });
+}
+
 // A CARD'S LANGUAGE: ruled sections with dim labels, and a foot carrying the total - built with
 // createElement so every line is its own element, which is also what the node tests read
 function usageCard(data) {
-  const windowParts = (data.windows || []).map(w => {
-    const section = usageSection(windowLabel(w.type), 'usage-window');
-    const {fraction} = windowMeasure(w);
-    if (fraction != null) section.appendChild(fillBar(fraction, w.status === 'allowed' ? '' : 'warn'));
-    section.appendChild(textLine(windowStats(w), 'stat'));
-    return section;
-  });
+  const profileNames = (data.profiles || []).map(p => p.name);
+  const windowParts = windowSections(data.windows || [], profileNames);
   const modelParts = [];
   const models = data.models || [];
   if (models.length) {
@@ -1655,8 +1716,8 @@ function openUsagePanel() {
 
 async function loadUsage(menu) {
   try {
-    const data = await api('/api/usage');
-    menu.refresh(usageSections(data));
+    const [data, profiles] = await Promise.all([api('/api/usage'), api('/api/profiles')]);
+    menu.refresh(usageSections({...data, profiles}));
   } catch (err) {
     menu.refresh([{kind: 'list', items: [], empty: `could not load usage: ${err.message}`}]);
   }
@@ -1930,6 +1991,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'Delete') { deleteCard(); return; }
   if (evt.code === 'KeyT') { toggleReplay(); return; }
   if (evt.code === 'KeyS') { openShortcutOverlay(); return; }
+  if (evt.code === 'KeyP' && evt.shiftKey) { evt.preventDefault(); toggleProfilesPanel(); return; }
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
   if (evt.code === 'KeyN') { toggleInboxPanel(); return; }
   if (evt.code === 'KeyH') { evt.preventDefault(); togglePreflightPanel(); return; }

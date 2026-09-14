@@ -26,7 +26,9 @@ function expandReadPath(raw) {
 }
 function fetchStub(path, opts) {
   calls.push({path, opts});
-  if (path !== '/api/settings') return Promise.resolve(stubJson(404, {error: 'no stub for ' + path}));
+  // anything else never answers, as on main: board.js's own startup fetches (loadBoards) would
+  // otherwise reject unhandled and end the run before a single assertion
+  if (path !== '/api/settings') return new Promise(() => {});
   if (!opts || !opts.method || opts.method === 'GET') return Promise.resolve(stubJson(200, {...settingsState}));
   if (opts.method === 'PATCH') {
     const body = JSON.parse(opts.body);
@@ -92,9 +94,10 @@ assert.ok(!boardBar.children.includes(button), 'the button must not live inside 
 button.onclick();
 assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel');
 
-// ---- the panel renders one section, "mission control can read", loaded from the server ---------
+// ---- the panel renders both sections: the credential-profile toggle and "mission control can read"
 await flush();
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 1, 'mission control can read is the one section so far');
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 2, 'credential profiles, then mission control can read');
+assert.ok(mod.st.listEl.querySelector('.settings-auto-switch-checkbox'), 'the credential section carries the auto-switch toggle');
 assert.ok(mod.rp.listEl.querySelector('.hazard-placeholder'), 'no folders yet shows a placeholder, not nothing');
 
 // ---- adding a path PATCHes the whole list, and stores the server's expanded absolute path -------

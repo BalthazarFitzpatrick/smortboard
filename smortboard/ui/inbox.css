@@ -81,3 +81,14 @@
 .inbox-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
 .inbox-status.inbox-ok { color: var(--lichen-milk); }
 .inbox-status.inbox-error { color: var(--status-warn); }
+
+.inbox-lease-approve {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.inbox-wants {
+  flex: 1 1 auto;
+  color: var(--text-dim);
+  word-break: break-all;
+}

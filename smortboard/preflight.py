@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Protocol
 
+from smortboard import profiles
 from smortboard.exec.backends import (
     card_image,
     card_image_available,
@@ -151,6 +152,56 @@ def _token_check(token_path: str | Path | None) -> dict[str, Any]:
     return _check(
         "card-token", "machine", "card token", "ok", f"a token file is present at {path}."
     )
+
+
+def _profile_checks() -> list[dict[str, Any]]:
+    """one row per configured credential profile - present, mode 600, rate-limited right now.
+
+    Reuses profiles.list_profiles() rather than re-probing the filesystem itself, same reason the
+    rest of this module reuses backends' probes: one source of truth for what "ok" means.
+    """
+    rows = []
+    for row in profiles.list_profiles():
+        label = f"profile: {row['name']}" + (" (active)" if row["active"] else "")
+        check_id = f"profile-{row['name']}"
+        if not row["present"]:
+            rows.append(
+                _check(
+                    check_id,
+                    "machine",
+                    label,
+                    "fail",
+                    f"no token file at {row['path']}.",
+                    "claude setup-token, then (umask 077; pbpaste | tr -d '\\r\\n ' > "
+                    f"{row['path']})",
+                )
+            )
+        elif not row["mode_ok"]:
+            rows.append(
+                _check(
+                    check_id,
+                    "machine",
+                    label,
+                    "warn",
+                    f"mode is not 600 at {row['path']}.",
+                    f"chmod 600 {row['path']}",
+                )
+            )
+        elif row["limited_now"]:
+            rows.append(
+                _check(
+                    check_id,
+                    "machine",
+                    label,
+                    "warn",
+                    f"rate-limited until {row['limited_until']}.",
+                )
+            )
+        else:
+            rows.append(
+                _check(check_id, "machine", label, "ok", f"present at {row['path']}, mode 600.")
+            )
+    return rows
 
 
 def _gh_check(run: CommandRunner) -> dict[str, Any]:
@@ -348,7 +399,9 @@ def run_preflight(
     checks = [
         _docker_check(),
         _image_check(),
-        _token_check(token_path),
+        # the credential the next run will use, which follows the active profile
+        _token_check(profiles.token_path_for_run(token_path)),
+        *_profile_checks(),
         _gh_check(run),
         _git_check(),
     ]
