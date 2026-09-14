@@ -98,7 +98,13 @@ const statusEl = document.getElementById('schedule-status');
 assert.ok(statusEl && !statusEl.hidden, 'the board bar shows a status while a schedule runs');
 assert.equal(statusEl.textContent, '1 running - 1 queued');
 assert.equal(badgeText('c1'), 'running', 'a running card carries it on its foot');
-assert.equal(badgeText('c2'), 'queued', 'a queued card carries it on its foot too');
+assert.equal(badgeText('c2'), 'queued, 1 of 1', 'a queued card shows its position on its foot');
+
+// ---- a queue of two shows each card's own position, front to back -----------------------------
+
+mod.applyScheduleToCards({running: [], queued: ['c1', 'c2'], waiting: {}, paused_until: null});
+assert.equal(badgeText('c1'), 'queued, 1 of 2', 'the front of the queue says so');
+assert.equal(badgeText('c2'), 'queued, 2 of 2', 'and the position updates as the queue moves');
 
 // ---- w again: stop clears the queue, running cards are left alone ------------------------------
 

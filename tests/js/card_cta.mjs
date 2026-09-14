@@ -65,6 +65,13 @@ assert.ok(mod.ctaFor({status: 'todo', review_flag: 1}).attention);
 assert.ok(!mod.ctaFor({status: 'todo'}).attention);
 assert.ok(!mod.ctaFor({status: 'todo', review_flag: 0}).attention);
 
+// ---- a card the board is retrying itself shows the retry time, not a reason code or a glow
+assert.equal(
+  mod.ctaFor({status: 'doing', blocked_reason_code: 'API_UNREACHABLE', handled_by_board: true, next: 'retry at 21:40 UTC'}).label,
+  'retry at 21:40 UTC',
+);
+assert.ok(!mod.ctaFor({status: 'doing', blocked_reason_code: 'API_UNREACHABLE', handled_by_board: true, next: 'retry at 21:40 UTC'}).attention);
+
 // ---- the strip renders exactly one CTA, distinct from the status/workstream footer
 const strip = mod.renderCardStrip({id: 'c1', title: 't', status: 'todo', workstream: 'w'});
 const ctas = strip.querySelectorAll('.card-cta');
@@ -91,5 +98,14 @@ let opened = false;
 checkingStrip._expander = {open: () => { opened = true; }, close() {}};
 checkingStrip.querySelector('.card-cta')._listeners.click[0]({stopPropagation() {}});
 assert.ok(opened, "a checking card's CTA opens the panel rather than deciding for the operator");
+
+// ---- handled_by_board wins over card-attention on the strip's own border class
+const handledStrip = mod.renderCardStrip({
+  id: 'c4', title: 't', status: 'doing', blocked_reason_code: 'MERGE_CONFLICT',
+  handled_by_board: true, next: 'resuming automatically',
+});
+assert.ok(!handledStrip.className.includes('card-attention'), 'a self-handled card does not glow');
+assert.ok(handledStrip.className.includes('card-working'), 'it reads as working instead');
+assert.equal(handledStrip.querySelector('.card-cta').textContent, 'resuming automatically');
 
 console.log('ok');

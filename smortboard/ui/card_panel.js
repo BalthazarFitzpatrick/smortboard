@@ -12,7 +12,10 @@ function cardClasses(card) {
   // blocked wins over working: a card waiting on you is not a card making progress, and showing
   // both reads as progress. flagged counts too - a refused or stopped card has no reason code
   // but sits in the inbox, and without this the board drew it plain
-  if (card.blocked_reason_code || card.review_flag) classes.push('card-attention');
+  // handled_by_board: the board is already retrying this itself, so it reads as working, not as
+  // a thing waiting on operator - the glow is reserved for a card that actually needs him
+  if (card.handled_by_board) classes.push('card-working');
+  else if (card.blocked_reason_code || card.review_flag) classes.push('card-attention');
   else if (card.status === 'doing') classes.push('card-working');
   else if (card.status === 'rejected') classes.push('card-rejected');
   else if (card.status === 'accepted') classes.push('card-accepted');
@@ -41,6 +44,10 @@ const CTA_BLOCKED_LABELS = new Map([
 // a second source of truth for what state a card is in. action is what the CTA's click performs;
 // attention is whether it wears the waiting-on-you treatment
 function ctaFor(card) {
+  // the board is retrying this one on its own - the CTA says when, not that it needs a decision
+  if (card.handled_by_board) {
+    return {label: card.next || 'retrying automatically', action: 'open', attention: false};
+  }
   if (card.blocked_reason_code) {
     return {label: CTA_BLOCKED_LABELS.get(card.blocked_reason_code) || 'Needs attention', action: 'open', attention: true};
   }
@@ -68,8 +75,11 @@ function renderCardStrip(card) {
   // secondary facts sitting on the floor. ui_base draws the rule with .h-divider - the parent
   // spaces its children and the rule only draws the line
   // a card waiting on someone says what to do, not only why - the reason code is the tooltip
-  const stat = card.next_action_short || card.blocked_reason_code || card.status;
-  const statHtml = card.next_action_short
+  const stat = card.handled_by_board ? (card.next || 'retrying automatically')
+    : (card.next_action_short || card.blocked_reason_code || card.status);
+  const statHtml = card.handled_by_board
+    ? `<span class="stat" title="${escapeHtml(card.blocked_reason_code || '')}">${escapeHtml(stat)}</span>`
+    : card.next_action_short
     ? `<span class="stat stat-action" title="${escapeHtml(card.blocked_reason_code || card.next_action || '')}">${escapeHtml(stat)}</span>`
     : `<span class="stat">${escapeHtml(stat)}</span>`;
   strip.innerHTML = `
