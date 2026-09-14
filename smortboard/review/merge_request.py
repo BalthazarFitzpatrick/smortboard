@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.exec.worktrees import repo_lock
+from smortboard.review.screenshot import latest_screenshot
 
 # the branches nothing here may ever write, however it is spelled. a push whose destination is one
 # of these is a bug, and the bug it would be is the one that writes main
@@ -227,6 +228,13 @@ def _body(card: dict[str, Any], evidence: _CardEvidence, branch: str) -> str:
             )
     else:
         lines.append("Review: not run")
+
+    shot = latest_screenshot(card)
+    if shot is not None:
+        lines.append(
+            f"Screenshot: [{shot['filename']}](/api/cards/{card['id']}/attachments/{shot['id']}) "
+            "- open it from the board that ran this card"
+        )
 
     if card.get("description"):
         lines += ["", "## What the card asked for", "", str(card["description"])]
