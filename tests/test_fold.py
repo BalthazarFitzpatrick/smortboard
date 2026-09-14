@@ -9,7 +9,10 @@ import pytest
 from smortboard import consolidate
 from smortboard.consolidate import apply_folds, run_fold_turn
 from smortboard.store.api import Store
-from tests.test_mission_control_http import _request, running_server  # noqa: F401 - a fixture
+from tests import test_mission_control_http as http
+
+# the mission control suite's server fixture, bound here so pytest finds it for this module too
+running_server = http.running_server
 
 
 @pytest.fixture
@@ -132,7 +135,7 @@ def test_a_turn_folds_what_was_proposed_and_reports_the_old_ids(store, board):
     assert a["id"][:8] in body and b["id"][:8] in body and "both edit x.py" in body
 
 
-def test_one_fold_at_a_time_per_board_over_http(running_server, monkeypatch):  # noqa: F811
+def test_one_fold_at_a_time_per_board_over_http(running_server, monkeypatch):
     base_url, _ = running_server
     gate = threading.Event()
 
@@ -141,14 +144,14 @@ def test_one_fold_at_a_time_per_board_over_http(running_server, monkeypatch):  #
         return consolidate.FoldResult()
 
     monkeypatch.setattr(consolidate, "run_fold_turn", slow)
-    _, board = _request(f"{base_url}/api/boards", "POST", {"name": "dev"})
+    _, board = http._request(f"{base_url}/api/boards", "POST", {"name": "dev"})
     url = f"{base_url}/api/boards/{board['id']}/fold"
-    assert _request(url, "POST")[0] == 202
-    assert _request(url, "POST")[0] == 409
-    assert _request(url)[1]["running"] is True
+    assert http._request(url, "POST")[0] == 202
+    assert http._request(url, "POST")[0] == 409
+    assert http._request(url)[1]["running"] is True
     gate.set()
     deadline = time.monotonic() + 5
-    while _request(url)[1]["running"] and time.monotonic() < deadline:
+    while http._request(url)[1]["running"] and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert _request(url)[1]["running"] is False
-    assert _request(f"{base_url}/api/boards/nope/fold", "POST")[0] == 404
+    assert http._request(url)[1]["running"] is False
+    assert http._request(f"{base_url}/api/boards/nope/fold", "POST")[0] == 404
