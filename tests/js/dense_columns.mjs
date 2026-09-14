@@ -156,6 +156,13 @@ function piles(bucketRows) {
   const counts = mod.letterCounts(cards, 'doing');
   assert.deepEqual(counts, {d: 2, a: 1}, 'a blocked/flagged doing card counts as attention, not doing');
 }
+{
+  // the board retrying a card itself is not a card waiting on fabian - it counts under its own
+  // status, same as cardClasses already draws it (card-working, not card-attention)
+  const cards = [card(1, 'doing'), card(2, 'doing', {blocked_reason_code: 'API_UNREACHABLE', handled_by_board: true})];
+  const counts = mod.letterCounts(cards, 'doing');
+  assert.deepEqual(counts, {d: 2}, 'a self-handled card does not inflate the attention count');
+}
 
 {
   const cards = [card(1, 'todo'), card(2, 'todo', {blocked_reason_code: 'CRASH'})];
