@@ -50,15 +50,33 @@ _SETTING_KEYS = (
     "auto_switch_profiles",
 )
 
-# writable settings that get_settings does not summarise, because they are not scalars callers read
-# at a glance. mission_control_read_paths is a json list of absolute host paths (see
-# mission_control_read_paths()); its own reader parses it, so it stays out of the settings dict.
+# writable settings that are not plain strings. mission_control_read_paths is a json list of
+# absolute host paths, parsed by mission_control_read_paths() - get_settings reports it through that
+# tolerant reader as a list, and the settings panel (o) replaces it whole with a list of paths
 _EXTRA_SETTING_KEYS = ("mission_control_read_paths",)
 
 
 def _check_findings_route(value: str | None) -> None:
     if value is not None and value not in FINDINGS_ROUTES:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
+
+
+def _check_read_paths(value: Any) -> list[str]:
+    """each path absolute after ~ expansion, and an existing folder - the message names the one
+    that failed, so the operator knows which row in the panel to fix"""
+    if not isinstance(value, list):
+        raise ValueError(f"mission_control_read_paths must be a list of paths, not {value!r}")
+    resolved = []
+    for raw in value:
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError(f"a read path must be a non-empty string, not {raw!r}")
+        path = Path(raw.strip()).expanduser()
+        if not path.is_absolute():
+            raise ValueError(f"{raw} must be an absolute path")
+        if not path.is_dir():
+            raise ValueError(f"{raw} does not exist or is not a folder")
+        resolved.append(str(path))
+    return resolved
 
 
 def _check_lease_glob(value: Any) -> str:
@@ -433,19 +451,26 @@ class Store:
     def get_settings(self) -> dict[str, Any]:
         rows = self._conn.execute("SELECT key, value FROM settings").fetchall()
         stored = {r["key"]: r["value"] for r in rows}
-        return {key: stored.get(key) for key in _SETTING_KEYS}
+        settings = {key: stored.get(key) for key in _SETTING_KEYS}
+        settings["mission_control_read_paths"] = self.mission_control_read_paths()
+        return settings
 
-    def set_setting(self, key: str, value: str | None) -> dict[str, Any]:
-        """sets a board-wide value, or clears it with None"""
+    def set_setting(self, key: str, value: Any) -> dict[str, Any]:
+        """sets a board-wide value, or clears it with None (or an empty list, for the read paths)"""
         if key not in _SETTING_KEYS and key not in _EXTRA_SETTING_KEYS:
             raise UnknownFieldError(f"no setting {key!r}")
         if key == "findings_route":
             _check_findings_route(value)
-        if value is None:
+        stored = value
+        # a list is the panel's whole-list replace and is checked path by path; a string is already
+        # json and stored as given, which mission_control_read_paths() reads tolerantly
+        if key == "mission_control_read_paths" and isinstance(value, list):
+            stored = json.dumps(_check_read_paths(value)) if value else None
+        if stored is None:
             self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))
         else:
             self._conn.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, stored)
             )
         self._conn.commit()
         return self.get_settings()
