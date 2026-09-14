@@ -594,6 +594,36 @@ def test_without_a_card_model_the_board_setting_then_sonnet_apply(board, monkeyp
     assert reviewed == [lifecycle.DEFAULT_REVIEWER_MODEL]
 
 
+def test_a_restart_clears_the_attention_flag_once_it_takes_a_seat(board, monkeypatch):
+    """r on a doing card blocked CRASH: the worktree step succeeding IS taking a seat, so the
+    blocked_reason_code clears there and the card renders as an ordinary doing card"""
+    store, card_id = board
+    store.update_card(card_id, status="doing", blocked_reason_code="CRASH")
+    _stub_gates(monkeypatch)
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] is None
+    assert card["status"] == "checking"  # the run went on to finish, same as any other run
+
+
+def test_a_restart_that_never_takes_a_seat_keeps_the_attention_flag(board, monkeypatch):
+    """a restart refused before the worktree exists (no runtime, no lease, ...) never reaches the
+    line that clears blocked_reason_code, so a card parked on something real stays visibly parked"""
+    store, card_id = board
+    store.update_card(card_id, status="doing", blocked_reason_code="CRASH")
+    monkeypatch.setattr(
+        lifecycle,
+        "require_card_runtime",
+        lambda *a, **k: (_ for _ in ()).throw(lifecycle.CardRuntimeUnavailable("no docker")),
+    )
+    # backend=None so the stubbed require_card_runtime is the thing that actually runs
+    result = lifecycle.run_card_lifecycle(store, card_id)
+    assert result.phase == "refused"
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] == "CRASH"
+    assert card["status"] == "doing"
+
+
 def test_a_card_with_no_lease_is_refused_before_a_worktree_is_cut(tmp_path, repo):
     """an empty lease lets the agent write nowhere - a run that can only fail is not started"""
     store = Store(tmp_path / "b.db")
