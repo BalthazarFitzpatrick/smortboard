@@ -27,10 +27,12 @@ turn; with nothing queued stdin closes, which is what lets the process exit.
 import contextlib
 import json
 import queue
+import re
 import subprocess
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -286,6 +288,10 @@ class RunResult:
     # the last StructuredOutput call's input - a --json-schema answer the run gave before it ended,
     # kept even when the run then stopped on its budget
     structured_output: dict[str, Any] | None = None
+    # parsed from a session-limit refusal's own text (see _session_limit_resets_at) when
+    # blocked_reason_code is USAGE_LIMIT but no rate_limit_event ever carried a resetsAt - None
+    # whenever an authoritative rate_limit_event already covers it, or the text had no readable time
+    resets_at: float | None = None
 
 
 def _structured_output(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -342,14 +348,90 @@ def _lease_conflict_signal(result_event: dict[str, Any]) -> bool:
     return LEASE_CONFLICT_PREFIX in (result_event.get("result") or "")
 
 
+# the text a session-limit refusal leaves in `result` when no rate_limit_event stream event ever
+# arrives - "You've hit your session limit · resets 3:40pm (UTC)" (a time) or a date variant
+# ("resets Sep 15 (UTC)") when the reset is not today. captures whatever sits between "resets" and
+# the trailing "(UTC)" and leaves parsing it to _parse_session_limit_reset below.
+_SESSION_LIMIT_PATTERN = re.compile(
+    r"session limit.*?resets\s+(?P<when>.+?)\s*\(UTC\)", re.IGNORECASE
+)
+
+_SESSION_LIMIT_TIME_FORMATS = ("%I:%M%p", "%I%p")
+# each paired with the current year, appended before parsing - a bare "%b %d" is ambiguous about
+# which year it means and Python 3.15 will start refusing it outright
+_SESSION_LIMIT_DATE_FORMATS = ("%b %d %Y", "%B %d %Y", "%m/%d %Y", "%Y-%m-%d")
+
+
+def _parse_session_limit_reset(when: str, now: datetime | None = None) -> float | None:
+    """turns "3:40pm" or "Sep 15" into an epoch timestamp - the soonest future UTC moment that
+    text could mean, rolling a bare time to tomorrow and a bare date to next year once it has
+    already passed. Unrecognised text returns None rather than raising: a caller with no readable
+    reset falls back the same way an absent rate_limit_event always has."""
+    now = now or datetime.now(UTC)
+    when = when.strip()
+    # %p wants an upper-case AM/PM marker; the text arrives lower-case ("3:40pm")
+    compact = when.upper().replace(" ", "")
+    for fmt in _SESSION_LIMIT_TIME_FORMATS:
+        try:
+            parsed = datetime.strptime(compact, fmt)
+        except ValueError:
+            continue
+        candidate = now.replace(hour=parsed.hour, minute=parsed.minute, second=0, microsecond=0)
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate.timestamp()
+    dated = f"{when} {now.year}"
+    for fmt in _SESSION_LIMIT_DATE_FORMATS:
+        text = when if fmt == "%Y-%m-%d" else dated
+        try:
+            parsed = datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        candidate = now.replace(
+            year=parsed.year,
+            month=parsed.month,
+            day=parsed.day,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        if candidate <= now:
+            candidate = candidate.replace(year=candidate.year + 1)
+        return candidate.timestamp()
+    return None
+
+
+def _session_limit_resets_at(result_event: dict[str, Any]) -> float | None:
+    """the reset time parsed from a session-limit refusal's own text, or None if this result
+    carries no such text - distinct from "text matched but the time itself was unreadable", which
+    also returns None and just leaves resets_at unset for the caller."""
+    text = result_event.get("result") or ""
+    match = _SESSION_LIMIT_PATTERN.search(text)
+    if not match:
+        return None
+    return _parse_session_limit_reset(match.group("when"))
+
+
+def _session_limit_text_signal(result_event: dict[str, Any]) -> bool:
+    """true for a session-limit refusal's OWN text, whether or not the reset time inside it could
+    be parsed - the classification does not depend on a readable time, only resets_at does."""
+    text = result_event.get("result") or ""
+    return bool(_SESSION_LIMIT_PATTERN.search(text))
+
+
 def classify_result(result_event: dict[str, Any]) -> str | None:
     """maps one `result` stream event onto the store's blocked_reason_code vocabulary, or None
     for a clean run. Order matters: a lease conflict is checked before is_error, since S3 showed
-    the run still completes `subtype: success` when it hits one"""
+    the run still completes `subtype: success` when it hits one. The session-limit text is checked
+    before is_error too - a run whose only output is that refusal text was seen classified CRASH
+    instead of USAGE_LIMIT, so nothing rotated."""
     if _lease_conflict_signal(result_event):
         return "LEASE_CONFLICT"
     if _agent_question_signal(result_event):
         return "AGENT_QUESTION"
+    if _session_limit_text_signal(result_event):
+        return "USAGE_LIMIT"
     if result_event.get("is_error"):
         return "CRASH"
     return None
@@ -396,6 +478,7 @@ def result_to_run_result(result_event: dict[str, Any]) -> RunResult:
         # measured on claude 2.1.197 with a bogus token: is_error, api_error_status 401,
         # "Failed to authenticate. API Error: 401 OAuth access token is invalid."
         auth_failed=result_event.get("api_error_status") == 401,
+        resets_at=_session_limit_resets_at(result_event),
     )
 
 
@@ -529,6 +612,14 @@ def run_process(
             continue
         # the orchestrator passes no store: it has no card of its own, only a board-wide turn
         if store is not None:
+            # attribute the window figure to whichever credential earned it - telemetry has no
+            # other record of which profile a past run used (see usage_projection)
+            if event.get("type") == "rate_limit_event":
+                # imported here, not at module level - profiles.py imports smortboard.exec.backends,
+                # which imports this module, so a top-level import would be circular
+                from smortboard import profiles
+
+                event = {**event, "profile": profiles.active_profile()}
             store.append_event(card_id, event.get("type", "unknown"), event)
 
         if event.get("type") == "result":
@@ -580,6 +671,20 @@ def run_process(
     if blocked_reason_code and run_result.blocked_reason_code is None:
         run_result = RunResult(
             **{**run_result.__dict__, "blocked_reason_code": blocked_reason_code}
+        )
+    # a real rate_limit_event already arrived on the stream (blocked_reason_code local var) and
+    # was recorded as its own event above - that authoritative resetsAt must win, so a synthetic
+    # one is appended only when the session-limit TEXT is all there was to go on
+    if (
+        store is not None
+        and run_result.blocked_reason_code == "USAGE_LIMIT"
+        and not blocked_reason_code
+        and run_result.resets_at is not None
+    ):
+        store.append_event(
+            card_id,
+            "rate_limit_event",
+            {"rate_limit_info": {"status": "refused", "resetsAt": run_result.resets_at}},
         )
     return run_result
 

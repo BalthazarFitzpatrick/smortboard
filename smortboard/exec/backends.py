@@ -42,6 +42,7 @@ from smortboard.exec.worktrees import (
 )
 from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
+from smortboard.store.errors import NotFoundError
 
 # defaults, overridable per deployment - never the credential itself, which is never an env var
 DEFAULT_CARD_IMAGE = "smortboard-card:latest"
@@ -116,17 +117,23 @@ def card_token_path() -> Path:
     return Path(os.environ.get(CARD_TOKEN_PATH_ENV) or _default_token_file())
 
 
+def config_base() -> Path:
+    """the platform's config root - APPDATA on Windows, XDG_CONFIG_HOME or ~/.config elsewhere.
+
+    shared with smortboard/profiles.py so a profile's token file and the legacy card_token file
+    live under the same tree; kept here since this is where that tree was first decided.
+    """
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+
+
 def _default_token_file() -> Path:
     """where the token file lives, per platform - the first place the board looks.
 
-    APPDATA on Windows, XDG_CONFIG_HOME or ~/.config elsewhere. The OS credential store is only
-    the fallback when this file is absent.
+    The OS credential store is only the fallback when this file is absent.
     """
-    if os.name == "nt":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return base / "smortboard" / "card_token"
+    return config_base() / "smortboard" / "card_token"
 
 
 def _credential_store_token() -> str | None:
@@ -243,6 +250,24 @@ def card_image_available(image: str | None = None) -> bool:
     return result.returncode == 0
 
 
+def _current_repo(store: Store | None, repo: dict[str, Any] | None) -> dict[str, Any] | None:
+    """the repo row fresh off the store, not whatever the caller happened to be holding.
+
+    mirrors review.gates._current_repo (duplicated rather than imported: gates.py already imports
+    from this module, so importing back would be circular) - a card on the fix route calls
+    run_card again for every round, and an operator's edit to test_command between rounds must
+    reach the very next one. falls back to the given `repo` when there is no store or id to
+    re-read by (tests hand in a bare dict, or no repo at all).
+    """
+    repo_id = (repo or {}).get("id")
+    if store is None or not repo_id:
+        return repo
+    try:
+        return store.get_repo(repo_id)
+    except NotFoundError:
+        return repo
+
+
 class RunnerBackend(Protocol):
     """a card runner: a working directory and a token in, a RunResult out.
 
@@ -296,6 +321,10 @@ class ContainerBackend:
         pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
         on_process: Callable[[ProcessHandle], None] | None = None,
     ) -> RunResult:
+        # re-read, not the repo dict the caller is holding: a card's fix rounds all run through
+        # this one method, and an operator's edit to test_command between rounds must scope the
+        # very next round's Bash allowlist and brief, not only a card started after the edit
+        repo = _current_repo(store, repo)
         token = read_card_token(token_path)
         clone_path = Path(tempfile.mkdtemp(prefix=f"smortboard-card-{uuid.uuid4().hex[:8]}-"))
         repo_root = repo_root_of_worktree(worktree_path)

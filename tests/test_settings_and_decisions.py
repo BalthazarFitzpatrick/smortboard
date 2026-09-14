@@ -1,5 +1,7 @@
 """the findings route's precedence, the outcome projection, and the decisions' refusals"""
 
+import re
+
 import pytest
 
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
@@ -44,6 +46,8 @@ def test_the_global_route_forces_every_card(store, card_id):
         "max_parallel": None,
         "resume_briefing": None,
         "gate_timeout_seconds": None,
+        "auto_switch_profiles": None,
+        "mission_control_read_paths": [],
     }
 
 
@@ -54,6 +58,36 @@ def test_an_unknown_route_or_setting_is_refused(store, card_id):
         store.set_setting("findings_route", "ignore")
     with pytest.raises(UnknownFieldError):
         store.set_setting("theme", "dark")
+
+
+def test_mission_control_read_paths_add_refuse_remove(store, tmp_path):
+    folder = tmp_path / "screenshots"
+    folder.mkdir()
+
+    added = store.set_setting("mission_control_read_paths", [str(folder)])
+    assert added["mission_control_read_paths"] == [str(folder)]
+
+    missing = tmp_path / "does-not-exist"
+    with pytest.raises(ValueError, match=re.escape(str(missing))):
+        store.set_setting("mission_control_read_paths", [str(folder), str(missing)])
+    # a refused patch must not touch the list that was already stored
+    assert store.get_settings()["mission_control_read_paths"] == [str(folder)]
+
+    removed = store.set_setting("mission_control_read_paths", [])
+    assert removed["mission_control_read_paths"] == []
+
+
+def test_mission_control_read_paths_expand_and_reject_relative(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "Documents" / "screenshots").mkdir(parents=True)
+
+    settings = store.set_setting("mission_control_read_paths", ["~/Documents/screenshots"])
+    assert settings["mission_control_read_paths"] == [str(tmp_path / "Documents" / "screenshots")]
+
+    with pytest.raises(ValueError, match="absolute"):
+        store.set_setting("mission_control_read_paths", ["relative/path"])
+    with pytest.raises(ValueError):
+        store.set_setting("mission_control_read_paths", [str(tmp_path / "not-a-dir.txt")])
 
 
 def test_settings_travel_in_the_export_bundle(store, tmp_path):
@@ -69,6 +103,8 @@ def test_settings_travel_in_the_export_bundle(store, tmp_path):
             "max_parallel": None,
             "resume_briefing": None,
             "gate_timeout_seconds": None,
+            "auto_switch_profiles": None,
+            "mission_control_read_paths": [],
         }
 
 

@@ -671,3 +671,8 @@ the operator to delete or keep.
 - every card on this board was stuck: 11 of 16 carried src/** leases (mission control has never seen a file), and the db purge left every repo without test_command, lint_command or image, so the gate refused cards with correct leases and the bash guard refused their test runs.
 - plan approved: mission control spans every board by default and reads read-only clones of the repos; it imports ledger tasks once, linked; dev_ledger/CARDS.jsonl and REPO.json keep cards and repo settings through a board-opened sync PR; leases are checked against real files, a conflict parks for one-key approve and is remembered per repo.
 - queued as 19 mc-* tasks, in build order; card-leases-from-real-files and lease-editor-in-ui are folded into mc-lease-check, mc-lease-approve and mc-ui-leases.
+
+## 2026-09-14T18:32Z - wowtomate-fixes-and-board-cleanup [76b838] - plan: a development branch the board lands cards on
+- operator approved (2026-09-14): each repo gets a development branch; cards branch from it, sync with it at hand-over, and the board merges them into it; the operator merges development into main now and then. main stays unreachable for the board.
+- units: review/integrate.py (merge commit built with commit-tree, pushed as a fast-forward, refuses protected bases, a moved base is a retry), lifecycle (after the PR opens on a non-protected base: sync, retest when anything came in, land, accept, keep one standing development-into-main PR), tests for both.
+- deploy: create development on each repo's remote from main, set each repo's default_branch to development, restart the board.
