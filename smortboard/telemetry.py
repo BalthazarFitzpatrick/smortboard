@@ -242,6 +242,8 @@ def _attempt_outcome(segment: list[dict[str, Any]]) -> str:
         return "stopped"
     if any(event["kind"] == "run_orphaned" for event in segment):
         return "blocked: CRASH"  # the board died under it - see server.runs.recover_orphaned_runs
+    if any(event["kind"] == "merge_conflict" for event in segment):
+        return "blocked: MERGE_CONFLICT"
     for event in reversed(segment):
         if event["kind"] == "rate_limit_event":
             reason = classify_rate_limit(event["payload"])

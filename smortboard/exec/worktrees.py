@@ -48,6 +48,13 @@ def branch_name(card_id: str) -> str:
     return f"card/{card_id}"
 
 
+def default_branch(repo: dict) -> str:
+    """the repo's own base branch, or "main" - one place for this so a repo pointed at, say,
+    "development" is read the same way everywhere: lifecycle, scheduler's sweep, decide.py's
+    rejection diff. never hard-code "main" where a repo row is already in hand."""
+    return repo.get("default_branch") or "main"
+
+
 def worktree_path(repo_path: str | Path, card_id: str) -> Path:
     return _worktree_root(Path(repo_path).resolve()) / card_id
 
