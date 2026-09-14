@@ -917,7 +917,7 @@ function mcQueueFor(boardId) {
   if (!mc.queues.has(boardId)) {
     mc.queues.set(boardId, createMessageQueue(
       `mission-control-${boardId}`,
-      body => sendMissionControlMessage(boardId, body),
+      (body, id) => sendMissionControlMessage(boardId, body, id),
       {
         onChange: () => renderMissionControlQueue(boardId),
         // fires once the message is delivered AND already off the queue, so the confirmed
@@ -929,15 +929,20 @@ function mcQueueFor(boardId) {
   return mc.queues.get(boardId);
 }
 
-// the actual network call a queued message makes. rejects on a network error AND on a non-2xx
-// (409 - still thinking - included) so createMessageQueue treats both as retryable rather than
-// dropping the message
-async function sendMissionControlMessage(boardId, text) {
+// the actual network call a queued message makes. the queue's id travels as client_id, so the
+// server can ignore a message it already accepted. a 409 (a turn in progress) rejects as busy -
+// the message waits as pending - and any other failure rejects plainly and is retried as failed
+async function sendMissionControlMessage(boardId, text, clientId) {
   const res = await fetch(`/api/boards/${boardId}/orchestrator`, {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}),
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({message: text, client_id: clientId}),
   });
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((body && body.error) || `request failed (${res.status})`);
+  if (!res.ok) {
+    const err = new Error((body && body.error) || `request failed (${res.status})`);
+    err.busy = res.status === 409;
+    throw err;
+  }
   return body;
 }
 

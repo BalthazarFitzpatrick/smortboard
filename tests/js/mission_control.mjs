@@ -191,7 +191,9 @@ mod.sendMissionControl('build the login card');
 await new Promise(r => setTimeout(r, 0));
 const post = calls.find(c => c.path === '/api/boards/b1/orchestrator' && c.opts?.method === 'POST');
 assert.ok(post, 'sending should POST to the board orchestrator route');
-assert.deepEqual(JSON.parse(post.opts.body), {message: 'build the login card'}, 'the post body carries the message');
+const posted = JSON.parse(post.opts.body);
+assert.equal(posted.message, 'build the login card', 'the post body carries the message');
+assert.equal(typeof posted.client_id, 'string', 'and the queue id, so the server can ignore a resend');
 const thinkingLine = mod.mc.log.children.find(c => c.className.includes('author-thinking'));
 assert.ok(thinkingLine, 'a thinking reply shows the dim thinking line');
 // close before the 1500ms poll fires - closing clears mc.poll so the process can exit
