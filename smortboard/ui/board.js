@@ -906,6 +906,8 @@ function renderMissionControlQueue(boardId) {
     if (!line) {
       line = appendLine(mc.log, 'fabian', item.body);
       line.dataset.queueId = item.id;
+      // a queued line is a new line like any other: it follows, or it counts on the pill
+      settleAfterAppend(mc.log);
     }
     line.className = `terminal-line author-fabian queue-${item.state}`;
     let badge = line.querySelector('.terminal-state');
@@ -916,7 +918,6 @@ function renderMissionControlQueue(boardId) {
     }
     badge.textContent = item.state;
   });
-  settleAfterAppend(mc.log);
 }
 
 function buildMissionControlDom(drawer) {
