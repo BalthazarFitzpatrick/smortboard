@@ -77,6 +77,53 @@ def test_a_turn_creates_cards_resolves_repo_and_deps_and_flags_the_unknown_repo(
     assert store.get_plan(board["id"]) == "p"
 
 
+def test_planning_mode_creates_no_card_and_says_so_on_the_board(store, board):
+    result = run_orchestrator_turn(
+        store, board["id"], "build a and b", runner=_runner(TWO_CARDS), mode="planning"
+    )
+    assert result.error is None
+    assert store.list_cards(board["id"]) == []
+    board_notes = [
+        m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
+    ]
+    assert any("2 proposed card" in note for note in board_notes)
+    # fabian's reply still lands - planning mode is a conversation, not a refusal
+    reply = [
+        m for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "orchestrator"
+    ]
+    assert reply and reply[0]["body"] == "ok"
+
+
+def test_planning_mode_with_no_proposed_cards_adds_no_board_note(store, board):
+    payload = {"reply": "still thinking", "plan": "p", "cards": []}
+    run_orchestrator_turn(store, board["id"], "hey", runner=_runner(payload), mode="planning")
+    board_notes = [
+        m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
+    ]
+    assert board_notes == []  # nothing was ignored, so nothing to say
+
+
+def test_manage_mode_creates_cards_same_as_the_default(store, board):
+    result = run_orchestrator_turn(
+        store, board["id"], "build a and b", runner=_runner(TWO_CARDS), mode="manage"
+    )
+    assert result.error is None
+    assert len(store.list_cards(board["id"])) == 2
+
+
+def test_the_turn_prompt_carries_the_mode_rule(store, board):
+    seen_prompts = []
+
+    def _capture(prompt, model, budget_usd):
+        seen_prompts.append(prompt)
+        return json.dumps({"reply": "ok", "plan": "p", "cards": []})
+
+    run_orchestrator_turn(store, board["id"], "hi", runner=_capture, mode="planning")
+    assert "PLANNING MODE" in seen_prompts[0]
+    run_orchestrator_turn(store, board["id"], "hi", runner=_capture, mode="manage")
+    assert "MANAGE MODE" in seen_prompts[1]
+
+
 def test_a_card_carries_the_model_proposed_and_a_non_name_is_refused(store, board):
     # the model reaches `claude --model`, so only plain aliases and ids get through
     base = TWO_CARDS["cards"][0]
@@ -174,6 +221,23 @@ def test_registry_runs_a_turn_and_clears_thinking(tmp_path):
         time.sleep(0.02)
     assert not registry.thinking(board["id"])
     assert registry.error(board["id"]) is None
+
+
+def test_registry_passes_its_mode_argument_through_to_the_turn(tmp_path):
+    db = tmp_path / "board.db"
+    with Store(db) as store:
+        board = store.create_board("dev")
+        store.create_repo(board["id"], "repo", "/repo", "main")
+
+    registry = OrchestratorRegistry(db)
+    assert registry.start(board["id"], "build a and b", runner=_runner(TWO_CARDS), mode="planning")
+    import time
+
+    deadline = time.time() + 5
+    while registry.thinking(board["id"]) and time.time() < deadline:
+        time.sleep(0.02)
+    with Store(db) as store:
+        assert store.list_cards(board["id"]) == []  # planning mode reached the real turn
 
 
 def test_registry_refuses_a_second_turn_while_thinking(tmp_path):

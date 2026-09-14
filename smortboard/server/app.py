@@ -647,6 +647,7 @@ def _make_handler(
             body = self._read_json()
             message = (body.get("message") or "").strip()
             client_id = body.get("client_id")
+            mode = body.get("mode") if body.get("mode") in ("planning", "manage") else "planning"
             if not message:
                 self._send_json(400, {"error": "message must not be empty"})
                 return
@@ -663,7 +664,7 @@ def _make_handler(
             store.add_orchestrator_message(board_id, "fabian", message)
             if client_id:
                 accepted_messages[board_id].append(client_id)
-            orchestrator.start(board_id, message, message_already_stored=True)
+            orchestrator.start(board_id, message, message_already_stored=True, mode=mode)
             self._send_json(202, self._orchestrator_view(board_id))
 
         def _fold_view(self, board_id: str) -> dict:
