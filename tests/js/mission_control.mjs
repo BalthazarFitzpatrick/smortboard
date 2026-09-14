@@ -175,7 +175,17 @@ assert.equal(mod.boardIdRef(), 'b1');
 
 mod.drawers.right.open(); // triggers openMissionControl -> loadMissionControl
 await new Promise(r => setTimeout(r, 0));
-assert.equal(mod.mc.header.textContent, 'mission control - opus', 'the header names the model');
+assert.equal(mod.mc.header.textContent, 'mission control - planning - opus', 'the header names the mode and the model - planning by default');
+
+// ---- shift+tab toggles the mode; plain tab must not ----------------------------------------------
+const shiftTab = () => mod.mc.input._listeners.keydown.forEach(fn => fn({code: 'Tab', shiftKey: true, preventDefault() {}}));
+const plainTab = () => mod.mc.input._listeners.keydown.forEach(fn => fn({code: 'Tab', shiftKey: false, preventDefault() {}}));
+plainTab();
+assert.equal(mod.mc.header.textContent, 'mission control - planning - opus', 'a plain tab does not toggle the mode');
+shiftTab();
+assert.equal(mod.mc.header.textContent, 'mission control - managing - opus', 'shift+tab switches to managing');
+shiftTab();
+assert.equal(mod.mc.header.textContent, 'mission control - planning - opus', 'a second shift+tab switches back');
 
 responses.set('/api/boards/b1/orchestrator', stubJson(202, {
   messages: [
@@ -194,6 +204,7 @@ assert.ok(post, 'sending should POST to the board orchestrator route');
 const posted = JSON.parse(post.opts.body);
 assert.equal(posted.message, 'build the login card', 'the post body carries the message');
 assert.equal(typeof posted.client_id, 'string', 'and the queue id, so the server can ignore a resend');
+assert.equal(posted.mode, 'planning', 'the current mode travels with every post - planning here, the two shift+tabs above cancelled out');
 const thinkingLine = mod.mc.log.children.find(c => c.className.includes('author-thinking'));
 assert.ok(thinkingLine, 'a thinking reply shows the dim thinking line');
 // close before the 1500ms poll fires - closing clears mc.poll so the process can exit
