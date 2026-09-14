@@ -11,8 +11,10 @@ grading its own homework, so the board re-runs them; the agent's own view that t
 the same, so a separate reviewer reads the diff. A card reaches a pull request by passing two things
 that do not care what it thinks.
 
-The board never merges. The chain ends with an open pull request and a link, which is the point at
-which a human takes over. There is no step after this one.
+The board never merges into main. On a repo whose base is main, the chain ends with an open pull
+request and a link, which is the point at which a human takes over. On a repo whose base is not
+protected - a development branch - the board lands the card there itself (review/integrate.py), so
+the next card starts on top of it, and merging development into main stays the operator's.
 """
 
 from __future__ import annotations
@@ -36,19 +38,25 @@ from smortboard.exec.worktrees import (
     branch_diff,
     branch_exists,
     create_worktree,
+    default_branch,
     existing_worktree,
     fetch_base,
     has_remote,
     worktree_path,
 )
 from smortboard.operator import OPERATOR_NAME
+from smortboard.review.decide import accept_card
 from smortboard.review.gates import GateUnavailable, run_test_gate
+from smortboard.review.integrate import integrate, integration_lock, open_release_request
 from smortboard.review.merge_request import (
+    PROTECTED_BRANCHES,
     MergeRequestUnavailable,
     branch_has_commits,
     open_merge_request,
 )
+from smortboard.review.mergeable import sync_with_base
 from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
+from smortboard.review.screenshot import diff_touches_ui, take_screenshot
 from smortboard.store.api import Store
 
 # the phases a card passes through, in order. the last four are terminal
@@ -270,6 +278,98 @@ def _stopped(store: Store, state: LifecycleResult) -> LifecycleResult:
     return state
 
 
+def _sync_and_retest(
+    store: Store, state: LifecycleResult, card_id: str, tree: Any, repo: dict[str, Any], base: str
+) -> LifecycleResult | None:
+    """merges the base into the card branch: a conflict blocks the card, and anything new from the
+    base reruns the tests. None means the branch is current and still passes"""
+    # measured 2026-09-14 (card 59727ba3, PR #112): a branch cut once and never updated drifted 34
+    # commits behind main while its PR waited, and conflicted in four files other PRs had since
+    # touched. one more sync right before the PR is opened is what this closes
+    merge_result = sync_with_base(tree.path, base)
+    if merge_result is not None and not merge_result.clean:
+        base_ref = f"origin/{base}"
+        store.append_event(
+            card_id,
+            "merge_conflict",
+            {"base_ref": base_ref, "files": merge_result.conflicting_files},
+        )
+        return _block(
+            store,
+            state,
+            "MERGE_CONFLICT",
+            f"Merging {base_ref} into {tree.branch} conflicts in: "
+            f"{', '.join(merge_result.conflicting_files) or 'unknown files'}.\n\n"
+            "Resuming this card lets the worker merge the base branch and resolve them.",
+        )
+    if merge_result is not None and merge_result.merged:
+        try:
+            gate = run_test_gate(store, card_id, tree.path, repo)
+        except GateUnavailable as exc:
+            return _refuse(store, state, f"The test gate could not run after merging {base}: {exc}")
+        if not gate.passed:
+            return _block(
+                store,
+                state,
+                "TESTS_FAILED",
+                f"`{gate.command}` exited {gate.exit_code} after merging {base} in.\n\n"
+                f"```\n{gate.output}\n```",
+            )
+    return None
+
+
+# a base that moves between the sync and the push is synced again and retried, this many times
+INTEGRATE_ATTEMPTS = 3
+
+
+def _integrate(
+    store: Store,
+    state: LifecycleResult,
+    card: dict[str, Any],
+    tree: Any,
+    repo: dict[str, Any],
+    base: str,
+    url: str,
+) -> LifecycleResult:
+    """lands the card on a base that is not protected, then accepts it. a card that cannot land
+    keeps its open pull request and waits for the operator, as on main"""
+    card_id = card["id"]
+    landed, reason = None, "the base kept moving while it was merged"
+    with integration_lock(repo["path"], base):
+        for _ in range(INTEGRATE_ATTEMPTS):
+            if (blocked := _sync_and_retest(store, state, card_id, tree, repo, base)) is not None:
+                return blocked
+            result = integrate(tree.path, tree.branch, base, card["title"])
+            if result.sha or not result.moved:
+                landed, reason = result.sha, result.reason or reason
+                break
+
+    if landed is None:
+        _note(
+            store,
+            card_id,
+            with_next(
+                f"Tests passed and the reviewer approved, but the board could not merge it into "
+                f"{base}: {reason}\n\nThe pull request is open:\n{url}",
+                "review",
+            ),
+        )
+        store.update_card(card_id, review_flag=True)
+    else:
+        store.append_event(card_id, "integrated", {"base": base, "sha": landed, "url": url})
+        accept_card(store, card_id)
+        release = open_release_request(repo["path"], base)
+        _note(
+            store,
+            card_id,
+            f"Tests passed, the reviewer approved, and the board merged it into {base} as "
+            f"{landed[:10]}:\n{url}\n\nMerging {base} into main is yours"
+            + (f":\n{release}" if release else "."),
+        )
+    state.phase, state.pr_url = "opened", url
+    return state
+
+
 def run_card_lifecycle(
     store: Store,
     card_id: str,
@@ -328,7 +428,7 @@ def run_card_lifecycle(
     if not _lease_globs(card):
         return _refuse(store, state, NO_LEASE_NOTE)
     repo = store.get_repo(card["repo_id"])
-    base = repo.get("default_branch") or "main"
+    base = default_branch(repo)
 
     try:
         runtime = backend or require_card_runtime(token_path)
@@ -364,6 +464,10 @@ def run_card_lifecycle(
     worker_model = card.get("model") or configured.get("worker_model") or DEFAULT_WORKER_MODEL
     reviewer_model = configured.get("reviewer_model") or DEFAULT_REVIEWER_MODEL
 
+    # the worker's own final message, kept for the screenshot step below - it is where the worker
+    # names which view to open, per runner.SYSTEM_PROMPT's SCREENSHOT: instruction
+    last_summary: str | None = None
+
     def work(prompt: str) -> LifecycleResult | None:
         """one agent run in the card's worktree; returns the blocked/stopped state if it stopped
         short"""
@@ -394,6 +498,8 @@ def run_card_lifecycle(
                 f"The run stopped: {run.blocked_reason_code}.\n\n{run.result_text or ''}".strip(),
             )
         store.append_event(card_id, "worker_summary", {"text": run.result_text})
+        nonlocal last_summary
+        last_summary = run.result_text
         return None
 
     # a resumed card (an inbox answer, or a re-run after a block) keeps this worktree and its
@@ -432,11 +538,12 @@ def run_card_lifecycle(
             )
 
         phase("reviewing")
+        diff_text = branch_diff(repo["path"], base, tree.branch)
         try:
             review = run_review(
                 store,
                 card_id,
-                branch_diff(repo["path"], base, tree.branch),
+                diff_text,
                 tree.path,
                 settings,
                 repo=repo,
@@ -475,10 +582,22 @@ def run_card_lifecycle(
     if stopped_now():
         return _stopped(store, state)
 
+    # both gates passed - a card whose diff touches smortboard/ui/ gets one screenshot, taken on
+    # the host so the operator sees the change before merging. a failed screenshot is a note, never
+    # a block: nothing about the work itself was wrong
+    if diff_touches_ui(diff_text):
+        phase("screenshotting")
+        shot = take_screenshot(store, card_id, tree.path, last_summary)
+        if shot.note:
+            _note(store, card_id, f"Screenshot not attached: {shot.note}")
+
     # only now is the card work waiting on a human: checking requires both gates, not either
     store.update_card(card_id, status="checking")
 
     phase("opening")
+    if (blocked := _sync_and_retest(store, state, card_id, tree, repo, base)) is not None:
+        return blocked
+
     try:
         request = open_merge_request(store, card_id, repo["path"], tree.branch, base=base)
     except MergeRequestUnavailable as exc:
@@ -486,6 +605,9 @@ def run_card_lifecycle(
 
     if not request.url:
         return _refuse(store, state, f"Both gates passed, but: {request.refusal}")
+
+    if base not in PROTECTED_BRANCHES:
+        return _integrate(store, state, card, tree, repo, base, request.url)
 
     _note(
         store,

@@ -1,7 +1,8 @@
 """pure projections over the store and the run registry - no model calls, nothing derived by asking.
 
-roster: every card an agent currently holds, working or blocked, with a one-line activity read off
-its own latest event rather than asked for (see docs/PLAN.md Phase 5's roster unit).
+roster: every card an agent currently holds - a live run only - with a one-line activity read off
+its own latest event rather than asked for (see docs/PLAN.md Phase 5's roster unit). a blocked card
+belongs to the attention inbox instead, not to this list.
 usage: rate-limit windows and model spend, summed straight off the event log.
 """
 
@@ -84,7 +85,10 @@ def _activity_for_running_card(store: Store, card_id: str, phase: str | None) ->
 
 def roster_rows(store: Store, active_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """`active_runs` is `[{"card_id", "phase"}, ...]` - the caller (the http handler) passes
-    RunRegistry.active() through in that shape, so telemetry never imports server.runs."""
+    RunRegistry.active() through in that shape, so telemetry never imports server.runs.
+
+    only cards an agent currently holds - a live run. a blocked card is not an agent working on
+    anything; it belongs to the attention inbox (see attention_rows), not here."""
     working = []
     for run in active_runs:
         card = store.get_card(run["card_id"])
@@ -98,24 +102,7 @@ def roster_rows(store: Store, active_runs: list[dict[str, Any]]) -> list[dict[st
                 "activity": _activity_for_running_card(store, card["id"], run.get("phase")),
             }
         )
-
-    running_ids = {r["card_id"] for r in active_runs}
-    blocked = []
-    for card in store.list_doing_cards_blocked():
-        if card["id"] in running_ids:
-            continue  # a card can be both "doing" and mid-retry-run; the run wins
-        blocked.append(
-            {
-                "card_id": card["id"],
-                "board_id": card["board_id"],
-                "title": card["title"],
-                "state": "blocked",
-                "reason": card["blocked_reason_code"],
-                "activity": f"blocked: {card['blocked_reason_code']}",
-            }
-        )
-
-    return working + blocked
+    return working
 
 
 def _window_from_rate_limit_event(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -255,6 +242,8 @@ def _attempt_outcome(segment: list[dict[str, Any]]) -> str:
         return "stopped"
     if any(event["kind"] == "run_orphaned" for event in segment):
         return "blocked: CRASH"  # the board died under it - see server.runs.recover_orphaned_runs
+    if any(event["kind"] == "merge_conflict" for event in segment):
+        return "blocked: MERGE_CONFLICT"
     for event in reversed(segment):
         if event["kind"] == "rate_limit_event":
             reason = classify_rate_limit(event["payload"])

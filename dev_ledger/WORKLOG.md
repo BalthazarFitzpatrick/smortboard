@@ -671,3 +671,14 @@ the operator to delete or keep.
 - every card on this board was stuck: 11 of 16 carried src/** leases (mission control has never seen a file), and the db purge left every repo without test_command, lint_command or image, so the gate refused cards with correct leases and the bash guard refused their test runs.
 - plan approved: mission control spans every board by default and reads read-only clones of the repos; it imports ledger tasks once, linked; dev_ledger/CARDS.jsonl and REPO.json keep cards and repo settings through a board-opened sync PR; leases are checked against real files, a conflict parks for one-key approve and is remembered per repo.
 - queued as 19 mc-* tasks, in build order; card-leases-from-real-files and lease-editor-in-ui are folded into mc-lease-check, mc-lease-approve and mc-ui-leases.
+
+## 2026-09-14T18:32Z - wowtomate-fixes-and-board-cleanup [76b838] - plan: a development branch the board lands cards on
+- operator approved (2026-09-14): each repo gets a development branch; cards branch from it, sync with it at hand-over, and the board merges them into it; the operator merges development into main now and then. main stays unreachable for the board.
+- units: review/integrate.py (merge commit built with commit-tree, pushed as a fast-forward, refuses protected bases, a moved base is a retry), lifecycle (after the PR opens on a non-protected base: sync, retest when anything came in, land, accept, keep one standing development-into-main PR), tests for both.
+- deploy: create development on each repo's remote from main, set each repo's default_branch to development, restart the board.
+
+## 2026-09-14T20:29Z - wowtomate-fixes-and-board-cleanup [76b838] - development branch live, board.js split, dense columns, house cleaned
+- every repo on the board now bases on development; the board lands finished cards there (#115) and one standing development-into-main PR (#116) is the operator's to merge. direct sessions land on development from worktrees; the main checkout stays on development and only fast-forwards, since the live board runs from it.
+- fold widened (631574e): the board computes lease overlaps into the snapshot, the model groups small overlapping cards, and the board refuses any group over 4 cards or 12 criteria or with a card that shares no lease with the rest.
+- board.js split into chat.js, shortcuts.js, card_panel.js and columns.js (ae42ce2..1fd02fd), salvaged from card 72030909's own commit e36f238 after it hit its budget cap; screenshots before and after matched. dense columns (948a9b3) on top; this entry's fix keeps a dense column inside the viewport (measured: last row at 939px of 1000) with a trailing "more" aggregate, and hides the short id on chips, where it was cut off.
+- cards 72030909, b5d3ed7d, 917877ad, d3ba1625 and 5d779d18 removed from the board (built directly or dropped by the operator). 21 local and 12 remote merged branches and 16 worktrees removed.

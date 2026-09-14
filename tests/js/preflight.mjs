@@ -53,6 +53,7 @@ const CHECKS = [
 responses.set('/api/preflight', stubJson(200, CHECKS));
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+  smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('preflight.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {togglePreflightPanel, openPreflightPanel, closePreflightPanel, pf, BINDINGS}`)(SpyMenu, SpyDrawer);
