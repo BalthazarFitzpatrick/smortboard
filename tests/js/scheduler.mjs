@@ -50,6 +50,9 @@ function addCardStrip(cardId) {
   badge.hidden = true;
   foot.appendChild(badge);
   strip.appendChild(foot);
+  const cta = element('div', 'card-cta');
+  cta.textContent = 'Running…';
+  strip.appendChild(cta);
   bucketRow.appendChild(strip);
   return strip;
 }
@@ -99,6 +102,15 @@ assert.ok(statusEl && !statusEl.hidden, 'the board bar shows a status while a sc
 assert.equal(statusEl.textContent, '1 running - 1 queued');
 assert.equal(badgeText('c1'), 'running', 'a running card carries it on its foot');
 assert.equal(badgeText('c2'), 'queued, 1 of 1', 'a queued card shows its position on its foot');
+
+function ctaText(cardId) {
+  return queryAll(bucketRow, `.card-strip[data-card-id="${cardId}"]`)[0]
+    .querySelector('.card-cta').textContent;
+}
+// a re-queued card kept its 'doing' status (see scheduler.py's _is_queueable), so the CTA still
+// read 'Running…' until this landed - the queue corrects it, not the card's own stored status
+assert.equal(ctaText('c2'), 'Queued', 'a queued card says so on its own button, not Running…');
+assert.equal(ctaText('c1'), 'Running…', 'a card actually running keeps its own label');
 
 // ---- a queue of two shows each card's own position, front to back -----------------------------
 

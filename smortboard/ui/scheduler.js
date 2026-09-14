@@ -58,6 +58,10 @@ function applyScheduleToCards(view) {
   view.queued.forEach((id, index) => {
     if (waitingIds.has(id)) return;
     showRun(id, `queued, ${index + 1} of ${total}`);
+    // a card re-queued while blocked kept its 'doing' status, so the CTA still reads 'Running…' -
+    // it hasn't actually started again yet, the queue has
+    const cta = ctaButton(id);
+    if (cta && cta.textContent === 'Running…') cta.textContent = 'Queued';
   });
 }
 
