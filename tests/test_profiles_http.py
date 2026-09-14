@@ -143,15 +143,32 @@ def test_remove_deletes_the_token_file(running_server, tmp_path):
     assert not any(r["name"] == "alt" for r in body)
 
 
-def test_remove_the_active_profile_is_refused(running_server):
+def test_remove_the_active_profile_switches_active_first(running_server):
     _request(f"{running_server}/api/profiles", "POST", {"name": "alt", "token": VALID_TOKEN})
     _request(f"{running_server}/api/profiles/alt/activate", "POST")
-    status, body = _request(f"{running_server}/api/profiles/alt", "DELETE")
+    status, _ = _request(f"{running_server}/api/profiles/alt", "DELETE")
+    assert status == 204
+
+    status, body = _request(f"{running_server}/api/profiles")
+    assert status == 200
+    assert body == [{"name": "default", "active": True, "present": False, "limited_until": None}]
+
+
+def test_remove_default_is_now_allowed(running_server, tmp_path):
+    _request(f"{running_server}/api/profiles", "POST", {"name": "alt", "token": VALID_TOKEN})
+    status, _ = _request(f"{running_server}/api/profiles/default", "DELETE")
+    assert status == 204
+    status, body = _request(f"{running_server}/api/profiles")
+    assert not any(r["name"] == "default" for r in body)
+
+
+def test_remove_the_last_remaining_profile_is_refused(running_server):
+    status, body = _request(f"{running_server}/api/profiles/default", "DELETE")
     assert status == 409
     assert "error" in body
 
 
-def test_remove_default_is_refused(running_server):
-    status, body = _request(f"{running_server}/api/profiles/default", "DELETE")
-    assert status == 400
+def test_remove_unknown_profile_is_404(running_server):
+    status, body = _request(f"{running_server}/api/profiles/ghost", "DELETE")
+    assert status == 404
     assert "error" in body
