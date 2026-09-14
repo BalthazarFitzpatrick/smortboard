@@ -513,6 +513,122 @@ def test_the_queue_resumes_once_the_pause_expires(store, board_and_repo, monkeyp
     assert b["id"] in runs.started
 
 
+def test_a_usage_limit_card_itself_rejoins_the_queue_once_the_pause_expires(store, board_and_repo):
+    """the gap the queue-only fix left: the card that hit USAGE_LIMIT must rerun once its own
+    reset passes, not only unblock cards behind it."""
+    board_id, repo_id = board_and_repo
+    store.set_setting("max_parallel", "1")
+    a = store.create_card(board_id, repo_id, "a")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    runs.finish(a["id"], blocked_reason_code="USAGE_LIMIT")
+    runs.started.clear()
+
+    scheduler._paused_until = time.time() - 1
+    scheduler.schedule_view()
+    assert a["id"] in runs.started
+
+
+# -- API_UNREACHABLE backoff ---------------------------------------------------------
+
+
+def test_api_unreachable_retries_with_backoff_then_stops_at_three(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    assert runs.started == [a["id"]]
+
+    for expected_minutes in scheduler_module.API_UNREACHABLE_BACKOFF_MINUTES:
+        runs.started.clear()
+        runs.finish(a["id"], blocked_reason_code="API_UNREACHABLE")
+        view = scheduler.schedule_view()
+        retry_at = view["card_retry_at"][a["id"]]
+        assert retry_at == pytest.approx(time.time() + expected_minutes * 60, abs=5)
+        # fast-forward: the retry is due, so polling starts it again
+        scheduler._card_retry_at[a["id"]] = time.time() - 1
+        scheduler.schedule_view()
+        assert runs.started == [a["id"]]
+
+    # a fourth failure exhausts the automatic retries and stays blocked for the operator
+    runs.started.clear()
+    runs.finish(a["id"], blocked_reason_code="API_UNREACHABLE")
+    view = scheduler.schedule_view()
+    assert a["id"] not in view["card_retry_at"]
+    assert runs.started == []
+
+    retries = [e for e in store.list_events(a["id"]) if e["kind"] == "api_unreachable_retry"]
+    assert len(retries) == len(scheduler_module.API_UNREACHABLE_BACKOFF_MINUTES)
+
+
+def test_api_unreachable_retry_posts_a_board_comment_with_the_next_retry_time(
+    store, board_and_repo
+):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    runs.finish(a["id"], blocked_reason_code="API_UNREACHABLE")
+    comments = store.get_card(a["id"])["comments"]
+    assert any("retrying automatically" in c["body"] for c in comments)
+
+
+# -- stale CRASH relabel --------------------------------------------------------------
+
+
+def test_relabel_stale_crashes_fixes_a_mislabeled_session_limit(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.update_card(a["id"], blocked_reason_code="CRASH", review_flag=True)
+    store.append_event(
+        a["id"],
+        "result",
+        {
+            "type": "result",
+            "is_error": True,
+            "result": "You've hit your session limit · resets 3:40pm (UTC)",
+        },
+    )
+
+    relabeled = scheduler_module.relabel_stale_crashes(store)
+    assert relabeled == [{"card_id": a["id"], "from": "CRASH", "to": "USAGE_LIMIT"}]
+    assert store.get_card(a["id"])["blocked_reason_code"] == "USAGE_LIMIT"
+    kinds = [e["kind"] for e in store.list_events(a["id"])]
+    assert "relabeled" in kinds
+
+
+def test_relabel_stale_crashes_fixes_a_mislabeled_api_unreachable(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.update_card(a["id"], blocked_reason_code="CRASH", review_flag=True)
+    store.append_event(
+        a["id"],
+        "result",
+        {"type": "result", "is_error": True, "result": "Unable to connect to API"},
+    )
+
+    relabeled = scheduler_module.relabel_stale_crashes(store)
+    assert relabeled == [{"card_id": a["id"], "from": "CRASH", "to": "API_UNREACHABLE"}]
+    assert store.get_card(a["id"])["blocked_reason_code"] == "API_UNREACHABLE"
+
+
+def test_relabel_stale_crashes_leaves_a_genuine_crash_alone(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.update_card(a["id"], blocked_reason_code="CRASH", review_flag=True)
+    store.append_event(
+        a["id"], "result", {"type": "result", "is_error": True, "result": "TypeError: boom"}
+    )
+
+    assert scheduler_module.relabel_stale_crashes(store) == []
+    assert store.get_card(a["id"])["blocked_reason_code"] == "CRASH"
+
+
 # -- stop ---------------------------------------------------------------------------
 
 
@@ -619,7 +735,13 @@ def test_schedule_endpoint_reports_an_empty_board_cleanly(server):
     base, board_id, _ = server
     status, body = _call(f"{base}/api/boards/{board_id}/schedule")
     assert status == 200
-    assert body == {"running": [], "queued": [], "waiting": {}, "paused_until": None}
+    assert body == {
+        "running": [],
+        "queued": [],
+        "waiting": {},
+        "paused_until": None,
+        "card_retry_at": {},
+    }
 
 
 def test_run_all_stop_clears_the_queue_over_http(server):

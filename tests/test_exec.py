@@ -334,6 +334,28 @@ def test_a_real_rate_limit_event_wins_over_the_session_limit_text(tmp_path):
         assert recorded[0]["payload"]["rate_limit_info"]["resetsAt"] == real_resets_at
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Unable to connect to API",
+        "unable to connect to the api - please try again",
+        "ConnectionRefused: [Errno 61]",
+        "connection reset by peer",
+        "api overloaded, please retry",
+        "the api returned a 503 error",
+    ],
+)
+def test_api_unreachable_text_classifies_as_api_unreachable_not_crash(text):
+    result_event = {
+        "type": "result",
+        "subtype": "error_during_execution",
+        "is_error": True,
+        "permission_denials": [],
+        "result": text,
+    }
+    assert classify_result(result_event) == "API_UNREACHABLE"
+
+
 def test_crash_when_is_error_and_no_other_signal():
     result_event = {
         "type": "result",

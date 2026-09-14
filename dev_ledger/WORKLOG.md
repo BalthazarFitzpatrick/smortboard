@@ -682,3 +682,19 @@ the operator to delete or keep.
 - fold widened (631574e): the board computes lease overlaps into the snapshot, the model groups small overlapping cards, and the board refuses any group over 4 cards or 12 criteria or with a card that shares no lease with the rest.
 - board.js split into chat.js, shortcuts.js, card_panel.js and columns.js (ae42ce2..1fd02fd), salvaged from card 72030909's own commit e36f238 after it hit its budget cap; screenshots before and after matched. dense columns (948a9b3) on top; this entry's fix keeps a dense column inside the viewport (measured: last row at 939px of 1000) with a trailing "more" aggregate, and hides the short id on chips, where it was cut off.
 - cards 72030909, b5d3ed7d, 917877ad, d3ba1625 and 5d779d18 removed from the board (built directly or dropped by the operator). 21 local and 12 remote merged branches and 16 worktrees removed.
+
+## 2026-09-15T00:00Z - board-self-heal-plan - self-heal spike plan for stuck cards
+Plan, landed one fix at a time on development, worktree `smortboard-worktrees/self-heal`,
+branch `feature/board-self-heal`:
+- Fix A: API_UNREACHABLE joins BLOCKED_REASON_CODES (schema migration 12, same recreate-table
+  pattern as MERGE_CONFLICT's migration 11). classify_result recognizes connection-refused/reset,
+  5xx and overloaded text. scheduler retries an API_UNREACHABLE card itself with backoff
+  2/10/30 min, three attempts, then leaves it blocked for the operator; each retry is an event
+  plus a board comment naming the next retry time. USAGE_LIMIT's existing profile-rotate/pause
+  path had a gap where the card that hit the limit was dropped from the queue rather than
+  rejoining it once the pause lapsed - fixed. one-time relabel_stale_crashes (wired into
+  build_server) turns an old CRASH card into USAGE_LIMIT/API_UNREACHABLE if its last result text
+  matches, logged as a `relabeled` event.
+- Fix B: budget/turn-capped runs with commits continue to test+review instead of blocking.
+- Fix C: MERGE_CONFLICT resumes itself once automatically, twice stays blocked.
+- Fix D: /api/attention excludes cards the board is already handling automatically.
