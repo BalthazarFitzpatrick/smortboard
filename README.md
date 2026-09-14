@@ -317,6 +317,7 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `g` | kanban / workstreams | `s` | shortcuts |
 | `/` | type: the open card's comment, or the open chat | `b` | boards and repos |
 | | | `h` | pre-flight checklist |
+| | | shift+`p` | credential profiles |
 | | | `1`-`9` | jump to a board |
 
 ## Setup
@@ -423,6 +424,12 @@ it here:
 
 The board never reads that login and a card never sees it. Do not copy a token out of it - the
 card token is the narrower, model-only one.
+
+**Several subscriptions.** Run `claude setup-token` once per account, then press shift+`p` and
+paste each one under its own profile name. It lands at
+`~/.config/smortboard/tokens/<name>` (mode 600) - the "default" profile stays the plain
+`card_token` file above, nothing already set up moves. When the active profile hits its rate
+limit, the board rotates to the next one instead of parking until the window resets.
 
 ### A board and its repo
 
