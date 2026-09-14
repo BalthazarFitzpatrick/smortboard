@@ -107,5 +107,10 @@ const handledStrip = mod.renderCardStrip({
 assert.ok(!handledStrip.className.includes('card-attention'), 'a self-handled card does not glow');
 assert.ok(handledStrip.className.includes('card-working'), 'it reads as working instead');
 assert.equal(handledStrip.querySelector('.card-cta').textContent, 'resuming automatically');
+// the retry text lives on the CTA alone - the footer falls back to the bare status rather than
+// repeating it. the stat span is templated into innerHTML, which the stub keeps as a string only
+// (see its own note further down), so this checks the markup directly rather than a live node
+assert.match(handledStrip.innerHTML, /<span class="stat"[^>]*>doing<\/span>/);
+assert.doesNotMatch(handledStrip.innerHTML, /resuming automatically/);
 
 console.log('ok');

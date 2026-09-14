@@ -115,6 +115,10 @@ function stackHeight(count, rowHeight) {
 }
 
 function isAttentionCard(card) {
+  // the board handling a card itself reads as working, not as waiting on operator - cardClasses
+  // already draws it that way (card-working wins over card-attention), the header count has to
+  // agree or it flags a card nobody needs to look at
+  if (card.handled_by_board) return false;
   return !!(card.blocked_reason_code || card.review_flag);
 }
 

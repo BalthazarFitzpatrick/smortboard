@@ -74,8 +74,10 @@ function renderCardStrip(card) {
   // a card, not a strip: a title band at the top, a rule, the description with the room, and the
   // secondary facts sitting on the floor. ui_base draws the rule with .h-divider - the parent
   // spaces its children and the rule only draws the line
-  // a card waiting on someone says what to do, not only why - the reason code is the tooltip
-  const stat = card.handled_by_board ? (card.next || 'retrying automatically')
+  // a card waiting on someone says what to do, not only why - the reason code is the tooltip.
+  // handled_by_board already carries that text on the CTA button itself (see ctaFor) - the foot
+  // falls back to the status so the retry text isn't drawn twice
+  const stat = card.handled_by_board ? card.status
     : (card.next_action_short || card.blocked_reason_code || card.status);
   const statHtml = card.handled_by_board
     ? `<span class="stat" title="${escapeHtml(card.blocked_reason_code || '')}">${escapeHtml(stat)}</span>`
