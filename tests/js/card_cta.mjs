@@ -1,6 +1,6 @@
-// proves the primary call-to-action button on each card strip: exactly one per card, a label that
-// tracks status and blocked reason code, a distinct highlight when the card is waiting on the
-// operator, and clicks that act on that card rather than whatever happens to be focused.
+// proves ctaFor's label/action logic, and the compact action note 3919ce56 replaced the oversized
+// full-width CTA button with: one per card, coloured by state, left-aligned ahead of the
+// workstream, no click handler of its own.
 // run: node tests/js/card_cta.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
@@ -72,45 +72,44 @@ assert.equal(
 );
 assert.ok(!mod.ctaFor({status: 'doing', blocked_reason_code: 'API_UNREACHABLE', handled_by_board: true, next: 'retry at 21:40 UTC'}).attention);
 
-// ---- the strip renders exactly one CTA, distinct from the status/workstream footer
+// ---- the strip renders exactly one compact action note, left of the workstream, no separate
+// full-width button (3919ce56 reverted d66ceee3's CTA). the note is templated into innerHTML, which
+// the stub keeps as a string only (see its own note further down), so these check the markup
+// directly rather than a live node
 const strip = mod.renderCardStrip({id: 'c1', title: 't', status: 'todo', workstream: 'w'});
-const ctas = strip.querySelectorAll('.card-cta');
-assert.equal(ctas.length, 1, 'a card shows exactly one primary action');
-assert.equal(ctas[0].textContent, 'Run');
-assert.ok(!ctas[0].classList.contains('card-cta-attention'), 'a quiet card CTA carries no attention styling');
+assert.equal(strip.querySelectorAll('.card-cta').length, 0, 'the oversized CTA button is gone');
+const footIdx = strip.innerHTML.indexOf('card-foot');
+const actionIdx = strip.innerHTML.indexOf('card-action', footIdx);
+const workstreamIdx = strip.innerHTML.indexOf('card-workstream', footIdx);
+assert.ok(actionIdx > 0 && actionIdx < workstreamIdx, 'the action note sits left of the workstream');
+assert.match(strip.innerHTML, /<span class="card-action card-action-quiet"[^>]*>Run<\/span>/);
 
-// ---- a blocked card's CTA is visibly distinct from a quiet one
+// ---- a blocked card's note is visibly distinct from a quiet one, in the attention colour
 const blockedStrip = mod.renderCardStrip({id: 'c2', title: 't', status: 'doing', blocked_reason_code: 'LEASE_CONFLICT'});
-const blockedCta = blockedStrip.querySelector('.card-cta');
-assert.equal(blockedCta.textContent, 'Fix leases');
-assert.ok(blockedCta.classList.contains('card-cta-attention'), 'a blocked card highlights its CTA');
+assert.match(blockedStrip.innerHTML, /<span class="card-action card-action-attention"[^>]*>Fix leases<\/span>/);
 
-// ---- clicking a todo card's CTA runs that card, regardless of what is focused, and stops the
-// click from also reaching the strip's own click handling (which would otherwise pop it open too)
-let stopped = false;
-ctas[0]._listeners.click[0]({stopPropagation() { stopped = true; }});
-assert.ok(calls.some(c => c.path === '/api/runtime'), "a todo card's CTA checks runtime readiness before running");
-assert.ok(stopped, "the CTA's click must stop before it reaches the strip");
+// ---- a running card's note wears the working colour, same as the card's own border
+const runningStrip = mod.renderCardStrip({id: 'c3', title: 't', status: 'doing'});
+assert.match(runningStrip.innerHTML, /<span class="card-action card-action-working"[^>]*>Running…<\/span>/);
 
-// ---- clicking a checking card's CTA opens the card so its outcome and PR can be read
-const checkingStrip = mod.renderCardStrip({id: 'c3', title: 't', status: 'checking'});
-let opened = false;
-checkingStrip._expander = {open: () => { opened = true; }, close() {}};
-checkingStrip.querySelector('.card-cta')._listeners.click[0]({stopPropagation() {}});
-assert.ok(opened, "a checking card's CTA opens the panel rather than deciding for the operator");
+// ---- checking and accepted borrow their own state colours
+const checkingStrip = mod.renderCardStrip({id: 'c4', title: 't', status: 'checking'});
+assert.match(checkingStrip.innerHTML, /card-action-review"[^>]*>Review PR</);
+const acceptedStrip = mod.renderCardStrip({id: 'c5', title: 't', status: 'accepted'});
+assert.match(acceptedStrip.innerHTML, /card-action-accepted"[^>]*>View</);
 
-// ---- handled_by_board wins over card-attention on the strip's own border class
+// ---- handled_by_board wins over card-attention on the strip's own border class, and its retry
+// text appears exactly once (on the note, not repeated anywhere else on the footer)
 const handledStrip = mod.renderCardStrip({
-  id: 'c4', title: 't', status: 'doing', blocked_reason_code: 'MERGE_CONFLICT',
+  id: 'c6', title: 't', status: 'doing', blocked_reason_code: 'MERGE_CONFLICT',
   handled_by_board: true, next: 'resuming automatically',
 });
 assert.ok(!handledStrip.className.includes('card-attention'), 'a self-handled card does not glow');
 assert.ok(handledStrip.className.includes('card-working'), 'it reads as working instead');
-assert.equal(handledStrip.querySelector('.card-cta').textContent, 'resuming automatically');
-// the retry text lives on the CTA alone - the footer falls back to the bare status rather than
-// repeating it. the stat span is templated into innerHTML, which the stub keeps as a string only
-// (see its own note further down), so this checks the markup directly rather than a live node
-assert.match(handledStrip.innerHTML, /<span class="stat"[^>]*>doing<\/span>/);
-assert.doesNotMatch(handledStrip.innerHTML, /resuming automatically/);
+assert.match(handledStrip.innerHTML, /card-action-working"[^>]*>resuming automatically</);
+assert.equal(
+  (handledStrip.innerHTML.match(/resuming automatically/g) || []).length, 1,
+  'the retry text is drawn once, not repeated on the footer',
+);
 
 console.log('ok');

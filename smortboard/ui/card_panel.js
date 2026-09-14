@@ -64,6 +64,18 @@ function shortId(id) {
   return String(id).slice(0, 8);
 }
 
+// the compact note's colour follows the action it names, not a flat grey line - attention wins
+// (the same red the card's own border wears), otherwise doing/running reads as the working green,
+// checking/accepted borrow the colour their own column state already uses elsewhere, and a plain
+// todo/rejected note stays quiet text
+function ctaColorClass(cta, card) {
+  if (cta.attention) return 'card-action-attention';
+  if (card.handled_by_board || cta.action === 'stop') return 'card-action-working';
+  if (card.status === 'checking') return 'card-action-review';
+  if (card.status === 'accepted') return 'card-action-accepted';
+  return 'card-action-quiet';
+}
+
 function renderCardStrip(card) {
   const strip = document.createElement('div');
   strip.className = cardClasses(card);
@@ -74,43 +86,26 @@ function renderCardStrip(card) {
   // a card, not a strip: a title band at the top, a rule, the description with the room, and the
   // secondary facts sitting on the floor. ui_base draws the rule with .h-divider - the parent
   // spaces its children and the rule only draws the line
-  // a card waiting on someone says what to do, not only why - the reason code is the tooltip.
-  // handled_by_board already carries that text on the CTA button itself (see ctaFor) - the foot
-  // falls back to the status so the retry text isn't drawn twice
-  const stat = card.handled_by_board ? card.status
-    : (card.next_action_short || card.blocked_reason_code || card.status);
-  const statHtml = card.handled_by_board
-    ? `<span class="stat" title="${escapeHtml(card.blocked_reason_code || '')}">${escapeHtml(stat)}</span>`
-    : card.next_action_short
-    ? `<span class="stat stat-action" title="${escapeHtml(card.blocked_reason_code || card.next_action || '')}">${escapeHtml(stat)}</span>`
-    : `<span class="stat">${escapeHtml(stat)}</span>`;
+  // the compact note IS the one thing worth reading - no separate full-width button (reverted,
+  // see 3919ce56): coloured and bold in place, left-aligned ahead of the workstream.
+  // next_action_short is the more specific guidance the board writes for a blocked card ("widen
+  // or answer") - it wins over ctaFor's blunter reason-code label ("Fix leases") when both exist
+  const cta = ctaFor(card);
+  const actionClass = ctaColorClass(cta, card);
+  const label = card.next_action_short || cta.label;
+  const actionHtml = `<span class="card-action ${actionClass}" ` +
+    `title="${escapeHtml(card.blocked_reason_code || card.next_action || '')}">${escapeHtml(label)}</span>`;
   strip.innerHTML = `
     <div class="card-head"><div class="card-title">${escapeHtml(card.title)}</div><span class="card-id">${escapeHtml(shortId(card.id))}</span></div>
     <div class="h-divider"></div>
     <div class="card-body">${escapeHtml(card.description || '')}</div>
     <div class="h-divider"></div>
     <div class="card-foot">
+      ${actionHtml}
       <span class="card-workstream">${escapeHtml(card.workstream || '')}</span>
-      ${statHtml}
       <span class="card-run" hidden></span>
     </div>
   `;
-  // THE ONE BUTTON THAT MATTERS. built with createElement rather than folded into the innerHTML
-  // string above, so it stays a queryable live node - the same reason terminalDom does, see its note
-  const cta = ctaFor(card);
-  const ctaEl = document.createElement('div');
-  ctaEl.className = `card-cta${cta.attention ? ' card-cta-attention' : ''}`;
-  ctaEl.textContent = cta.label;
-  ctaEl.dataset.action = cta.action;
-  ctaEl.addEventListener('click', evt => {
-    // stop here rather than risk the click also reaching whatever expand.js binds on the strip -
-    // a run/stop action popping the card open behind it would read as two things happening at once
-    evt.stopPropagation();
-    if (cta.action === 'run') runFocusedCard(card.id);
-    else if (cta.action === 'stop') stopFocusedCard(card.id);
-    else strip._expander?.open();
-  });
-  strip.appendChild(ctaEl);
 
   // appended rather than templated into the string above: the test dom stub does not parse
   // innerHTML back into a tree (see the same note on terminalDom further down), so a live listener
