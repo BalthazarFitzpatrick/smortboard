@@ -24,7 +24,14 @@ _LEASE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
 _WORKSPACE_PREFIX = "/workspace/"
 
 RESUMABLE_REASONS = frozenset(
-    {"AGENT_QUESTION", "TESTS_FAILED", "REVIEW_REJECTED", "CRASH", "LEASE_CONFLICT"}
+    {
+        "AGENT_QUESTION",
+        "TESTS_FAILED",
+        "REVIEW_REJECTED",
+        "CRASH",
+        "LEASE_CONFLICT",
+        "MERGE_CONFLICT",
+    }
 )
 # USAGE_LIMIT clears on its own once the rate-limit window resets - answering it does not change
 # the model's limit, so an answer would only be spent confusing the agent on its next run.
