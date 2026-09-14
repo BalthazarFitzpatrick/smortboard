@@ -698,3 +698,15 @@ branch `feature/board-self-heal`:
 - Fix B: budget/turn-capped runs with commits continue to test+review instead of blocking.
 - Fix C: MERGE_CONFLICT resumes itself once automatically, twice stays blocked.
 - Fix D: /api/attention excludes cards the board is already handling automatically.
+
+## 2026-09-14T22:54Z — wowtomate-fixes-and-board-cleanup [76b838]
+Landed all 7 assigned cards on development, one commit per card: aa32d46e (js suite in the
+test gate), 71f97352 (remembered lease approvals), 71207021 (cross-board pull request panel,
+resolving its board.js/BINDINGS split conflict into shortcuts.js), 29382fc3 (proved the
+restart-clears-attention behavior already existed in lifecycle.py, added the tests that name
+it), 6c290823 (global + per-board parallel caps), 06e09da8 (shift+tab planning/managing mode
+for mission control), 3facb458 (repo_image.py builds a repo's own test image - backend only,
+no UI button or preflight staleness check, to avoid the UI-focused session's files). Salvaged
+existing card/* branch work for the first three and the fifth (via git merge, resolving one
+schema.py migration-number conflict and the board.js/shortcuts.js split); built the rest from
+scratch. Full suite green throughout (793 pytest, 25 js) except where noted per-card.
