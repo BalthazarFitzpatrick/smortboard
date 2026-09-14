@@ -132,6 +132,24 @@ def test_token_file_present_and_healthy_is_ok(store, tmp_path):
     assert _by_id(checks, "card-token")["status"] == "ok"
 
 
+def test_the_token_row_follows_the_active_profile(store):
+    """with no card_token on disk, the active profile's file is what a run uses"""
+    profiles.add_profile("second", "y" * 108)
+    profiles.set_active("second")
+    checks = run_preflight(store, runner=_all_ok_runner)
+    assert _by_id(checks, "card-token")["status"] == "ok"
+
+
+def test_readiness_takes_the_active_profile_token(monkeypatch):
+    from smortboard.server.runs import Readiness
+
+    monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: True)
+    monkeypatch.setattr("smortboard.exec.backends.card_image_available", lambda *_args: True)
+    profiles.add_profile("second", "y" * 108)
+    profiles.set_active("second")
+    assert Readiness().check()["token"] is True
+
+
 def test_the_default_profile_gets_its_own_row(store):
     checks = run_preflight(store, runner=_all_ok_runner)
     row = _by_id(checks, "profile-default")
