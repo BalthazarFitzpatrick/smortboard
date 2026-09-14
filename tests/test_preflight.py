@@ -9,8 +9,19 @@ import subprocess
 
 import pytest
 
+from smortboard import profiles
 from smortboard.preflight import run_preflight
 from smortboard.store import Store
+
+
+@pytest.fixture(autouse=True)
+def _isolated_profiles(monkeypatch, tmp_path):
+    # preflight's own profile rows read smortboard.profiles directly, independent of the
+    # token_path argument these tests pass to run_preflight - isolate them the same way
+    # tests/test_profiles.py does, so this file never touches the real config directory
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("SMORTBOARD_PROFILES_STATE_PATH", str(tmp_path / "profiles.json"))
+    monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "card_token_unused"))
 
 
 @pytest.fixture
@@ -119,6 +130,48 @@ def test_token_file_present_and_healthy_is_ok(store, tmp_path):
     token_file.chmod(0o600)
     checks = run_preflight(store, token_path=token_file, runner=_all_ok_runner)
     assert _by_id(checks, "card-token")["status"] == "ok"
+
+
+def test_the_default_profile_gets_its_own_row(store):
+    checks = run_preflight(store, runner=_all_ok_runner)
+    row = _by_id(checks, "profile-default")
+    assert row["group"] == "machine"
+    assert "default" in row["label"]
+
+
+def test_a_second_profile_shows_present_and_mode(store, tmp_path):
+    profiles.add_profile("work", token="a-token")
+    checks = run_preflight(store, runner=_all_ok_runner)
+    row = _by_id(checks, "profile-work")
+    assert row["status"] == "ok"
+    assert "mode 600" in row["detail"]
+
+
+def test_an_absent_profile_file_fails_with_a_paste_fix(store):
+    profiles.add_profile("work")  # registered, but no token file written
+    checks = run_preflight(store, runner=_all_ok_runner)
+    row = _by_id(checks, "profile-work")
+    assert row["status"] == "fail"
+    assert "claude setup-token" in row["fix"]
+
+
+def test_a_rate_limited_profile_shows_limited_until(store):
+    import time
+
+    profiles.add_profile("work", token="a-token")
+    until = time.time() + 3600
+    profiles.mark_limited("work", until)
+    checks = run_preflight(store, runner=_all_ok_runner)
+    row = _by_id(checks, "profile-work")
+    assert row["status"] == "warn"
+    assert str(until) in row["detail"]
+
+
+def test_profile_rows_never_include_a_token_value(store):
+    secret = "sk-profile-secret-do-not-leak"
+    profiles.add_profile("work", token=secret)
+    checks = run_preflight(store, runner=_all_ok_runner)
+    assert secret not in str(checks)
 
 
 def test_gh_not_installed(monkeypatch, store, tmp_path):
