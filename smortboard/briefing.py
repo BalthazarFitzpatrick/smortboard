@@ -100,6 +100,14 @@ def _latest_test_gate(segment: list[dict[str, Any]]) -> dict[str, Any] | None:
     return gate
 
 
+def _latest_merge_conflict(segment: list[dict[str, Any]]) -> dict[str, Any] | None:
+    conflict = None
+    for event in segment:
+        if event["kind"] == "merge_conflict":
+            conflict = event["payload"]
+    return conflict
+
+
 def _format_finding(finding: dict[str, Any]) -> str:
     location = finding.get("file") or ""
     if finding.get("line") is not None:
@@ -118,6 +126,14 @@ def _detail_lines(segment: list[dict[str, Any]], worktree_reused: bool) -> list[
     if gate is not None:
         verdict = "passed" if gate.get("passed") else "failed"
         lines.append(f"Test gate ({gate.get('command')}): {verdict}, exit {gate.get('exit_code')}")
+
+    conflict = _latest_merge_conflict(segment)
+    if conflict is not None:
+        files = ", ".join(conflict.get("files") or [])
+        lines.append(
+            f"Merging {conflict.get('base_ref')} into this branch conflicted in: {files}. "
+            f"Merge {conflict.get('base_ref')} yourself, resolve those files, then commit the merge."
+        )
 
     findings = _latest_review_findings(segment)
     if findings:

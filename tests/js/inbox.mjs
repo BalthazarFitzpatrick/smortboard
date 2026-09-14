@@ -46,10 +46,11 @@ class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; 
 const ROWS = [
   {card_id: 'c1', board_id: 'b1', board_name: 'alpha', title: 'widen the lease', reason: 'AGENT_QUESTION', question: 'should I widen the lease?', since: '2026-01-01T00:00:00', action: 'Answer the agent\'s question in the inbox (n) - the answer resumes it.'},
   {card_id: 'c2', board_id: 'b1', board_name: 'alpha', title: 'fix the flaky test', reason: 'TESTS_FAILED', question: '`pytest` exited 1', since: '2026-01-02T00:00:00'},
+  {card_id: 'c3', board_id: 'b1', board_name: 'alpha', title: 'edited outside its lease', reason: 'LEASE_CONFLICT', question: 'blocked: lease conflict', since: '2026-01-03T00:00:00', wants: ['ui/board.js', 'docs/notes.md']},
 ];
 responses.set('/api/attention', stubJson(200, ROWS));
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('board.js'), smort('inbox.js')].join('\n;\n');
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js'), smort('inbox.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {toggleInboxPanel, openInboxPanel, closeInboxPanel, ib, BINDINGS, indicatorRef: () => indicatorEl};`)(SpyMenu, SpyDrawer);
 
@@ -70,7 +71,7 @@ assert.ok(mod.BINDINGS.some(b => b.code === 'KeyN' && b.group === 'panels'), 'n 
 await flush(); await flush();
 const indicator = mod.indicatorRef();
 assert.ok(indicator, 'the indicator is built onto the board bar at startup');
-assert.equal(indicator.textContent, '2', 'the indicator shows the attention count');
+assert.equal(indicator.textContent, '3', 'the indicator shows the attention count');
 assert.ok(!indicator.classList.contains('dim'), 'a nonzero count is not dim');
 
 // ---- n opens the panel, not a Menu (SpyMenu.openAt would have been recorded, it was not for n) ----
@@ -78,7 +79,7 @@ press('KeyN');
 await flush(); await flush();
 assert.ok(mod.ib.backdrop.parentNode, 'the panel is attached once opened');
 const rows = mod.ib.panel.querySelectorAll('.inbox-row');
-assert.equal(rows.length, 2, 'both blocked cards render as rows');
+assert.equal(rows.length, 3, 'all three blocked cards render as rows');
 assert.equal(rows[0].querySelector('.inbox-title').textContent, 'widen the lease');
 assert.equal(rows[0].querySelector('.inbox-reason').textContent, 'AGENT_QUESTION');
 assert.equal(rows[0].querySelector('.inbox-question').textContent, 'should I widen the lease?');
@@ -117,6 +118,30 @@ const status1 = rows[1].querySelector('.inbox-status');
 assert.equal(status1.textContent, 'this card is still running');
 assert.ok(status1.className.includes('inbox-error'));
 assert.ok(!input1.disabled, 'a refusal leaves the input open to retry');
+
+// ---- a LEASE_CONFLICT row shows the wanted paths and an approve control -------------------------
+assert.equal(rows[2].querySelector('.inbox-wants').textContent, 'wants: ui/board.js, docs/notes.md');
+assert.ok(rows[2].querySelector('.inbox-answer'), 'the answer field still shows too');
+const approveButton = rows[2].querySelector('.inbox-approve');
+assert.ok(approveButton.classList.contains('toggle'), 'reuses the existing toggle button class');
+responses.set('/api/cards/c3/lease/approve', stubJson(202, {card_id: 'c3', running: true, phase: 'running'}));
+approveButton.onclick();
+await flush(); await flush();
+const approveCall = calls.find(c => c.path === '/api/cards/c3/lease/approve');
+assert.ok(approveCall, 'the approve control posts to the lease/approve route');
+assert.equal(approveCall.opts.method, 'POST');
+assert.deepEqual(JSON.parse(approveCall.opts.body), {paths: ['ui/board.js', 'docs/notes.md']});
+
+// ---- a lease/approve refusal renders inline on that row too ---------------------------------------
+responses.set('/api/attention', stubJson(200, ROWS));
+const rows3 = mod.ib.panel.querySelectorAll('.inbox-row');
+const approveButton2 = rows3[2].querySelector('.inbox-approve');
+responses.set('/api/cards/c3/lease/approve', stubJson(409, {error: 'this card is not blocked on a lease conflict'}));
+approveButton2.onclick();
+await flush(); await flush();
+const approveStatus = rows3[2].querySelector('.inbox-lease-approve .inbox-status');
+assert.equal(approveStatus.textContent, 'this card is not blocked on a lease conflict');
+assert.ok(approveStatus.className.includes('inbox-error'));
 
 // ---- escape, from inside the answer input, closes the panel --------------------------------------
 fireKeydown(input1, {code: 'Escape', key: 'Escape'});

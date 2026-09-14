@@ -9,7 +9,8 @@ import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
 const root = new URL('../../', import.meta.url);
 const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('board.js')].join('\n;\n');
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+  smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const STATUS_ORDER = ['todo', 'doing', 'checking', 'accepted', 'rejected'];
 
 // a fresh stub document plus a fresh board.js module per scenario - nothing accumulates across

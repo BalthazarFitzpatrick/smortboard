@@ -134,9 +134,14 @@ function buildInboxRow(row) {
   question.className = 'inbox-question';
   question.textContent = row.question || '(no question text)';
 
+  const extras = [];
+  if (row.reason === 'LEASE_CONFLICT' && row.wants && row.wants.length) {
+    extras.push(buildLeaseApproveRow(row));
+  }
+
   // an answer cannot move a decision or a rate limit - the action line already says what will
   if (row.answerable === false) {
-    rowEl.append(head, action, question);
+    rowEl.append(head, action, question, ...extras);
     return rowEl;
   }
 
@@ -156,8 +161,51 @@ function buildInboxRow(row) {
   });
   answerRow.append(input, status);
 
-  rowEl.append(head, action, question, answerRow);
+  // the answer field stays too - the operator may prefer to tell the agent to leave the file be
+  // instead of widening the lease for it
+  rowEl.append(head, action, question, ...extras, answerRow);
   return rowEl;
+}
+
+// the "wants: <paths>" line and its approve control - one click widens exactly those paths and
+// resumes the card, reusing the `toggle` class other inbox controls already use as a button
+function buildLeaseApproveRow(row) {
+  const wrap = document.createElement('div');
+  wrap.className = 'inbox-lease-approve';
+
+  const wants = document.createElement('div');
+  wants.className = 'inbox-wants';
+  wants.textContent = `wants: ${row.wants.join(', ')}`;
+
+  const button = document.createElement('span');
+  button.className = 'inbox-approve toggle';
+  button.textContent = 'approve';
+  const status = document.createElement('span');
+  status.className = 'inbox-status';
+  button.onclick = () => approveLease(row.card_id, row.wants, button, status);
+
+  wrap.append(wants, button, status);
+  return wrap;
+}
+
+async function approveLease(cardId, paths, button, status) {
+  button.classList.add('dim');
+  status.textContent = 'approving...';
+  status.className = 'inbox-status';
+  const {ok, body} = await apiOrError(`/api/cards/${cardId}/lease/approve`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({paths}),
+  });
+  if (!ok) {
+    status.textContent = (body && body.error) || 'could not approve';
+    status.className = 'inbox-status inbox-error';
+    button.classList.remove('dim');
+    return;
+  }
+  status.textContent = 'resumed';
+  status.className = 'inbox-status inbox-ok';
+  pollAttentionCount();
+  if (currentBoardId) onBoardEnter(currentBoardId);
+  loadInbox();
 }
 
 // works on both the real DOM (where .children is read-only) and the test stub - child.remove()

@@ -37,6 +37,8 @@ CARD_WRITABLE_FIELDS = {
 # smortboard.scheduler.DEFAULT_MAX_PARALLEL
 # resume_briefing gates lifecycle.py's resume briefing - "off" disables it, unset means on
 # gate_timeout_seconds caps the test gate - unset means review.gates.GATE_TIMEOUT_SECONDS (600)
+# auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - "off" parks the board until
+# the reset instead (the pre-profiles behaviour), unset means on
 _SETTING_KEYS = (
     "findings_route",
     "orchestrator_model",
@@ -45,12 +47,36 @@ _SETTING_KEYS = (
     "max_parallel",
     "resume_briefing",
     "gate_timeout_seconds",
+    "auto_switch_profiles",
 )
+
+# writable settings that are not plain strings. mission_control_read_paths is a json list of
+# absolute host paths, parsed by mission_control_read_paths() - get_settings reports it through that
+# tolerant reader as a list, and the settings panel (o) replaces it whole with a list of paths
+_EXTRA_SETTING_KEYS = ("mission_control_read_paths",)
 
 
 def _check_findings_route(value: str | None) -> None:
     if value is not None and value not in FINDINGS_ROUTES:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
+
+
+def _check_read_paths(value: Any) -> list[str]:
+    """each path absolute after ~ expansion, and an existing folder - the message names the one
+    that failed, so the operator knows which row in the panel to fix"""
+    if not isinstance(value, list):
+        raise ValueError(f"mission_control_read_paths must be a list of paths, not {value!r}")
+    resolved = []
+    for raw in value:
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError(f"a read path must be a non-empty string, not {raw!r}")
+        path = Path(raw.strip()).expanduser()
+        if not path.is_absolute():
+            raise ValueError(f"{raw} must be an absolute path")
+        if not path.is_dir():
+            raise ValueError(f"{raw} does not exist or is not a folder")
+        resolved.append(str(path))
+    return resolved
 
 
 def _check_lease_glob(value: Any) -> str:
@@ -239,16 +265,22 @@ class Store:
         criteria: list[str] | None = None,
         leases: list[str] | None = None,
         model: str | None = None,
+        ledger_task: str | None = None,
+        depends_on: list[str] | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
+        # validated before any insert - a brand new card can never be part of an existing
+        # cycle or depend on itself (its id does not exist yet), so only existence matters
+        cleaned_deps = list(dict.fromkeys(depends_on or []))
+        self._check_dependency_ids_exist(cleaned_deps)
         card_id = _new_id()
         now = _now()
         self._conn.execute(
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
-                blocked_reason_code, description, position, review_flag, model, created_at,
-                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                blocked_reason_code, description, position, review_flag, model, ledger_task,
+                created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -262,6 +294,7 @@ class Store:
                 position,
                 int(review_flag),
                 model,
+                ledger_task,
                 now,
                 now,
             ),
@@ -281,8 +314,21 @@ class Store:
                 "INSERT INTO card_leases (id, card_id, path_glob) VALUES (?, ?, ?)",
                 (_new_id(), card_id, glob),
             )
+        for dep_id in cleaned_deps:
+            self._conn.execute(
+                "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
+                (card_id, dep_id),
+            )
         self._conn.commit()
         return self.get_card(card_id)
+
+    def ledger_links(self, repo_id: str) -> dict[str, str]:
+        """which of this repo's ledger tasks already have a card: task id -> card id"""
+        rows = self._conn.execute(
+            "SELECT ledger_task, id FROM cards WHERE repo_id = ? AND ledger_task IS NOT NULL",
+            (repo_id,),
+        ).fetchall()
+        return {row["ledger_task"]: row["id"] for row in rows}
 
     def _card_row(self, card_id: str) -> sqlite3.Row:
         row = self._conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
@@ -415,22 +461,48 @@ class Store:
     def get_settings(self) -> dict[str, Any]:
         rows = self._conn.execute("SELECT key, value FROM settings").fetchall()
         stored = {r["key"]: r["value"] for r in rows}
-        return {key: stored.get(key) for key in _SETTING_KEYS}
+        settings = {key: stored.get(key) for key in _SETTING_KEYS}
+        settings["mission_control_read_paths"] = self.mission_control_read_paths()
+        return settings
 
-    def set_setting(self, key: str, value: str | None) -> dict[str, Any]:
-        """sets a board-wide value, or clears it with None"""
-        if key not in _SETTING_KEYS:
+    def set_setting(self, key: str, value: Any) -> dict[str, Any]:
+        """sets a board-wide value, or clears it with None (or an empty list, for the read paths)"""
+        if key not in _SETTING_KEYS and key not in _EXTRA_SETTING_KEYS:
             raise UnknownFieldError(f"no setting {key!r}")
         if key == "findings_route":
             _check_findings_route(value)
-        if value is None:
+        stored = value
+        # a list is the panel's whole-list replace and is checked path by path; a string is already
+        # json and stored as given, which mission_control_read_paths() reads tolerantly
+        if key == "mission_control_read_paths" and isinstance(value, list):
+            stored = json.dumps(_check_read_paths(value)) if value else None
+        if stored is None:
             self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))
         else:
             self._conn.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, stored)
             )
         self._conn.commit()
         return self.get_settings()
+
+    def mission_control_read_paths(self) -> list[str]:
+        """the operator's extra read-only paths for mission control, parsed from the settings row.
+
+        stored as a json list of absolute host paths. an unset or malformed value is no paths, never
+        an error - a bad value must not stop a turn from running.
+        """
+        row = self._conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("mission_control_read_paths",)
+        ).fetchone()
+        if row is None or not row["value"]:
+            return []
+        try:
+            value = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if not isinstance(value, list):
+            return []
+        return [str(p) for p in value if isinstance(p, str) and p.strip()]
 
     def findings_route(self, card_id: str) -> str:
         """where this card's reviewer findings go.
@@ -655,6 +727,63 @@ class Store:
 
     # -- dependencies (card_deps is the single source, queried both ways) ------
 
+    def _check_dependency_ids_exist(self, card_ids: list[str]) -> None:
+        if not card_ids:
+            return
+        placeholders = ",".join("?" * len(card_ids))
+        rows = self._conn.execute(
+            f"SELECT id FROM cards WHERE id IN ({placeholders})", card_ids
+        ).fetchall()
+        found = {row["id"] for row in rows}
+        missing = [dep_id for dep_id in card_ids if dep_id not in found]
+        if missing:
+            raise ValueError(f"no card {missing[0]}")
+
+    def _check_no_dependency_cycle(self, card_id: str, new_deps: list[str]) -> None:
+        """raises ValueError if giving card_id exactly new_deps would create a cycle.
+
+        walks the graph as it would look after the change - card_id's own edges become
+        new_deps, every other card's edges are as stored - and fails if that walk from
+        new_deps ever reaches back to card_id.
+        """
+        graph: dict[str, list[str]] = {card_id: new_deps}
+        for row in self._conn.execute("SELECT card_id, depends_on_card_id FROM card_deps"):
+            if row["card_id"] != card_id:
+                graph.setdefault(row["card_id"], []).append(row["depends_on_card_id"])
+        stack = list(new_deps)
+        seen: set[str] = set()
+        while stack:
+            node = stack.pop()
+            if node == card_id:
+                raise ValueError(f"dependency cycle: {card_id} would depend on itself")
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(graph.get(node, []))
+
+    def set_dependencies(self, card_id: str, depends_on: list[str]) -> dict[str, Any]:
+        """replaces a card's whole dependency list, the same way set_leases replaces leases.
+
+        validated before anything is written: an unknown id, a self-dependency, or a cycle
+        would leave the board unable to schedule cards, so all three are refused outright and
+        nothing changes.
+        """
+        self._card_row(card_id)  # raises NotFoundError on a bad card_id itself
+        cleaned = list(dict.fromkeys(depends_on))
+        if card_id in cleaned:
+            raise ValueError(f"a card cannot depend on itself: {card_id}")
+        self._check_dependency_ids_exist(cleaned)
+        self._check_no_dependency_cycle(card_id, cleaned)
+        self._conn.execute("DELETE FROM card_deps WHERE card_id = ?", (card_id,))
+        for dep_id in cleaned:
+            self._conn.execute(
+                "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
+                (card_id, dep_id),
+            )
+        self._conn.execute("UPDATE cards SET updated_at = ? WHERE id = ?", (_now(), card_id))
+        self._conn.commit()
+        return self.get_card(card_id)
+
     def add_dependency(self, card_id: str, depends_on_card_id: str) -> None:
         self._conn.execute(
             "INSERT OR IGNORE INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
@@ -874,10 +1003,13 @@ class Store:
 
     def list_events_by_kind(self, kinds: list[str]) -> list[dict[str, Any]]:
         """every event of these kinds, across every card - usage is board-agnostic, see the
-        /api/usage contract. ordered oldest first, same as list_events"""
+        /api/usage contract. ordered oldest first BY WALL-CLOCK TIME across cards - `seq` only
+        orders events within one card, so `ORDER BY card_id, seq` grouped by card instead of time
+        and let a stale event from an alphabetically-later card_id win telemetry's "latest wins"
+        merge (usage_projection, scheduler._latest_reset)."""
         placeholders = ", ".join("?" for _ in kinds)
         rows = self._conn.execute(
-            f"SELECT * FROM events WHERE kind IN ({placeholders}) ORDER BY card_id, seq", kinds
+            f"SELECT * FROM events WHERE kind IN ({placeholders}) ORDER BY created_at, seq", kinds
         ).fetchall()
         events = []
         for row in rows:

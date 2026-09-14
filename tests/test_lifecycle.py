@@ -467,6 +467,72 @@ def test_a_stop_during_the_worker_run_never_reaches_the_gates(board, monkeypatch
     assert gated == [] and reviewed == [] and opened == []
 
 
+# -- budget/turn cap: commits still reach the gates (Fix B) -------------------
+
+
+def test_a_budget_capped_run_with_commits_reaches_the_gates(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)  # branch_has_commits -> True
+    backend = _Backend(
+        RunResult(
+            subtype="error_max_budget_usd",
+            is_error=True,
+            blocked_reason_code="CRASH",
+            session_id="s",
+            total_cost_usd=5.0,
+            num_turns=40,
+            result_text="ran out of budget",
+        )
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "opened"
+    kinds = [e["kind"] for e in store.list_events(card_id)]
+    assert "budget_capped_with_commits" in kinds
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any("hit its budget after committing" in b for b in bodies)
+
+
+def test_a_budget_capped_run_with_no_commits_blocks_with_a_clear_note(board, monkeypatch):
+    store, card_id = board
+    monkeypatch.setattr(lifecycle, "branch_has_commits", lambda *a, **k: False)
+    backend = _Backend(
+        RunResult(
+            subtype="error_max_budget_usd",
+            is_error=True,
+            blocked_reason_code="CRASH",
+            session_id="s",
+            total_cost_usd=5.0,
+            num_turns=40,
+            result_text="ran out of budget",
+        )
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "blocked"
+    assert result.blocked_reason_code == "CRASH"
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any("hit its budget" in b for b in bodies)
+
+
+def test_a_turn_capped_run_with_no_commits_names_the_turn_limit(board, monkeypatch):
+    store, card_id = board
+    monkeypatch.setattr(lifecycle, "branch_has_commits", lambda *a, **k: False)
+    backend = _Backend(
+        RunResult(
+            subtype="error_max_turns",
+            is_error=True,
+            blocked_reason_code="CRASH",
+            session_id="s",
+            total_cost_usd=1.0,
+            num_turns=200,
+            result_text="ran out of turns",
+        )
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "blocked"
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any("turn limit" in b for b in bodies)
+
+
 def test_a_stop_leaves_the_card_flagged_with_a_comment_and_an_event(board, monkeypatch):
     store, card_id = board
     lifecycle.run_card_lifecycle(store, card_id, backend=_Backend(), stop_requested=lambda: True)
@@ -542,3 +608,95 @@ def test_a_card_with_no_lease_is_refused_before_a_worktree_is_cut(tmp_path, repo
     assert backend.calls == []
     assert result.worktree is None
     store.close()
+
+
+def test_a_clean_merge_at_handover_reruns_the_gate_then_opens_the_pr(board, monkeypatch):
+    """the branch was behind but merged clean - the gate is re-run against the merged result
+    before the pull request opens, per lifecycle's opening-phase sync"""
+    from smortboard.review.mergeable import MergeSyncResult
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(
+        lifecycle,
+        "sync_with_base",
+        lambda *a, **k: MergeSyncResult(clean=True, behind=True, merged=True),
+    )
+    gate_calls = []
+    real_gate = lifecycle.run_test_gate
+
+    def _counting_gate(*a, **k):
+        gate_calls.append(1)
+        return real_gate(*a, **k)
+
+    monkeypatch.setattr(lifecycle, "run_test_gate", _counting_gate)
+
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.phase == "opened"
+    # the normal testing-phase gate, plus one more re-run against the merged result
+    assert gate_calls == [1, 1]
+
+
+def test_a_conflicting_merge_at_handover_blocks_and_opens_no_pr(board, monkeypatch):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(
+        lifecycle,
+        "sync_with_base",
+        lambda *a, **k: MergeSyncResult(
+            clean=False,
+            behind=True,
+            conflicting_files=["smortboard/store/api.py", "ui/settings.js"],
+        ),
+    )
+    opened = []
+    monkeypatch.setattr(
+        lifecycle,
+        "open_merge_request",
+        lambda *a, **k: (
+            opened.append(1)
+            or (_ for _ in ()).throw(
+                AssertionError("open_merge_request must not be called on a conflict")
+            )
+        ),
+    )
+
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.phase == "blocked"
+    assert result.blocked_reason_code == "MERGE_CONFLICT"
+    assert opened == []
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] == "MERGE_CONFLICT"
+    note = card["comments"][-1]["body"]
+    assert "smortboard/store/api.py" in note
+    assert "ui/settings.js" in note
+    events = [e for e in store.list_events(card_id) if e["kind"] == "merge_conflict"]
+    assert events and events[-1]["payload"]["files"] == [
+        "smortboard/store/api.py",
+        "ui/settings.js",
+    ]
+
+
+def test_a_clean_but_not_behind_merge_skips_the_extra_gate(board, monkeypatch):
+    """clean and not behind (never merged) - nothing to re-test, the normal gate result stands"""
+    from smortboard.review.mergeable import MergeSyncResult
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(
+        lifecycle, "sync_with_base", lambda *a, **k: MergeSyncResult(clean=True, behind=False)
+    )
+    gate_calls = []
+    monkeypatch.setattr(
+        lifecycle,
+        "run_test_gate",
+        lambda *a, **k: (
+            gate_calls.append(1)
+            or GateResult(passed=True, command="true", exit_code=0, output="ok")
+        ),
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.phase == "opened"
+    assert gate_calls == [1]  # only the normal testing-phase gate, no extra one after merge
