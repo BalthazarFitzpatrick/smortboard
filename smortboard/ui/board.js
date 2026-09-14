@@ -192,6 +192,7 @@ function showRun(cardId, text, href, detail) {
   badge.title = detail || '';
   if (href) {
     const link = document.createElement('a');
+    link.className = 'pr-link';
     link.href = href;
     link.target = '_blank';
     link.rel = 'noreferrer';

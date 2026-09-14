@@ -47,7 +47,7 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {cardPanelHtml, acceptOrRejectCard, showRun, runBadge, splitCommentHeadline,
-  summarizeDescription, renderCardStrip};`)(SpyMenu, SpyDrawer);
+  summarizeDescription, renderCardStrip, appendLine};`)(SpyMenu, SpyDrawer);
 
 // ---- a full outcome renders summary, the finding, the PR link, and not the "not run yet" text
 // (cardPanelHtml is the actual render, the same string openCardPanel assigns to panel.innerHTML -
@@ -68,7 +68,8 @@ const outcome = {
 const html1 = mod.cardPanelHtml(card, outcome);
 assert.ok(html1.includes('did it'), 'panel should show the worker summary');
 assert.ok(html1.includes('trailing comma'), 'panel should show the finding message');
-assert.ok(html1.includes('<a href="https://x/pull/1"'), 'panel should link the PR url');
+assert.ok(html1.includes('<a class="pr-link" href="https://x/pull/1" target="_blank" rel="noreferrer">https://x/pull/1</a>'),
+  'panel should link the PR url, opening in a new tab');
 assert.ok(!html1.includes('not run yet'), 'a real outcome should not say not run yet');
 
 // ---- an all-null outcome says so instead of rendering empty sections
@@ -111,6 +112,41 @@ const rejectedCard = {...card, status: 'rejected', comments: [
 const rejectedHtml = mod.cardPanelHtml(rejectedCard, outcome);
 const ctaButtons = (rejectedHtml.match(/class="comment-cta"/g) || []).length;
 assert.equal(ctaButtons, 1, 'exactly one comment carries the primary action button');
+
+// ---- clickable PR links (8082e7af): a full url anywhere renders as a real link that opens in a
+// new tab; a bare PR number only links when the card carries its own repo_url
+
+// a PR url mentioned inside the worker summary, not just the dedicated outcome.pr_url field
+const summaryWithUrl = mod.cardPanelHtml(card, {...outcome, pr_url: null, summary: 'opened https://x/pull/9 for review'});
+assert.ok(
+  summaryWithUrl.includes('opened <a class="pr-link" href="https://x/pull/9" target="_blank" rel="noreferrer">https://x/pull/9</a> for review'),
+  'a PR url inside the summary text should become a link, not stay as plain text');
+
+// a PR url inside a comment body
+const commentWithUrl = mod.cardPanelHtml({...card, comments: [{author: 'fabian', body: 'see https://x/pull/3'}]}, outcome);
+assert.ok(
+  commentWithUrl.includes('<a class="pr-link" href="https://x/pull/3" target="_blank" rel="noreferrer">https://x/pull/3</a>'),
+  'a PR url inside a comment should become a link');
+
+// only a PR number is stored (no url) - with a repo_url on the card, the link is built from it
+const numberOnly = mod.cardPanelHtml({...card, repo_url: 'https://x/'}, {...outcome, pr_url: 42});
+assert.ok(
+  numberOnly.includes('<a class="pr-link" href="https://x/pull/42" target="_blank" rel="noreferrer">#42</a>'),
+  'a bare PR number should link out using the card\'s own repo_url (trailing slash trimmed)');
+
+// only a PR number, and no repo_url anywhere on the card - shown plainly rather than a dead link
+const numberNoRepo = mod.cardPanelHtml(card, {...outcome, pr_url: 7});
+assert.ok(numberNoRepo.includes('outcome-pr" data-state="ok">#7</div>'),
+  'a bare PR number with no known repo should render as text, not a broken link');
+assert.ok(!numberNoRepo.includes('<a'), 'no anchor should be drawn when there is nowhere for it to point');
+
+// ---- the same linkifying rule drives chat lines (mission control / workforce), where a card's
+// worker or the operator might paste a PR url mid-conversation
+const chatLog = element('div', 'terminal-log');
+const chatLine = mod.appendLine(chatLog, 'worker', 'done, see https://x/pull/5', null);
+assert.ok(
+  chatLine.innerHTML.includes('<a class="pr-link" href="https://x/pull/5" target="_blank" rel="noreferrer">https://x/pull/5</a>'),
+  'a PR url in a chat line should render as a clickable link');
 assert.ok(rejectedHtml.includes('data-cta-action="run">Rerun</button>'),
   "a rejected card's latest note offers Rerun, the same action the strip's CTA offers");
 

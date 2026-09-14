@@ -428,9 +428,12 @@ body {
    shift sideways the moment a run starts. */
 .card-foot .card-workstream { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .card-foot .card-run { flex: 0 0 auto; color: var(--text-dim); white-space: nowrap; }
-/* the finished state is the one worth looking at, so the link is the only coloured thing here */
-.card-foot .card-run a { color: var(--kingfisher); text-decoration: none; }
-.card-foot .card-run a:hover { text-decoration: underline; }
+
+/* ---- PR references, wherever they show up: a card's outcome, a comment, a chat line ---------
+   one accent colour and one hover affordance for every PR link on the board, so a link reads as
+   a link no matter which section drew it */
+.pr-link { color: var(--kingfisher); text-decoration: none; }
+.pr-link:hover { text-decoration: underline; }
 
 /* ---- what to do next -----------------------------------------------------------------------
    A card waiting on someone says what to do on its strip and at the top of its panel, in the
