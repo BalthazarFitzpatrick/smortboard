@@ -17,6 +17,7 @@ _TABLES = (
     "card_criteria",
     "card_leases",
     "card_deps",
+    "card_backups",
     "comments",
     "events",
     "settings",
@@ -53,6 +54,9 @@ def import_bundle(conn: sqlite3.Connection, path: str | Path) -> None:
 
     # card_deps references two cards, so it must come after every card exists
     _insert_all(conn, "card_deps", bundle.get("card_deps", []))
+    # card_backups has no foreign key (a backup can outlive the card and board it describes),
+    # so it has no ordering requirement - grouped here with the rest of the cards' data
+    _insert_all(conn, "card_backups", bundle.get("card_backups", []))
     _insert_all(conn, "comments", bundle.get("comments", []))
     _insert_all(conn, "events", bundle.get("events", []))
     _insert_all(conn, "settings", bundle.get("settings", []))
