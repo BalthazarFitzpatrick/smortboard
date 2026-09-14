@@ -324,7 +324,7 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `w` | run the board | `,` | workforce |
 | `g` | kanban / workstreams | `s` | shortcuts |
 | `/` | type: the open card's comment, or the open chat | `b` | boards and repos |
-| | | `h` | pre-flight checklist |
+| `f` | fold: merge the todo cards one agent should do as one (asks first, costs a model run) | `h` | pre-flight checklist |
 | | | shift+`p` | credential profiles |
 | | | `1`-`9` | jump to a board |
 
