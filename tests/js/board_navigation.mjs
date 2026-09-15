@@ -3,10 +3,10 @@
 // rows, and enter/escape open and close a card. run: node tests/js/board_navigation.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element} from './dom_stub.mjs';
+import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 installStubDom({fetchImpl: () => new Promise(() => {})}); // fetches never resolve in this test
@@ -27,7 +27,7 @@ STATUS_ORDER.forEach(status => {
 document.body.appendChild(boardBar);
 document.body.appendChild(bucketRow);
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('board.js')].join('\n;\n');
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function(`${src}
 ;return {STATUSES, BINDINGS, renderBuckets, renderCardStrip, cardClasses, acceptOrRejectCard, slideFrom};`)();
 
@@ -126,12 +126,12 @@ assert.ok(!quiet.includes('card-attention'), 'an unflagged queued card does not'
 // a waiting card's strip says what to do in its footer, the reason code kept as the tooltip
 const acting = mod.renderCardStrip({id: 'w1', title: 't', status: 'doing', blocked_reason_code: 'LEASE_CONFLICT',
   next_action_short: 'widen or answer', next_action: 'Widen its lease.'});
-assert.ok(acting.innerHTML.includes('class="stat stat-action" title="LEASE_CONFLICT">widen or answer'),
-  'the strip footer shows the short action');
+assert.ok(acting.innerHTML.includes('class="card-action card-action-attention" title="LEASE_CONFLICT">widen or answer'),
+  'the strip footer shows the short action, coloured for attention');
 const plain = mod.renderCardStrip({id: 'w2', title: 't', status: 'todo'});
-assert.ok(plain.innerHTML.includes('<span class="stat">todo</span>'), 'a quiet card still shows its status');
+assert.ok(plain.innerHTML.includes('<span class="card-action card-action-quiet" title="">Run</span>'),
+  'a quiet card still shows its status note');
 
-// ---- every card shows its 8-char short-id, muted/monospace metadata beside the title
+// ---- the overview no longer shows the short-id (9bd5a207) - it moved into the opened detail
 const idCard = mod.renderCardStrip({id: '6a05dc01-4225-4f11-9167-77ff40069c8a', title: 't', status: 'todo'});
-assert.ok(idCard.innerHTML.includes('<span class="card-id">6a05dc01</span>'),
-  'the card shows the first 8 chars of its id as a card-id span');
+assert.ok(!idCard.innerHTML.includes('card-id'), 'the overview strip carries no short-id span');

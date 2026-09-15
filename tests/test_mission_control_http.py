@@ -85,9 +85,15 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
     # OrchestratorRegistry.start takes the runner explicitly - patch it in via the server instance
     original_start = server.orchestrator.start
 
-    def _patched_start(board_id, message, runner=None, message_already_stored=False):
+    def _patched_start(
+        board_id, message, runner=None, message_already_stored=False, mode="planning"
+    ):
         return original_start(
-            board_id, message, runner=_ok_runner, message_already_stored=message_already_stored
+            board_id,
+            message,
+            runner=_ok_runner,
+            message_already_stored=message_already_stored,
+            mode=mode,
         )
 
     server.orchestrator.start = _patched_start

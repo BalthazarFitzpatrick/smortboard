@@ -126,6 +126,63 @@ def test_a_checking_card_awaiting_decision_surfaces_too(store, repo):
     assert "press y to accept or x to reject" in rows[0]["hint"]
 
 
+def test_usage_limit_is_excluded_from_the_inbox_while_retried_automatically(store, repo):
+    from smortboard import attention as attention_module
+
+    _, card = _board_and_card(store, repo)
+    store.update_card(card["id"], blocked_reason_code="USAGE_LIMIT", review_flag=True)
+
+    assert attention_rows(store) == []
+    cards = attention_module.with_actions(store, [store.get_card(card["id"])])
+    assert cards[0]["handled_by_board"] is True
+
+
+def test_api_unreachable_with_a_pending_retry_is_excluded_from_the_inbox(store, repo):
+    from smortboard import attention as attention_module
+
+    _, card = _board_and_card(store, repo)
+    store.update_card(card["id"], blocked_reason_code="API_UNREACHABLE", review_flag=True)
+    store.append_event(
+        card["id"], "api_unreachable_retry", {"attempt": 1, "retry_at": 1999999999.0}
+    )
+
+    assert attention_rows(store) == []
+    cards = attention_module.with_actions(store, [store.get_card(card["id"])])
+    assert cards[0]["handled_by_board"] is True
+    assert "retry at" in cards[0]["next"]
+
+
+def test_api_unreachable_returns_to_the_inbox_once_retries_are_spent(store, repo):
+    from smortboard.scheduler import API_UNREACHABLE_MAX_RETRIES
+
+    _, card = _board_and_card(store, repo)
+    store.update_card(card["id"], blocked_reason_code="API_UNREACHABLE", review_flag=True)
+    for n in range(API_UNREACHABLE_MAX_RETRIES):
+        store.append_event(
+            card["id"], "api_unreachable_retry", {"attempt": n + 1, "retry_at": 123.0}
+        )
+
+    rows = attention_rows(store)
+    assert len(rows) == 1
+    assert rows[0]["card_id"] == card["id"]
+
+
+def test_a_merge_conflict_with_its_resume_still_pending_is_excluded(store, repo):
+    _, card = _board_and_card(store, repo)
+    store.update_card(card["id"], blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+    assert attention_rows(store) == []
+
+
+def test_a_merge_conflict_returns_to_the_inbox_once_its_resume_is_spent(store, repo):
+    _, card = _board_and_card(store, repo)
+    store.update_card(card["id"], blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+    store.append_event(card["id"], "merge_conflict_auto_resume", {"files": ["x.py"]})
+
+    rows = attention_rows(store)
+    assert len(rows) == 1
+    assert rows[0]["card_id"] == card["id"]
+
+
 def test_oldest_first(store, repo):
     _, older = _board_and_card(store, repo)
     store.update_card(older["id"], blocked_reason_code="CRASH", review_flag=True)

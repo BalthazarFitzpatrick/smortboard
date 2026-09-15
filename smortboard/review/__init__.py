@@ -1,6 +1,6 @@
 """phase 3 gates: the checks a card passes before it becomes a pull request"""
 
-from smortboard.review.gates import GateResult, GateUnavailable, run_test_gate
+from smortboard.review.gates import GateResult, GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.merge_request import (
     MergeRequestResult,
     MergeRequestUnavailable,
@@ -18,6 +18,7 @@ from smortboard.review.reviewer import (
 __all__ = [
     "GateResult",
     "GateUnavailable",
+    "NoTestCommand",
     "run_test_gate",
     "MergeRequestResult",
     "MergeRequestUnavailable",

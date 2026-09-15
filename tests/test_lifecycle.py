@@ -13,7 +13,7 @@ from smortboard import lifecycle
 from smortboard.exec.runner import RunResult
 from smortboard.exec.worktrees import WorktreeInfo
 from smortboard.operator import OPERATOR_NAME
-from smortboard.review.gates import GateResult, GateUnavailable
+from smortboard.review.gates import GateResult, GateUnavailable, NoTestCommand
 from smortboard.review.merge_request import MergeRequestResult
 from smortboard.review.reviewer import ReviewFinding, ReviewResult
 from smortboard.store.api import Store
@@ -467,6 +467,72 @@ def test_a_stop_during_the_worker_run_never_reaches_the_gates(board, monkeypatch
     assert gated == [] and reviewed == [] and opened == []
 
 
+# -- budget/turn cap: commits still reach the gates (Fix B) -------------------
+
+
+def test_a_budget_capped_run_with_commits_reaches_the_gates(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)  # branch_has_commits -> True
+    backend = _Backend(
+        RunResult(
+            subtype="error_max_budget_usd",
+            is_error=True,
+            blocked_reason_code="CRASH",
+            session_id="s",
+            total_cost_usd=5.0,
+            num_turns=40,
+            result_text="ran out of budget",
+        )
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "opened"
+    kinds = [e["kind"] for e in store.list_events(card_id)]
+    assert "budget_capped_with_commits" in kinds
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any("hit its budget after committing" in b for b in bodies)
+
+
+def test_a_budget_capped_run_with_no_commits_blocks_with_a_clear_note(board, monkeypatch):
+    store, card_id = board
+    monkeypatch.setattr(lifecycle, "branch_has_commits", lambda *a, **k: False)
+    backend = _Backend(
+        RunResult(
+            subtype="error_max_budget_usd",
+            is_error=True,
+            blocked_reason_code="CRASH",
+            session_id="s",
+            total_cost_usd=5.0,
+            num_turns=40,
+            result_text="ran out of budget",
+        )
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "blocked"
+    assert result.blocked_reason_code == "CRASH"
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any("hit its budget" in b for b in bodies)
+
+
+def test_a_turn_capped_run_with_no_commits_names_the_turn_limit(board, monkeypatch):
+    store, card_id = board
+    monkeypatch.setattr(lifecycle, "branch_has_commits", lambda *a, **k: False)
+    backend = _Backend(
+        RunResult(
+            subtype="error_max_turns",
+            is_error=True,
+            blocked_reason_code="CRASH",
+            session_id="s",
+            total_cost_usd=1.0,
+            num_turns=200,
+            result_text="ran out of turns",
+        )
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "blocked"
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any("turn limit" in b for b in bodies)
+
+
 def test_a_stop_leaves_the_card_flagged_with_a_comment_and_an_event(board, monkeypatch):
     store, card_id = board
     lifecycle.run_card_lifecycle(store, card_id, backend=_Backend(), stop_requested=lambda: True)
@@ -526,6 +592,36 @@ def test_without_a_card_model_the_board_setting_then_sonnet_apply(board, monkeyp
     lifecycle.run_card_lifecycle(store, card_id, backend=backend)
     assert backend.models == [lifecycle.DEFAULT_WORKER_MODEL]
     assert reviewed == [lifecycle.DEFAULT_REVIEWER_MODEL]
+
+
+def test_a_restart_clears_the_attention_flag_once_it_takes_a_seat(board, monkeypatch):
+    """r on a doing card blocked CRASH: the worktree step succeeding IS taking a seat, so the
+    blocked_reason_code clears there and the card renders as an ordinary doing card"""
+    store, card_id = board
+    store.update_card(card_id, status="doing", blocked_reason_code="CRASH")
+    _stub_gates(monkeypatch)
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] is None
+    assert card["status"] == "checking"  # the run went on to finish, same as any other run
+
+
+def test_a_restart_that_never_takes_a_seat_keeps_the_attention_flag(board, monkeypatch):
+    """a restart refused before the worktree exists (no runtime, no lease, ...) never reaches the
+    line that clears blocked_reason_code, so a card parked on something real stays visibly parked"""
+    store, card_id = board
+    store.update_card(card_id, status="doing", blocked_reason_code="CRASH")
+    monkeypatch.setattr(
+        lifecycle,
+        "require_card_runtime",
+        lambda *a, **k: (_ for _ in ()).throw(lifecycle.CardRuntimeUnavailable("no docker")),
+    )
+    # backend=None so the stubbed require_card_runtime is the thing that actually runs
+    result = lifecycle.run_card_lifecycle(store, card_id)
+    assert result.phase == "refused"
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] == "CRASH"
+    assert card["status"] == "doing"
 
 
 def test_a_card_with_no_lease_is_refused_before_a_worktree_is_cut(tmp_path, repo):
@@ -634,3 +730,64 @@ def test_a_clean_but_not_behind_merge_skips_the_extra_gate(board, monkeypatch):
     result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
     assert result.phase == "opened"
     assert gate_calls == [1]  # only the normal testing-phase gate, no extra one after merge
+
+
+# ---- TESTS_FAILED's note: a one-line headline in front of the full gate output ------------------
+
+
+def test_pytest_failures_name_the_tests_that_failed():
+    output = (
+        "FAILED tests/test_x.py::test_x - AssertionError\n"
+        "FAILED tests/test_y.py::TestCase::test_y - ValueError\n"
+        "FAILED tests/test_z.py::test_z\n"
+        "FAILED tests/test_w.py::test_w\n"
+        "FAILED tests/test_v.py::test_v\n"
+    )
+    assert lifecycle._failing_tests_headline(output) == "tests failed: test_x, test_y (+3 more)"
+
+
+def test_ruff_findings_are_the_fallback_when_pytest_names_nothing():
+    output = (
+        "src/thing.py:12:4: F401 'os' imported but unused\nsrc/other.py:3:1: E501 line too long\n"
+    )
+    assert lifecycle._failing_tests_headline(output) == (
+        "tests failed: src/thing.py:12 F401, src/other.py:3 E501"
+    )
+
+
+def test_unparseable_gate_output_falls_back_to_the_bare_line():
+    assert lifecycle._failing_tests_headline("some unrelated crash trace\n") == "tests failed"
+
+
+def test_a_failing_test_gate_leads_its_note_with_the_parsed_headline(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(
+        monkeypatch,
+        passed=False,
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "run_test_gate",
+        lambda *a, **k: GateResult(
+            passed=False, command="pytest", exit_code=1, output="FAILED tests/test_x.py::test_x\n"
+        ),
+    )
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any(b.startswith("tests failed: test_x") for b in bodies)
+    assert any("FAILED tests/test_x.py::test_x" in b for b in bodies), "full output stays in body"
+
+
+def test_no_test_command_gets_a_short_pointer_at_the_repo_setting(board, monkeypatch):
+    """the long explanation lives in the pre-flight checklist now, once per repo - the card only
+    needs to say where to fix it"""
+    store, card_id = board
+    _stub_gates(monkeypatch)
+
+    def _unavailable(*a, **k):
+        raise NoTestCommand("This repo declares no test_command, so there is nothing to check.")
+
+    monkeypatch.setattr(lifecycle, "run_test_gate", _unavailable)
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.phase == "refused"
+    assert result.refusal == "repo has no test command - set it in b"

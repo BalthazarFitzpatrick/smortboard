@@ -19,6 +19,7 @@ the next card starts on top of it, and merging development into main stays the o
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +47,7 @@ from smortboard.exec.worktrees import (
 )
 from smortboard.operator import OPERATOR_NAME
 from smortboard.review.decide import accept_card
-from smortboard.review.gates import GateUnavailable, run_test_gate
+from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.integrate import integrate, integration_lock, open_release_request
 from smortboard.review.merge_request import (
     PROTECTED_BRANCHES,
@@ -56,6 +57,7 @@ from smortboard.review.merge_request import (
 )
 from smortboard.review.mergeable import sync_with_base
 from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
+from smortboard.review.screenshot import diff_touches_ui, take_screenshot
 from smortboard.store.api import Store
 
 # the phases a card passes through, in order. the last four are terminal
@@ -103,6 +105,17 @@ NO_LEASE_NOTE = (
     "This card has no lease, so its agent could not Edit or Write a single file. Set the path "
     'globs it may write (PATCH /api/cards/<id> with {"leases": ["src/thing/**", "tests/**"]}), '
     "then run it again."
+)
+
+# a run that ends on one of these never got to say it was done - it just ran out of budget or
+# turns mid-turn. with commits on the branch that is still real work, so it goes to the gates
+# like a normal finish; with none, it is blocked like any other failed run, but the note names
+# the actual limit instead of a bare CRASH
+BUDGET_CAPPED_SUBTYPES = frozenset({"error_max_budget_usd", "error_max_turns"})
+
+NO_COMMITS_BUDGET_NOTE = (
+    "The run hit its {limit} before committing anything, so there is nothing to test or review. "
+    "Its last words are in the timeline. Run it again, with a note if it stopped early."
 )
 
 
@@ -247,6 +260,56 @@ def _base_for_fresh_cut(store: Store, state: LifecycleResult, repo_path: str, ba
     return base
 
 
+# pytest names a failure as "FAILED path/to/test.py::TestCase::test_name" - the test name is the
+# part after the last "::", which is what a person actually scans for
+_PYTEST_FAILED_RE = re.compile(r"^FAILED\s+(\S+)", re.MULTILINE)
+# ruff names a finding as "path:line:col: CODE message" - path:line plus the code is enough to spot
+_RUFF_ERROR_RE = re.compile(r"^(\S+\.py):(\d+):\d+: (\w+\d*)", re.MULTILINE)
+# how many names the one-liner spells out before folding the rest into "(+N more)"
+_HEADLINE_SHOWN = 2
+
+
+def _failing_tests_headline(output: str) -> str:
+    """the gate's output, boiled down to "tests failed: test_x, test_y (+3 more)" - or the bare
+    "tests failed" once nothing recognisable parses, rather than guessing at a shape it doesn't
+    have. pytest's FAILED lines win when present; ruff's path:line:col lines are the fallback."""
+    names: list[str] = []
+    for match in _PYTEST_FAILED_RE.finditer(output):
+        name = match.group(1).rsplit("::", 1)[-1]
+        if name not in names:
+            names.append(name)
+    if not names:
+        for match in _RUFF_ERROR_RE.finditer(output):
+            path, line, code = match.groups()
+            label = f"{path}:{line} {code}"
+            if label not in names:
+                names.append(label)
+    if not names:
+        return "tests failed"
+    shown = names[:_HEADLINE_SHOWN]
+    extra = len(names) - len(shown)
+    headline = f"tests failed: {', '.join(shown)}"
+    return f"{headline} (+{extra} more)" if extra else headline
+
+
+def _tests_failed_note(command: str, exit_code: int, output: str, after_merging: str = "") -> str:
+    """the stored comment for a TESTS_FAILED block: the parsed headline leads, the full gate
+    command and output stay in the body for whoever opens the details."""
+    context = f" after merging {after_merging} in" if after_merging else ""
+    return (
+        f"{_failing_tests_headline(output)}{context}.\n\n"
+        f"`{command}` exited {exit_code}.\n\n```\n{output}\n```"
+    )
+
+
+# a repo with no test_command is a board setting, not a fault in this run - the pre-flight
+# checklist already explains it once per repo, so the card only needs a pointer back to it
+def _gate_unavailable_note(exc: GateUnavailable) -> str:
+    if isinstance(exc, NoTestCommand):
+        return "repo has no test command - set it in b"
+    return f"The test gate could not run: {exc}"
+
+
 def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
     """the board could not run this card at all - a missing repo, image or credential.
 
@@ -305,14 +368,19 @@ def _sync_and_retest(
         try:
             gate = run_test_gate(store, card_id, tree.path, repo)
         except GateUnavailable as exc:
-            return _refuse(store, state, f"The test gate could not run after merging {base}: {exc}")
+            return _refuse(
+                store,
+                state,
+                _gate_unavailable_note(exc)
+                if isinstance(exc, NoTestCommand)
+                else f"The test gate could not run after merging {base}: {exc}",
+            )
         if not gate.passed:
             return _block(
                 store,
                 state,
                 "TESTS_FAILED",
-                f"`{gate.command}` exited {gate.exit_code} after merging {base} in.\n\n"
-                f"```\n{gate.output}\n```",
+                _tests_failed_note(gate.command, gate.exit_code, gate.output, after_merging=base),
             )
     return None
 
@@ -463,7 +531,12 @@ def run_card_lifecycle(
     worker_model = card.get("model") or configured.get("worker_model") or DEFAULT_WORKER_MODEL
     reviewer_model = configured.get("reviewer_model") or DEFAULT_REVIEWER_MODEL
 
+    # the worker's own final message, kept for the screenshot step below - it is where the worker
+    # names which view to open, per runner.SYSTEM_PROMPT's SCREENSHOT: instruction
+    last_summary: str | None = None
+
     def work(prompt: str) -> LifecycleResult | None:
+        nonlocal last_summary
         """one agent run in the card's worktree; returns the blocked/stopped state if it stopped
         short"""
         run = runtime.run_card(
@@ -485,6 +558,24 @@ def run_card_lifecycle(
             return _stopped(store, state)
         if run.auth_failed:
             return _refuse(store, state, TOKEN_REFUSED_NOTE)
+        if run.subtype in BUDGET_CAPPED_SUBTYPES:
+            if branch_has_commits(repo["path"], tree.branch, base):
+                store.append_event(card_id, "budget_capped_with_commits", {"subtype": run.subtype})
+                _note(
+                    store,
+                    card_id,
+                    "It hit its budget after committing, so its work went to tests and review.",
+                )
+                store.append_event(card_id, "worker_summary", {"text": run.result_text})
+                last_summary = run.result_text
+                return None
+            limit = "budget" if run.subtype == "error_max_budget_usd" else "turn limit"
+            return _block(
+                store,
+                state,
+                run.blocked_reason_code or "CRASH",
+                NO_COMMITS_BUDGET_NOTE.format(limit=limit),
+            )
         if run.blocked_reason_code:
             return _block(
                 store,
@@ -493,6 +584,7 @@ def run_card_lifecycle(
                 f"The run stopped: {run.blocked_reason_code}.\n\n{run.result_text or ''}".strip(),
             )
         store.append_event(card_id, "worker_summary", {"text": run.result_text})
+        last_summary = run.result_text
         return None
 
     # a resumed card (an inbox answer, or a re-run after a block) keeps this worktree and its
@@ -519,7 +611,7 @@ def run_card_lifecycle(
         try:
             gate = run_test_gate(store, card_id, tree.path, repo)
         except GateUnavailable as exc:
-            return _refuse(store, state, f"The test gate could not run: {exc}")
+            return _refuse(store, state, _gate_unavailable_note(exc))
         if stopped_now():
             return _stopped(store, state)
         if not gate.passed:
@@ -527,15 +619,16 @@ def run_card_lifecycle(
                 store,
                 state,
                 "TESTS_FAILED",
-                f"`{gate.command}` exited {gate.exit_code}.\n\n```\n{gate.output}\n```",
+                _tests_failed_note(gate.command, gate.exit_code, gate.output),
             )
 
         phase("reviewing")
+        diff_text = branch_diff(repo["path"], base, tree.branch)
         try:
             review = run_review(
                 store,
                 card_id,
-                branch_diff(repo["path"], base, tree.branch),
+                diff_text,
                 tree.path,
                 settings,
                 repo=repo,
@@ -573,6 +666,15 @@ def run_card_lifecycle(
 
     if stopped_now():
         return _stopped(store, state)
+
+    # both gates passed - a card whose diff touches smortboard/ui/ gets one screenshot, taken on
+    # the host so the operator sees the change before merging. a failed screenshot is a note, never
+    # a block: nothing about the work itself was wrong
+    if diff_touches_ui(diff_text):
+        phase("screenshotting")
+        shot = take_screenshot(store, card_id, tree.path, last_summary)
+        if shot.note:
+            _note(store, card_id, f"Screenshot not attached: {shot.note}")
 
     # only now is the card work waiting on a human: checking requires both gates, not either
     store.update_card(card_id, status="checking")

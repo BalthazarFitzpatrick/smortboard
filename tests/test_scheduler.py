@@ -41,7 +41,20 @@ class FakeRuns:
         self.started.append(card_id)
         if on_finish is not None:
             self._callbacks[card_id] = on_finish
-        return SimpleNamespace(card_id=card_id, running=True)
+        state = SimpleNamespace(card_id=card_id, running=True)
+        state.as_dict = lambda: {"card_id": card_id, "running": True}
+        return state
+
+    def get(self, card_id):
+        # matches RunRegistry.get()'s shape for attention.answer_card - nothing is ever mid-run
+        # from this fake's own perspective once .start() has returned
+        return None
+
+    def active(self):
+        # matches RunRegistry.active()'s shape: every card started but not yet .finish()ed. one
+        # FakeRuns shared by several BoardSchedulers (as the real RunRegistry is) is what lets a
+        # test prove the global cap is counted across boards, not per board
+        return [SimpleNamespace(card_id=cid, running=True) for cid in self._callbacks]
 
     def finish(self, card_id, blocked_reason_code=None):
         callback = self._callbacks.pop(card_id, None)
@@ -365,6 +378,82 @@ def test_setting_max_parallel_raises_the_cap(store, board_and_repo):
     assert len(runs.started) == 3
 
 
+def test_a_board_limit_holds_a_board_back_while_another_board_still_starts(store, board_and_repo):
+    """global 3, board a limit 1: a starts one at a time while board b, sharing the same global
+    seat count through one RunRegistry, still gets its own card in"""
+    board_a, repo_a = board_and_repo
+    board_b = store.create_board("b2")
+    repo_b = store.create_repo(board_b["id"], "r2", "/tmp/r2", "main")
+
+    store.set_setting("max_parallel", "3")
+    store.set_board_max_parallel(board_a, 1)
+    [store.create_card(board_a, repo_a, f"a{i}") for i in range(2)]
+    card_b = store.create_card(board_b["id"], repo_b["id"], "b0")
+
+    runs = FakeRuns()  # one shared registry, exactly as the real server wires every board's own
+    scheduler_a = BoardScheduler(board_a, store.path, runs)
+    scheduler_b = BoardScheduler(board_b["id"], store.path, runs)
+
+    scheduler_a.start_all()
+    assert len(scheduler_a.schedule_view()["running"]) == 1, "board a's own cap holds it to one"
+    assert len(scheduler_a.schedule_view()["queued"]) == 1
+
+    scheduler_b.start_all()
+    assert scheduler_b.schedule_view()["running"] == [card_b["id"]], (
+        "board b is unaffected by a's cap"
+    )
+
+
+def test_a_global_cap_of_two_holds_a_third_card_back_on_any_board(store, board_and_repo):
+    board_a, repo_a = board_and_repo
+    board_b = store.create_board("b2")
+    repo_b = store.create_repo(board_b["id"], "r2", "/tmp/r2", "main")
+
+    store.set_setting("max_parallel", "2")
+    store.create_card(board_a, repo_a, "a0")
+    store.create_card(board_a, repo_a, "a1")
+    card_b = store.create_card(board_b["id"], repo_b["id"], "b0")
+
+    runs = FakeRuns()
+    scheduler_a = BoardScheduler(board_a, store.path, runs)
+    scheduler_b = BoardScheduler(board_b["id"], store.path, runs)
+
+    scheduler_a.start_all()
+    assert len(runs.started) == 2  # the global cap, not board a's own (unset) limit
+
+    scheduler_b.start_all()
+    assert card_b["id"] not in runs.started, "the third card waits on the shared global cap"
+    assert scheduler_b.schedule_view()["queued"] == [card_b["id"]]
+
+    runs.finish(runs.started[0])
+    scheduler_b._tick()
+    assert card_b["id"] in runs.started, "a freed global seat lets board b's card start"
+
+
+def test_an_unset_board_limit_behaves_exactly_like_today(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    [store.create_card(board_id, repo_id, f"c{i}") for i in range(3)]
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    assert len(runs.started) == DEFAULT_MAX_PARALLEL == 2
+
+
+def test_a_lowered_board_limit_never_stops_an_already_running_card(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    ids = [store.create_card(board_id, repo_id, f"c{i}")["id"] for i in range(2)]
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    assert len(runs.started) == 2
+
+    store.set_board_max_parallel(board_id, 1)  # lowered while both cards are running
+    scheduler._tick()
+    assert set(runs.started) == set(ids), "a lowered cap only holds back the NEXT card, not these"
+
+
 # -- blocked cards rejoin the queue --------------------------------------------------
 
 
@@ -513,6 +602,172 @@ def test_the_queue_resumes_once_the_pause_expires(store, board_and_repo, monkeyp
     assert b["id"] in runs.started
 
 
+def test_a_usage_limit_card_itself_rejoins_the_queue_once_the_pause_expires(store, board_and_repo):
+    """the gap the queue-only fix left: the card that hit USAGE_LIMIT must rerun once its own
+    reset passes, not only unblock cards behind it."""
+    board_id, repo_id = board_and_repo
+    store.set_setting("max_parallel", "1")
+    a = store.create_card(board_id, repo_id, "a")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    runs.finish(a["id"], blocked_reason_code="USAGE_LIMIT")
+    runs.started.clear()
+
+    scheduler._paused_until = time.time() - 1
+    scheduler.schedule_view()
+    assert a["id"] in runs.started
+
+
+# -- API_UNREACHABLE backoff ---------------------------------------------------------
+
+
+def test_api_unreachable_retries_with_backoff_then_stops_at_three(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    assert runs.started == [a["id"]]
+
+    for expected_minutes in scheduler_module.API_UNREACHABLE_BACKOFF_MINUTES:
+        runs.started.clear()
+        runs.finish(a["id"], blocked_reason_code="API_UNREACHABLE")
+        view = scheduler.schedule_view()
+        retry_at = view["card_retry_at"][a["id"]]
+        assert retry_at == pytest.approx(time.time() + expected_minutes * 60, abs=5)
+        # fast-forward: the retry is due, so polling starts it again
+        scheduler._card_retry_at[a["id"]] = time.time() - 1
+        scheduler.schedule_view()
+        assert runs.started == [a["id"]]
+
+    # a fourth failure exhausts the automatic retries and stays blocked for the operator
+    runs.started.clear()
+    runs.finish(a["id"], blocked_reason_code="API_UNREACHABLE")
+    view = scheduler.schedule_view()
+    assert a["id"] not in view["card_retry_at"]
+    assert runs.started == []
+
+    retries = [e for e in store.list_events(a["id"]) if e["kind"] == "api_unreachable_retry"]
+    assert len(retries) == len(scheduler_module.API_UNREACHABLE_BACKOFF_MINUTES)
+
+
+def test_api_unreachable_retry_posts_a_board_comment_with_the_next_retry_time(
+    store, board_and_repo
+):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    runs.finish(a["id"], blocked_reason_code="API_UNREACHABLE")
+    comments = store.get_card(a["id"])["comments"]
+    assert any("retrying automatically" in c["body"] for c in comments)
+
+
+# -- stale CRASH relabel --------------------------------------------------------------
+
+
+def test_relabel_stale_crashes_fixes_a_mislabeled_session_limit(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.update_card(a["id"], blocked_reason_code="CRASH", review_flag=True)
+    store.append_event(
+        a["id"],
+        "result",
+        {
+            "type": "result",
+            "is_error": True,
+            "result": "You've hit your session limit · resets 3:40pm (UTC)",
+        },
+    )
+
+    relabeled = scheduler_module.relabel_stale_crashes(store)
+    assert relabeled == [{"card_id": a["id"], "from": "CRASH", "to": "USAGE_LIMIT"}]
+    assert store.get_card(a["id"])["blocked_reason_code"] == "USAGE_LIMIT"
+    kinds = [e["kind"] for e in store.list_events(a["id"])]
+    assert "relabeled" in kinds
+
+
+def test_relabel_stale_crashes_fixes_a_mislabeled_api_unreachable(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.update_card(a["id"], blocked_reason_code="CRASH", review_flag=True)
+    store.append_event(
+        a["id"],
+        "result",
+        {"type": "result", "is_error": True, "result": "Unable to connect to API"},
+    )
+
+    relabeled = scheduler_module.relabel_stale_crashes(store)
+    assert relabeled == [{"card_id": a["id"], "from": "CRASH", "to": "API_UNREACHABLE"}]
+    assert store.get_card(a["id"])["blocked_reason_code"] == "API_UNREACHABLE"
+
+
+def test_relabel_stale_crashes_leaves_a_genuine_crash_alone(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.update_card(a["id"], blocked_reason_code="CRASH", review_flag=True)
+    store.append_event(
+        a["id"], "result", {"type": "result", "is_error": True, "result": "TypeError: boom"}
+    )
+
+    assert scheduler_module.relabel_stale_crashes(store) == []
+    assert store.get_card(a["id"])["blocked_reason_code"] == "CRASH"
+
+
+# -- MERGE_CONFLICT auto-resume -------------------------------------------------------
+
+
+def test_a_merge_conflict_is_resumed_automatically_once(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.append_event(
+        a["id"], "merge_conflict", {"base_ref": "origin/development", "files": ["x.py"]}
+    )
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    # mirrors what lifecycle._block already wrote before this card's run finished
+    store.update_card(a["id"], blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+    runs.finish(a["id"], blocked_reason_code="MERGE_CONFLICT")
+
+    # answer_card resumed it through runs.start - the same path an inbox answer uses
+    assert a["id"] in runs.started
+    assert store.get_card(a["id"])["blocked_reason_code"] is None
+    kinds = [e["kind"] for e in store.list_events(a["id"])]
+    assert "merge_conflict_auto_resume" in kinds
+    comments = store.get_card(a["id"])["comments"]
+    assert any("Resuming automatically" in c["body"] for c in comments)
+
+
+def test_a_second_merge_conflict_on_the_same_card_is_left_for_the_operator(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.append_event(
+        a["id"], "merge_conflict", {"base_ref": "origin/development", "files": ["x.py"]}
+    )
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    runs.finish(a["id"], blocked_reason_code="MERGE_CONFLICT")
+    runs.started.clear()
+
+    # the resumed run conflicts again
+    store.update_card(a["id"], blocked_reason_code="MERGE_CONFLICT", review_flag=True)
+    scheduler._handle_merge_conflict(a["id"])
+
+    assert a["id"] not in runs.started  # never retried twice for the same conflict
+    retries = [e for e in store.list_events(a["id"]) if e["kind"] == "merge_conflict_auto_resume"]
+    assert len(retries) == 1
+    comments = store.get_card(a["id"])["comments"]
+    assert any("left for the operator" in c["body"] for c in comments)
+
+
 # -- stop ---------------------------------------------------------------------------
 
 
@@ -619,7 +874,13 @@ def test_schedule_endpoint_reports_an_empty_board_cleanly(server):
     base, board_id, _ = server
     status, body = _call(f"{base}/api/boards/{board_id}/schedule")
     assert status == 200
-    assert body == {"running": [], "queued": [], "waiting": {}, "paused_until": None}
+    assert body == {
+        "running": [],
+        "queued": [],
+        "waiting": {},
+        "paused_until": None,
+        "card_retry_at": {},
+    }
 
 
 def test_run_all_stop_clears_the_queue_over_http(server):
@@ -634,6 +895,34 @@ def test_run_all_on_an_unknown_board_is_a_404(server):
     base, _, _ = server
     status, _ = _call(f"{base}/api/boards/nope/run-all", method="POST")
     assert status == 404
+
+
+def _patch_json(url, body):
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        url, data=data, method="PATCH", headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            raw = resp.read()
+            return resp.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        return exc.code, (json.loads(raw) if raw else None)
+
+
+def test_patch_board_max_parallel_over_http(server):
+    base, board_id, _ = server
+    status, body = _patch_json(f"{base}/api/boards/{board_id}", {"max_parallel": 2})
+    assert status == 200
+    assert body["max_parallel"] == 2
+
+    status, body = _patch_json(f"{base}/api/boards/{board_id}", {"max_parallel": 0})
+    assert status == 400
+
+    status, body = _patch_json(f"{base}/api/boards/{board_id}", {"max_parallel": None})
+    assert status == 200
+    assert body["max_parallel"] is None
 
 
 # -- keeping a checking card's pr mergeable ------------------------------------------------------

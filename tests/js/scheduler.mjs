@@ -2,10 +2,10 @@
 // run: node tests/js/scheduler.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element, queryAll} from './dom_stub.mjs';
+import {installStubDom, element, queryAll, uiBaseAsset} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 const fetchCalls = [];
@@ -49,6 +49,9 @@ function addCardStrip(cardId) {
   const badge = element('span', 'card-run');
   badge.hidden = true;
   foot.appendChild(badge);
+  const note = element('span', 'card-action');
+  note.textContent = 'Running…';
+  foot.appendChild(note);
   strip.appendChild(foot);
   bucketRow.appendChild(strip);
   return strip;
@@ -69,6 +72,7 @@ function SpyDrawer() {
 }
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+  smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('scheduler.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {
@@ -97,7 +101,23 @@ const statusEl = document.getElementById('schedule-status');
 assert.ok(statusEl && !statusEl.hidden, 'the board bar shows a status while a schedule runs');
 assert.equal(statusEl.textContent, '1 running - 1 queued');
 assert.equal(badgeText('c1'), 'running', 'a running card carries it on its foot');
-assert.equal(badgeText('c2'), 'queued', 'a queued card carries it on its foot too');
+assert.equal(badgeText('c2'), 'queued, 1 of 1', 'a queued card shows its position on its foot');
+
+function actionText(cardId) {
+  return queryAll(bucketRow, `.card-strip[data-card-id="${cardId}"]`)[0]
+    .querySelector('.card-action').textContent;
+}
+// a re-queued card kept its 'doing' status (see scheduler.py's _is_queueable), so the compact
+// note still read 'Running…' until this landed - the queue corrects it, not the card's own
+// stored status
+assert.equal(actionText('c2'), 'Queued', 'a queued card says so on its own note, not Running…');
+assert.equal(actionText('c1'), 'Running…', 'a card actually running keeps its own label');
+
+// ---- a queue of two shows each card's own position, front to back -----------------------------
+
+mod.applyScheduleToCards({running: [], queued: ['c1', 'c2'], waiting: {}, paused_until: null});
+assert.equal(badgeText('c1'), 'queued, 1 of 2', 'the front of the queue says so');
+assert.equal(badgeText('c2'), 'queued, 2 of 2', 'and the position updates as the queue moves');
 
 // ---- w again: stop clears the queue, running cards are left alone ------------------------------
 

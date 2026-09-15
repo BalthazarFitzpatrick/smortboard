@@ -30,6 +30,7 @@ from typing import Any
 
 from smortboard import profiles
 from smortboard.actions import with_next
+from smortboard.exec.runner import _api_unreachable_signal, _session_limit_text_signal
 from smortboard.exec.worktrees import (
     branch_name,
     default_branch,
@@ -66,6 +67,37 @@ def _is_queueable(card: dict[str, Any]) -> bool:
 # a run that blocks USAGE_LIMIT but carries no readable resetsAt (never happened in the spikes,
 # but a stream is someone else's format) parks for this long rather than never resuming
 _FALLBACK_PARK_SECONDS = 5 * 60
+
+# API_UNREACHABLE backoff: three automatic retries, then it stays blocked for the operator
+API_UNREACHABLE_BACKOFF_MINUTES = (2, 10, 30)
+API_UNREACHABLE_MAX_RETRIES = len(API_UNREACHABLE_BACKOFF_MINUTES)
+
+
+def relabel_stale_crashes(store: Store) -> list[dict[str, str]]:
+    """one-time fix for cards blocked CRASH before the classifier learned session-limit and
+    api-unreachable wording: relabels them by re-reading their last `result` event's own text,
+    the same signals classify_result checks on a fresh run. Returns each relabel for logging.
+    """
+    relabeled = []
+    for board in store.list_boards():
+        for card in store.list_cards(board["id"]):
+            if card.get("blocked_reason_code") != "CRASH":
+                continue
+            results = [e for e in store.list_events(card["id"]) if e["kind"] == "result"]
+            if not results:
+                continue
+            payload = results[-1]["payload"]
+            if _session_limit_text_signal(payload):
+                new_code = "USAGE_LIMIT"
+            elif _api_unreachable_signal(payload):
+                new_code = "API_UNREACHABLE"
+            else:
+                continue
+            store.update_card(card["id"], blocked_reason_code=new_code)
+            store.append_event(card["id"], "relabeled", {"from": "CRASH", "to": new_code})
+            relabeled.append({"card_id": card["id"], "from": "CRASH", "to": new_code})
+    return relabeled
+
 
 # schedule_view is polled by the UI every couple seconds - asking GitHub every poll would hammer
 # it for no benefit, so one answer per PR url is good for this long
@@ -212,6 +244,21 @@ def _max_parallel(store: Store) -> int:
     return value if value > 0 else DEFAULT_MAX_PARALLEL
 
 
+def _board_max_parallel(store: Store, board_id: str) -> int | None:
+    """this board's own cap, or None for no board-specific limit - only the global one applies"""
+    try:
+        raw = store.get_board(board_id).get("max_parallel")
+    except NotFoundError:
+        return None
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _dependency_wait(store: Store, card: dict[str, Any], repo_path: str | Path) -> str | None:
     """None once every dependency's pull request is actually MERGED on GitHub.
 
@@ -286,18 +333,31 @@ class BoardScheduler:
         self._running: set[str] = set()
         self._waiting: dict[str, str] = {}
         self._paused_until: float | None = None
+        # per-card timers for a solo, automatic retry - API_UNREACHABLE backoff and a resumed
+        # MERGE_CONFLICT's own once-only attempt, both keyed by card id
+        self._card_retry_at: dict[str, float] = {}
 
     # -- reads --------------------------------------------------------------------
 
     def schedule_view(self) -> dict[str, Any]:
         """running / queued / waiting / paused_until - resumes a lapsed pause first, so polling
-        this is enough to drain the queue again once a USAGE_LIMIT window rolls over; nothing
-        else needs its own timer."""
+        this is enough to drain the queue again once a USAGE_LIMIT window rolls over. Also requeues
+        any card whose own retry timer (API_UNREACHABLE backoff, a MERGE_CONFLICT auto-resume) has
+        come due - those are per-card, not the board-wide pause, so nothing else drains them."""
+        now = time.time()
         with self._lock:
-            expired = self._paused_until is not None and time.time() >= self._paused_until
+            expired = self._paused_until is not None and now >= self._paused_until
+            due = [card_id for card_id, at in self._card_retry_at.items() if now >= at]
+        if due:
+            with self._lock:
+                for card_id in due:
+                    self._card_retry_at.pop(card_id, None)
+                    if card_id not in self._queue and card_id not in self._running:
+                        self._queue.append(card_id)
         if expired:
             with self._lock:
                 self._paused_until = None
+        if expired or due:
             self._tick()
         with self._lock:
             return {
@@ -305,6 +365,7 @@ class BoardScheduler:
                 "queued": list(self._queue),
                 "waiting": dict(self._waiting),
                 "paused_until": self._paused_until,
+                "card_retry_at": dict(self._card_retry_at),
             }
 
     # -- writes --------------------------------------------------------------------
@@ -358,10 +419,19 @@ class BoardScheduler:
             for card_id in running_ids:
                 with contextlib.suppress(NotFoundError):
                     running_cards.append(store.get_card(card_id))
-            slots = _max_parallel(store) - len(running_ids)
-            # a card started by hand holds its lease too, but not one of this board's slots
+            # THE GLOBAL CAP IS ONE SEAT COUNT SHARED ACROSS EVERY BOARD - runs.active() is the one
+            # RunRegistry every BoardScheduler shares, so it is the only place that count can come
+            # from. a fake with no .active() (most scheduler tests) falls back to this board's own
+            # running set, exactly the old single-board behaviour.
             active = getattr(self._runs, "active", None)
-            for state in active() if active else []:
+            active_states = list(active()) if active else None
+            global_running = len(active_states) if active_states is not None else len(running_ids)
+            slots = _max_parallel(store) - global_running
+            board_cap = _board_max_parallel(store, self.board_id)
+            if board_cap is not None:
+                slots = min(slots, board_cap - len(running_ids))
+            # a card started by hand holds its lease too, but not one of this board's slots
+            for state in active_states or []:
                 if state.card_id not in running_ids:
                     with contextlib.suppress(NotFoundError):
                         running_cards.append(store.get_card(state.card_id))
@@ -409,12 +479,89 @@ class BoardScheduler:
         def _on_finish(state: Any) -> None:
             with self._lock:
                 self._running.discard(card_id)
-            if getattr(state, "blocked_reason_code", None) == "USAGE_LIMIT":
+            reason = getattr(state, "blocked_reason_code", None)
+            if reason == "USAGE_LIMIT":
                 self._handle_usage_limit(card_id)
+            elif reason == "API_UNREACHABLE":
+                self._handle_api_unreachable(card_id)
+            elif reason == "MERGE_CONFLICT":
+                self._handle_merge_conflict(card_id)
             else:
                 self._tick()
 
         return _on_finish
+
+    def _handle_merge_conflict(self, card_id: str) -> None:
+        """resumes a MERGE_CONFLICT card exactly once, automatically, through the same path an
+        inbox answer uses (attention.answer_card) - the note tells the worker which base to merge
+        and which files it conflicts in. A second MERGE_CONFLICT on the same card (the resume's own
+        attempt failed to resolve it) is left for the operator - never retried twice."""
+        # imported here, not at module level: attention.py imports conflicting_run from this
+        # module, so a top-level import here would be circular
+        from smortboard.attention import AnswerRefused, answer_card
+
+        store = Store(self._db_path)
+        try:
+            already_tried = any(
+                e["kind"] == "merge_conflict_auto_resume" for e in store.list_events(card_id)
+            )
+            if already_tried:
+                store.add_comment(
+                    card_id,
+                    author=_BOARD_AUTHOR,
+                    body="merge conflict again after the automatic resume - left for the operator.",
+                )
+                return
+            merge_events = [e for e in store.list_events(card_id) if e["kind"] == "merge_conflict"]
+            payload = merge_events[-1]["payload"] if merge_events else {}
+            base_ref = payload.get("base_ref", "the base branch")
+            files = payload.get("files") or []
+            store.append_event(card_id, "merge_conflict_auto_resume", {"files": files})
+            note = (
+                f"Resuming automatically: merge {base_ref} into this branch and resolve the "
+                f"conflicts in: {', '.join(files) or 'the listed files'}. Then commit the result."
+            )
+            # still blocked - the operator sees it in the inbox like any other refusal
+            with contextlib.suppress(AnswerRefused):
+                answer_card(store, self._runs, card_id, note)
+        finally:
+            store.close()
+        self._tick()
+
+    def _handle_api_unreachable(self, card_id: str) -> None:
+        """retries an API_UNREACHABLE card itself, with backoff 2/10/30 minutes. After
+        API_UNREACHABLE_MAX_RETRIES automatic attempts it is left blocked for the operator, same
+        as any other block - the card's own blocked_reason_code and board note already say why."""
+        store = Store(self._db_path)
+        try:
+            attempts = [
+                e for e in store.list_events(card_id) if e["kind"] == "api_unreachable_retry"
+            ]
+            attempt = len(attempts) + 1
+            if attempt > API_UNREACHABLE_MAX_RETRIES:
+                store.add_comment(
+                    card_id,
+                    author=_BOARD_AUTHOR,
+                    body=f"api unreachable after {len(attempts)} automatic retries - "
+                    "left for the operator.",
+                )
+                return
+            delay_minutes = API_UNREACHABLE_BACKOFF_MINUTES[attempt - 1]
+            retry_at = time.time() + delay_minutes * 60
+            store.append_event(
+                card_id, "api_unreachable_retry", {"attempt": attempt, "retry_at": retry_at}
+            )
+            store.add_comment(
+                card_id,
+                author=_BOARD_AUTHOR,
+                body=f"api unreachable - retrying automatically in {delay_minutes} minute(s) "
+                f"(attempt {attempt}/{API_UNREACHABLE_MAX_RETRIES}).",
+            )
+        finally:
+            store.close()
+        with self._lock:
+            self._card_retry_at[card_id] = retry_at
+        self._tick()
 
     def _handle_usage_limit(self, card_id: str) -> None:
         """the credential in use just got refused. Marks it limited and, if another configured
@@ -448,8 +595,13 @@ class BoardScheduler:
                     self._queue.insert(0, card_id)
         else:
             fallback = result["earliest_reset"] if result["rotated"] else None
+            # the card itself has to rejoin the queue too, not only the board-wide pause clear -
+            # left out of the queue, schedule_view's lapsed-pause check had nothing to start once
+            # the window rolled over, and this card sat blocked past its own reset forever
             with self._lock:
                 self._paused_until = fallback or resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+                if card_id not in self._queue and card_id not in self._running:
+                    self._queue.append(card_id)
         self._tick()
 
 
