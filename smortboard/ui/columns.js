@@ -473,11 +473,15 @@ function fitPiledColumn(bucketRowsEl) {
     }
     el.style.height = `${card}px`;
     // the earlier card of a pair wears card-covered (it gives way); the later one pulls itself up
-    // over it with a negative margin-top - never the same row, or the later card would peek too
+    // over it with a negative margin-top - never the same row, or the later card would peek too.
+    // bucket-rows' own flex `gap` still applies UNDER a margin (they add, never cancel each
+    // other), so the margin has to cancel gap too or every peek band comes out gap px too tall -
+    // which is exactly what ran a 35-card column's real height past what computePileFit sized it
+    // for (each of n-1 pairs quietly adding one gap) and off the bottom of the screen with it
     const nextIsCard = i < rows.length - 1 && rows[i + 1].type === 'card';
     const prevIsCard = i > 0 && rows[i - 1].type === 'card';
     el.classList.toggle('card-covered', nextIsCard);
-    el.style.marginTop = prevIsCard ? `${-(card - PEEK)}px` : '';
+    el.style.marginTop = prevIsCard ? `${-(card - PEEK + gap)}px` : '';
   });
 }
 

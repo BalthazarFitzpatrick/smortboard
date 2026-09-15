@@ -409,7 +409,10 @@ function piles(bucketRows) {
     const cardHeight = parseFloat(s.style.height);
     const next = bucketRows.children[bucketRows.children.indexOf(s) + 1];
     assert.ok(next.className.includes('card-strip'), 'the covered card is always followed by the one covering it');
-    assert.equal(parseFloat(next.style.marginTop), -(cardHeight - mod.PEEK), 'the later card slides up, leaving only PEEK px of the earlier one showing');
+    // the stub's computed rowGap is empty, so fitPiledColumn falls back to BUCKET_ROW_GAP (18) -
+    // the margin has to cancel that real flex gap too, or the peek band comes out gap px too tall
+    assert.equal(parseFloat(next.style.marginTop), -(cardHeight - mod.PEEK + 18),
+      'the later card slides up over the gap AND the peek, leaving exactly PEEK px of the earlier one showing');
   });
   assert.ok(!bucketRows.className.includes('bucket-rows-scrolls'), 'room enough at the portrait floor - no scrollbar needed');
 }
@@ -429,6 +432,57 @@ function piles(bucketRows) {
   const pile = piles(bucketRows)[0];
   assert.equal(parseFloat(pile.style.height), mod.PILE, 'a scrolling pile still keeps its plain 96px floor, no more');
 }
+
+// ---- regression: a 35-card column really ends inside the window, not past its bottom -----------
+// bucket-rows' own flex `gap` sits UNDER a covered card's negative margin-top, adding to it rather
+// than being cancelled by it - so a stack of n peeked cards came out (n-1) real gaps too tall,
+// however correctly computePileFit had sized the column. real offsets, measured from a live
+// 1600px-wide six-column board (playwright, .bucket[data-status="todo"] .bucket-rows): rowsTop
+// 89.8125px below the viewport top (board bar + column header), width 222.390625px, gap 10px -
+// checked at both a tall window (1300, where a 35-card column piled and had room for two full
+// stacks) and a short one (700, where it piles down to the fixed edges)
+
+function replayPiledColumnBottom(rowKinds, card, pileHeight, gap, peek) {
+  // mirrors the real css model exactly: normal flex flow (each row's top is the previous row's
+  // bottom plus gap), then a covered card's own negative margin-top on top of that - never a
+  // model that assumes the margin already accounts for the gap, which is the bug this guards
+  let top = 0, bottom = 0, prevWasCard = false;
+  rowKinds.forEach((kind, i) => {
+    const height = kind === 'pile' ? pileHeight : card;
+    if (i > 0) top = bottom + gap;
+    if (i > 0 && kind === 'card' && prevWasCard) top += -(card - peek + gap);
+    bottom = top + height;
+    prevWasCard = kind === 'card';
+  });
+  return bottom;
+}
+
+for (const [innerHeight, rowsTop] of [[1300, 89.8125], [700, 89.8125]]) {
+  const width = 222.390625, gap = 10;
+  const cards = Array.from({length: 35}, (_, i) => card(`d${i}`, 'todo'));
+  const bucketEl = element('div', 'bucket');
+  bucketEl.dataset.status = 'todo';
+  const label = element('div', 'bucket-label');
+  const bucketRows = element('div', 'bucket-rows');
+  bucketRows.getBoundingClientRect = () => ({top: rowsTop, left: 0, right: 0, bottom: 0, width, height: 0});
+  bucketRows._realGap = gap;
+  const realGetComputedStyle = globalThis.getComputedStyle;
+  globalThis.getComputedStyle = el => (el === bucketRows ? {rowGap: `${gap}px`} : realGetComputedStyle(el));
+  globalThis.window.innerHeight = innerHeight;
+  bucketEl.appendChild(label);
+  bucketEl.appendChild(bucketRows);
+  mod.renderBucketColumn(bucketEl, cards, 'todo');
+  globalThis.getComputedStyle = realGetComputedStyle;
+
+  const rowKinds = Array.from(bucketRows.children).map(el => el.classList.contains('card-pile') ? 'pile' : 'card');
+  const cardHeight = parseFloat(fullCards(bucketRows)[0].style.height);
+  const pileHeight = parseFloat((piles(bucketRows)[0] || {style: {height: '0px'}}).style.height);
+  const bottom = replayPiledColumnBottom(rowKinds, cardHeight, pileHeight, gap, mod.PEEK);
+  const available = innerHeight - rowsTop - 24;
+  assert.ok(bottom <= available + 0.5,
+    `window ${innerHeight}: the column's real bottom (${bottom}px) must stay inside the ${available}px available, not past it`);
+}
+globalThis.window.innerHeight = 800;
 
 // ---- pile style: a desk pile, jittered per card id, each layer wearing its own state edge -------
 
