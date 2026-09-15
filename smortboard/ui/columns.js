@@ -101,10 +101,22 @@ window.addEventListener('resize', () => {
 // full-size whether it sits at rest or mid-excursion. presentation only - never touches card status
 // or any stored state, only which cards are drawn full vs folded into a pile right now
 
+// tuning-page constants: css custom properties on body (layout.css), read once here so the sizing
+// maths and the actual drawn gap always agree - a fallback matches today's value exactly, so a
+// missing var (an older stylesheet, or this test stub) changes nothing
+function readGapVar(name, fallback) {
+  const target = (typeof document !== 'undefined' && (document.documentElement || document.body)) || null;
+  const css = target && globalThis.getComputedStyle?.(target);
+  const raw = parseFloat(css?.getPropertyValue?.(name) || '');
+  return Number.isFinite(raw) ? raw : fallback;
+}
+
 const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
 const MIN_PILED_CARDS = 5; // below this, front stack + pile + back stack has nothing left to pile
 const PILE = 96; // a pile's fixed height - never shrinks, only grows with whatever is left over
-const PEEK = 50; // the title-strip band an earlier stacked card still shows under the one on top
+const PEEK = readGapVar('--stack-peek', 50); // the title-strip band an earlier card still shows
+const PILE_GAP_ABOVE = readGapVar('--pile-gap-above', 0); // extra space above a pile, past the row gap
+const PILE_GAP_BELOW = readGapVar('--pile-gap-below', 0); // extra space below a pile, past the row gap
 const MIN_CARD = PILE + 16; // cards shrink no further than this before the column scrolls instead
 const PORTRAIT_BELOW = 230; // a column narrower than this keeps 230px of card height (portrait)
 
@@ -436,8 +448,10 @@ function computePileFit(rows, available, gap, width) {
   });
   const groups = stacks.filter(n => n !== null);
   // real gaps sit only BETWEEN groups/piles - a stack's own cards overlap via negative margin-top
-  // (fitPiledColumn), so a run of consecutive cards costs peek increments, never rows.length-1 gaps
-  const fixedGaps = Math.max(0, groups.length + piles - 1) * gap;
+  // (fitPiledColumn), so a run of consecutive cards costs peek increments, never rows.length-1 gaps.
+  // each pile also carries its own above/below knob (0 today - see layout.css), same margin the
+  // css actually draws on .card-pile, so the two never disagree about how tall a pile's slot is
+  const fixedGaps = Math.max(0, groups.length + piles - 1) * gap + piles * (PILE_GAP_ABOVE + PILE_GAP_BELOW);
   const pileFixed = piles * PILE;
   const peekTotal = groups.reduce((sum, n) => sum + (n - 1) * PEEK, 0);
   const used = card => groups.length * card + peekTotal + pileFixed + fixedGaps;
@@ -497,7 +511,7 @@ function computeStackCounts(total, available, width, gap) {
   const card = squareCard(width);
   const allPeeked = (total - 1) * PEEK + card;
   if (allPeeked <= available) return [total, 0];
-  const fixed = PILE + 2 * gap;
+  const fixed = PILE + 2 * gap + PILE_GAP_ABOVE + PILE_GAP_BELOW;
   const sizes = [1, 1];
   const used = () => (sizes[0] - 1) * PEEK + card + (sizes[1] - 1) * PEEK + card + fixed;
   if (used() > available) return sizes;
