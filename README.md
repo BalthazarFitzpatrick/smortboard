@@ -329,8 +329,33 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `g` | kanban / workstreams | `s` | shortcuts |
 | `/` | type: the open card's comment, or the open chat | `b` | boards and repos |
 | `f` | fold: merge the todo cards one agent should do as one (asks first, costs a model run) | `h` | pre-flight checklist |
+| | | `q` | landing lock: who holds the push lock on each repo, and the queue behind them |
 | | | shift+`p` | credential profiles |
 | | | `1`-`9` | jump to a board |
+
+## Landing lock
+
+Every card lands its finished branch on the repo's development branch itself (see "How a card
+runs"), and so can an agent outside the board - a direct Claude session, or one of its subagents.
+Two of them racing the same push is a rejected ref, and the loser has to merge and retest again.
+The landing lock is the queue that stops that: one holder per (repo, target branch), FIFO behind
+it, held by the board across a restart (`store/schema.py` migration 15).
+
+An outside agent uses `smortboard-land`, installed with the package:
+
+```bash
+uv run smortboard-land --repo . --target development -- uv run pytest -q
+```
+
+It queues for the lock (heartbeating every 30s while it waits and while it holds it), then fetches,
+merges `origin/<target>` into `HEAD`, runs the given test command, and pushes `HEAD:refs/heads/<target>`
+- refusing `main`/`master`/`trunk` outright, the same refusal `integrate()` gives a card. It exits
+non-zero on a merge conflict, a failed test command, or a rejected push, and says which; the lock is
+always released, including on ctrl-c. `--url` points it at a board other than the default
+`http://127.0.0.1:8000`.
+
+`q` in the browser shows every repo's holder, how long they have held it, their heartbeat age, and
+the queue in order - `GET /api/landing`, live while the panel is open.
 
 ## Setup
 

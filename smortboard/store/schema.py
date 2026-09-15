@@ -314,6 +314,39 @@ _MIGRATIONS: list[str] = [
     """
     ALTER TABLE boards ADD COLUMN max_parallel INTEGER;
     """,
+    # 15: the landing lock - one holder per (repo_key, target branch), FIFO queue behind it. repo_key
+    # is a resolved path or remote url, not a foreign key to repos: an outside agent's repo need not
+    # be registered on any board. calling POST /api/repos/.../landing again with the held lease_id is
+    # the heartbeat; a holder whose heartbeat goes stale past ttl_s is evicted and the next queued
+    # lease is promoted - see smortboard/review/landing.py
+    """
+    CREATE TABLE landing_locks (
+        repo_key TEXT NOT NULL,
+        target TEXT NOT NULL,
+        lease_id TEXT NOT NULL,
+        holder TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        ttl_s INTEGER NOT NULL,
+        since TEXT NOT NULL,
+        last_heartbeat TEXT NOT NULL,
+        PRIMARY KEY (repo_key, target)
+    );
+
+    CREATE TABLE landing_queue (
+        id TEXT PRIMARY KEY,
+        repo_key TEXT NOT NULL,
+        target TEXT NOT NULL,
+        lease_id TEXT NOT NULL UNIQUE,
+        holder TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        ttl_s INTEGER NOT NULL,
+        queued_at TEXT NOT NULL,
+        position INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_landing_queue_repo_target
+        ON landing_queue (repo_key, target, position);
+    """,
 ]
 
 
