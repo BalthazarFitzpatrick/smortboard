@@ -3,7 +3,7 @@
 // button or a pile click. run: node tests/js/dense_columns.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element} from './dom_stub.mjs';
+import {installStubDom, element, stubMotion} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
 const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
@@ -27,7 +27,8 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
   handlePileKey, MIN_PILED_CARDS, fitPiledColumn, squareCard, PILE, PEEK, MIN_CARD,
   PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
   shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus, applyCardShadows,
-  PILE_GAP_ABOVE, PILE_GAP_BELOW, BUCKET_ROW_GAP, flipDelta};`)(SpyMenu, SpyDrawer);
+  PILE_GAP_ABOVE, PILE_GAP_BELOW, BUCKET_ROW_GAP, flipDelta, planPileMotion, PILE_MOTION_MS,
+  PILE_SETTLE_MS, PILE_EASING, PILE_LAND_OFFSET, ROW_MOTION_MS, ROW_EASING};`)(SpyMenu, SpyDrawer);
 
 // fixture heights below are derived from the module's own tuning constants, not typed pixel
 // counts, so a future gap-tuning pass moves the fixtures with it instead of breaking them
@@ -572,11 +573,12 @@ for (const [room, n] of [[SHORT_N2, 2], [TALL_N3, 3]]) {
   const total = 14;
   const cards = Array.from({length: total}, (_, i) => card(`e${n}-${i}`, 'todo'));
   const {bucketRows} = buildColumn(room, cards);
-  const rest = n === 3 ? ['1o', '2s', '3o'] : ['1o', '2o'];
-  assert.deepEqual(drawn(bucketRows).slice(0, n), rest, `n=${n}, at rest: card 1 is the open one, as with focus on it`);
+  const rest = n === 3 ? ['1s', '2s', '3o'] : ['1s', '2o'];
+  assert.deepEqual(drawn(bucketRows).slice(0, n), rest, `n=${n}, at rest: every card covered by the next, as the fan rests`);
   const first = focusFromOutside(bucketRows, fullCards(bucketRows)[0]);
   assert.equal(first.dataset.idx, '0');
-  assert.deepEqual(drawn(bucketRows).slice(0, n), rest, `n=${n}: focus landing on card 1 finds it open`);
+  assert.deepEqual(drawn(bucketRows).slice(0, n), n === 3 ? ['1o', '2s', '3o'] : ['1o', '2o'],
+    `n=${n}: focus landing on card 1 opens it`);
   const second = focusFromOutside(bucketRows, fullCards(bucketRows).find(s => s.dataset.idx === '1'));
   assert.equal(second.dataset.idx, '1', 'the column redraws around a card focus lands on from outside');
   assert.deepEqual(drawn(bucketRows).slice(0, n), n === 3 ? ['1s', '2o', '3o'] : ['1s', '2o'],
@@ -659,17 +661,279 @@ function cssRules(needle) {
   });
 }
 
-// ---- focus: every card lifts 3% - a piled one too - and a piled card draws its own ring, so the
-// shared marker (a fixed overlay above everything) hides while one has focus ------------------------
+// ---- focus: one look for every card in every column - the lift, the colours and its own ring -
+// read off the real cascade (ui_base's base.css, then layout.css) for real rendered strips, so a
+// rule scoped to one column type shows up as a difference rather than slipping past a grep --------
+
+const stripComments = css => css.replace(/\/\*[\s\S]*?\*\//g, '');
+const sheet = [uiBase('base.css'), smort('layout.css')].flatMap(css =>
+  [...stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(m => [m[1].trim(), m[2]]));
+
+// one compound selector (no combinator) against el - :focus holds only for `focusedEl`
+function compoundMatches(el, compound, focusedEl) {
+  if (compound.includes('::') || /:has\(/.test(compound)) return false;
+  const nots = [];
+  let rest = compound.replace(/:not\(([^()]*)\)/g, (_, inner) => { nots.push(inner); return ''; });
+  for (const pseudo of rest.match(/:[\w-]+/g) || []) {
+    if (pseudo === ':focus' || pseudo === ':focus-visible') { if (el !== focusedEl) return false; }
+    else if (pseudo === ':first-child') { if (el.parentNode?.children[0] !== el) return false; }
+    else if (pseudo === ':last-child') { if (el.parentNode?.children.at(-1) !== el) return false; }
+    else return false; // :hover, :root and the rest are not in play here
+  }
+  rest = rest.replace(/:[\w-]+/g, '');
+  if (/[[*%]/.test(rest)) return false;
+  const tag = rest.replace(/[.#][\w-]+/g, '');
+  if (tag && tag !== el.tag) return false;
+  if ((rest.match(/#[\w-]+/g) || []).some(id => el.id !== id.slice(1))) return false;
+  if (!(rest.match(/\.[\w-]+/g) || []).every(c => el.classList?.contains(c.slice(1)))) return false;
+  return !nots.some(inner => compoundMatches(el, inner, focusedEl));
+}
+
+// a full selector, right to left through descendant, child and sibling combinators
+function selectorMatches(el, selector, focusedEl) {
+  const tokens = selector.split(/(\s*[>~+]\s*|\s+)/);
+  const from = (node, i) => {
+    if (!node || !compoundMatches(node, tokens[i], focusedEl)) return false;
+    if (i === 0) return true;
+    const comb = tokens[i - 1].trim();
+    const siblings = node.parentNode?.children || [];
+    const before = siblings.slice(0, siblings.indexOf(node));
+    if (comb === '>') return from(node.parentNode, i - 2);
+    if (comb === '~') return before.some(s => from(s, i - 2));
+    if (comb === '+') return from(before.at(-1), i - 2);
+    for (let up = node.parentNode; up; up = up.parentNode) if (from(up, i - 2)) return true;
+    return false;
+  };
+  return from(el, tokens.length - 1);
+}
+
+function specificity(selector) {
+  const s = selector.replace(/::[\w-]+/g, '');
+  const ids = (s.match(/#[\w-]+/g) || []).length;
+  const classes = (s.match(/\.[\w-]+|\[[^\]]*\]|:(?!not\(|has\()[\w-]+/g) || []).length;
+  const tags = (s.replace(/:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]*\]/g, ' ').match(/[a-z][\w-]*/gi) || []).length;
+  return ids * 10000 + classes * 100 + tags;
+}
+
+// the winning value of each focus property for `strip`, with `focusedEl` holding focus
+const FOCUS_PROPS = ['transform', 'filter', 'box-shadow', 'outline'];
+function focusLook(strip, focusedEl = strip) {
+  const won = {};
+  sheet.forEach(([list, body]) => list.split(',').map(s => s.trim()).forEach(sel => {
+    if (!sel || sel.startsWith('@') || !selectorMatches(strip, sel, focusedEl)) return;
+    const spec = specificity(sel);
+    body.split(';').forEach(decl => {
+      const at = decl.indexOf(':');
+      const prop = decl.slice(0, at).trim();
+      if (at < 0 || !FOCUS_PROPS.includes(prop)) return;
+      if (!won[prop] || spec >= won[prop].spec) won[prop] = {spec, value: decl.slice(at + 1).trim()};
+    });
+  }));
+  return Object.fromEntries(FOCUS_PROPS.map(p => [p, won[p]?.value ?? null]));
+}
+
+// the :has() rules that hide indicate.js's marker, and whether one of them covers `strip` focused
+function markerHiddenFor(strip) {
+  return sheet.some(([list, body]) => /opacity:\s*0\b/.test(body) && list.split(',').some(sel => {
+    const has = sel.match(/:has\(([^()]*)\)\s+\.focus-marker$/);
+    return has && selectorMatches(strip, has[1], strip);
+  }));
+}
 
 {
-  const lift = cssRules('.card-strip:focus').map(([, body]) => body).join(';');
-  assert.match(lift, /transform:\s*scale\(1\.03\)/, 'a focused card lifts 3% toward the viewer');
-  assert.ok(!cssRules(':focus').some(([, body]) => /transform:\s*none/.test(body)), 'no rule takes the lift off a piled card');
-  const ring = cssRules('.card-strip:not(.fan-item):focus').map(([, body]) => body).join(';');
-  assert.match(ring, /inset 0 0 8px 1\.5px/, 'the inner glow is half its old 16px blur and 3px spread');
-  assert.ok(cssRules('.focus-marker').some(([sel, body]) => sel.includes(':has(.card-strip:not(.fan-item):focus)') && /opacity:\s*0/.test(body)),
-    'the shared marker hides while a piled card has focus');
+  const focusedIn = (bucketRows, pick) => {
+    const strip = pick(fullCards(bucketRows));
+    strip.focus();
+    return strip;
+  };
+  // a plain short column (the fan), an expanded one (the fan again), and a stacked one: its open
+  // card, a covered strip, an edge card past the lower pile, and the last card bottom-anchored
+  const plain = buildColumn(2000, [card('pl0', 'todo'), card('pl1', 'todo'), card('pl2', 'todo')]).bucketRows;
+  const expanded = buildColumn(600, Array.from({length: 10}, (_, i) => card(`ex${i}`, 'todo')));
+  expanded.bucketEl.querySelector('.bucket-expand')._listeners.click[0]();
+  const stacked = buildColumn(SHORT_N2, Array.from({length: 14}, (_, i) => card(`st${i}`, 'todo'))).bucketRows;
+  const bottom = buildColumn(SHORT_N2, Array.from({length: 14}, (_, i) => card(`bt${i}`, 'todo'))).bucketRows;
+  const pressBottom = keyDriver(bottom);
+  for (let i = 1; i < 14; i++) pressBottom('ArrowDown');
+  const cases = {
+    'plain, first card': focusedIn(plain, s => s[0]),
+    'plain, middle card': focusedIn(plain, s => s[1]),
+    'expanded, middle card': focusedIn(expanded.bucketRows, s => s[4]),
+    'stacked, open card': focusFromOutside(stacked, fullCards(stacked)[0]),
+    'stacked, covered strip': focusedIn(stacked, s => s.find(x => x.className.includes('card-covered'))),
+    'stacked, edge card': focusedIn(stacked, s => s.at(-1)),
+    'stacked, bottom-anchored last card': fullCards(bottom).at(-1),
+  };
+  cases['stacked, bottom-anchored last card'].focus();
+  assert.ok(cases['plain, middle card'].className.includes('fan-item') && !cases['stacked, open card'].className.includes('fan-item'),
+    'both column types are really under test: the plain column fans, the stacked one does not');
+  const reference = focusLook(cases['stacked, open card']);
+  assert.match(reference.transform, /^scale\(1\.03\)$/, 'a focused card lifts 3% toward the viewer');
+  assert.match(reference.filter, /saturate\(1\.7\) brightness\(1\.4\)/, 'and its own colours step up');
+  assert.match(reference['box-shadow'], /^inset 0 0 0 3px var\(--cream\), inset 0 0 8px 1\.5px /,
+    'its own ring: the inset frame, then the inner glow at half its old 16px blur and 3px spread');
+  Object.entries(cases).forEach(([where, strip]) => {
+    assert.deepEqual(focusLook(strip), reference, `${where}: the same focus look as a stacked card`);
+    assert.ok(markerHiddenFor(strip), `${where}: the shared marker hides, so it never draws over the card's own ring`);
+    assert.equal(focusLook(strip, null)['box-shadow'], 'none', `${where}: no ring without focus`);
+  });
+}
+
+// ---- pile motion: a step that moves a card onto or off a pile runs at the pile's own slower
+// timing, and a pile's count only changes when the card lands on it ------------------------------
+
+{
+  assert.ok(mod.PILE_MOTION_MS >= 260 && mod.PILE_MOTION_MS <= 320, 'the pile timing sits in the 260-320 ms band');
+  assert.ok(mod.PILE_MOTION_MS > mod.ROW_MOTION_MS, 'and is slower than a plain step');
+  const prior = new Map([['a', 'card'], ['b', 'card'], ['c', 'pile-below'], ['d', 'pile-below']]);
+  const next = new Map([['a', 'pile-above'], ['b', 'card'], ['c', 'card'], ['d', 'pile-below']]);
+  const plan = mod.planPileMotion(prior, next);
+  assert.deepEqual([plan.duration, plan.easing], [mod.PILE_MOTION_MS, mod.PILE_EASING], 'any pile change: every row at the pile timing');
+  assert.deepEqual(plan.piles.get('pile-above'), {landing: ['a'], lifting: [], countAt: mod.PILE_MOTION_MS},
+    'a card landing: its pile\'s count changes when it lands, not before');
+  assert.deepEqual(plan.piles.get('pile-below'), {landing: [], lifting: ['c'], countAt: 0},
+    'a card lifting off: that pile\'s count changes at once, the card has left it');
+  const still = mod.planPileMotion(prior, new Map(prior));
+  assert.deepEqual([still.duration, still.easing, still.piles.size], [mod.ROW_MOTION_MS, mod.ROW_EASING, 0],
+    'a step inside the group keeps the plain timing');
+  assert.ok(Math.abs(mod.PILE_LAND_OFFSET * (mod.PILE_MOTION_MS + mod.PILE_SETTLE_MS) - mod.PILE_MOTION_MS) < 1e-9,
+    'the landing offset falls exactly PILE_MOTION_MS into a travel-then-settle run');
+}
+
+// drives a stacked column with the stub's animation recorder on and timers held, never real time
+function withMotion(run, {reduced = false} = {}) {
+  const timers = [];
+  const realSetTimeout = globalThis.setTimeout;
+  stubMotion.on = true;
+  stubMotion.log.length = 0;
+  globalThis.setTimeout = (fn, ms) => { timers.push({fn, ms}); return 0; };
+  if (reduced) globalThis.matchMedia = query => ({matches: query.includes('reduce')});
+  try { run(timers); } finally {
+    stubMotion.on = false;
+    globalThis.setTimeout = realSetTimeout;
+    delete globalThis.matchMedia;
+  }
+}
+const pileOn = (bucketRows, side) => piles(bucketRows).find(p => p.dataset.side === side);
+const pileCount = pile => pile.querySelector('.bucket-counts').textContent;
+
+withMotion(timers => {
+  const total = 14;
+  const cards = Array.from({length: total}, (_, i) => card(`mo${i}`, 'todo'));
+  const {bucketRows} = buildColumn(SHORT_N2, cards);
+  const n = mod.computeGroupFit(total, SHORT_N2, GAP, WIDE).n;
+  const press = keyDriver(bucketRows);
+  focusFromOutside(bucketRows, fullCards(bucketRows)[0]);
+  for (let i = 1; i < n; i++) press('ArrowDown');
+  const landings = () => timers.filter(t => t.ms === mod.PILE_MOTION_MS);
+  assert.equal(landings().length, 0, 'steps inside the group schedule no pile landing');
+  const belowBefore = pileOn(bucketRows, 'below')._cards.length;
+
+  // the step past the group's end forms the upper pile: card 1 travels onto it
+  stubMotion.log.length = 0;
+  press('ArrowDown');
+  const ghost = stubMotion.log.find(a => a.el.className.includes('row-ghost') && a.el.dataset.cardId === cards[0].id);
+  assert.ok(ghost, 'the card folded onto the pile travels there as itself, not a fade');
+  assert.equal(ghost.options.duration, mod.PILE_MOTION_MS + mod.PILE_SETTLE_MS);
+  assert.equal(ghost.el.style.zIndex, '3', 'drawn over the rows sliding up under it');
+  const [start, landed, end] = ghost.keyframes;
+  assert.deepEqual([start.opacity, landed.opacity, end.opacity], [1, 1, 0], 'it keeps its face the whole way and only dissolves once it has landed');
+  assert.equal(landed.offset, mod.PILE_LAND_OFFSET);
+  assert.equal(start.easing, mod.PILE_EASING, 'the travel itself runs on the pile easing');
+  assert.match(landed.clipPath, /^inset\(-\d+px -\d+px \d+(\.\d+)?px -\d+px\)$/, 'cut from the bottom to the pile face, never squashed');
+  const upper = pileOn(bucketRows, 'above');
+  const formed = upper._animations[0];
+  assert.deepEqual(formed.keyframes.map(k => [k.offset, k.opacity]), [[0, 0], [mod.PILE_LAND_OFFSET, 0], [1, 1]],
+    'the new pile stays unseen until the card lands on it, then appears under it');
+  assert.equal(formed.options.duration, ghost.options.duration);
+  assert.equal(pileCount(upper), '1');
+  // the other end of the same step: one card lifts off the lower pile, whose count drops at once
+  const lifted = fullCards(bucketRows).find(s => s.dataset.cardId === cards[n].id);
+  assert.ok(lifted.className.includes('row-lifting'), 'the card drawn off the lower pile is drawn over it while it lifts');
+  const lift = lifted._animations[0];
+  assert.deepEqual([lift.options.duration, lift.options.easing], [mod.PILE_MOTION_MS, mod.PILE_EASING], 'at the pile timing');
+  assert.match(lift.keyframes[0].clipPath, /^inset\(-\d+px -\d+px \d+(\.\d+)?px -\d+px\)$/, 'starting as the pile\'s face');
+  lift.onfinish();
+  assert.ok(!lifted.className.includes('row-lifting'), 'and settles back into the column once it is in place');
+  assert.equal(pileCount(pileOn(bucketRows, 'below')), String(belowBefore - 1), 'the lower pile shows its new count straight away');
+  assert.equal(landings().length, 0, 'a forming pile has no old count to hold');
+
+  // the next step lands a second card on the pile that is already there: 1 until it lands, then 2
+  stubMotion.log.length = 0;
+  press('ArrowDown');
+  const again = pileOn(bucketRows, 'above');
+  assert.equal(pileCount(again), '1', 'the pile keeps its old count while the card is still travelling');
+  assert.equal(landings().length, 1, 'one landing, scheduled PILE_MOTION_MS in - when the card arrives');
+  landings()[0].fn();
+  assert.equal(pileCount(again), '2', 'the count ticks up as the card lands');
+  assert.ok(again.querySelector('.bucket-counts')._animations?.length, 'with a small pop on the number');
+});
+
+withMotion(timers => {
+  const cards = Array.from({length: 14}, (_, i) => card(`rm${i}`, 'todo'));
+  const {bucketRows} = buildColumn(SHORT_N2, cards);
+  const n = mod.computeGroupFit(14, SHORT_N2, GAP, WIDE).n;
+  const press = keyDriver(bucketRows);
+  for (let i = 0; i <= n; i++) press('ArrowDown');
+  assert.equal(stubMotion.log.length, 0, 'reduced motion: nothing animates');
+  assert.equal(timers.filter(t => t.ms === mod.PILE_MOTION_MS).length, 0, 'and no landing is scheduled');
+  assert.equal(pileCount(pileOn(bucketRows, 'above')), '2', 'every count is final at once');
+}, {reduced: true});
+
+// ---- leaving a stacked column puts it back at rest: the open card is covered by the next again, as
+// the fan does, whether focus left from card 1 or from further down ------------------------------
+
+{
+  const neighbour = element('div', 'bucket');
+  const neighbourRow = element('div', 'row card card-strip');
+  neighbour.appendChild(neighbourRow);
+  bucketRow.appendChild(neighbour);
+  const panel = element('div', 'expand-panel');
+  document.body.appendChild(panel);
+  const leaveTo = (bucketRows, to) => {
+    const from = bucketRows.children.find(r => r.focused);
+    from.blur();
+    to.focus();
+    bucketRows._listeners.focusout[0]({target: from, relatedTarget: to});
+  };
+  // what the rest rule draws for the group where it now stands
+  const restDrawing = bucketRows => {
+    const state = bucketRows._pile;
+    const n = mod.computeGroupFit(state.sorted.length, SHORT_N2, GAP, WIDE).n;
+    return mod.computePileLayout(state.sorted, null, state.start, state.anchor, n).rows
+      .map(r => (r.type === 'pile' ? 'P' : `${r.idx + 1}${r.covered ? 's' : 'o'}`));
+  };
+  const cards = Array.from({length: 14}, (_, i) => card(`lv${i}`, 'todo'));
+  const {bucketEl, bucketRows} = buildColumn(SHORT_N2, cards);
+  bucketRow.appendChild(bucketEl);
+  const atRest = drawn(bucketRows);
+  assert.deepEqual(atRest, restDrawing(bucketRows));
+
+  focusFromOutside(bucketRows, fullCards(bucketRows)[0]);
+  assert.equal(drawn(bucketRows)[0], '1o', 'card 1 opens under focus');
+  leaveTo(bucketRows, neighbourRow);
+  assert.deepEqual(drawn(bucketRows), atRest, 'leaving from card 1: the next card slides back over it - the column at rest');
+  assert.equal(bucketRows._pile.focusIndex, null);
+
+  const press = keyDriver(bucketRows);
+  focusFromOutside(bucketRows, fullCards(bucketRows)[0]);
+  for (let i = 1; i <= 5; i++) press('ArrowDown');
+  // one back up: focus on the group's first card, which the group's next card covers at rest
+  assert.equal(press('ArrowUp').dataset.idx, '4');
+  assert.ok(drawn(bucketRows).includes('5o'), 'card 5 is open under focus');
+  const pilesBefore = piles(bucketRows).map(p => p._cards.map(c => c.id));
+  leaveTo(bucketRows, neighbourRow);
+  assert.deepEqual(drawn(bucketRows), restDrawing(bucketRows), 'leaving from a middle card: the same rest rule, no card left open');
+  assert.ok(drawn(bucketRows).includes('5s') && !drawn(bucketRows).includes('5o'), 'the card that had focus is covered again');
+  assert.deepEqual(piles(bucketRows).map(p => p._cards.map(c => c.id)), pilesBefore, 'the piles stay as they were');
+
+  focusFromOutside(bucketRows, fullCards(bucketRows).find(s => s.dataset.idx === '5'));
+  const open = drawn(bucketRows);
+  leaveTo(bucketRows, panel);
+  assert.deepEqual(drawn(bucketRows), open, 'a panel opened from the card is not leaving - nothing is redrawn under it');
+  bucketEl.remove();
+  neighbour.remove();
+  panel.remove();
 }
 
 console.log('ok');
