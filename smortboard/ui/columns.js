@@ -122,6 +122,53 @@ function isAttentionCard(card) {
   return !!(card.blocked_reason_code || card.review_flag);
 }
 
+// a pile layer's own state edge - the same precedence card_panel.js's cardClasses draws a full
+// card with, so what protrudes from the pile tells you what is actually inside it
+function cardEdgeVar(card) {
+  if (card.handled_by_board || card.status === 'doing') return 'var(--fill-good)';
+  if (card.blocked_reason_code || card.review_flag) return 'var(--fill-attention)';
+  if (card.status === 'rejected') return 'var(--fill-warn)';
+  if (card.status === 'accepted') return 'var(--status-good)';
+  return 'var(--grey-border)';
+}
+
+// ---- pile jitter: each drawn layer offset and rotated from that card's own id, so the same set
+// of cards always draws the same pile and only changes when a card enters or leaves it. fnv-1a
+// into a mulberry32 stream - picked in the jitter picker (derived/pile_picker), option E -------
+
+function fnv1aHash(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const jitterBetween = (r, lo, hi) => lo + (hi - lo) * r();
+const clampPileY = y => Math.max(-10, Math.min(10, y));
+
+// pure: a card id -> its layer's offset and rotation. dx +-8px, dy +-10px (clamped, same as the
+// row gap a layer may protrude into), rotation +-0.6..2.2deg with a random sign
+function pileLayerJitter(cardId) {
+  const r = mulberry32(fnv1aHash(cardId));
+  const dx = jitterBetween(r, -8, 8);
+  const dy = clampPileY(jitterBetween(r, -10, 10));
+  const rot = (r() < 0.5 ? -1 : 1) * jitterBetween(r, 0.6, 2.2);
+  return {dx, dy, rot};
+}
+
 // one letter per column status, plus attention - accepted borrows 'v' and rejected 'r' so neither
 // collides with attention's own 'a' (ambiguity call, see the PR notes)
 const STATUS_LETTER = {todo: 't', doing: 'd', checking: 'c', accepted: 'v', rejected: 'r'};
@@ -213,8 +260,12 @@ function availableColumnHeight(bucketRowsEl) {
   return Math.max(0, (window.innerHeight || 0) - top - 24);
 }
 
-// a stack of real card edges behind the top one - straight, each layer 3px lower, so only the bottom
-// edges show. a rotated layer lifted its corners over the face and read as another card's top edge
+const MAX_PILE_LAYERS = 8; // more than this and the desk-pile look stops reading as individual cards
+
+// a desk pile of real card edges behind the top one, each nudged and turned a little from its own
+// card's id (pileLayerJitter) and wearing that card's own state edge - what protrudes tells you
+// what is inside. bottom first: the first drawn card sits furthest back, the last right under the
+// face. jitter stays inside the row gap (clamped to +-10px) so a layer never reaches a neighbour
 function buildPileRow(cards, status) {
   const el = document.createElement('div');
   // the pile wears the state edge a card would: attention if it holds one, else doing's own
@@ -222,12 +273,14 @@ function buildPileRow(cards, status) {
   el.className = `row card-pile${state}`;
   el.tabIndex = -1;
   el.dataset.pile = 'true';
-  const layers = Math.min(cards.length, 4);
-  for (let i = layers - 1; i >= 0; i--) {
+  const drawn = cards.slice(0, Math.min(MAX_PILE_LAYERS, cards.length));
+  for (let i = drawn.length - 1; i >= 0; i--) {
+    const source = drawn[i];
+    const {dx, dy, rot} = pileLayerJitter(source.id);
     const layer = document.createElement('div');
     layer.className = 'card-pile-layer';
-    // edges peek out below the face, inside the pile's own box - never over a neighbouring row
-    layer.style.transform = `translateY(${i * 3}px)`;
+    layer.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) rotate(${rot.toFixed(2)}deg)`;
+    layer.style.borderColor = cardEdgeVar(source);
     el.appendChild(layer);
   }
   const count = document.createElement('div');

@@ -24,7 +24,8 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {sortColumnCards, computePileLayout, letterCounts, renderBucketColumn, handlePileKey, MIN_PILED_CARDS,
-  computePileFit, fitPiledColumn, MIN_PILE_HEIGHT, MIN_COVERED_VISIBLE};`)(SpyMenu, SpyDrawer);
+  computePileFit, fitPiledColumn, MIN_PILE_HEIGHT, MIN_COVERED_VISIBLE, pileLayerJitter, cardEdgeVar,
+  MAX_PILE_LAYERS};`)(SpyMenu, SpyDrawer);
 
 function card(id, status, extra = {}) {
   return {id, title: `card ${id}`, status, workstream: '', ...extra};
@@ -301,7 +302,7 @@ function fitTotal(rows, fit, gap) {
   assert.equal(pile.style.marginTop, '', 'a refit clears the overlap a previous fit left behind');
 }
 
-// ---- pile style: straight layers, and the edge of the state the pile holds ----------------------
+// ---- pile style: a desk pile, jittered per card id, each layer wearing its own state edge -------
 
 {
   const cards = Array.from({length: 10}, (_, i) => card(`s${i}`, 'doing'));
@@ -309,8 +310,8 @@ function fitTotal(rows, fit, gap) {
   const pile = piles(bucketRows)[0];
   assert.ok(pile.className.includes('card-pile-doing'), 'a doing pile wears the doing edge');
   const layers = pile.children.filter(c => c.className.includes('card-pile-layer'));
-  assert.ok(layers.length && layers.every(l => !l.style.transform.includes('rotate')),
-    'layers stack straight - a rotated corner rose over the face');
+  assert.ok(layers.length && layers.every(l => /rotate\(-?\d/.test(l.style.transform)),
+    'every layer carries its own jittered rotation - the desk-pile look');
 }
 {
   // attention sorts first, so three of them put one past the top pair and into the pile
@@ -323,6 +324,42 @@ function fitTotal(rows, fit, gap) {
   const {bucketRows} = buildColumn(200, cards);
   const cls = piles(bucketRows)[0].className;
   assert.ok(!cls.includes('card-pile-doing') && !cls.includes('card-pile-attention'), 'a quiet pile keeps the grey edge');
+}
+
+// ---- pile jitter: seeded by card id alone, so the same ids always draw the same pile ------------
+
+{
+  const a = mod.pileLayerJitter('card-42');
+  const b = mod.pileLayerJitter('card-42');
+  assert.deepEqual(a, b, 'the same card id gives the same offset and rotation every time');
+  const c = mod.pileLayerJitter('card-43');
+  assert.notDeepEqual(a, c, 'a different id gives a different jitter (sanity - not a hash collision)');
+  assert.ok(a.dx >= -8 && a.dx <= 8, 'dx stays within +-8px');
+  assert.ok(a.dy >= -10 && a.dy <= 10, 'dy stays within +-10px, clamped to the row gap it may protrude into');
+  assert.ok(Math.abs(a.rot) >= 0.6 && Math.abs(a.rot) <= 2.2, 'rotation magnitude stays within 0.6-2.2deg');
+}
+
+{
+  // every card's edge colour matches cardClasses' own precedence for a full card
+  assert.equal(mod.cardEdgeVar(card('w', 'doing')), 'var(--fill-good)');
+  assert.equal(mod.cardEdgeVar(card('h', 'doing', {handled_by_board: true})), 'var(--fill-good)');
+  assert.equal(mod.cardEdgeVar(card('a', 'todo', {blocked_reason_code: 'CRASH'})), 'var(--fill-attention)');
+  assert.equal(mod.cardEdgeVar(card('r', 'rejected')), 'var(--fill-warn)');
+  assert.equal(mod.cardEdgeVar(card('v', 'accepted')), 'var(--status-good)');
+  assert.equal(mod.cardEdgeVar(card('t', 'todo')), 'var(--grey-border)');
+}
+
+{
+  // up to MAX_PILE_LAYERS drawn, bottom first: the first (lowest-index) card ends up painted last
+  // (closest to the face), the way a real desk pile is built up one card at a time
+  const cards = Array.from({length: 20}, (_, i) => card(`z${i}`, 'todo'));
+  const {bucketRows} = buildColumn(200, cards);
+  const pile = piles(bucketRows)[0];
+  const layers = pile.children.filter(c => c.className.includes('card-pile-layer'));
+  assert.equal(layers.length, mod.MAX_PILE_LAYERS, 'never more than MAX_PILE_LAYERS drawn edges');
+  const expectedTop = mod.pileLayerJitter(pile._cards[0].id);
+  const topTransform = layers.at(-1).style.transform;
+  assert.ok(topTransform.includes(expectedTop.dx.toFixed(1)), 'the first (bottom) card is the last layer appended - painted on top, under the face');
 }
 
 console.log('ok');
