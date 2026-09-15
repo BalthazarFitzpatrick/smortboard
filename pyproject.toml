@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 smortboard = "smortboard.cli:main"
+smortboard-land = "smortboard.land_cli:main"
 
 # dependency-groups is the current form; [tool.uv] dev-dependencies is deprecated
 [dependency-groups]

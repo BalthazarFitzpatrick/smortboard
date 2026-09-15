@@ -726,3 +726,35 @@ architecture violation - the formatting primitives belong in ui_base, a separate
 repo out of this worktree's scope - so it was left undone rather than re-landing the same
 violation; see the final report for the exact finding. Full suite green throughout (800
 pytest, all js) except where noted. Worktree and branch removed after this entry.
+
+## 2026-09-15T06:31Z - landing-lock - a db-backed push lock for development, queue visible from outside the board
+
+Built the "q push lock" Balthazar asked for: several agents (card runs and outside Claude sessions)
+were racing pushes to a repo's development branch and rejecting each other. Added a persisted
+landing lock, one holder per (repo_key, target branch), FIFO queue behind it - migration 15
+(`landing_locks`, `landing_queue`), `Store.request_landing/release_landing/list_landing` in
+`store/api.py`. `POST /api/repos/<repo_id>/landing` grants or queues, repeated with the same
+`lease_id` as the heartbeat/poll; `DELETE /api/landing/<lease_id>` releases; `GET /api/landing`
+lists every repo's holder and queue. Repo lookup (`review/landing.py resolve_repo_key`) accepts a
+board repo id or a filesystem path, so an outside tool needs no board repo registered.
+
+`lifecycle._integrate` now takes this lock (card id as holder) around the existing in-process
+`integration_lock`, so card runs and outside agents share one queue. `smortboard-land` (new console
+script, `land_cli.py`) is the client for agents outside the board: queues, heartbeats every 30s,
+fetches/merges/tests/pushes, refuses main/master/trunk, always releases including on ctrl-c, exits
+non-zero on conflict/test failure/rejected push.
+
+UI: `q` opens a live panel (`ui/landing.js` + `.css`, same modal-backdrop/panel-floating shape as
+`pulls.js`) showing holder, since/heartbeat age, ttl, and the queue in order; closes on q/Escape.
+Added to the shortcut overlay and `tests/js/keyboard_bindings.mjs`'s frozen key count.
+
+Tests: `tests/test_landing_lock.py` - grant/queue/release/promote, two real concurrent acquirers
+(each its own sqlite connection, per Store's thread-binding), ttl eviction, restart persistence, the
+http routes over real http, and the client end to end (real git remote, passes and fails). Full
+suite green: 809 pytest (incl. new file), js suite green. Screenshot at
+`ui_shots/landing_lock.png` (held lock + 2-deep queue, checked once against a throwaway db on
+127.0.0.1:8791, not the live board).
+
+Landed on smortboard's `development` directly per the task instructions. **The live board on
+:8000 needs a restart to pick up migration 15 and the new routes/ui.** Worktree and branch removed
+after this entry.

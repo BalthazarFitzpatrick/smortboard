@@ -1122,3 +1122,214 @@ class Store:
         from smortboard.store.export import import_bundle as _import
 
         _import(self._conn, path)
+
+    # -- landing lock: one holder per (repo_key, target), fifo queue behind it -------------
+
+    def _evict_stale_landing(self, repo_key: str, target: str) -> str | None:
+        """drops a holder whose heartbeat is older than its own ttl and promotes the next queued
+        lease, if any. returns the evicted lease_id, or None if the holder (if any) is still live"""
+        row = self._conn.execute(
+            "SELECT * FROM landing_locks WHERE repo_key = ? AND target = ?", (repo_key, target)
+        ).fetchone()
+        if row is None:
+            return None
+        held_for = (
+            datetime.now(UTC) - datetime.fromisoformat(row["last_heartbeat"])
+        ).total_seconds()
+        if held_for <= row["ttl_s"]:
+            return None
+        evicted = row["lease_id"]
+        self._conn.execute(
+            "DELETE FROM landing_locks WHERE repo_key = ? AND target = ?", (repo_key, target)
+        )
+        self._promote_next_landing(repo_key, target)
+        self._conn.commit()
+        return evicted
+
+    def _promote_next_landing(self, repo_key: str, target: str) -> None:
+        """moves the front of the queue into landing_locks and renumbers the rest. no-op if the
+        slot is already held or the queue is empty - caller has already freed the slot"""
+        held = self._conn.execute(
+            "SELECT 1 FROM landing_locks WHERE repo_key = ? AND target = ?", (repo_key, target)
+        ).fetchone()
+        if held is not None:
+            return
+        next_row = self._conn.execute(
+            "SELECT * FROM landing_queue WHERE repo_key = ? AND target = ? ORDER BY position LIMIT 1",
+            (repo_key, target),
+        ).fetchone()
+        if next_row is None:
+            return
+        now = _now()
+        self._conn.execute(
+            """
+            INSERT INTO landing_locks
+                (repo_key, target, lease_id, holder, branch, ttl_s, since, last_heartbeat)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                repo_key,
+                target,
+                next_row["lease_id"],
+                next_row["holder"],
+                next_row["branch"],
+                next_row["ttl_s"],
+                now,
+                now,
+            ),
+        )
+        self._conn.execute("DELETE FROM landing_queue WHERE id = ?", (next_row["id"],))
+        self._renumber_landing_queue(repo_key, target)
+
+    def _renumber_landing_queue(self, repo_key: str, target: str) -> None:
+        rows = self._conn.execute(
+            "SELECT id FROM landing_queue WHERE repo_key = ? AND target = ? ORDER BY position",
+            (repo_key, target),
+        ).fetchall()
+        for position, row in enumerate(rows, start=1):
+            self._conn.execute(
+                "UPDATE landing_queue SET position = ? WHERE id = ?", (position, row["id"])
+            )
+
+    def request_landing(
+        self,
+        repo_key: str,
+        holder: str,
+        branch: str,
+        target: str = "development",
+        ttl_s: int = 600,
+        lease_id: str | None = None,
+    ) -> dict[str, Any]:
+        """grants the lock if the slot is free, else queues fifo behind whoever holds it. calling
+        again with a lease_id already granted or queued is the poll/heartbeat - it refreshes the
+        heartbeat rather than taking a second place in line. an unrecognised lease_id (evicted, or
+        from a restarted client) is treated as a fresh request"""
+        self._evict_stale_landing(repo_key, target)
+        now = _now()
+        if lease_id:
+            held = self._conn.execute(
+                "SELECT * FROM landing_locks WHERE repo_key = ? AND target = ? AND lease_id = ?",
+                (repo_key, target, lease_id),
+            ).fetchone()
+            if held is not None:
+                self._conn.execute(
+                    "UPDATE landing_locks SET last_heartbeat = ?, ttl_s = ? WHERE lease_id = ?",
+                    (now, ttl_s, lease_id),
+                )
+                self._conn.commit()
+                return self._landing_status(repo_key, target, lease_id)
+            queued = self._conn.execute(
+                "SELECT * FROM landing_queue WHERE lease_id = ?", (lease_id,)
+            ).fetchone()
+            if queued is not None:
+                self._conn.execute(
+                    "UPDATE landing_queue SET ttl_s = ? WHERE lease_id = ?", (ttl_s, lease_id)
+                )
+                self._conn.commit()
+                return self._landing_status(repo_key, target, lease_id)
+
+        lease_id = lease_id or _new_id()
+        current = self._conn.execute(
+            "SELECT 1 FROM landing_locks WHERE repo_key = ? AND target = ?", (repo_key, target)
+        ).fetchone()
+        if current is None:
+            self._conn.execute(
+                """
+                INSERT INTO landing_locks
+                    (repo_key, target, lease_id, holder, branch, ttl_s, since, last_heartbeat)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (repo_key, target, lease_id, holder, branch, ttl_s, now, now),
+            )
+            self._conn.commit()
+            return self._landing_status(repo_key, target, lease_id)
+
+        next_position = (
+            self._conn.execute(
+                "SELECT COALESCE(MAX(position), 0) FROM landing_queue WHERE repo_key = ? "
+                "AND target = ?",
+                (repo_key, target),
+            ).fetchone()[0]
+            + 1
+        )
+        self._conn.execute(
+            """
+            INSERT INTO landing_queue
+                (id, repo_key, target, lease_id, holder, branch, ttl_s, queued_at, position)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (_new_id(), repo_key, target, lease_id, holder, branch, ttl_s, now, next_position),
+        )
+        self._conn.commit()
+        return self._landing_status(repo_key, target, lease_id)
+
+    def _landing_status(self, repo_key: str, target: str, lease_id: str) -> dict[str, Any]:
+        held = self._conn.execute(
+            "SELECT * FROM landing_locks WHERE repo_key = ? AND target = ? AND lease_id = ?",
+            (repo_key, target, lease_id),
+        ).fetchone()
+        if held is not None:
+            row = _row_to_dict(held)
+            row["granted"] = True
+            return row
+        queued = self._conn.execute(
+            "SELECT * FROM landing_queue WHERE lease_id = ?", (lease_id,)
+        ).fetchone()
+        row = _row_to_dict(queued)
+        row["granted"] = False
+        row["position"] = queued["position"]
+        return row
+
+    def release_landing(self, lease_id: str) -> dict[str, Any]:
+        """releases a held lease and promotes the next queued one, or drops a queued lease that
+        gave up waiting. not an error to release an unknown lease_id - the caller's finally block
+        should never itself fail"""
+        held = self._conn.execute(
+            "SELECT * FROM landing_locks WHERE lease_id = ?", (lease_id,)
+        ).fetchone()
+        if held is not None:
+            repo_key, target = held["repo_key"], held["target"]
+            self._conn.execute("DELETE FROM landing_locks WHERE lease_id = ?", (lease_id,))
+            self._promote_next_landing(repo_key, target)
+            self._conn.commit()
+            return {"released": True}
+        queued = self._conn.execute(
+            "SELECT repo_key, target FROM landing_queue WHERE lease_id = ?", (lease_id,)
+        ).fetchone()
+        if queued is not None:
+            self._conn.execute("DELETE FROM landing_queue WHERE lease_id = ?", (lease_id,))
+            self._renumber_landing_queue(queued["repo_key"], queued["target"])
+            self._conn.commit()
+            return {"released": True}
+        return {"released": False}
+
+    def list_landing(self) -> list[dict[str, Any]]:
+        """every repo/target that has a holder or a queue right now, holder first, queue in
+        order. sweeps stale holders first so a restarted board still reports the truth"""
+        keys = self._conn.execute(
+            "SELECT DISTINCT repo_key, target FROM landing_locks "
+            "UNION SELECT DISTINCT repo_key, target FROM landing_queue"
+        ).fetchall()
+        rows = []
+        for key_row in keys:
+            repo_key, target = key_row["repo_key"], key_row["target"]
+            self._evict_stale_landing(repo_key, target)
+            held = self._conn.execute(
+                "SELECT * FROM landing_locks WHERE repo_key = ? AND target = ?",
+                (repo_key, target),
+            ).fetchone()
+            queue = self._conn.execute(
+                "SELECT * FROM landing_queue WHERE repo_key = ? AND target = ? ORDER BY position",
+                (repo_key, target),
+            ).fetchall()
+            if held is None and not queue:
+                continue
+            rows.append(
+                {
+                    "repo_key": repo_key,
+                    "target": target,
+                    "holder": _row_to_dict(held) if held else None,
+                    "queue": [_row_to_dict(q) for q in queue],
+                }
+            )
+        return rows
