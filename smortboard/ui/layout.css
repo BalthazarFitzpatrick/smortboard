@@ -13,9 +13,9 @@ body {
   /* the tuning page's three knobs - columns.js reads these same three back for its sizing maths,
      so changing a value here is the one edit that moves both the layout and the drawing. today's
      numbers are exactly what the code already used before these existed - not a value change */
-  --pile-gap-above: 0px;
-  --pile-gap-below: 0px;
-  --stack-peek: 50px;
+  --pile-gap-above: 5px;
+  --pile-gap-below: 5px;
+  --stack-peek: 60px;
 }
 
 .board-bar {
