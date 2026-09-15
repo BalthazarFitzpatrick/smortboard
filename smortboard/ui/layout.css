@@ -227,7 +227,7 @@ body {
 .card-pile-layer,
 .card-pile-count {
   position: absolute;
-  inset: 0 0 9px 0;
+  inset: 11px 0 11px 0;
   border: 2px solid var(--pile-edge);
   border-radius: 0;
   background: var(--panel-row);
