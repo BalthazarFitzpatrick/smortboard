@@ -26,7 +26,33 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {sortColumnCards, computePileLayout, computeStackCounts, letterCounts, renderBucketColumn,
   handlePileKey, MIN_PILED_CARDS, computePileFit, fitPiledColumn, squareCard, PILE, PEEK, MIN_CARD,
   PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
-  shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus};`)(SpyMenu, SpyDrawer);
+  shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus,
+  PILE_GAP_ABOVE, PILE_GAP_BELOW, BUCKET_ROW_GAP};`)(SpyMenu, SpyDrawer);
+
+// fixture heights below are derived from the module's own tuning constants, not typed pixel
+// counts, so a future gap-tuning pass moves the fixtures with it instead of breaking them
+const GAP = mod.BUCKET_ROW_GAP; // buildColumn's stub leaves rowGap unset, so this fallback applies
+
+// mirrors computeStackCounts' own "used" formula for a [front, back] split
+function stacksUsed(front, back, card, gap) {
+  const fixed = mod.PILE + 2 * gap + mod.PILE_GAP_ABOVE + mod.PILE_GAP_BELOW;
+  return (front - 1) * mod.PEEK + card + (back - 1) * mod.PEEK + card + fixed;
+}
+
+// mirrors computePileFit's own "used" formula for one pile flanked by two 2-card stacks
+function pileFitUsed(card, gap) {
+  const fixedGaps = 2 * gap + mod.PILE_GAP_ABOVE + mod.PILE_GAP_BELOW; // 2 groups + 1 pile - 1 = 2 gaps
+  return 2 * card + 2 * mod.PEEK + mod.PILE + fixedGaps;
+}
+
+// the room a [2, 2] round-robin rest needs, plus one gap of headroom so it doesn't tip to [3, 2]
+const REST_2X2_HEIGHT = stacksUsed(2, 2, 300, GAP) + GAP;
+// exactly the room two 2-card stacks plus one pile need at full square size - zero left over
+const PILE_FIT_NO_LEFTOVER = pileFitUsed(300, 10);
+// room for every one of 12 cards peeked into a single continuous run, no pile at all
+const ALL_PEEKED_12_HEIGHT = 11 * mod.PEEK + 300;
+// the room a [3, 2] round-robin rest needs, plus one gap of headroom so it doesn't tip to [3, 3]/[4, 2]
+const REST_3X2_HEIGHT = stacksUsed(3, 2, 300, GAP) + GAP;
 
 function card(id, status, extra = {}) {
   return {id, title: `card ${id}`, status, workstream: '', ...extra};
@@ -95,7 +121,7 @@ function piles(bucketRows) {
 
 {
   const cards = Array.from({length: 12}, (_, i) => card(`c${i}`, 'todo'));
-  const {bucketRows} = buildColumn(840, cards);
+  const {bucketRows} = buildColumn(REST_2X2_HEIGHT, cards);
   const rows = bucketRows.children;
   assert.equal(rows.length, 5, '2 full + 1 pile + 2 full');
   assert.equal(fullCards(bucketRows).length, 4, 'at most 4 full cards visible at rest');
@@ -109,7 +135,7 @@ function piles(bucketRows) {
 
 {
   const cards = Array.from({length: 12}, (_, i) => card(`c${i}`, 'todo'));
-  const {bucketRows} = buildColumn(840, cards);
+  const {bucketRows} = buildColumn(REST_2X2_HEIGHT, cards);
   const dispatch = (target, key) => {
     const evt = {key, target, preventDefault() {}, stopPropagation() {}};
     bucketRows._listeners.keydown[0](evt);
@@ -134,7 +160,7 @@ function piles(bucketRows) {
 
 {
   const cards = Array.from({length: 12}, (_, i) => card(`c${i}`, 'todo'));
-  const {bucketRows} = buildColumn(840, cards);
+  const {bucketRows} = buildColumn(REST_2X2_HEIGHT, cards);
   const dispatch = (target, key) => bucketRows._listeners.keydown[0]({key, target, preventDefault() {}, stopPropagation() {}});
   let focused = fullCards(bucketRows)[0];
   for (let i = 0; i < 5; i++) { dispatch(focused, 'ArrowDown'); focused = bucketRows.children.find(r => r.focused); }
@@ -149,7 +175,7 @@ function piles(bucketRows) {
 
 {
   const cards = Array.from({length: 12}, (_, i) => card(`c${i}`, 'todo'));
-  const {bucketRows} = buildColumn(840, cards);
+  const {bucketRows} = buildColumn(REST_2X2_HEIGHT, cards);
   const dispatch = (target, key) => bucketRows._listeners.keydown[0]({key, target, preventDefault() {}, stopPropagation() {}});
   let focused = fullCards(bucketRows)[3]; // c11, the last fixed card
   for (let i = 0; i < 5; i++) { dispatch(focused, 'ArrowUp'); focused = bucketRows.children.find(r => r.focused); }
@@ -168,7 +194,7 @@ function piles(bucketRows) {
   // [2,2]) - moving focus one step from idx 0 to idx 1 is still covered by front=3, so the layout
   // does not reset to a fixed [2, 2]
   const cards = Array.from({length: 20}, (_, i) => card(`r${i}`, 'todo'));
-  const {bucketRows} = buildColumn(900, cards);
+  const {bucketRows} = buildColumn(REST_3X2_HEIGHT, cards);
   assert.deepEqual(fullCards(bucketRows).map(r => r.dataset.cardId), ['r0', 'r1', 'r2', 'r18', 'r19'],
     'rests at the round-robin [3, 2] split, not a fixed [2, 2]');
   const dispatch = (target, key) => bucketRows._listeners.keydown[0]({key, target, preventDefault() {}, stopPropagation() {}});
@@ -287,7 +313,7 @@ function piles(bucketRows) {
   assert.ok(a.url && c.url, 'each cached entry carries a real image url');
 }
 
-// ---- computePileFit: the pile is fixed at 96px and only ever grows with the leftover -------------
+// ---- computePileFit: the pile is fixed at PILE and only ever grows with the leftover -----------
 
 {
   // roomy: a wide column leaves plenty over past the full-size cards - the pile takes all of it
@@ -303,9 +329,9 @@ function piles(bucketRows) {
   // a real gap only sits between groups (2 of them here, around the pile), never inside a stack,
   // whose own cards overlap via negative margin-top instead
   const rows = [{type: 'card'}, {type: 'card'}, {type: 'pile'}, {type: 'card'}, {type: 'card'}];
-  const fit = mod.computePileFit(rows, 816, 10, 300);
+  const fit = mod.computePileFit(rows, PILE_FIT_NO_LEFTOVER, 10, 300);
   assert.equal(fit.card, 300, 'still full square size');
-  assert.equal(fit.pileHeight, mod.PILE, 'nothing left over past the cards - the pile sits at its 96px floor');
+  assert.equal(fit.pileHeight, mod.PILE, 'nothing left over past the cards - the pile sits at its own floor');
 }
 
 {
@@ -321,18 +347,21 @@ function piles(bucketRows) {
 {
   // just enough room for the shrunk floor - cards shrink but the column does not need to scroll
   const rows = [{type: 'card'}, {type: 'pile'}, {type: 'card'}];
-  const fit = mod.computePileFit(rows, 2 * mod.MIN_CARD + mod.PILE + 20, 10, 300);
+  // two single-card groups + one pile: fixedGaps is 2 * gap + the pile's own above/below knobs -
+  // exactly enough room for two MIN_CARD cards plus the pile plus those fixed gaps, no more
+  const fixedGaps = 2 * 10 + mod.PILE_GAP_ABOVE + mod.PILE_GAP_BELOW;
+  const fit = mod.computePileFit(rows, 2 * mod.MIN_CARD + mod.PILE + fixedGaps, 10, 300);
   assert.equal(fit.card, mod.MIN_CARD);
   assert.equal(fit.scrolls, false, 'the shrunk floor is enough - no scroll needed');
 }
 
-// ---- a pile never grows past PILE + one PEEK (146px) - the rest stays empty, not in the pile -----
+// ---- a pile never grows past PILE + one PEEK - the rest stays empty, not in the pile ------------
 
 {
   // wildly roomy - the old rule would have handed all of it to the pile; the new rule caps it
   const rows = [{type: 'card'}, {type: 'card'}, {type: 'pile'}, {type: 'card'}, {type: 'card'}];
   const fit = mod.computePileFit(rows, 3000, 10, 300);
-  assert.equal(fit.pileHeight, mod.PILE + mod.PEEK, 'the pile stops growing at 96 + 50 = 146px');
+  assert.equal(fit.pileHeight, mod.PILE + mod.PEEK, `the pile stops growing at ${mod.PILE} + ${mod.PEEK} = ${mod.PILE + mod.PEEK}px`);
 }
 {
   // several piles share the leftover, and each is capped the same way, independently
@@ -343,22 +372,22 @@ function piles(bucketRows) {
 {
   // a little leftover, less than one PEEK - the pile takes exactly that, same as before the cap
   const rows = [{type: 'card'}, {type: 'card'}, {type: 'pile'}, {type: 'card'}, {type: 'card'}];
-  const fit = mod.computePileFit(rows, 816 + 30, 10, 300);
+  const fit = mod.computePileFit(rows, PILE_FIT_NO_LEFTOVER + 30, 10, 300);
   assert.equal(fit.pileHeight, mod.PILE + 30, 'under the PEEK cap, the pile still takes the whole leftover');
 }
 
 // ---- no pile when it isn't needed: if every card fits as one continuously peeked run, no pile ----
 
 {
-  // 12 cards, a 300px-wide column, and enough room for all 12 peeked (11*50 + 300 = 850px) - not
+  // 12 cards, a 300px-wide column, and enough room for all 12 peeked (11 * PEEK + card) - not
   // a single card is hidden behind a pile
-  assert.deepEqual(mod.computeStackCounts(12, 850, 300, 18), [12, 0], 'front takes every card, back and the pile are empty');
+  assert.deepEqual(mod.computeStackCounts(12, ALL_PEEKED_12_HEIGHT, 300, 18), [12, 0], 'front takes every card, back and the pile are empty');
   const cards = Array.from({length: 12}, (_, i) => card(`n${i}`, 'todo'));
   const bucketEl = element('div', 'bucket');
   bucketEl.dataset.status = 'todo';
   const label = element('div', 'bucket-label');
   const bucketRows = element('div', 'bucket-rows');
-  bucketRows.getBoundingClientRect = () => ({top: 800 - 24 - 850, left: 0, right: 0, bottom: 0, width: 300, height: 0});
+  bucketRows.getBoundingClientRect = () => ({top: 800 - 24 - ALL_PEEKED_12_HEIGHT, left: 0, right: 0, bottom: 0, width: 300, height: 0});
   bucketEl.appendChild(label);
   bucketEl.appendChild(bucketRows);
   mod.renderBucketColumn(bucketEl, cards, 'todo');
@@ -367,8 +396,8 @@ function piles(bucketRows) {
 }
 {
   // one card too many for the no-pile route - now a pile has to appear
-  assert.notDeepEqual(mod.computeStackCounts(13, 850, 300, 18), [13, 0], 'one more card and the continuous run no longer fits');
-  const [front, back] = mod.computeStackCounts(13, 850, 300, 18);
+  assert.notDeepEqual(mod.computeStackCounts(13, ALL_PEEKED_12_HEIGHT, 300, 18), [13, 0], 'one more card and the continuous run no longer fits');
+  const [front, back] = mod.computeStackCounts(13, ALL_PEEKED_12_HEIGHT, 300, 18);
   assert.ok(front + back < 13, 'so a pile holds whatever is left over');
 }
 
@@ -376,8 +405,8 @@ function piles(bucketRows) {
 
 {
   assert.deepEqual(mod.computeStackCounts(12, 200, 300, 10), [1, 1], 'not even 1 card per stack fits - both stay at their floor of 1');
-  assert.deepEqual(mod.computeStackCounts(12, 840, 300, 18), [2, 2], 'room for 2 apiece, not 3 - round-robin lands even');
-  const [front, back] = mod.computeStackCounts(12, 840, 300, 18);
+  assert.deepEqual(mod.computeStackCounts(12, REST_2X2_HEIGHT, 300, 18), [2, 2], 'room for 2 apiece, not 3 - round-robin lands even');
+  const [front, back] = mod.computeStackCounts(12, REST_2X2_HEIGHT, 300, 18);
   assert.ok(Math.abs(front - back) <= 1, 'the two stacks never differ by more than one card');
 }
 
@@ -430,7 +459,7 @@ function piles(bucketRows) {
   mod.renderBucketColumn(bucketEl, cards, 'todo');
   assert.ok(bucketRows.className.includes('bucket-rows-scrolls'), 'too short even at the card floor - the column scrolls');
   const pile = piles(bucketRows)[0];
-  assert.equal(parseFloat(pile.style.height), mod.PILE, 'a scrolling pile still keeps its plain 96px floor, no more');
+  assert.equal(parseFloat(pile.style.height), mod.PILE, 'a scrolling pile still keeps its plain floor, no more');
 }
 
 // ---- regression: a 35-card column really ends inside the window, not past its bottom -----------
@@ -535,7 +564,7 @@ globalThis.window.innerHeight = 800;
   // up to MAX_PILE_LAYERS drawn, bottom first: the first (lowest-index) card ends up painted last
   // (closest to the face), the way a real desk pile is built up one card at a time
   const cards = Array.from({length: 20}, (_, i) => card(`z${i}`, 'todo'));
-  const {bucketRows} = buildColumn(836, cards);
+  const {bucketRows} = buildColumn(REST_2X2_HEIGHT, cards);
   const pile = piles(bucketRows)[0];
   const layers = pile.children.filter(c => c.className.includes('card-pile-layer'));
   assert.equal(layers.length, mod.MAX_PILE_LAYERS, 'never more than MAX_PILE_LAYERS drawn edges');
@@ -549,7 +578,7 @@ globalThis.window.innerHeight = 800;
 
 {
   const cards = Array.from({length: 12}, (_, i) => card(`w${i}`, 'todo'));
-  const {bucketEl, bucketRows} = buildColumn(840, cards); // starts piled: 2 full + pile + 2 full
+  const {bucketEl, bucketRows} = buildColumn(REST_2X2_HEIGHT, cards); // starts piled: 2 full + pile + 2 full
   bucketRow.appendChild(bucketEl); // refitPiledColumns finds columns under #bucket-row
   assert.equal(piles(bucketRows).length, 1, 'starts piled at the narrow/short size');
   const focused = fullCards(bucketRows)[0];
@@ -574,7 +603,7 @@ globalThis.window.innerHeight = 800;
 
 {
   const cards = Array.from({length: 12}, (_, i) => card(`m${i}`, 'todo'));
-  const {bucketRows} = buildColumn(840, cards); // 2 full + pile + 2 full - the front pair overlaps
+  const {bucketRows} = buildColumn(REST_2X2_HEIGHT, cards); // 2 full + pile + 2 full - the front pair overlaps
   const covered = fullCards(bucketRows).find(s => s.className.includes('card-covered'));
   const covering = bucketRows.children[bucketRows.children.indexOf(covered) + 1];
   assert.ok(covered && covering, 'a covered card and the one covering it both exist');
