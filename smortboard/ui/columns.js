@@ -238,7 +238,7 @@ function applyCardShadows(bucketRowsEl) {
     // plain list's own fan-item:focus z-index lift stays the only one in play for that case, so
     // this never fights it
     if (!row.classList.contains('fan-item')) {
-      const decorated = row.classList.contains('card-attention');
+      const decorated = row.classList.contains('card-attention') || row === document.activeElement;
       row.style.zIndex = String(decorated ? base + DECORATION_LIFT : base);
     }
     if (w && h) {
@@ -673,6 +673,9 @@ function focusPileIndex(bucketRowsEl, idx) {
   target.tabIndex = 0;
   target.focus();
   indicateCardFocus(target);
+  // applyCardShadows' decoration lift reads document.activeElement - drawColumn's own call (just
+  // before this) ran ahead of target.focus(), so it never saw the new target as focused
+  applyCardShadows(bucketRowsEl);
 }
 
 // ArrowDown/Up inside a piled column, intercepted ahead of buckets.js's own roving nav (see
@@ -734,7 +737,13 @@ function wireColumnFocus(bucketRowsEl) {
   bucketRowsEl.addEventListener('focusin', evt => {
     const row = evt.target.closest?.('[data-idx]');
     if (row && bucketRowsEl._pile) bucketRowsEl._pile.focusIndex = Number(row.dataset.idx);
+    // a plain mouse/tab focus move (not through handlePileKey) still needs the decoration lift
+    // reapplied against the new document.activeElement
+    applyCardShadows(bucketRowsEl);
   });
+  // losing focus (a covered card in particular) drops the lift the same way - reapply with no
+  // row matching document.activeElement inside this column
+  bucketRowsEl.addEventListener('focusout', () => applyCardShadows(bucketRowsEl));
 }
 
 // builds one status column - every card full if it fits (or expanded, or too few to pile), else

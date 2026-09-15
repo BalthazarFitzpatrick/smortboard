@@ -622,9 +622,9 @@ globalThis.window.innerHeight = 800;
   assert.equal(marker.style.clipPath, '', 'the covering card keeps its full, unclipped frame');
 }
 
-// ---- applyCardShadows: an attention card's ring glow clears the shadow the next card casts over
-// it - it must out-rank that one shadow, but never the next card itself, or the ring would draw
-// over a neighbour / uncover a covered card, exactly what it must not do -------------------------
+// ---- applyCardShadows: a decorated row (focused, or attention) clears the shadow the next card
+// casts over it - it must out-rank that one shadow, but never the next card itself, or the
+// decoration would draw over a neighbour / uncover a covered card, exactly what it must not do ----
 
 {
   const cards = Array.from({length: 12}, (_, i) => card(`z${i}`, 'todo'));
@@ -643,11 +643,18 @@ globalThis.window.innerHeight = 800;
   const coveringShadeZ = Number(document.querySelectorAll('.card-shade')[strips.indexOf(covering)].style.zIndex);
   assert.ok(coveringShadeZ > plainZ, 'at rest, the covering card\'s shadow paints over the covered card');
 
+  covered.focus();
+  mod.applyCardShadows(bucketRows);
+  const focusedZ = Number(covered.style.zIndex);
+  assert.ok(focusedZ > coveringShadeZ, 'focused, the covered card clears the shadow covering it');
+  assert.ok(focusedZ < coveringZ, 'but still stays below the card actually covering it - never uncovered');
+  covered.blur?.();
+
   covered.className += ' card-attention';
   mod.applyCardShadows(bucketRows);
   const attentionZ = Number(covered.style.zIndex);
-  assert.ok(attentionZ > coveringShadeZ, 'an attention ring clears the covering shadow');
-  assert.ok(attentionZ < coveringZ, 'and never climbs above the card covering it');
+  assert.ok(attentionZ > coveringShadeZ, 'an attention ring clears the covering shadow the same way');
+  assert.ok(attentionZ < coveringZ, 'and also never climbs above the card covering it');
 }
 
 console.log('ok');
