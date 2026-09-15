@@ -132,6 +132,26 @@ body {
 /* bottom-anchored (focus reached the last card): the rows pin to the bottom edge, so the column's
    first cards are the ones cut, at the top - never the piles */
 .bucket-rows.bucket-rows-piled.bucket-rows-bottom { justify-content: flex-end; }
+/* ROOM FOR THE TOP CARD'S SHADOW. a card's shadow is its own child now (columns.js), so the clip
+   above would cut the first card's shadow flat. padding moves the clip's top edge past the
+   shadow's reach, and an equal negative margin cancels it, so nothing moves (columns.js reads the
+   padding back in availableColumnHeight). top only: padding past the bottom edge would grow the
+   board's own scroll area. bottom-anchored, clip-path cuts the first cards at the column's real
+   top edge. the padding overlaps the header, so only the rows themselves take clicks */
+.bucket-rows.bucket-rows-piled:not(.bucket-rows-scrolls) {
+  --shadow-room: 24px;
+  box-sizing: content-box;
+  padding-top: var(--shadow-room);
+  margin-top: calc(-1 * var(--shadow-room));
+  pointer-events: none;
+}
+.bucket-rows.bucket-rows-piled.bucket-rows-bottom:not(.bucket-rows-scrolls) {
+  clip-path: inset(var(--shadow-room) -40px 0 -40px);
+}
+.bucket-rows.bucket-rows-piled > * { pointer-events: auto; }
+/* bottom-anchored, the last card sits on the column's cut edge: its lift grows up and sideways
+   from that edge, so the clip never takes the bottom of its frame */
+.bucket-rows.bucket-rows-piled.bucket-rows-bottom > .card-strip:last-child { transform-origin: 50% 100%; }
 /* only a piled column that truly can't shrink its cards any further scrolls (computeGroupFit) */
 .bucket-rows.bucket-rows-piled.bucket-rows-scrolls { overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
 
@@ -143,10 +163,14 @@ body {
    a plain box-shadow can't put more darkness at a corner than along a side, and can't be drawn
    outside a card's own overflow:hidden box the way a covered card's peek needs it to */
 .card-strip { box-shadow: none; }
-/* the shadow layer: one per .bucket, positioned against it (not .bucket-rows), holding one <img>
-   per card strip - never the piles, which keep their own card-pile-layer box-shadow */
-.card-shadow-layer { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
-.card-shadow-layer .card-shade { position: absolute; max-width: none; pointer-events: none; }
+/* the shadow is a child canvas of its own card (columns.js attachCardShadow) - never the piles,
+   which keep their own card-pile-layer box-shadow. z-index 0 makes every strip its own stacking
+   context, so the canvas's -1 paints over the earlier card this one covers, never over its own card
+   or a later one; strips sharing z 0 then paint in dom order, the later card on top */
+.card-strip { z-index: 0; }
+.card-strip > .card-shade { position: absolute; z-index: -1; max-width: none; pointer-events: none; }
+/* a row replayed once on its way out - onto a pile, or a pile emptying - under every live row */
+.row-ghost { pointer-events: none; }
 /* a seventh shorter than ui_base's 1:1.2, so a pile's neighbours leave it room to read as a pile.
    the fan's overlap scales with it (-80% x 6/7), or an unpiled column would hide more of each card */
 .card-strip { aspect-ratio: 1 / 1.0286; border-radius: 0; }
@@ -168,14 +192,9 @@ body {
 /* clears the ⋯ sitting over the same corner rather than letting a long title run under it */
 .card-strip .card-title { padding-right: 26px; box-sizing: border-box; }
 
-.card-strip.card-attention, .expand-panel.card-attention {
-  border-color: var(--fill-attention);
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--fill-attention) 60%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--fill-attention) 28%, transparent),
-    0 0 0 7px color-mix(in srgb, var(--fill-attention) 9%, transparent),
-    var(--shadow-lift);
-}
+/* attention is the standard frame in vanilla, nothing more: the thick ring glow it used to wear
+   fought the drop shadow, and the operator dropped it on 2026-09-15 */
+.card-strip.card-attention, .expand-panel.card-attention { border-color: var(--fill-attention); }
 /* done is lichen, an edge like every other state: the fills are too flat at card size. measured
    under simulated deuteranopia it stays delta-e 54 from the rejected red, and 2.6x brighter */
 .card-strip.card-accepted { border-color: var(--status-good); }
@@ -185,19 +204,15 @@ body {
    transform keeps the fan's 140ms slide, and indicate.js re-places its marker once this settles */
 .card-strip { transition: transform 140ms, filter 140ms, box-shadow 140ms; }
 .card-strip:focus { transform: scale(1.03); filter: saturate(1.7) brightness(1.4); }
-/* PILED CARDS NEVER SCALE ON FOCUS. indicate.js's marker glides to the card's own boundingClientRect,
-   which a 1.03x scale grows past the card's own footprint - straight into a covered neighbour above
-   or below it (the whole point of a stack is that footprint is all a covered card has left, and a
-   covering card's own growth pushes further over it too). a piled card is any non-fan-item full card
-   (fitPiledColumn drops fan-item for both members of a pair); it keeps the same colour/intensity cue
-   as the plain fan, just without the transform that would draw over a neighbour.
-   IT DOES GET A RING INSTEAD, to make up for losing the grow cue: an inset box-shadow, which paints
-   inward from the card's own border and never crosses into a neighbour's footprint (covered or
-   covering) the way an outward ring or a scale would - safe to show on a covered card's peek band */
+/* A PILED CARD LIFTS LIKE ANY OTHER AND DRAWS ITS OWN FOCUS RING. the ring is on the card itself -
+   an inset frame plus an inner glow, half the width it shipped at (operator, 2026-09-15) - so it
+   scales with the card's lift and is covered by exactly what covers the card. indicate.js's shared
+   marker is a fixed overlay above everything: on a stacked card it glided to the scaled box and
+   drew over the neighbours, so it stays hidden while a piled card has focus (the rule below) */
 .card-strip:not(.fan-item):focus {
-  transform: none;
-  box-shadow: inset 0 0 0 3px var(--cream), inset 0 0 16px 3px color-mix(in srgb, var(--cream) 65%, transparent);
+  box-shadow: inset 0 0 0 3px var(--cream), inset 0 0 8px 1.5px color-mix(in srgb, var(--cream) 65%, transparent);
 }
+body:has(.card-strip:not(.fan-item):focus) .focus-marker { opacity: 0; }
 /* the plain fan (unpiled) wants a focused card lifted above the ones already covering it - a
    piled pair does not: applyCardShadows always keeps the later card on top of the earlier one, and
    a stray z-index here would let a focused-but-earlier card pop over it regardless of that */

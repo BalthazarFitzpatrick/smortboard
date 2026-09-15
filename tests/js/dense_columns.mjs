@@ -27,7 +27,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
   handlePileKey, MIN_PILED_CARDS, fitPiledColumn, squareCard, PILE, PEEK, MIN_CARD,
   PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
   shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus, applyCardShadows,
-  PILE_GAP_ABOVE, PILE_GAP_BELOW, BUCKET_ROW_GAP};`)(SpyMenu, SpyDrawer);
+  PILE_GAP_ABOVE, PILE_GAP_BELOW, BUCKET_ROW_GAP, flipDelta};`)(SpyMenu, SpyDrawer);
 
 // fixture heights below are derived from the module's own tuning constants, not typed pixel
 // counts, so a future gap-tuning pass moves the fixtures with it instead of breaking them
@@ -550,64 +550,126 @@ globalThis.window.innerHeight = 800;
   assert.ok(stillFocused && stillFocused.dataset.cardId === 'w0', 'focus stays on the same card through the refit');
 }
 
-// ---- indicateCardFocus: a covered card's marker clips to its own visible peek band, never the
-// full box that would otherwise run across the card covering it. a covering (or plain) card keeps
-// its full frame -------------------------------------------------------------------------------
+// ---- the ends match the mockup's pushGroup (derived/column_motion, layoutC): the focused card is
+// always the open one - at rest, when focus first lands in the column, and at the last card - with
+// the cards passed as covered strips above it and the next card full below it ---------------------
 
-{
-  const cards = Array.from({length: 12}, (_, i) => card(`m${i}`, 'todo'));
-  const {bucketRows} = buildColumn(SHORT_N2, cards); // 2 full + pile + 2 full - the front pair overlaps
-  const covered = fullCards(bucketRows).find(s => s.className.includes('card-covered'));
-  const covering = bucketRows.children[bucketRows.children.indexOf(covered) + 1];
-  assert.ok(covered && covering, 'a covered card and the one covering it both exist');
-
-  // real geometry: the covering card's own top sits PEEK px below the covered card's top - only
-  // that top band is what fitPiledColumn actually leaves visible
-  covered.getBoundingClientRect = () => ({top: 100, left: 0, right: 0, bottom: 330, width: 230, height: 230});
-  covering.getBoundingClientRect = () => ({top: 100 + mod.PEEK, left: 0, right: 0, bottom: 380, width: 230, height: 230});
-
-  mod.indicateCardFocus(covered);
-  const marker = document.querySelector('.focus-marker');
-  assert.equal(marker.style.clipPath, `inset(0 0 calc(100% - ${mod.PEEK}px) 0)`,
-    'a covered card clips the marker to its own peek band, not its full (unclipped) box');
-
-  mod.indicateCardFocus(covering);
-  assert.equal(marker.style.clipPath, '', 'the covering card keeps its full, unclipped frame');
+// the column top to bottom: 'P' a pile, else the card's 1-based position plus 'o' (open, nothing
+// slides over it) or 's' (a covered strip)
+function drawn(bucketRows) {
+  return bucketRows.children.map(el => (el.className.includes('card-pile') ? 'P'
+    : `${Number(el.dataset.idx) + 1}${el.className.includes('card-covered') ? 's' : 'o'}`));
+}
+// focus arriving from outside the column - buckets.js's left/right nav, tab, a panel closing -
+// rather than through a pile key
+function focusFromOutside(bucketRows, row) {
+  row.focus();
+  bucketRows._listeners.focusin[0]({target: row, stopPropagation() {}});
+  return bucketRows.children.find(r => r.focused);
 }
 
-// ---- applyCardShadows: a decorated row (focused, or attention) clears the shadow the next card
-// casts over it - it must out-rank that one shadow, but never the next card itself, or the
-// decoration would draw over a neighbour / uncover a covered card, exactly what it must not do ----
+for (const [room, n] of [[SHORT_N2, 2], [TALL_N3, 3]]) {
+  const total = 14;
+  const cards = Array.from({length: total}, (_, i) => card(`e${n}-${i}`, 'todo'));
+  const {bucketRows} = buildColumn(room, cards);
+  const rest = n === 3 ? ['1o', '2s', '3o'] : ['1o', '2o'];
+  assert.deepEqual(drawn(bucketRows).slice(0, n), rest, `n=${n}, at rest: card 1 is the open one, as with focus on it`);
+  const first = focusFromOutside(bucketRows, fullCards(bucketRows)[0]);
+  assert.equal(first.dataset.idx, '0');
+  assert.deepEqual(drawn(bucketRows).slice(0, n), rest, `n=${n}: focus landing on card 1 finds it open`);
+  const second = focusFromOutside(bucketRows, fullCards(bucketRows).find(s => s.dataset.idx === '1'));
+  assert.equal(second.dataset.idx, '1', 'the column redraws around a card focus lands on from outside');
+  assert.deepEqual(drawn(bucketRows).slice(0, n), n === 3 ? ['1s', '2o', '3o'] : ['1s', '2o'],
+    `n=${n}: card 2 focused - card 1 passed as a strip, card 2 open, card 3 full below it`);
+  const press = keyDriver(bucketRows);
+  for (let i = 2; i < total; i++) press('ArrowDown');
+  assert.equal(bucketRows.children.find(r => r.focused).dataset.idx, String(total - 1));
+  assert.deepEqual(drawn(bucketRows).slice(-n), n === 3 ? ['12s', '13s', '14o'] : ['13s', '14o'],
+    `n=${n}, the last card: the cards passed are strips above it, the last card open at the bottom`);
+  press('ArrowUp');
+  assert.deepEqual(drawn(bucketRows).slice(-n), n === 3 ? ['12s', '13o', '14o'] : ['13o', '14o'],
+    `n=${n}, one back up: that card opens and the last card stays full below it`);
+}
+
+// ---- card shadows ride their card: each is a child canvas of its own strip, placed against the
+// strip itself, so a card that moves takes its shadow with it and none is ever left behind -------
 
 {
-  const cards = Array.from({length: 12}, (_, i) => card(`z${i}`, 'todo'));
-  const {bucketRows} = buildColumn(SHORT_N2, cards); // 2 full + pile + 2 full
-  const strips = fullCards(bucketRows);
-  const covered = strips.find(s => s.className.includes('card-covered'));
-  const covering = bucketRows.children[bucketRows.children.indexOf(covered) + 1];
-  covered.getBoundingClientRect = () => ({top: 100, left: 0, right: 0, bottom: 330, width: 230, height: 230});
-  covering.getBoundingClientRect = () => ({top: 100 + mod.PEEK, left: 0, right: 0, bottom: 380, width: 230, height: 230});
-
+  const cards = Array.from({length: 12}, (_, i) => card(`y${i}`, 'todo'));
+  const {bucketEl, bucketRows} = buildColumn(SHORT_N2, cards);
+  const pad = mod.shadowImage(WIDE, WIDE).pad; // the stub's border width is 0
+  const shadeOf = strip => strip.children.filter(c => c.className === 'card-shade');
+  const assertRiding = where => {
+    const strips = fullCards(bucketRows);
+    strips.forEach(s => assert.equal(shadeOf(s).length, 1, `${where}: exactly one shadow per card`));
+    const all = bucketEl.querySelectorAll('.card-shade');
+    assert.equal(all.length, strips.length, `${where}: no shadow outside a drawn card`);
+    all.forEach(c => {
+      assert.ok(strips.includes(c.parentNode), `${where}: every shadow is a child of a card still drawn`);
+      assert.deepEqual([c.style.top, c.style.left], [`-${pad}px`, `-${pad}px`], `${where}: placed against its own card`);
+    });
+  };
+  assertRiding('at rest');
+  assert.equal(bucketEl.querySelectorAll('.card-shadow-layer').length, 0, 'no shared shadow layer left');
+  const strip = fullCards(bucketRows)[0];
+  strip.getBoundingClientRect = () => ({top: 100, left: 0, right: WIDE, bottom: 100 + WIDE, width: WIDE, height: WIDE});
   mod.applyCardShadows(bucketRows);
-  const plainZ = Number(covered.style.zIndex);
-  const coveringZ = Number(covering.style.zIndex);
-  // the shade canvases are appended in row order, one per full card - covering's own is at its
-  // same position among them, since piles never get one (applyCardShadows skips card-pile rows)
-  const coveringShadeZ = Number(document.querySelectorAll('.card-shade')[strips.indexOf(covering)].style.zIndex);
-  assert.ok(coveringShadeZ > plainZ, 'at rest, the covering card\'s shadow paints over the covered card');
-
-  covered.focus();
+  const shade = shadeOf(strip)[0];
+  strip.getBoundingClientRect = () => ({top: 400, left: 40, right: 40 + WIDE, bottom: 400 + WIDE, width: WIDE, height: WIDE});
   mod.applyCardShadows(bucketRows);
-  const focusedZ = Number(covered.style.zIndex);
-  assert.ok(focusedZ > coveringShadeZ, 'focused, the covered card clears the shadow covering it');
-  assert.ok(focusedZ < coveringZ, 'but still stays below the card actually covering it - never uncovered');
-  covered.blur?.();
-
-  covered.className += ' card-attention';
+  assert.equal(shadeOf(strip)[0], shade, 'a card that moved keeps the very same shadow node');
+  assert.deepEqual([shade.style.top, shade.style.left], [`-${pad}px`, `-${pad}px`], 'still placed against the card, wherever it went');
+  strip.getBoundingClientRect = () => ({top: 400, left: 40, right: 340, bottom: 630, width: WIDE, height: mod.PORTRAIT_BELOW});
   mod.applyCardShadows(bucketRows);
-  const attentionZ = Number(covered.style.zIndex);
-  assert.ok(attentionZ > coveringShadeZ, 'an attention ring clears the covering shadow the same way');
-  assert.ok(attentionZ < coveringZ, 'and also never climbs above the card covering it');
+  assert.equal(shadeOf(strip).length, 1, 'a card that changed size swaps its shadow, never stacks a second');
+  assert.equal(shadeOf(strip)[0].dataset.size, `${WIDE}x${mod.PORTRAIT_BELOW}`, 'sized to the card\'s new box');
+  const press = keyDriver(bucketRows);
+  for (let i = 1; i < cards.length; i++) { press('ArrowDown'); assertRiding(`down to ${i}`); }
+  for (let i = cards.length - 2; i >= 0; i--) { press('ArrowUp'); assertRiding(`up to ${i}`); }
+}
+
+// ---- flip: the translate/scale that replays a row from its old box, about the element's centre --
+
+{
+  const d = mod.flipDelta({left: 0, top: 0, width: WIDE, height: mod.PILE}, {left: 0, top: mod.PILE, width: WIDE, height: WIDE});
+  assert.deepEqual(d, {x: 0, y: mod.PILE / 2 - (mod.PILE + WIDE / 2), sx: 1, sy: mod.PILE / WIDE},
+    'a card drawn off a pile starts at the pile\'s own box - its centre, its height');
+}
+
+// ---- attention is the standard frame in vanilla: no ring, glow or outline past it, in css or on
+// the card itself ---------------------------------------------------------------------------------
+
+const layoutCss = smort('layout.css').replace(/\/\*[\s\S]*?\*\//g, '');
+// every rule whose selector mentions `needle`, as [selector, body] pairs
+function cssRules(needle) {
+  return [...layoutCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map(m => [m[1].trim(), m[2]]).filter(([sel]) => sel.includes(needle));
+}
+
+{
+  const rules = cssRules('.card-attention');
+  assert.ok(rules.length, 'the attention rule is still there - it sets the frame colour');
+  rules.forEach(([sel, body]) => assert.ok(!/box-shadow|outline/.test(body), `${sel}: no ring or glow past the frame`));
+  const cards = [card('x1', 'todo', {review_flag: true}), card('x2', 'todo', {blocked_reason_code: 'CRASH'})];
+  const {bucketRows} = buildColumn(2000, cards, 'attention');
+  fullCards(bucketRows).forEach(s => {
+    assert.ok(s.className.includes('card-attention'), 'still marked attention, for the frame colour');
+    assert.deepEqual(s.className.split(' ').filter(c => /glow|ring/.test(c)), [], 'no glow or ring class');
+    assert.ok(!s.style.boxShadow && !s.style.outline, 'no inline ring either');
+  });
+}
+
+// ---- focus: every card lifts 3% - a piled one too - and a piled card draws its own ring, so the
+// shared marker (a fixed overlay above everything) hides while one has focus ------------------------
+
+{
+  const lift = cssRules('.card-strip:focus').map(([, body]) => body).join(';');
+  assert.match(lift, /transform:\s*scale\(1\.03\)/, 'a focused card lifts 3% toward the viewer');
+  assert.ok(!cssRules(':focus').some(([, body]) => /transform:\s*none/.test(body)), 'no rule takes the lift off a piled card');
+  const ring = cssRules('.card-strip:not(.fan-item):focus').map(([, body]) => body).join(';');
+  assert.match(ring, /inset 0 0 8px 1\.5px/, 'the inner glow is half its old 16px blur and 3px spread');
+  assert.ok(cssRules('.focus-marker').some(([sel, body]) => sel.includes(':has(.card-strip:not(.fan-item):focus)') && /opacity:\s*0/.test(body)),
+    'the shared marker hides while a piled card has focus');
 }
 
 console.log('ok');
