@@ -250,8 +250,10 @@ function buildFullRow(card, idx, fanned = true) {
 
 // pure: rows in order ({type: 'card'|'pile', height, focused} - a pile's height is ignored), the
 // available height and the row gap -> each pile's height and how much to cut off each full card.
-// piles share the leftover; if that leaves a pile under its minimum, one card of each adjacent full
-// pair gives up its lower part to pay for it - never the focused one, never past its title band
+// piles share the leftover; if that leaves a pile under its minimum, the EARLIER card of each
+// adjacent full pair always gives up its lower part to pay for it, focused or not - the later card
+// always ends up on top (layout.css leaves it un-lifted), so who is reading which one never flips
+// which card the stack shows on top. cuts still respect the title-band floor below
 function computePileFit(rows, available, gap) {
   const piles = rows.filter(r => r.type === 'pile').length;
   const cardsHeight = rows.reduce((sum, r) => sum + (r.type === 'card' ? r.height : 0), 0);
@@ -259,10 +261,9 @@ function computePileFit(rows, available, gap) {
   const cuts = rows.map(() => 0);
   if (!piles) return {pileHeight: 0, cuts};
   if (leftover / piles >= MIN_PILE_HEIGHT) return {pileHeight: Math.floor(leftover / piles), cuts};
-  // the pair's upper card gives way unless it holds focus, then the lower one does
   const victims = [];
   rows.forEach((r, i) => {
-    if (r.type === 'card' && rows[i - 1]?.type === 'card') victims.push(rows[i - 1].focused ? i : i - 1);
+    if (r.type === 'card' && rows[i - 1]?.type === 'card') victims.push(i - 1);
   });
   // smallest card first, so one hitting its floor spills the rest onto the others
   let remaining = piles * MIN_PILE_HEIGHT - leftover;
