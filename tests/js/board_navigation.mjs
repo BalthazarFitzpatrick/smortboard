@@ -29,7 +29,7 @@ document.body.appendChild(bucketRow);
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function(`${src}
-;return {STATUSES, BINDINGS, renderBuckets, renderCardStrip, cardClasses, acceptOrRejectCard, slideFrom};`)();
+;return {STATUSES, COLUMNS, columnFor, BINDINGS, renderBuckets, renderCardStrip, cardClasses, acceptOrRejectCard, slideFrom};`)();
 
 // ---- five status buckets, matching the contract's kanban columns exactly
 assert.deepEqual(mod.STATUSES, STATUS_ORDER, 'board.js should declare exactly the five kanban statuses');
@@ -135,3 +135,44 @@ assert.ok(plain.innerHTML.includes('<span class="card-action card-action-quiet" 
 // ---- the overview no longer shows the short-id (9bd5a207) - it moved into the opened detail
 const idCard = mod.renderCardStrip({id: '6a05dc01-4225-4f11-9167-77ff40069c8a', title: 't', status: 'todo'});
 assert.ok(!idCard.innerHTML.includes('card-id'), 'the overview strip carries no short-id span');
+
+// ---- the attention column: todo, doing, attention, checking, accepted, rejected -----------------
+
+assert.deepEqual(mod.COLUMNS, ['todo', 'doing', 'attention', 'checking', 'accepted', 'rejected'],
+  'attention sits right after doing, ahead of checking - checking still sits between it and accepted');
+// STATUSES (the real, storable statuses) is unchanged - attention is presentation only
+assert.deepEqual(mod.STATUSES, STATUS_ORDER, 'attention never becomes a storable status');
+
+{
+  // a fixture with all six columns, so an attention-flagged card has somewhere to land
+  const sixBucketRow = element('div', 'bucket-row');
+  sixBucketRow.id = 'bucket-row';
+  mod.COLUMNS.forEach(column => {
+    const bucket = element('div', 'bucket');
+    bucket.dataset.status = column;
+    bucket.appendChild(element('div', 'bucket-label'));
+    bucket.appendChild(element('div', 'bucket-rows'));
+    sixBucketRow.appendChild(bucket);
+  });
+  document.body.querySelector('#bucket-row').remove();
+  document.body.appendChild(sixBucketRow);
+
+  const plainDoing = {id: 'd1', title: 'plain doing', status: 'doing', workstream: 'w'};
+  const blockedDoing = {id: 'd2', title: 'blocked doing', status: 'doing', workstream: 'w', blocked_reason_code: 'LEASE_CONFLICT'};
+  const flaggedChecking = {id: 'c1', title: 'flagged checking', status: 'checking', workstream: 'w', review_flag: 1};
+  const selfHealing = {id: 'd3', title: 'self healing', status: 'doing', workstream: 'w', blocked_reason_code: 'API_UNREACHABLE', handled_by_board: true};
+  assert.equal(mod.columnFor(plainDoing), 'doing');
+  assert.equal(mod.columnFor(blockedDoing), 'attention', 'a blocked card moves out of its own status column');
+  assert.equal(mod.columnFor(flaggedChecking), 'attention', 'a flagged card moves out of checking too');
+  assert.equal(mod.columnFor(selfHealing), 'doing', 'a card the board is already retrying stays put, per 2987165');
+
+  mod.renderBuckets([plainDoing, blockedDoing, flaggedChecking, selfHealing]);
+  const cardIdsIn = column => Array.from(
+    sixBucketRow.querySelector(`.bucket[data-status="${column}"] .bucket-rows`).children,
+  ).map(el => el.dataset.cardId);
+  assert.deepEqual(cardIdsIn('doing'), ['d1', 'd3'], 'the plain and the self-healing card stay in doing');
+  assert.deepEqual(cardIdsIn('attention'), ['d2', 'c1'], 'the blocked and the flagged card land in attention instead');
+  assert.deepEqual(cardIdsIn('checking'), [], 'checking lost its flagged card to attention');
+}
+
+console.log('ok');

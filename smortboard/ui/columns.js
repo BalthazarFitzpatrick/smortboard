@@ -175,8 +175,8 @@ function pileLayerJitter(cardId) {
 
 // one letter per column status, plus attention - accepted borrows 'v' and rejected 'r' so neither
 // collides with attention's own 'a' (ambiguity call, see the PR notes)
-const STATUS_LETTER = {todo: 't', doing: 'd', checking: 'c', accepted: 'v', rejected: 'r'};
-const STATUS_NAME = {todo: 'to do', doing: 'doing', checking: 'checking', accepted: 'accepted', rejected: 'rejected'};
+const STATUS_LETTER = {todo: 't', doing: 'd', attention: 'a', checking: 'c', accepted: 'v', rejected: 'r'};
+const STATUS_NAME = {todo: 'to do', doing: 'doing', attention: 'attention', checking: 'checking', accepted: 'accepted', rejected: 'rejected'};
 const LETTER_ORDER = ['d', 'a', 't', 'c', 'v', 'r'];
 
 // a doing card actually held by a live agent right now, as opposed to one the board is only

@@ -22,10 +22,13 @@
   <!-- board bar: one nav-tab per board, shell.js drives selection and memory -->
   <div class="board-bar" id="board-bar" role="tablist"></div>
 
-  <!-- five status buckets, each an ordered list of card-strip rows - makeBuckets drives focus -->
+  <!-- six columns, each an ordered list of card-strip rows - makeBuckets drives focus. attention
+       is not a stored status (board.js's STATUSES stays the five real ones a card can hold) - it
+       is a presentation-only column, cards pulled out of their real status bucket by isAttentionCard -->
   <div class="bucket-row" id="bucket-row">
     <div class="bucket" data-status="todo"><div class="bucket-label">to do</div><div class="bucket-rows"></div></div>
     <div class="bucket" data-status="doing"><div class="bucket-label">doing</div><div class="bucket-rows"></div></div>
+    <div class="bucket" data-status="attention"><div class="bucket-label">attention</div><div class="bucket-rows"></div></div>
     <div class="bucket" data-status="checking"><div class="bucket-label">checking</div><div class="bucket-rows"></div></div>
     <div class="bucket" data-status="accepted"><div class="bucket-label">accepted</div><div class="bucket-rows"></div></div>
     <div class="bucket" data-status="rejected"><div class="bucket-label">rejected</div><div class="bucket-rows"></div></div>
