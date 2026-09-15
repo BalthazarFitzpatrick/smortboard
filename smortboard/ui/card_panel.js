@@ -276,6 +276,16 @@ async function openCardPanel(panel, cardId) {
 // reason codes that stop a card on the operator rather than on a fault in the work
 const ATTENTION_CODES = new Set(['AGENT_QUESTION', 'LEASE_CONFLICT', 'USAGE_LIMIT', 'DEPENDENCY_REJECTED']);
 
+// ---- card timeline entries: header over small dash-led paragraphs, the review verdict's own
+// shape - deriveEntryHeader/splitEntryParagraphs come from ui_base's entrytext.js (board-agnostic
+// text layout); this wrapper only owns the html/escaping/pr-linking, which is this file's business
+function timelineEntryHtml(header, bodyText, extraLines = []) {
+  const paragraphs = [...splitEntryParagraphs(bodyText), ...extraLines].filter(Boolean);
+  const lines = paragraphs.map(p => `<div class="timeline-line">- ${linkifyPrRefs(p)}</div>`).join('');
+  const body = lines ? `<div class="timeline-body">${lines}</div>` : '';
+  return `<div class="timeline-header verdict">${escapeHtml(header)}</div>${body}`;
+}
+
 function outcomeSectionHtml(outcome, card = {}) {
   const working = card.status === 'doing' && !card.blocked_reason_code;
   const empty = !outcome || (!outcome.summary && !outcome.tests && !outcome.review && !outcome.pr_url);
@@ -288,20 +298,22 @@ function outcomeSectionHtml(outcome, card = {}) {
   const parts = [];
   if (outcome.summary) {
     const waiting = !outcome.tests && ATTENTION_CODES.has(card.blocked_reason_code);
-    parts.push(`<div class="outcome-part outcome-summary" data-state="${waiting ? 'attention' : 'ok'}">${linkifyPrRefs(outcome.summary)}</div>`);
+    const entry = timelineEntryHtml(deriveEntryHeader(outcome.summary), outcome.summary);
+    parts.push(`<div class="outcome-part outcome-summary" data-state="${waiting ? 'attention' : 'ok'}">${entry}</div>`);
   }
   if (outcome.tests) {
     const t = outcome.tests;
-    parts.push(`<div class="outcome-part outcome-tests" data-ok="${t.passed}" data-state="${t.passed ? 'ok' : 'problem'}"><span class="verdict">${t.passed ? 'tests passed' : 'tests failed'}</span> - ${escapeHtml(t.command)} (exit ${t.exit_code})</div>`);
+    const entry = timelineEntryHtml(t.passed ? 'tests passed' : 'tests failed', `${t.command} (exit ${t.exit_code})`);
+    parts.push(`<div class="outcome-part outcome-tests" data-ok="${t.passed}" data-state="${t.passed ? 'ok' : 'problem'}">${entry}</div>`);
   }
   if (outcome.review) {
     const r = outcome.review;
-    const findings = (r.findings || [])
-      .map(f => `<li>${escapeHtml(f.severity)} ${escapeHtml(f.category)} in ${escapeHtml(f.file)}: ${escapeHtml(f.message)}</li>`)
-      .join('');
+    const findingLines = (r.findings || [])
+      .map(f => `${f.severity} ${f.category} in ${f.file}: ${f.message}`);
     // a review that did not approve comes to the operator (or back to the worker, still going)
     const reviewState = r.approved ? 'ok' : (working ? 'doing' : 'attention');
-    parts.push(`<div class="outcome-part outcome-review" data-ok="${r.approved}" data-state="${reviewState}"><span class="verdict">${r.approved ? 'approved' : 'not approved'}</span>${r.error ? `: ${escapeHtml(r.error)}` : ''}${findings ? `<ul class="outcome-findings">${findings}</ul>` : ''}</div>`);
+    const entry = timelineEntryHtml(r.approved ? 'approved' : 'not approved', r.error || '', findingLines);
+    parts.push(`<div class="outcome-part outcome-review" data-ok="${r.approved}" data-state="${reviewState}">${entry}</div>`);
   }
   if (outcome.pr_url) {
     parts.push(`<div class="outcome-part outcome-pr" data-state="ok">${prAnchorHtml(outcome.pr_url, card.repo_url)}</div>`);

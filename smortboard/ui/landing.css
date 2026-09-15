@@ -1,0 +1,46 @@
+/* landing lock (q): every visual primitive - panel-floating, h-divider, field-label, stat, hazard
+   stripes - comes from base.css; this file only positions and sizes them, same rule pulls.css
+   states for its own panel. */
+
+.landing-panel {
+  width: min(720px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+
+.landing-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.landing-row {
+  padding: var(--gap, 8px) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.landing-row:first-child .h-divider { display: none; }
+
+.landing-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.landing-repo { font-weight: 600; color: var(--cream); word-break: break-all; }
+.landing-target { text-transform: uppercase; }
+
+.landing-holder { display: flex; flex-direction: column; gap: 2px; }
+.landing-free { color: var(--text-dim); }
+
+.landing-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 12px;
+  color: var(--text-dim);
+  font-size: calc(var(--font-size, 13px) - 1px);
+}

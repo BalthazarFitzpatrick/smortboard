@@ -43,6 +43,7 @@ const BINDINGS = [
   {code: 'KeyH', label: 'h', action: 'pre-flight checklist: what is missing before a card can run', group: 'panels'},
   {code: 'KeyO', label: 'o', action: 'settings: mission control preferences', group: 'panels'},
   {code: 'KeyV', label: 'v', action: 'pull requests: every open one across every board, in merge order', group: 'panels'},
+  {code: 'KeyQ', label: 'q', action: 'landing lock: who holds the push lock on each repo, and the queue behind them', group: 'panels'},
   {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent', group: 'panels'},
   {code: 'Period', label: '.', action: 'mission control: chat with the board orchestrator', group: 'panels'},
   ...Array.from({length: 9}, (_, i) => ({
@@ -172,6 +173,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyH') { evt.preventDefault(); togglePreflightPanel(); return; }
   if (evt.code === 'KeyO') { evt.preventDefault(); toggleSettingsPanel(); return; }
   if (evt.code === 'KeyV') { evt.preventDefault(); togglePullsPanel(); return; }
+  if (evt.code === 'KeyQ') { evt.preventDefault(); toggleLandingPanel(); return; }
   // preventDefault: the panel focuses its first input, and the key that opened it typed itself there
   if (evt.code === 'KeyB') { evt.preventDefault(); toggleBoardsPanel(); return; }
   // opening a drawer leaves focus on the board, so the key that opened it also closes it
