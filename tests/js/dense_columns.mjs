@@ -28,7 +28,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
   PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
   shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus, applyCardShadows,
   PILE_GAP_ABOVE, PILE_GAP_BELOW, BUCKET_ROW_GAP, flipDelta, planPileMotion, PILE_MOTION_MS,
-  PILE_SETTLE_MS, PILE_EASING, PILE_LAND_OFFSET, ROW_MOTION_MS, ROW_EASING};`)(SpyMenu, SpyDrawer);
+  PILE_SETTLE_MS, PILE_EASING, PILE_LAND_OFFSET, ROW_MOTION_MS, ROW_EASING, shownClip, CLIP_REACH};`)(SpyMenu, SpyDrawer);
 
 // fixture heights below are derived from the module's own tuning constants, not typed pixel
 // counts, so a future gap-tuning pass moves the fixtures with it instead of breaking them
@@ -798,6 +798,13 @@ function markerHiddenFor(strip) {
     'a step inside the group keeps the plain timing');
   assert.ok(Math.abs(mod.PILE_LAND_OFFSET * (mod.PILE_MOTION_MS + mod.PILE_SETTLE_MS) - mod.PILE_MOTION_MS) < 1e-9,
     'the landing offset falls exactly PILE_MOTION_MS into a travel-then-settle run');
+  // a replay starts as the card is seen: a covered card as its PEEK band, an open one whole
+  const r = mod.CLIP_REACH;
+  const covered = mod.shownClip({top: 0, height: WIDE}, {top: mod.PEEK});
+  assert.equal(covered, `inset(-${r}px -${r}px ${WIDE - mod.PEEK}px -${r}px)`, 'a covered card shows only its PEEK band');
+  const open = mod.shownClip({top: 0, height: WIDE}, {top: WIDE + GAP});
+  assert.equal(open, `inset(-${r}px -${r}px -${r}px -${r}px)`, 'a card nothing covers shows whole, shadow included');
+  assert.equal(mod.shownClip({top: 0, height: WIDE}, undefined), open, 'and so does the last row');
 }
 
 // drives a stacked column with the stub's animation recorder on and timers held, never real time

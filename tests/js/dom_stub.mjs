@@ -12,7 +12,7 @@ export class Element {}
 // returns a handle whose onfinish/oncancel the test can fire itself - no real time passes
 export const stubMotion = {on: false, log: []};
 function recordAnimation(el, keyframes, options) {
-  const anim = {el, keyframes, options, onfinish: null, oncancel: null};
+  const anim = {el, keyframes, options, onfinish: null, oncancel: null, cancel() { anim.oncancel?.(); }};
   (el._animations ||= []).push(anim);
   stubMotion.log.push(anim);
   return anim;

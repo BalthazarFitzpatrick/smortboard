@@ -647,6 +647,21 @@ function faceFrame(card, face) {
 }
 const OPEN_CLIP = `inset(-${CLIP_REACH}px -${CLIP_REACH}px -${CLIP_REACH}px -${CLIP_REACH}px)`;
 
+// pure: the clip for what of a row actually shows - a card covered by the row drawn after it shows
+// only its band down to that row's top, so a replay drawn over every row starts (or ends) exactly
+// as the card is seen, rather than popping open to its full height
+function shownClip(rect, next) {
+  const bottom = rect.top + rect.height;
+  const cut = next && next.top < bottom ? bottom - Math.max(next.top, rect.top) : 0;
+  return cut > 0 ? `inset(-${CLIP_REACH}px -${CLIP_REACH}px ${cut}px -${CLIP_REACH}px)` : OPEN_CLIP;
+}
+
+// each measured row's key -> the rect of the row drawn right after it, in dom order
+function nextRects(rows) {
+  const list = [...rows.entries()];
+  return new Map(list.map(([key], i) => [key, list[i + 1]?.[1].rect]));
+}
+
 // lifts a node out of the drawn rows so it can be replayed once where it was: absolute against the
 // bucket, dropping .row so buckets.js's nav never counts it, removed when its animation ends
 function detachAsGhost(bucketEl, prior, zIndex) {
@@ -673,11 +688,11 @@ function ghostPile(bucketEl, prior, timing) {
 
 // a card folded onto a pile keeps its own face while it travels there, over every row, then
 // dissolves into the pile face once it has landed - the pile's count ticks at that same moment
-function travelOntoPile(bucketEl, prior, face) {
+function travelOntoPile(bucketEl, prior, face, next) {
   const ghost = detachAsGhost(bucketEl, prior, '3');
   const landed = faceFrame(prior.rect, face);
   const anim = ghost.animate([
-    {translate: '0px 0px', clipPath: OPEN_CLIP, opacity: 1, offset: 0, easing: PILE_EASING},
+    {translate: '0px 0px', clipPath: shownClip(prior.rect, next), opacity: 1, offset: 0, easing: PILE_EASING},
     {...landed, opacity: 1, offset: PILE_LAND_OFFSET, easing: 'linear'},
     {...landed, opacity: 0, offset: 1},
   ], {duration: PILE_MOTION_MS + PILE_SETTLE_MS, fill: 'forwards'});
@@ -685,12 +700,16 @@ function travelOntoPile(bucketEl, prior, face) {
 }
 
 // the reverse: a card drawn off a pile starts as that pile's face and grows down into its own box,
-// above the pile it leaves (.row-lifting) until it has settled
-function liftOffPile(el, rect, face, timing) {
+// above the pile it leaves (.row-lifting) until it has settled. it ends cut to what of it will show,
+// and holds that until the lift is dropped in the same task, so a card that lands covered never
+// flashes open for a frame over the card covering it
+function liftOffPile(el, rect, face, timing, next) {
   el.classList.add('row-lifting');
-  const anim = el.animate([{...faceFrame(rect, face), offset: 0}, {translate: '0px 0px', clipPath: OPEN_CLIP}], timing);
+  const anim = el.animate([{...faceFrame(rect, face), offset: 0}, {translate: '0px 0px', clipPath: shownClip(rect, next)}],
+    {...timing, fill: 'forwards'});
   el.animate([{opacity: 0}, {opacity: 1}], {duration: PILE_SETTLE_MS, easing: 'ease-out'});
-  anim.onfinish = anim.oncancel = () => el.classList.remove('row-lifting');
+  anim.onfinish = () => { el.classList.remove('row-lifting'); anim.cancel(); };
+  anim.oncancel = () => el.classList.remove('row-lifting');
 }
 
 // a pile that did not exist before stays unseen while its first card travels to it, and appears
@@ -723,6 +742,8 @@ function tickOnLanding(pileEl, priorCards, status, countAt) {
 function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) {
   const now = measureRows(bucketRowsEl);
   const timing = {duration: plan.duration, easing: plan.easing};
+  const priorNext = nextRects(before);
+  const nowNext = nextRects(now);
   now.forEach(({el, rect}, key) => {
     const prior = before.get(key);
     if (prior) {
@@ -738,7 +759,7 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
     }
     if (prior) return;
     const from = before.get(priorRoles.get(el.dataset.cardId));
-    if (from) liftOffPile(el, rect, pileFace(from.rect), timing);
+    if (from) liftOffPile(el, rect, pileFace(from.rect), timing, nowNext.get(key));
     else el.classList.add('row-enter');
   });
   const bucketEl = bucketRowsEl.closest('.bucket');
@@ -747,7 +768,7 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
     if (now.has(key)) return;
     if (key.startsWith('pile-')) { ghostPile(bucketEl, prior, timing); return; }
     const pile = now.get(nextRoles.get(prior.el.dataset.cardId));
-    if (pile) travelOntoPile(bucketEl, prior, pileFace(pile.rect));
+    if (pile) travelOntoPile(bucketEl, prior, pileFace(pile.rect), priorNext.get(key));
   });
 }
 
