@@ -110,7 +110,10 @@ body {
    collapsing it (same button) drops both and it rejoins the page's own scroll */
 .bucket-rows.bucket-rows-expanded { overflow-y: auto; padding-right: 4px; }
 /* a piled column spends its height on cards and piles, not gaps - columns.js reads this gap back */
-.bucket-rows.bucket-rows-piled { gap: 10px; }
+.bucket-rows.bucket-rows-piled { gap: 10px; overflow: visible; }
+/* only a piled column that truly can't shrink its cards any further scrolls - a pile's own jittered
+   edges may still poke a few px past the column box without forcing this on (computePileFit) */
+.bucket-rows.bucket-rows-piled.bucket-rows-scrolls { overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
 
 /* collapsed card: a wide flat strip - makeExpander reads its own rect as the animation's starting
    box, so this is the only place that ratio lives */
@@ -166,11 +169,11 @@ body {
 /* ---- dense column presentation: a pile standing in for every card the column folded away -------
    real card edges, not a placeholder box: a few layers stacked straight behind a top face, each
    3px lower than the one above, so only their bottom edges show - the board's square 2px edge */
-/* height lands inline from columns.js's computePileFit (the column's measured leftover); 48px is
-   only the fallback before that runs. face and layers stop 9px short so the edges peek out below */
+/* height lands inline from columns.js's computePileFit - fixed at 96px (PILE), only ever growing
+   with the column's own leftover space; 96px here is only the fallback before that runs */
 .card-pile {
   position: relative;
-  height: 48px;
+  height: 96px;
   flex: 0 0 auto;
   box-sizing: border-box;
   cursor: pointer;
