@@ -169,8 +169,9 @@ body {
    or a later one; strips sharing z 0 then paint in dom order, the later card on top */
 .card-strip { z-index: 0; }
 .card-strip > .card-shade { position: absolute; z-index: -1; max-width: none; pointer-events: none; }
-/* a row replayed once on its way out - onto a pile, or a pile emptying - under every live row */
-.row-ghost { pointer-events: none; }
+/* a row replayed once on its way out - a card sliding in under a pile, or a pile emptying over the
+   card drawn off it. it sits among the rows for its paint order, so it outranks their pointer rule */
+.row-ghost, .bucket-rows.bucket-rows-piled > .row-ghost { pointer-events: none; }
 /* a seventh shorter than ui_base's 1:1.2, so a pile's neighbours leave it room to read as a pile.
    the fan's overlap scales with it (-80% x 6/7), or an unpiled column would hide more of each card */
 .card-strip { aspect-ratio: 1 / 1.0286; border-radius: 0; }
@@ -214,8 +215,6 @@ body {
    unscaled box on top of the card's own ring and drew over the neighbours, so it stays hidden
    while any card has focus and shows again for whatever takes focus next */
 body:has(.card-strip:focus) .focus-marker { opacity: 0; }
-/* a card lifting off a pile (columns.js liftOffPile) is drawn over the pile it leaves */
-.card-strip.row-lifting { z-index: 3; }
 /* the plain fan (unpiled) wants a focused card lifted above the ones already covering it - a
    piled pair does not: applyCardShadows always keeps the later card on top of the earlier one, and
    a stray z-index here would let a focused-but-earlier card pop over it regardless of that */

@@ -3,7 +3,7 @@
 // button or a pile click. run: node tests/js/dense_columns.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element, stubMotion} from './dom_stub.mjs';
+import {installStubDom, element, stubMotion, stubLayout} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
 const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
@@ -28,7 +28,8 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
   PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
   shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus, applyCardShadows,
   PILE_GAP_ABOVE, PILE_GAP_BELOW, BUCKET_ROW_GAP, flipDelta, planPileMotion, PILE_MOTION_MS,
-  PILE_SETTLE_MS, PILE_EASING, PILE_LAND_OFFSET, ROW_MOTION_MS, ROW_EASING, shownClip, CLIP_REACH};`)(SpyMenu, SpyDrawer);
+  PILE_SETTLE_MS, PILE_EASING, ROW_MOTION_MS, ROW_EASING, CLIP_REACH, PILE_FACE_INSET, pileMouth,
+  mouthFrames, GROW_FRAME, REST_FRAME};`)(SpyMenu, SpyDrawer);
 
 // fixture heights below are derived from the module's own tuning constants, not typed pixel
 // counts, so a future gap-tuning pass moves the fixtures with it instead of breaking them
@@ -91,11 +92,13 @@ function buildColumn(availableHeight, cards, status = 'todo') {
   return {bucketEl, bucketRows: bucketEl.querySelector('.bucket-rows')};
 }
 
+// the drawn rows only - never a ghost still sliding into (or shrinking off) a pile
+const drawnRows = bucketRows => bucketRows.children.filter(c => !c.className.includes('row-ghost'));
 function fullCards(bucketRows) {
-  return bucketRows.children.filter(c => c.className.includes('card-strip'));
+  return drawnRows(bucketRows).filter(c => c.className.includes('card-strip'));
 }
 function piles(bucketRows) {
-  return bucketRows.children.filter(c => c.className.includes('card-pile'));
+  return drawnRows(bucketRows).filter(c => c.className.includes('card-pile'));
 }
 
 // ---- a column that fits renders every card full, no pile at all ---------------------------------
@@ -146,7 +149,7 @@ function roles(bucketRows) {
 // bottom edge when bottom-anchored
 function replayRows(bucketRows, available, gap) {
   let bottom = 0, marginBelow = 0;
-  const rows = bucketRows.children.map((el, i) => {
+  const rows = drawnRows(bucketRows).map((el, i) => {
     const pile = el.className.includes('card-pile');
     const marginTop = pile ? mod.PILE_GAP_ABOVE : parseFloat(el.style.marginTop || '0');
     const top = (i ? bottom + marginBelow + gap : 0) + marginTop;
@@ -796,15 +799,46 @@ function markerHiddenFor(strip) {
   const still = mod.planPileMotion(prior, new Map(prior));
   assert.deepEqual([still.duration, still.easing, still.piles.size], [mod.ROW_MOTION_MS, mod.ROW_EASING, 0],
     'a step inside the group keeps the plain timing');
-  assert.ok(Math.abs(mod.PILE_LAND_OFFSET * (mod.PILE_MOTION_MS + mod.PILE_SETTLE_MS) - mod.PILE_MOTION_MS) < 1e-9,
-    'the landing offset falls exactly PILE_MOTION_MS into a travel-then-settle run');
-  // a replay starts as the card is seen: a covered card as its PEEK band, an open one whole
+}
+
+// a keyframe's clip-path inset as [top, right, bottom, left] px, and its translate's y
+const insets = frame => frame.clipPath.match(/^inset\((.+)\)$/)[1].split(' ').map(parseFloat);
+const shiftY = frame => parseFloat(frame.translate.split(' ')[1]);
+// nothing of a box `height` tall (or its shadow) left between the top and bottom cuts
+const fullyClipped = (frame, height) => insets(frame)[0] + insets(frame)[2] >= height;
+// the card's own box uncut on every side
+const uncut = frame => insets(frame).every(v => v <= 0);
+
+// ---- the pile's mouth: a card goes in and out through the face edge that faces it, cut at that
+// line the whole way - the cut never moves while the card slides, so the pile eats it from its edge
+
+{
   const r = mod.CLIP_REACH;
-  const covered = mod.shownClip({top: 0, height: WIDE}, {top: mod.PEEK});
-  assert.equal(covered, `inset(-${r}px -${r}px ${WIDE - mod.PEEK}px -${r}px)`, 'a covered card shows only its PEEK band');
-  const open = mod.shownClip({top: 0, height: WIDE}, {top: WIDE + GAP});
-  assert.equal(open, `inset(-${r}px -${r}px -${r}px -${r}px)`, 'a card nothing covers shows whole, shadow included');
-  assert.equal(mod.shownClip({top: 0, height: WIDE}, undefined), open, 'and so does the last row');
+  const pile = {left: 0, top: 0, width: WIDE, height: mod.PILE};
+  const line = mod.PILE - mod.PILE_FACE_INSET;
+  const below = {left: 0, top: line + r + 30, width: WIDE, height: WIDE};
+  const mouth = mod.pileMouth(pile, below);
+  assert.deepEqual(mouth, {above: true, left: 0, line}, 'a card below the pile meets its bottom face edge');
+  const {shown, inside} = mod.mouthFrames(below, mouth);
+  assert.equal(shown.translate, '0px 0px', 'shown: the card at its own box');
+  assert.ok(uncut(shown), 'and uncut there');
+  assert.equal(below.top + insets(shown)[0], line, 'the cut sits on the mouth line');
+  assert.equal(below.top + shiftY(inside) + insets(inside)[0], line, 'and is still on it once the card is all the way in');
+  assert.ok(fullyClipped(inside, WIDE) && insets(inside)[0] >= WIDE + r, 'all the way in: nothing of the card or its shadow is left');
+  assert.ok(insets(inside)[0] > insets(shown)[0], 'the cut grows from the pile\'s side');
+
+  const above = {left: 0, top: -WIDE - 60, width: WIDE, height: WIDE};
+  const low = mod.pileMouth(pile, above);
+  assert.deepEqual(low, {above: false, left: 0, line: mod.PILE_FACE_INSET}, 'a card above the pile meets its top face edge');
+  const lowFrames = mod.mouthFrames(above, low);
+  assert.equal(above.top + above.height - insets(lowFrames.shown)[2], low.line);
+  assert.equal(above.top + above.height + shiftY(lowFrames.inside) - insets(lowFrames.inside)[2], low.line);
+  assert.ok(fullyClipped(lowFrames.inside, WIDE) && insets(lowFrames.inside)[2] > insets(lowFrames.shown)[2],
+    'mirrored: the cut grows from the bottom, toward the pile below');
+
+  const reaching = {left: 0, top: 20, width: WIDE, height: WIDE};
+  assert.deepEqual(insets(mod.mouthFrames(reaching, mod.pileMouth(pile, reaching)).shown), [-r, -r, -r, -r],
+    'a card whose own box reaches into the pile starts whole, shadow included');
 }
 
 // drives a stacked column with the stub's animation recorder on and timers held, never real time
@@ -817,17 +851,38 @@ function withMotion(run, {reduced = false} = {}) {
   if (reduced) globalThis.matchMedia = query => ({matches: query.includes('reduce')});
   try { run(timers); } finally {
     stubMotion.on = false;
+    stubLayout.rect = null;
     globalThis.setTimeout = realSetTimeout;
     delete globalThis.matchMedia;
   }
 }
 const pileOn = (bucketRows, side) => piles(bucketRows).find(p => p.dataset.side === side);
-const pileCount = pile => pile.querySelector('.bucket-counts').textContent;
+const pileCount = pile => pile.querySelector('.bucket-counts')?.textContent ?? null;
+const ghostsOf = bucketRows => bucketRows.children.filter(c => c.className.includes('row-ghost'));
+
+// the stub has no layout: give each drawn row the box the css model puts it at (replayRows)
+function rowGeometry(bucketRows, available) {
+  return el => {
+    if (el.parentNode !== bucketRows || el.className.includes('row-ghost')) return null;
+    const row = replayRows(bucketRows, available, GAP).find(r => r.el === el);
+    return row && {left: 0, top: row.top, width: WIDE, height: row.bottom - row.top, right: WIDE, bottom: row.bottom};
+  };
+}
+
+// paint order the way the browser settles it here: every row, ghost and pile is positioned at
+// z-index 0 or auto in one stacking context, so a higher z wins and equal z paints in dom order
+const zOf = el => Number(el.style.zIndex || 0);
+function paintsUnder(a, b) {
+  if (zOf(a) !== zOf(b)) return zOf(a) < zOf(b);
+  const rows = a.parentNode.children;
+  return a.parentNode === b.parentNode && rows.indexOf(a) < rows.indexOf(b);
+}
 
 withMotion(timers => {
   const total = 14;
   const cards = Array.from({length: total}, (_, i) => card(`mo${i}`, 'todo'));
-  const {bucketRows} = buildColumn(SHORT_N2, cards);
+  const {bucketEl, bucketRows} = buildColumn(SHORT_N2, cards);
+  stubLayout.rect = rowGeometry(bucketRows, SHORT_N2);
   const n = mod.computeGroupFit(total, SHORT_N2, GAP, WIDE).n;
   const press = keyDriver(bucketRows);
   focusFromOutside(bucketRows, fullCards(bucketRows)[0]);
@@ -835,45 +890,97 @@ withMotion(timers => {
   const landings = () => timers.filter(t => t.ms === mod.PILE_MOTION_MS);
   assert.equal(landings().length, 0, 'steps inside the group schedule no pile landing');
   const belowBefore = pileOn(bucketRows, 'below')._cards.length;
+  const ghostOf = id => stubMotion.log.find(a => a.el.className.includes('row-ghost') && a.el.dataset.cardId === id);
 
-  // the step past the group's end forms the upper pile: card 1 travels onto it
+  // the step past the group's end forms the upper pile: card 1 slides in under it
   stubMotion.log.length = 0;
   press('ArrowDown');
-  const ghost = stubMotion.log.find(a => a.el.className.includes('row-ghost') && a.el.dataset.cardId === cards[0].id);
-  assert.ok(ghost, 'the card folded onto the pile travels there as itself, not a fade');
-  assert.equal(ghost.options.duration, mod.PILE_MOTION_MS + mod.PILE_SETTLE_MS);
-  assert.equal(ghost.el.style.zIndex, '3', 'drawn over the rows sliding up under it');
-  const [start, landed, end] = ghost.keyframes;
-  assert.deepEqual([start.opacity, landed.opacity, end.opacity], [1, 1, 0], 'it keeps its face the whole way and only dissolves once it has landed');
-  assert.equal(landed.offset, mod.PILE_LAND_OFFSET);
-  assert.equal(start.easing, mod.PILE_EASING, 'the travel itself runs on the pile easing');
-  assert.match(landed.clipPath, /^inset\(-\d+px -\d+px \d+(\.\d+)?px -\d+px\)$/, 'cut from the bottom to the pile face, never squashed');
+  const ghost = ghostOf(cards[0].id);
+  assert.ok(ghost, 'the card folded onto the pile moves there as itself');
   const upper = pileOn(bucketRows, 'above');
+  assert.equal(ghost.el.parentNode, bucketRows, 'seated among the rows, in their paint order');
+  assert.ok(paintsUnder(ghost.el, upper), 'under the pile the whole way, not hovering over it');
+  assert.ok(!ghost.el.className.split(' ').includes('row') && ghost.el.dataset.idx === undefined, 'never counted as a row');
+  assert.deepEqual([ghost.options.duration, ghost.options.easing], [mod.PILE_MOTION_MS, mod.PILE_EASING], 'at the pile timing');
+  assert.ok(ghost.keyframes.every(k => !('opacity' in k)), 'no fade: the pile eats it');
+  const [shown, inside] = ghost.keyframes;
+  assert.equal(shown.translate, '0px 0px', 'from where it was drawn');
+  assert.ok(shiftY(inside) < 0, 'up into the pile above it');
+  assert.ok(insets(inside)[0] > insets(shown)[0], 'the cut grows from the top, the pile\'s side');
+  assert.ok(fullyClipped(inside, parseFloat(ghost.el.style.height)), 'and ends with nothing of it left');
   const formed = upper._animations[0];
-  assert.deepEqual(formed.keyframes.map(k => [k.offset, k.opacity]), [[0, 0], [mod.PILE_LAND_OFFSET, 0], [1, 1]],
-    'the new pile stays unseen until the card lands on it, then appears under it');
+  assert.deepEqual(formed.keyframes, [mod.GROW_FRAME, mod.REST_FRAME], 'the new pile grows in over the card');
   assert.equal(formed.options.duration, ghost.options.duration);
+  assert.equal(pileCount(upper), null, 'with no count until its first card is in');
+  assert.equal(landings().length, 1, 'the count is scheduled for when the card is in');
+  assert.ok(landings()[0].ms >= ghost.options.duration, 'not before the card is fully eaten');
+  landings()[0].fn();
   assert.equal(pileCount(upper), '1');
-  // the other end of the same step: one card lifts off the lower pile, whose count drops at once
+  // the other end of the same step: one card slides out from under the lower pile, whose count
+  // drops at once
+  const lowerPile = pileOn(bucketRows, 'below');
   const lifted = fullCards(bucketRows).find(s => s.dataset.cardId === cards[n].id);
-  assert.ok(lifted.className.includes('row-lifting'), 'the card drawn off the lower pile is drawn over it while it lifts');
   const lift = lifted._animations[0];
   assert.deepEqual([lift.options.duration, lift.options.easing], [mod.PILE_MOTION_MS, mod.PILE_EASING], 'at the pile timing');
-  assert.match(lift.keyframes[0].clipPath, /^inset\(-\d+px -\d+px \d+(\.\d+)?px -\d+px\)$/, 'starting as the pile\'s face');
+  assert.ok(paintsUnder(lifted, lowerPile), 'the card drawn off the lower pile comes out from under it');
+  assert.ok(fullyClipped(lift.keyframes[0], parseFloat(lifted.style.height)), 'starting all the way in, nothing showing');
+  assert.ok(shiftY(lift.keyframes[0]) > 0, 'down inside the pile below it');
+  assert.ok(insets(lift.keyframes[1])[2] < insets(lift.keyframes[0])[2], 'the cut falls back toward the pile as it slides out');
+  assert.ok(uncut(lift.keyframes[1]) && lift.keyframes[1].translate === '0px 0px', 'and ends in its own place, uncut');
+  assert.ok(lift.keyframes.every(k => !('opacity' in k)) && lifted._animations.length === 1, 'no fade on the way out either');
   lift.onfinish();
-  assert.ok(!lifted.className.includes('row-lifting'), 'and settles back into the column once it is in place');
-  assert.equal(pileCount(pileOn(bucketRows, 'below')), String(belowBefore - 1), 'the lower pile shows its new count straight away');
-  assert.equal(landings().length, 0, 'a forming pile has no old count to hold');
+  assert.equal(lowerPile.style.zIndex, '', 'the pile drops back to its own paint order once the card is out');
+  assert.equal(pileCount(lowerPile), String(belowBefore - 1), 'the lower pile shows its new count straight away');
 
-  // the next step lands a second card on the pile that is already there: 1 until it lands, then 2
+  // the next step lands a second card on the pile that is already there: 1 until it is in, then 2.
+  // the first card's ghost is still sliding (no real time passes) and keeps its seat under the pile
   stubMotion.log.length = 0;
   press('ArrowDown');
   const again = pileOn(bucketRows, 'above');
-  assert.equal(pileCount(again), '1', 'the pile keeps its old count while the card is still travelling');
-  assert.equal(landings().length, 1, 'one landing, scheduled PILE_MOTION_MS in - when the card arrives');
-  landings()[0].fn();
-  assert.equal(pileCount(again), '2', 'the count ticks up as the card lands');
+  const second = ghostOf(cards[1].id);
+  assert.ok(paintsUnder(second.el, again) && paintsUnder(ghost.el, again), 'both cards under the redrawn pile');
+  assert.deepEqual(ghostsOf(bucketRows), [ghost.el, second.el], 'the first still in flight, re-seated, not dropped');
+  assert.equal(pileCount(again), '1', 'the pile keeps its old count while the card is still sliding in');
+  assert.equal(landings().length, 2, 'one more landing, scheduled PILE_MOTION_MS in - when the card is in');
+  landings()[1].fn();
+  assert.equal(pileCount(again), '2', 'the count ticks up once the card is eaten');
   assert.ok(again.querySelector('.bucket-counts')._animations?.length, 'with a small pop on the number');
+  ghost.onfinish();
+  second.onfinish();
+  assert.deepEqual(ghostsOf(bucketRows), [], 'each ghost goes once its slide ends');
+
+  // the reverse, off the upper pile: back to the group's start, then one more draws a card off it
+  press('ArrowUp');
+  stubMotion.log.length = 0;
+  press('ArrowUp');
+  const top = pileOn(bucketRows, 'above');
+  const drawnOff = fullCards(bucketRows).find(s => s.dataset.cardId === cards[1].id);
+  const out = drawnOff._animations[0];
+  assert.ok(drawnOff && out, 'card 2 is drawn off the upper pile');
+  assert.ok(bucketRows.children.indexOf(drawnOff) > bucketRows.children.indexOf(top), 'after the pile in the dom');
+  assert.ok(paintsUnder(drawnOff, top), 'yet under it until it is out');
+  assert.ok(fullyClipped(out.keyframes[0], parseFloat(drawnOff.style.height)) && shiftY(out.keyframes[0]) < 0,
+    'starting all the way up inside the pile');
+  assert.ok(insets(out.keyframes[1])[0] < insets(out.keyframes[0])[0] && uncut(out.keyframes[1]), 'ending out of it, uncut');
+  // and the same step folds the group's last card into the lower pile, from below the group
+  const intoLower = stubMotion.log.find(a => a.el.className.includes('row-ghost'));
+  assert.ok(paintsUnder(intoLower.el, pileOn(bucketRows, 'below')), 'under the lower pile');
+  assert.ok(shiftY(intoLower.keyframes[1]) > 0 && insets(intoLower.keyframes[1])[2] > insets(intoLower.keyframes[0])[2],
+    'down into it, cut from the bottom');
+  out.onfinish();
+  intoLower.onfinish();
+
+  // the last card off the upper pile empties it: the emptied pile stays over the card while it
+  // shrinks away, rather than the card sliding over it
+  stubMotion.log.length = 0;
+  press('ArrowUp');
+  const first = fullCards(bucketRows).find(s => s.dataset.cardId === cards[0].id);
+  const gone = stubMotion.log.find(a => a.el.className.includes('row-ghost') && a.el.className.includes('card-pile'));
+  assert.ok(gone && !pileOn(bucketRows, 'above'), 'the upper pile is gone');
+  assert.ok(paintsUnder(first, gone.el), 'over the card drawn off it');
+  assert.ok(fullyClipped(first._animations[0].keyframes[0], parseFloat(first.style.height)), 'which still comes out from inside it');
+  assert.deepEqual(gone.keyframes, [mod.REST_FRAME, mod.GROW_FRAME], 'shrinking away as before');
+  bucketEl.remove();
 });
 
 withMotion(timers => {
