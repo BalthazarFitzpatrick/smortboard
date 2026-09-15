@@ -102,7 +102,7 @@ function openShortcutOverlay() {
 function reenterIfFocusLost() {
   if (document.activeElement && document.activeElement !== document.body) return false;
   const card = document.querySelector('.bucket .row');
-  if (card) { card.focus(); indicateFocus(card); return true; }
+  if (card) { card.focus(); indicateCardFocus(card); return true; }
   returnToBoardBar();
   return true;
 }

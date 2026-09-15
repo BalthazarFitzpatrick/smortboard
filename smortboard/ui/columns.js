@@ -101,10 +101,22 @@ window.addEventListener('resize', () => {
 // full-size whether it sits at rest or mid-excursion. presentation only - never touches card status
 // or any stored state, only which cards are drawn full vs folded into a pile right now
 
+// tuning-page constants: css custom properties on body (layout.css), read once here so the sizing
+// maths and the actual drawn gap always agree - a fallback matches today's value exactly, so a
+// missing var (an older stylesheet, or this test stub) changes nothing
+function readGapVar(name, fallback) {
+  const target = (typeof document !== 'undefined' && (document.documentElement || document.body)) || null;
+  const css = target && globalThis.getComputedStyle?.(target);
+  const raw = parseFloat(css?.getPropertyValue?.(name) || '');
+  return Number.isFinite(raw) ? raw : fallback;
+}
+
 const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
 const MIN_PILED_CARDS = 5; // below this, front stack + pile + back stack has nothing left to pile
 const PILE = 96; // a pile's fixed height - never shrinks, only grows with whatever is left over
-const PEEK = 50; // the title-strip band an earlier stacked card still shows under the one on top
+const PEEK = readGapVar('--stack-peek', 50); // the title-strip band an earlier card still shows
+const PILE_GAP_ABOVE = readGapVar('--pile-gap-above', 0); // extra space above a pile, past the row gap
+const PILE_GAP_BELOW = readGapVar('--pile-gap-below', 0); // extra space below a pile, past the row gap
 const MIN_CARD = PILE + 16; // cards shrink no further than this before the column scrolls instead
 const PORTRAIT_BELOW = 230; // a column narrower than this keeps 230px of card height (portrait)
 
@@ -436,8 +448,10 @@ function computePileFit(rows, available, gap, width) {
   });
   const groups = stacks.filter(n => n !== null);
   // real gaps sit only BETWEEN groups/piles - a stack's own cards overlap via negative margin-top
-  // (fitPiledColumn), so a run of consecutive cards costs peek increments, never rows.length-1 gaps
-  const fixedGaps = Math.max(0, groups.length + piles - 1) * gap;
+  // (fitPiledColumn), so a run of consecutive cards costs peek increments, never rows.length-1 gaps.
+  // each pile also carries its own above/below knob (0 today - see layout.css), same margin the
+  // css actually draws on .card-pile, so the two never disagree about how tall a pile's slot is
+  const fixedGaps = Math.max(0, groups.length + piles - 1) * gap + piles * (PILE_GAP_ABOVE + PILE_GAP_BELOW);
   const pileFixed = piles * PILE;
   const peekTotal = groups.reduce((sum, n) => sum + (n - 1) * PEEK, 0);
   const used = card => groups.length * card + peekTotal + pileFixed + fixedGaps;
@@ -497,7 +511,7 @@ function computeStackCounts(total, available, width, gap) {
   const card = squareCard(width);
   const allPeeked = (total - 1) * PEEK + card;
   if (allPeeked <= available) return [total, 0];
-  const fixed = PILE + 2 * gap;
+  const fixed = PILE + 2 * gap + PILE_GAP_ABOVE + PILE_GAP_BELOW;
   const sizes = [1, 1];
   const used = () => (sizes[0] - 1) * PEEK + card + (sizes[1] - 1) * PEEK + card + fixed;
   if (used() > available) return sizes;
@@ -556,19 +570,35 @@ function computePileLayout(sorted, focusIndex, anchor, available, width, gap) {
   return out;
 }
 
+// true if a card's role (drawn full, or folded into a pile) changed since the prior draw - a
+// plain refit or poll redraw that reproduces the same roles reports nothing new, so nothing animates
+function roleChanged(id, role, priorRoles) {
+  return priorRoles.get(id) !== role;
+}
+
 // redraws bucketRowsEl from its own _pile state - expanded and "fits anyway" both mean every card
-// full in one plain list; otherwise the excursion-aware split above
+// full in one plain list; otherwise the excursion-aware split above. every row that is new in its
+// current role (a card appearing, or moving in/out of a pile) gets .row-enter (layout.css); a row
+// whose role is unchanged - the common case, a resize refit or an unchanged poll - gets nothing
 function drawColumn(bucketRowsEl) {
   const state = bucketRowsEl._pile;
+  const priorRoles = bucketRowsEl._rowRoles || new Map();
+  const nextRoles = new Map();
   bucketRowsEl.innerHTML = '';
-  if (!state) return;
+  if (!state) { bucketRowsEl._rowRoles = nextRoles; return; }
   const {sorted, status} = state;
   if (state.expanded || state.fits || sorted.length < MIN_PILED_CARDS) {
-    sorted.forEach((c, idx) => bucketRowsEl.appendChild(buildFullRow(c, idx)));
+    sorted.forEach((c, idx) => {
+      const strip = buildFullRow(c, idx);
+      if (roleChanged(c.id, 'card', priorRoles)) strip.classList.add('row-enter');
+      nextRoles.set(c.id, 'card');
+      bucketRowsEl.appendChild(strip);
+    });
     bucketRowsEl.style.maxHeight = state.expanded && !state.fits ? `${availableColumnHeight(bucketRowsEl)}px` : '';
     bucketRowsEl.classList.toggle('bucket-rows-expanded', !!state.expanded && !state.fits);
     bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls');
     applyCardShadows(bucketRowsEl);
+    bucketRowsEl._rowRoles = nextRoles;
     return;
   }
   bucketRowsEl.style.maxHeight = '';
@@ -578,10 +608,46 @@ function drawColumn(bucketRowsEl) {
   const width = bucketRowsEl.getBoundingClientRect().width;
   const available = availableColumnHeight(bucketRowsEl);
   computePileLayout(sorted, state.focusIndex, state.anchor, available, width, gap).forEach(entry => {
-    bucketRowsEl.appendChild(entry.type === 'pile' ? buildPileRow(entry.cards, status) : buildFullRow(entry.card, entry.idx, false));
+    if (entry.type === 'pile') {
+      const entering = entry.cards.some(c => roleChanged(c.id, 'pile', priorRoles));
+      const el = buildPileRow(entry.cards, status);
+      if (entering) el.classList.add('row-enter');
+      entry.cards.forEach(c => nextRoles.set(c.id, 'pile'));
+      bucketRowsEl.appendChild(el);
+    } else {
+      const strip = buildFullRow(entry.card, entry.idx, false);
+      if (roleChanged(entry.card.id, 'card', priorRoles)) strip.classList.add('row-enter');
+      nextRoles.set(entry.card.id, 'card');
+      bucketRowsEl.appendChild(strip);
+    }
   });
   fitPiledColumn(bucketRowsEl);
   applyCardShadows(bucketRowsEl);
+  bucketRowsEl._rowRoles = nextRoles;
+}
+
+// indicate.js's marker is domain-free and glides to a target's whole box - right for a plain card,
+// wrong for a covered one, which only shows its own peek band (fitPiledColumn's negative margin
+// slides the covering card up over the rest of it). a covered card stays covered: this clips the
+// shared marker to the visible band (the target's own top down to where its covering neighbour
+// begins), so the marker's sides and bottom edge never run across a card sitting on top of it.
+// every card-focusing call site in this app goes through here instead of indicateFocus directly -
+// a plain or covering card gets no clip at all, same behaviour as before this existed
+function indicateCardFocus(target) {
+  indicateFocus(target);
+  const marker = document.querySelector('.focus-marker');
+  if (!marker) return;
+  const next = target.classList?.contains('card-covered') ? target.nextElementSibling : null;
+  const clip = () => {
+    if (!next) { marker.style.clipPath = ''; return; }
+    const visible = next.getBoundingClientRect().top - target.getBoundingClientRect().top;
+    marker.style.clipPath = visible > 0 ? `inset(0 0 calc(100% - ${visible}px) 0)` : '';
+  };
+  clip();
+  // indicate.js re-places the marker on the next frame and again once the target's own slide
+  // transition ends - the clip has to be reapplied after each, or the full box flashes back
+  globalThis.requestAnimationFrame?.(clip);
+  target.addEventListener('transitionend', clip, {once: true});
 }
 
 function focusPileIndex(bucketRowsEl, idx) {
@@ -591,7 +657,7 @@ function focusPileIndex(bucketRowsEl, idx) {
   if (!target) return;
   target.tabIndex = 0;
   target.focus();
-  indicateFocus(target);
+  indicateCardFocus(target);
 }
 
 // ArrowDown/Up inside a piled column, intercepted ahead of buckets.js's own roving nav (see
@@ -668,4 +734,42 @@ function renderBucketColumn(bucketEl, cards, status) {
   renderColumnHeader(bucketEl, cards, status);
   drawColumn(bucketRowsEl);
   wireColumnFocus(bucketRowsEl);
+}
+
+// ---- resize refit: card size, stack counts and pile height all come from the column's own
+// measured width/height (computeStackCounts, computePileFit), which only a real resize (not a
+// poll) can change. refits every already-piled column from its own _pile state alone - no refetch,
+// no full renderBuckets - and recomputes `fits` too, since widening a column can drop its pile
+// entirely, same as renderBucketColumn does on first draw --------------------------------------
+
+function refitColumn(bucketRowsEl) {
+  const state = bucketRowsEl._pile;
+  if (!state) return;
+  const width = bucketRowsEl.getBoundingClientRect().width;
+  state.fits = stackHeight(state.sorted.length, squareCard(width)) <= availableColumnHeight(bucketRowsEl);
+  drawColumn(bucketRowsEl);
+}
+
+const PILE_REFIT_DEBOUNCE_MS = 100;
+let pileRefitTimer = null;
+
+// keeps focus on whatever card had it, by id - drawColumn always rebuilds the row it lives in, so
+// the dom node itself never survives a refit even when nothing about that card actually changed
+function refitPiledColumns() {
+  const activeCardId = document.activeElement?.dataset?.cardId ?? null;
+  document.querySelectorAll('#bucket-row .bucket-rows').forEach(refitColumn);
+  refreshBucketNav();
+  if (!activeCardId) return;
+  const strip = document.querySelector(`.card-strip[data-card-id="${activeCardId}"]`);
+  if (!strip) return;
+  strip.tabIndex = 0;
+  strip.focus();
+  indicateCardFocus(strip);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', () => {
+    clearTimeout(pileRefitTimer);
+    pileRefitTimer = setTimeout(refitPiledColumns, PILE_REFIT_DEBOUNCE_MS);
+  });
 }

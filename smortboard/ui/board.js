@@ -127,7 +127,7 @@ function renderBuckets(cards) {
   refreshBucketNav();
   // the cream marker glides to whatever took focus, rather than every card drawing its own ring.
   // focusin rather than a per-card handler, so it also catches focus arriving by click or by tab
-  row.addEventListener('focusin', evt => indicateFocus(evt.target));
+  row.addEventListener('focusin', evt => indicateCardFocus(evt.target));
 }
 
 // rebinds the 2D grid nav to whatever is currently in the buckets - a full renderBuckets always
@@ -162,7 +162,7 @@ function skipEmptyColumns(evt) {
   evt.preventDefault();
   evt.stopPropagation();
   const target = buckets[targetIndex]?.querySelector('.bucket-rows .row');
-  if (target) { target.focus(); indicateFocus(target); }
+  if (target) { target.focus(); indicateCardFocus(target); }
 }
 document.addEventListener('keydown', skipEmptyColumns, {capture: true});
 
@@ -276,7 +276,7 @@ function redrawCardStrip(card) {
   const strip = renderCardStrip(card);
   bucket.appendChild(strip);
   old.remove();
-  if (hadFocus) { strip.focus(); indicateFocus(strip); }
+  if (hadFocus) { strip.focus(); indicateCardFocus(strip); }
   applyCardShadows(bucket);
 }
 
@@ -358,7 +358,7 @@ async function finishRun(cardId, state) {
   // loses their place after every run AND the result is invisible: only the focused card's foot
   // is showing in the fan, so the badge lands on a card nobody can see
   const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
-  if (strip) { strip.focus(); indicateFocus(strip); }
+  if (strip) { strip.focus(); indicateCardFocus(strip); }
   if (state.pr_url) showRun(cardId, 'pull request', state.pr_url);
   else if (state.blocked_reason_code) showRun(cardId, state.blocked_reason_code);
   else showRun(cardId, state.error ? 'failed' : 'refused', null,
@@ -436,12 +436,12 @@ async function acceptOrRejectCard(action) {
 // the card's new column or the board bar
 function focusAfterColumnExit(aboveCardId, oldStatus) {
   const above = aboveCardId && document.querySelector(`.card-strip[data-card-id="${aboveCardId}"]`);
-  if (above) { above.focus(); indicateFocus(above); return; }
+  if (above) { above.focus(); indicateCardFocus(above); return; }
   const buckets = Array.from(document.querySelectorAll('#bucket-row .bucket')).filter(b => !b.hidden);
   let index = buckets.findIndex(b => b.dataset.status === oldStatus) - 1;
   while (index >= 0 && !bucketHasCards(buckets[index])) index -= 1;
   const landing = index >= 0 ? buckets[index].querySelector('.bucket-rows .row') : null;
-  if (landing) { landing.focus(); indicateFocus(landing); return; }
+  if (landing) { landing.focus(); indicateCardFocus(landing); return; }
   document.activeElement?.blur?.();
 }
 
@@ -558,7 +558,7 @@ async function jumpToCard(cardId, roster) {
   const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
   if (!strip) return;
   strip.focus();
-  indicateFocus(strip);
+  indicateCardFocus(strip);
   strip._expander?.open();
 }
 
