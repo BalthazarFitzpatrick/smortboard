@@ -49,6 +49,7 @@ from smortboard.operator import OPERATOR_NAME
 from smortboard.review.decide import accept_card
 from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.integrate import integrate, integration_lock, open_release_request
+from smortboard.review.landing import landing_lock, resolve_repo_key
 from smortboard.review.merge_request import (
     PROTECTED_BRANCHES,
     MergeRequestUnavailable,
@@ -402,7 +403,14 @@ def _integrate(
     keeps its open pull request and waits for the operator, as on main"""
     card_id = card["id"]
     landed, reason = None, "the base kept moving while it was merged"
-    with integration_lock(repo["path"], base):
+    repo_key = resolve_repo_key(repo["path"], store)
+    # the in-process lock is cheap and covers same-process races instantly; the db-backed one is
+    # what keeps another board process or an outside agent's smortboard-land off the same base
+    # while this card's sync+push runs
+    with (
+        integration_lock(repo["path"], base),
+        landing_lock(store, repo_key, card_id, tree.branch, base),
+    ):
         for _ in range(INTEGRATE_ATTEMPTS):
             if (blocked := _sync_and_retest(store, state, card_id, tree, repo, base)) is not None:
                 return blocked

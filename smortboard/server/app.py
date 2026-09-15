@@ -7,7 +7,7 @@ from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 from smortboard import profiles
 from smortboard.attention import (
@@ -32,6 +32,8 @@ from smortboard.prompts import ROLES
 from smortboard.pulls import open_pull_requests
 from smortboard.repo_image import build_repo_image
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
+from smortboard.review.landing import DEFAULT_TTL_S as DEFAULT_LANDING_TTL_S
+from smortboard.review.landing import resolve_repo_key
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
 from smortboard.scheduler import SchedulerRegistry, conflicting_run, relabel_stale_crashes
@@ -117,6 +119,9 @@ _ROUTES = [
     (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)/activate$"), "POST"),
     (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)$"), "DELETE"),
     (re.compile(r"^/api/pulls$"), "GET"),
+    (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)/landing$"), "POST"),
+    (re.compile(r"^/api/landing/(?P<lease_id>[^/]+)$"), "DELETE"),
+    (re.compile(r"^/api/landing$"), "GET"),
 ]
 
 # a full claude setup-token is 108 bytes (see README Setup); this is a shape check, not a network
@@ -230,8 +235,14 @@ def _make_handler(
                 self._handle_patch_repo(params["repo_id"])
             elif "repo_id" in params and path.endswith("/image/build") and method == "POST":
                 self._handle_build_repo_image(params["repo_id"])
+            elif "lease_id" in params and path.startswith("/api/landing/") and method == "DELETE":
+                self._send_json(200, store.release_landing(params["lease_id"]))
             elif "lease_id" in params and method == "DELETE":
                 self._handle_forget_lease(params["repo_id"], params["lease_id"])
+            elif "repo_id" in params and path.endswith("/landing") and method == "POST":
+                self._handle_landing_request(params["repo_id"])
+            elif path == "/api/landing" and method == "GET":
+                self._send_json(200, store.list_landing())
             elif path == "/api/cards" and method == "POST":
                 body = self._read_json()
                 card = store.create_card(**body)
@@ -463,6 +474,29 @@ def _make_handler(
         def _handle_forget_lease(self, repo_id: str, lease_id: str) -> None:
             """the boards panel's remove on one remembered glob - see Store.forget_lease_path"""
             self._send_json(200, store.forget_lease_path(repo_id, lease_id))
+
+        def _handle_landing_request(self, repo_id: str) -> None:
+            """acquires (or queues for) the push lock on this repo's target branch. calling again
+            with the lease_id it returned is the heartbeat/poll - see Store.request_landing.
+            repo_id is looked up as a board repo id first, then as a path - see
+            smortboard.review.landing.resolve_repo_key, so an outside tool needs no board repo
+            registered to lock the same key the board itself would"""
+            body = self._read_json()
+            holder = (body.get("holder") or "").strip()
+            branch = (body.get("branch") or "").strip()
+            if not holder or not branch:
+                self._send_json(400, {"error": "holder and branch must not be empty"})
+                return
+            repo_key = resolve_repo_key(unquote(repo_id), store)
+            result = store.request_landing(
+                repo_key,
+                holder,
+                branch,
+                target=body.get("target") or "development",
+                ttl_s=int(body.get("ttl_s") or DEFAULT_LANDING_TTL_S),
+                lease_id=body.get("lease_id"),
+            )
+            self._send_json(200 if result["granted"] else 202, result)
 
         def _profiles_view(self) -> list[dict]:
             """name, active, present, limited_until only - never the token, per the card's rule"""
