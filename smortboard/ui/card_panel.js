@@ -460,7 +460,7 @@ async function moveCardStatus(cardId, status) {
   }
   if (currentBoardId) await onBoardEnter(currentBoardId);
   const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
-  if (strip) { strip.focus(); indicateFocus(strip); }
+  if (strip) { strip.focus(); indicateCardFocus(strip); }
 }
 
 function openMoveStatusMenu(cardId = actionableCardId()) {

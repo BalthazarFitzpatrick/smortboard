@@ -10,6 +10,12 @@ body {
   display: flex;
   flex-direction: column;
   --shadow-lift: 0 2px 5px rgba(0, 0, 0, 0.35);
+  /* the tuning page's three knobs - columns.js reads these same three back for its sizing maths,
+     so changing a value here is the one edit that moves both the layout and the drawing. today's
+     numbers are exactly what the code already used before these existed - not a value change */
+  --pile-gap-above: 0px;
+  --pile-gap-below: 0px;
+  --stack-peek: 50px;
 }
 
 .board-bar {
@@ -172,10 +178,30 @@ body {
    transform keeps the fan's 140ms slide, and indicate.js re-places its marker once this settles */
 .card-strip { transition: transform 140ms, filter 140ms; }
 .card-strip:focus { transform: scale(1.03); filter: saturate(1.4) brightness(1.15); }
+/* PILED CARDS NEVER SCALE ON FOCUS. indicate.js's marker glides to the card's own boundingClientRect,
+   which a 1.03x scale grows past the card's own footprint - straight into a covered neighbour above
+   or below it (the whole point of a stack is that footprint is all a covered card has left, and a
+   covering card's own growth pushes further over it too). a piled card is any non-fan-item full card
+   (fitPiledColumn drops fan-item for both members of a pair); it keeps the same colour/intensity cue
+   as the plain fan, just without the transform that would draw over a neighbour */
+.card-strip:not(.fan-item):focus { transform: none; }
 /* the plain fan (unpiled) wants a focused card lifted above the ones already covering it - a
    piled pair does not: computePileFit always keeps the later card on top of the earlier one, and
    a stray z-index here would let a focused-but-earlier card pop over it regardless of that */
 .card-strip.fan-item:focus { z-index: 2; }
+
+/* ---- insert/draw animation: only a genuinely new row (a card or pile that was not there in that
+   role last render) gets this - drawColumn tags it via the .row-enter class, so a plain refit or
+   poll redraw that reproduces the same rows plays nothing. short on purpose: this is a stack of
+   cards settling into place, not a page transition */
+@keyframes row-enter-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.row-enter { animation: row-enter-in 140ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .row-enter { animation: none; }
+}
 
 /* ---- dense column presentation: a pile standing in for every card the column folded away -------
    real card edges, not a placeholder box: a few layers stacked straight behind a top face, each
@@ -189,6 +215,10 @@ body {
   box-sizing: border-box;
   cursor: pointer;
   --pile-edge: var(--grey-border);
+  /* the tuning page's own knobs (declared on body, above) - columns.js's fit maths adds the same
+     two numbers, so a pile's drawn gap and its sized gap never drift apart */
+  margin-top: var(--pile-gap-above);
+  margin-bottom: var(--pile-gap-below);
 }
 /* a pile wears its column's state edge the way a card does: doing, or attention when it holds one */
 .card-pile.card-pile-doing { --pile-edge: var(--fill-good); }
