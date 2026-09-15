@@ -310,7 +310,7 @@ function piles(bucketRows) {
   const c = mod.shadowImage(180, 230); // a portrait card's own size - a different cache entry
   assert.notEqual(a, c);
   assert.equal(mod.shadowImageCache.size, 2);
-  assert.ok(a.url && c.url, 'each cached entry carries a real image url');
+  assert.ok(a.imageData && c.imageData, 'each cached entry carries real pixel data');
 }
 
 // ---- computePileFit: the pile is fixed at PILE and only ever grows with the leftover -----------
