@@ -226,7 +226,10 @@ function fitTotal(rows, fit, gap) {
 }
 
 {
-  // the measured browser case: 307px cards against 886px - at rest, drawn down, drawn up
+  // the measured browser case: 307px cards against 886px - at rest, drawn down, drawn up. a
+  // focused card sandwiched between two piles (mid-excursion) is never a stacking victim at all,
+  // so it is never cut; a focused card that IS the earlier half of a full-full pair still is -
+  // focus only changes size/saturation (css), never which card the stack shows on top
   const c = (focused = false) => ({type: 'card', height: 307, focused});
   const p = {type: 'pile', height: 0};
   const layouts = [[c(true), c(), p, c(), c()], [p, c(), c(true), p, c(), c()], [c(), c(), p, c(true), c(), p]];
@@ -235,10 +238,14 @@ function fitTotal(rows, fit, gap) {
     assert.ok(fit.pileHeight >= mod.MIN_PILE_HEIGHT, 'every pile keeps room for its count');
     assert.ok(fitTotal(rows, fit, 10) <= 886, 'the column fits the measured height');
     rows.forEach((r, i) => {
-      if (r.focused) assert.equal(fit.cuts[i], 0, 'the focused card is never cut');
+      const isPairEarlier = r.type === 'card' && rows[i + 1]?.type === 'card';
+      if (r.focused && !isPairEarlier) assert.equal(fit.cuts[i], 0, 'a focused card with no later sibling to lose to stays whole');
       if (fit.cuts[i]) assert.ok(r.height - fit.cuts[i] >= mod.MIN_COVERED_VISIBLE, 'a cut card keeps its title band');
     });
   }
+  // the earlier half of a pair is always the one cut, whether or not it holds focus
+  assert.ok(mod.computePileFit(layouts[0], 886, 10).cuts[0] > 0, 'a focused top card is still the one that gives way to the card after it');
+  assert.ok(mod.computePileFit(layouts[2], 886, 10).cuts[3] > 0, 'a focused bottom-pair upper card is still the one that gives way');
 }
 
 {
@@ -271,19 +278,26 @@ function fitTotal(rows, fit, gap) {
     assert.ok(nextTop < visibleBottom, 'the row after a covered card really overlaps it');
     assert.ok(visibleBottom <= nextTop + opaque, 'and covers all of what shows - nothing pokes out beneath');
   });
-  const underPile = covered.find(s => bucketRows.children[bucketRows.children.indexOf(s) + 1].className.includes('card-pile'));
-  assert.ok(underPile && clipOf(underPile) > 0, 'a card under a pile is clipped to end behind its face');
-  assert.ok(!fullCards(bucketRows)[0].className.includes('card-covered'), 'with no excursion yet, the first card stays whole');
+  // a victim is always the earlier half of a card/card pair, so its "next" is always the later
+  // card of that same pair, never the pile beside it - the pile never covers a full card directly
+  assert.ok(covered.every(s => !bucketRows.children[bucketRows.children.indexOf(s) + 1].className.includes('card-pile')),
+    'the pile itself never ends up covering a full card - only a later full card does');
+  // the first card is the earlier half of the top pair, so it gives way too, focus or not - the
+  // card after it (later, never the earlier) is the one that stays on top of the stack
+  assert.ok(fullCards(bucketRows)[0].className.includes('card-covered'), 'with no excursion yet, the first card is still the one covered');
+  assert.ok(!fullCards(bucketRows).at(-1).className.includes('card-covered') && !fullCards(bucketRows).at(-1).className.includes('card-clipped'),
+    'the last card - always the later half of its pair - never gives way');
 
-  // focus on the bottom pair's upper card: the last row gives way, and with nothing below it to
-  // slide over it, that one is clipped instead - and the earlier overlap is undone on the refit
+  // focus on the bottom pair's upper card changes nothing about who gives way: the earlier card of
+  // a pair is always the victim, so the layout here is identical to the unfocused case above
   bucketRows._pile.focusIndex = 8;
   mod.fitPiledColumn(bucketRows);
   const last = fullCards(bucketRows).at(-1);
-  assert.ok(last.className.includes('card-clipped'), 'the last row is clipped when it is the one giving way');
-  assert.ok(clipOf(last) > 0 && parseFloat(last.style.marginBottom) === -clipOf(last),
-    'clipped, and its layout gives the same height back, so the column still fits');
-  assert.equal(fullCards(bucketRows).filter(s => s.className.includes('card-clipped')).length, 1);
+  assert.ok(!last.className.includes('card-clipped'), 'the later card of a pair is never the one that gives way, focused or not');
+  assert.equal(last.style.marginTop, '-247px', 'the later card still slides up over the earlier (focused) one');
+  const secondToLast = fullCards(bucketRows).at(-2);
+  assert.ok(secondToLast.className.includes('card-covered'),
+    'the earlier (now-focused) card of the bottom pair still gives way to the one after it');
   assert.equal(pile.style.marginTop, '', 'a refit clears the overlap a previous fit left behind');
 }
 

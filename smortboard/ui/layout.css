@@ -157,7 +157,11 @@ body {
 /* the focused card is the one being read: a touch larger and its own colours a step more intense.
    transform keeps the fan's 140ms slide, and indicate.js re-places its marker once this settles */
 .card-strip { transition: transform 140ms, filter 140ms; }
-.card-strip:focus { transform: scale(1.03); filter: saturate(1.4) brightness(1.15); z-index: 2; }
+.card-strip:focus { transform: scale(1.03); filter: saturate(1.4) brightness(1.15); }
+/* the plain fan (unpiled) wants a focused card lifted above the ones already covering it - a
+   piled pair does not: computePileFit always keeps the later card on top of the earlier one, and
+   a stray z-index here would let a focused-but-earlier card pop over it regardless of that */
+.card-strip.fan-item:focus { z-index: 2; }
 
 /* ---- dense column presentation: a pile standing in for every card the column folded away -------
    real card edges, not a placeholder box: a few layers stacked straight behind a top face, each
