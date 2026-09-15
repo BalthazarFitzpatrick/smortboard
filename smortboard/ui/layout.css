@@ -78,6 +78,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* the positioning root for .card-shadow-layer - each card's shadow image is placed against this
+     box, not .bucket-rows, so it is never clipped by a row's own overflow:hidden. z-index:0 turns
+     that into its own stacking context, so columns.js's per-card z-index (interleaving a card
+     with the shadow of the card after it) never has to compare against an unrelated overlay
+     elsewhere on the page */
+  position: relative;
+  z-index: 0;
 }
 /* the display rule above outranks the browser's own [hidden], so an empty board kept its five
    columns squeezed beside the hazard box instead of hiding them */
@@ -110,16 +117,23 @@ body {
    collapsing it (same button) drops both and it rejoins the page's own scroll */
 .bucket-rows.bucket-rows-expanded { overflow-y: auto; padding-right: 4px; }
 /* a piled column spends its height on cards and piles, not gaps - columns.js reads this gap back */
-.bucket-rows.bucket-rows-piled { gap: 10px; }
+.bucket-rows.bucket-rows-piled { gap: 10px; overflow: visible; }
+/* only a piled column that truly can't shrink its cards any further scrolls - a pile's own jittered
+   edges may still poke a few px past the column box without forcing this on (computePileFit) */
+.bucket-rows.bucket-rows-piled.bucket-rows-scrolls { overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
 
 /* collapsed card: a wide flat strip - makeExpander reads its own rect as the animation's starting
    box, so this is the only place that ratio lives */
 /* the card and the fan now live in ui_base. what stays here is configuration: which state paints
    which edge, and the panel an opened card fills */
-/* a vanilla border alone let two stacked strips fuse into one shape - a low, tight shadow lifts
-   every card off the column ground so the border reads as one surface's edge, not a shared line.
-   bucket-rows' own gap keeps the strips from ever touching regardless */
-.card-strip { box-shadow: var(--shadow-lift); }
+/* the generated shadow (card-shadow-layer, below) replaces the flat --shadow-lift box-shadow here -
+   a plain box-shadow can't put more darkness at a corner than along a side, and can't be drawn
+   outside a card's own overflow:hidden box the way a covered card's peek needs it to */
+.card-strip { box-shadow: none; }
+/* the shadow layer: one per .bucket, positioned against it (not .bucket-rows), holding one <img>
+   per card strip - never the piles, which keep their own card-pile-layer box-shadow */
+.card-shadow-layer { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.card-shadow-layer .card-shade { position: absolute; max-width: none; pointer-events: none; }
 /* a seventh shorter than ui_base's 1:1.2, so a pile's neighbours leave it room to read as a pile.
    the fan's overlap scales with it (-80% x 6/7), or an unpiled column would hide more of each card */
 .card-strip { aspect-ratio: 1 / 1.0286; border-radius: 0; }
@@ -157,16 +171,20 @@ body {
 /* the focused card is the one being read: a touch larger and its own colours a step more intense.
    transform keeps the fan's 140ms slide, and indicate.js re-places its marker once this settles */
 .card-strip { transition: transform 140ms, filter 140ms; }
-.card-strip:focus { transform: scale(1.03); filter: saturate(1.4) brightness(1.15); z-index: 2; }
+.card-strip:focus { transform: scale(1.03); filter: saturate(1.4) brightness(1.15); }
+/* the plain fan (unpiled) wants a focused card lifted above the ones already covering it - a
+   piled pair does not: computePileFit always keeps the later card on top of the earlier one, and
+   a stray z-index here would let a focused-but-earlier card pop over it regardless of that */
+.card-strip.fan-item:focus { z-index: 2; }
 
 /* ---- dense column presentation: a pile standing in for every card the column folded away -------
    real card edges, not a placeholder box: a few layers stacked straight behind a top face, each
    3px lower than the one above, so only their bottom edges show - the board's square 2px edge */
-/* height lands inline from columns.js's computePileFit (the column's measured leftover); 48px is
-   only the fallback before that runs. face and layers stop 9px short so the edges peek out below */
+/* height lands inline from columns.js's computePileFit - fixed at 96px (PILE), only ever growing
+   with the column's own leftover space; 96px here is only the fallback before that runs */
 .card-pile {
   position: relative;
-  height: 48px;
+  height: 96px;
   flex: 0 0 auto;
   box-sizing: border-box;
   cursor: pointer;

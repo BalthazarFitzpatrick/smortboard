@@ -9,6 +9,16 @@
 // everything together.
 
 const STATUSES = ['todo', 'doing', 'checking', 'accepted', 'rejected'];
+// the board's own column order, not the data model - attention is not a stored status (a card
+// keeps its real one underneath) but a presentation column between doing and checking, pulled
+// out by isAttentionCard (columns.js) rather than driven by card.status
+const COLUMNS = ['todo', 'doing', 'attention', 'checking', 'accepted', 'rejected'];
+
+// which column a card actually renders in: attention wins over its own real status - excluding a
+// card the board is already retrying itself (isAttentionCard already reads handled_by_board)
+function columnFor(card) {
+  return isAttentionCard(card) ? 'attention' : card.status;
+}
 
 let boards = [];
 let currentBoardId = null;
@@ -107,11 +117,12 @@ async function onBoardEnter(boardId) {
 
 function renderBuckets(cards) {
   const row = document.getElementById('bucket-row');
-  STATUSES.forEach(status => {
-    const bucketEl = row.querySelector(`.bucket[data-status="${status}"]`);
-    // a blocked card still belongs to a column: it keeps the status it was in and carries the
-    // reason code, so it renders in place with the gold outline rather than vanishing
-    renderBucketColumn(bucketEl, cards.filter(c => c.status === status), status);
+  COLUMNS.forEach(column => {
+    const bucketEl = row.querySelector(`.bucket[data-status="${column}"]`);
+    // a column not present in this page's markup is simply skipped - lets an older or a test
+    // fixture without the attention bucket keep working against the five real statuses alone
+    if (!bucketEl) return;
+    renderBucketColumn(bucketEl, cards.filter(c => columnFor(c) === column), column);
   });
   refreshBucketNav();
   // the cream marker glides to whatever took focus, rather than every card drawing its own ring.
@@ -259,13 +270,14 @@ let followedCardStates = null; // Map<card id, `${status}|${updated_at}`> as of 
 // if it held focus - the open card's own strip is never passed in here, see followRunsOnce
 function redrawCardStrip(card) {
   const old = document.querySelector(`.card-strip[data-card-id="${card.id}"]`);
-  const bucket = document.querySelector(`.bucket[data-status="${card.status}"] .bucket-rows`);
+  const bucket = document.querySelector(`.bucket[data-status="${columnFor(card)}"] .bucket-rows`);
   if (!old || !bucket) return;
   const hadFocus = old.contains(document.activeElement);
   const strip = renderCardStrip(card);
   bucket.appendChild(strip);
   old.remove();
   if (hadFocus) { strip.focus(); indicateFocus(strip); }
+  applyCardShadows(bucket);
 }
 
 async function followRunsOnce() {

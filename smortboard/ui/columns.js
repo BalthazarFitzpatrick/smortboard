@@ -101,17 +101,137 @@ window.addEventListener('resize', () => {
 // full-size whether it sits at rest or mid-excursion. presentation only - never touches card status
 // or any stored state, only which cards are drawn full vs folded into a pile right now
 
-const CARD_STRIP_HEIGHT = 180; // a card's typical height (layout.css cuts ui_base's by a seventh) - the "fits at all" line
 const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
-const MIN_PILED_CARDS = 5; // below this, 2 full + pile + 2 full has nothing left to pile - all full
-const MIN_PILE_HEIGHT = 48; // enough for the count line plus the layer edges below it
-const MIN_COVERED_VISIBLE = 60; // a full card overlapped by its neighbour still shows its title band
-// a pile's face stops 9px above its bottom (layout.css), and a card tucked under it must end 2px
-// above that too - its own edge showing at the face's rim reads as a second card's border
-const PILE_FACE_INSET = 9 + 2;
+const MIN_PILED_CARDS = 5; // below this, front stack + pile + back stack has nothing left to pile
+const PILE = 96; // a pile's fixed height - never shrinks, only grows with whatever is left over
+const PEEK = 50; // the title-strip band an earlier stacked card still shows under the one on top
+const MIN_CARD = PILE + 16; // cards shrink no further than this before the column scrolls instead
+const PORTRAIT_BELOW = 230; // a column narrower than this keeps 230px of card height (portrait)
 
 function stackHeight(count, rowHeight) {
   return count ? count * rowHeight + (count - 1) * BUCKET_ROW_GAP : 0;
+}
+
+// a card is as tall as the column is wide - square - down to PORTRAIT_BELOW, where it keeps that
+// height and turns portrait instead of shrinking further
+function squareCard(width) {
+  return Math.max(width, PORTRAIT_BELOW);
+}
+
+// ---- card shadow: a pixel field, not a css box-shadow (box-shadow can't put more darkness at a
+// corner than along a side) - ported from derived/shadow_tuner/index.html, operator-approved
+// values. drawn outside each card's own overflow box (applyCardShadows), so a later card's shadow
+// falls on the earlier card it covers, the way the tuner's own cardwrap/shade pair does -------
+
+const SHADOW_STRENGTH = 0.83; // darkest point, at the corners
+const SHADOW_CORE = 1.5; // solid band right at the edge before the fade starts, in px
+const SHADOW_SIDE = 10.5; // how far the shadow reaches out along the long sides and the top, in px
+const SHADOW_SIDE_STRENGTH = 0.58; // the sides' darkness as a share of the corners'
+const SHADOW_RADIUS = 21; // how far the shadow reaches out around each corner, in px
+const SHADOW_CREEP = 87; // how far along each edge the corner's reach/darkness carry before fading
+const SHADOW_SOFT = 1.6; // fade curve: 1 is linear, higher drops off faster near the edge
+const SHADOW_BOTTOM = true; // the bottom edge casts a shadow too
+const SHADOW_DROP_Y = false; // no downward nudge
+
+// pure: a point (x, y) relative to a w x h card's top-left corner -> 0..255 alpha at that point.
+// dx/dy alone (a side) fades over SIDE (or blends toward RADIUS near a corner, over CREEP); both
+// nonzero (past a corner) fades over RADIUS - so a corner reaches further and stays darker longer
+function shadowAlpha(x, y, w, h) {
+  const dx = x < 0 ? -x : x > w ? x - w : 0;
+  const dy = y < 0 ? -y : y > h ? y - h : 0;
+  if (!dx && !dy) return 0;
+  if (!SHADOW_BOTTOM && y > h) return 0;
+  const fall = (d, span) => {
+    if (d <= SHADOW_CORE) return 1;
+    if (span <= 0) return 0;
+    const t = 1 - (d - SHADOW_CORE) / span;
+    return t <= 0 ? 0 : Math.pow(t, SHADOW_SOFT);
+  };
+  let a;
+  if (dx && dy) {
+    a = fall(Math.hypot(dx, dy), SHADOW_RADIUS);
+  } else {
+    const u = dx ? Math.min(Math.max(y, 0), Math.max(h - y, 0)) : Math.min(Math.max(x, 0), Math.max(w - x, 0));
+    const k = SHADOW_CREEP > 0 ? Math.max(0, 1 - u / SHADOW_CREEP) : 0;
+    const spanHere = SHADOW_SIDE + (SHADOW_RADIUS - SHADOW_SIDE) * k;
+    const strengthHere = SHADOW_SIDE_STRENGTH + (1 - SHADOW_SIDE_STRENGTH) * k;
+    a = fall(dx || dy, spanHere) * strengthHere;
+  }
+  return Math.round(255 * SHADOW_STRENGTH * a);
+}
+
+// one canvas per card size, generated once and cached - never per frame or per redraw. reach pads
+// the canvas past the card's own box on every side (the top if SHADOW_BOTTOM is off), which is
+// exactly what a plain css box-shadow could never place outside an overflow:hidden card
+const shadowImageCache = new Map();
+function shadowImage(w, h) {
+  const key = `${w}x${h}`;
+  if (shadowImageCache.has(key)) return shadowImageCache.get(key);
+  const reach = Math.max(SHADOW_SIDE, SHADOW_RADIUS) + SHADOW_CORE;
+  const pad = Math.ceil(reach) + 3;
+  const cw = w + 2 * pad, ch = h + 2 * pad;
+  const canvas = document.createElement('canvas');
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(cw, ch);
+  const oy = SHADOW_DROP_Y ? 2 : 0;
+  for (let py = 0; py < ch; py++) {
+    const y = py - pad - oy;
+    for (let px = 0; px < cw; px++) {
+      const alpha = shadowAlpha(px - pad, y, w, h);
+      if (alpha > 0) img.data[(py * cw + px) * 4 + 3] = alpha;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const out = {url: canvas.toDataURL(), pad, cw, ch};
+  shadowImageCache.set(key, out);
+  return out;
+}
+
+// draws every card strip's shadow as an absolutely-positioned image, layered by the shadow layer's
+// own DOM order - a later row's shadow is appended after an earlier row's, so it paints on top,
+// same as the strip covering it does. lives on .bucket (not .bucket-rows), one layer per bucket,
+// rebuilt from the rows' own measured position - real geometry, not the sizing math's own guess
+function applyCardShadows(bucketRowsEl) {
+  const bucketEl = bucketRowsEl.closest('.bucket');
+  if (!bucketEl) return;
+  let layer = bucketEl.querySelector('.card-shadow-layer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.className = 'card-shadow-layer';
+    bucketEl.appendChild(layer);
+  }
+  layer.innerHTML = '';
+  const bucketRect = bucketEl.getBoundingClientRect();
+  // z-index interleaves shadow and card, 2 apart per row: a shadow sits above the card BEFORE it
+  // (which it covers) but below the card it belongs to and everything after - same order the
+  // tuner's own DOM nesting gives for free, done explicitly since the shadows live in one shared
+  // layer rather than one wrapper per card (see .bucket's own z-index:0 - its own stacking context)
+  let cardIndex = 0;
+  Array.from(bucketRowsEl.children).forEach(row => {
+    if (!row.classList.contains('card-strip')) return; // piles keep their own existing shadow
+    const rect = row.getBoundingClientRect();
+    const w = Math.round(rect.width), h = Math.round(rect.height);
+    // only the piled layout actually overlaps cards (buildFullRow drops fan-item there) - the
+    // plain list's own fan-item:focus z-index lift stays the only one in play for that case, so
+    // this never fights it
+    if (!row.classList.contains('fan-item')) row.style.zIndex = String(cardIndex * 2);
+    if (w && h) {
+      const shade = shadowImage(w, h);
+      const img = document.createElement('img');
+      img.className = 'card-shade';
+      img.alt = '';
+      img.src = shade.url;
+      img.style.top = `${(rect.top - bucketRect.top) - shade.pad}px`;
+      img.style.left = `${(rect.left - bucketRect.left) - shade.pad}px`;
+      img.style.width = `${shade.cw}px`;
+      img.style.height = `${shade.ch}px`;
+      img.style.zIndex = String(cardIndex * 2 - 1);
+      layer.appendChild(img);
+    }
+    cardIndex += 1;
+  });
 }
 
 function isAttentionCard(card) {
@@ -122,10 +242,57 @@ function isAttentionCard(card) {
   return !!(card.blocked_reason_code || card.review_flag);
 }
 
+// a pile layer's own state edge - the same precedence card_panel.js's cardClasses draws a full
+// card with, so what protrudes from the pile tells you what is actually inside it
+function cardEdgeVar(card) {
+  if (card.handled_by_board || card.status === 'doing') return 'var(--fill-good)';
+  if (card.blocked_reason_code || card.review_flag) return 'var(--fill-attention)';
+  if (card.status === 'rejected') return 'var(--fill-warn)';
+  if (card.status === 'accepted') return 'var(--status-good)';
+  return 'var(--grey-border)';
+}
+
+// ---- pile jitter: each drawn layer offset and rotated from that card's own id, so the same set
+// of cards always draws the same pile and only changes when a card enters or leaves it. fnv-1a
+// into a mulberry32 stream - picked in the jitter picker (derived/pile_picker), option E -------
+
+function fnv1aHash(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const jitterBetween = (r, lo, hi) => lo + (hi - lo) * r();
+const clampPileY = y => Math.max(-10, Math.min(10, y));
+
+// pure: a card id -> its layer's offset and rotation. dx +-8px, dy +-10px (clamped, same as the
+// row gap a layer may protrude into), rotation +-0.6..2.2deg with a random sign
+function pileLayerJitter(cardId) {
+  const r = mulberry32(fnv1aHash(cardId));
+  const dx = jitterBetween(r, -8, 8);
+  const dy = clampPileY(jitterBetween(r, -10, 10));
+  const rot = (r() < 0.5 ? -1 : 1) * jitterBetween(r, 0.6, 2.2);
+  return {dx, dy, rot};
+}
+
 // one letter per column status, plus attention - accepted borrows 'v' and rejected 'r' so neither
 // collides with attention's own 'a' (ambiguity call, see the PR notes)
-const STATUS_LETTER = {todo: 't', doing: 'd', checking: 'c', accepted: 'v', rejected: 'r'};
-const STATUS_NAME = {todo: 'to do', doing: 'doing', checking: 'checking', accepted: 'accepted', rejected: 'rejected'};
+const STATUS_LETTER = {todo: 't', doing: 'd', attention: 'a', checking: 'c', accepted: 'v', rejected: 'r'};
+const STATUS_NAME = {todo: 'to do', doing: 'doing', attention: 'attention', checking: 'checking', accepted: 'accepted', rejected: 'rejected'};
 const LETTER_ORDER = ['d', 'a', 't', 'c', 'v', 'r'];
 
 // a doing card actually held by a live agent right now, as opposed to one the board is only
@@ -213,8 +380,12 @@ function availableColumnHeight(bucketRowsEl) {
   return Math.max(0, (window.innerHeight || 0) - top - 24);
 }
 
-// a stack of real card edges behind the top one - straight, each layer 3px lower, so only the bottom
-// edges show. a rotated layer lifted its corners over the face and read as another card's top edge
+const MAX_PILE_LAYERS = 8; // more than this and the desk-pile look stops reading as individual cards
+
+// a desk pile of real card edges behind the top one, each nudged and turned a little from its own
+// card's id (pileLayerJitter) and wearing that card's own state edge - what protrudes tells you
+// what is inside. bottom first: the first drawn card sits furthest back, the last right under the
+// face. jitter stays inside the row gap (clamped to +-10px) so a layer never reaches a neighbour
 function buildPileRow(cards, status) {
   const el = document.createElement('div');
   // the pile wears the state edge a card would: attention if it holds one, else doing's own
@@ -222,12 +393,14 @@ function buildPileRow(cards, status) {
   el.className = `row card-pile${state}`;
   el.tabIndex = -1;
   el.dataset.pile = 'true';
-  const layers = Math.min(cards.length, 4);
-  for (let i = layers - 1; i >= 0; i--) {
+  const drawn = cards.slice(0, Math.min(MAX_PILE_LAYERS, cards.length));
+  for (let i = drawn.length - 1; i >= 0; i--) {
+    const source = drawn[i];
+    const {dx, dy, rot} = pileLayerJitter(source.id);
     const layer = document.createElement('div');
     layer.className = 'card-pile-layer';
-    // edges peek out below the face, inside the pile's own box - never over a neighbouring row
-    layer.style.transform = `translateY(${i * 3}px)`;
+    layer.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) rotate(${rot.toFixed(2)}deg)`;
+    layer.style.borderColor = cardEdgeVar(source);
     el.appendChild(layer);
   }
   const count = document.createElement('div');
@@ -248,83 +421,125 @@ function buildFullRow(card, idx, fanned = true) {
   return strip;
 }
 
-// pure: rows in order ({type: 'card'|'pile', height, focused} - a pile's height is ignored), the
-// available height and the row gap -> each pile's height and how much to cut off each full card.
-// piles share the leftover; if that leaves a pile under its minimum, one card of each adjacent full
-// pair gives up its lower part to pay for it - never the focused one, never past its title band
-function computePileFit(rows, available, gap) {
+// pure: rows in order ({type: 'card'|'pile'}), the available height, the row gap and the column's
+// own width -> one square card height and one pile height. the pile is fixed at PILE and grows
+// with the leftover by at most one more PEEK (146px) - past that the extra stays as empty space
+// at the column's bottom rather than stretching the pile further. cards shrink first, never below
+// MIN_CARD - past that the column scrolls instead of shrinking further (the only case that scrolls)
+function computePileFit(rows, available, gap, width) {
   const piles = rows.filter(r => r.type === 'pile').length;
-  const cardsHeight = rows.reduce((sum, r) => sum + (r.type === 'card' ? r.height : 0), 0);
-  const leftover = available - cardsHeight - Math.max(0, rows.length - 1) * gap;
-  const cuts = rows.map(() => 0);
-  if (!piles) return {pileHeight: 0, cuts};
-  if (leftover / piles >= MIN_PILE_HEIGHT) return {pileHeight: Math.floor(leftover / piles), cuts};
-  // the pair's upper card gives way unless it holds focus, then the lower one does
-  const victims = [];
-  rows.forEach((r, i) => {
-    if (r.type === 'card' && rows[i - 1]?.type === 'card') victims.push(rows[i - 1].focused ? i : i - 1);
+  const stacks = [];
+  rows.forEach(r => {
+    if (r.type === 'pile') { stacks.push(null); return; }
+    if (stacks.length && stacks[stacks.length - 1] !== null) stacks[stacks.length - 1] += 1;
+    else stacks.push(1);
   });
-  // smallest card first, so one hitting its floor spills the rest onto the others
-  let remaining = piles * MIN_PILE_HEIGHT - leftover;
-  victims.sort((a, b) => rows[a].height - rows[b].height).forEach((v, k) => {
-    cuts[v] = Math.ceil(Math.max(0, Math.min(rows[v].height - MIN_COVERED_VISIBLE, remaining / (victims.length - k))));
-    remaining -= cuts[v];
-  });
-  return {pileHeight: MIN_PILE_HEIGHT, cuts};
+  const groups = stacks.filter(n => n !== null);
+  // real gaps sit only BETWEEN groups/piles - a stack's own cards overlap via negative margin-top
+  // (fitPiledColumn), so a run of consecutive cards costs peek increments, never rows.length-1 gaps
+  const fixedGaps = Math.max(0, groups.length + piles - 1) * gap;
+  const pileFixed = piles * PILE;
+  const peekTotal = groups.reduce((sum, n) => sum + (n - 1) * PEEK, 0);
+  const used = card => groups.length * card + peekTotal + pileFixed + fixedGaps;
+  const full = squareCard(width);
+  let card = full;
+  let scrolls = false;
+  if (used(full) > available) {
+    const denom = groups.length || 1;
+    card = Math.max(MIN_CARD, Math.floor((available - peekTotal - pileFixed - fixedGaps) / denom));
+    scrolls = used(card) > available;
+  }
+  const leftover = Math.max(0, available - used(card));
+  const pileHeight = PILE + (piles && !scrolls ? Math.min(PEEK, Math.floor(leftover / piles)) : 0);
+  return {card, pileHeight, scrolls};
 }
 
-// measures the drawn rows and applies computePileFit - card heights only exist once in the dom.
-// no excursion yet counts as focus on the first card, so the column opens with that one uncut
+// measures the drawn rows and applies computePileFit - the column's own width decides the square
+// card size, not a measured dom height. an earlier card in a stack keeps only its PEEK-tall title
+// band showing, overlapped by the one drawn after it (which keeps the regular drop shadow, so the
+// cover reads as a real card on top rather than a shorter box)
 function fitPiledColumn(bucketRowsEl) {
-  const focusIdx = String(bucketRowsEl._pile?.focusIndex ?? 0);
   const rowEls = Array.from(bucketRowsEl.children);
-  const rows = rowEls.map(el => el.classList.contains('card-pile')
-    ? {type: 'pile', height: 0}
-    : {type: 'card', height: el.getBoundingClientRect().height, focused: el.dataset.idx === focusIdx});
+  const rows = rowEls.map(el => ({type: el.classList.contains('card-pile') ? 'pile' : 'card'}));
   const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || BUCKET_ROW_GAP;
-  const {pileHeight, cuts} = computePileFit(rows, availableColumnHeight(bucketRowsEl), gap);
-  // REAL OVERLAP, NOT A SHORTER CARD. the row after a cut card slides up over its lower part and
-  // paints opaque on top; each row still starts exactly where a plain cut would have put it
-  const slides = rowEls.map(() => 0);
+  const width = bucketRowsEl.getBoundingClientRect().width;
+  const {card, pileHeight, scrolls} = computePileFit(rows, availableColumnHeight(bucketRowsEl), gap, width);
+  bucketRowsEl.classList.toggle('bucket-rows-scrolls', scrolls);
   rowEls.forEach((el, i) => {
-    if (rows[i].type === 'pile') { el.style.height = `${pileHeight}px`; return; }
-    const next = rows[i + 1];
-    el.classList.toggle('card-covered', cuts[i] > 0 && !!next);
-    el.classList.toggle('card-clipped', cuts[i] > 0 && !next);
-    el.style.clipPath = '';
-    el.style.marginBottom = '';
-    if (!cuts[i]) return;
-    const shown = rows[i].height - cuts[i];
-    // a pile is shorter than the part it covers, so a card under one stops behind the pile's face;
-    // the last row has nothing below it at all, so it simply ends where the cut says
-    let kept = rows[i].height;
-    if (!next) kept = shown;
-    else if (next.type === 'pile') kept = Math.min(kept, shown + gap + pileHeight - PILE_FACE_INSET);
-    // CLIP, NEVER SHRINK. a shorter box reflows the card's flex column and pulls its foot and
-    // button up into view - the full box stays, and only what should be hidden is cut away
-    if (kept < rows[i].height) el.style.clipPath = `inset(0 0 ${rows[i].height - kept}px 0)`;
-    if (next) slides[i + 1] = -cuts[i];
-    else el.style.marginBottom = `-${cuts[i]}px`;
+    if (rows[i].type === 'pile') {
+      el.style.height = `${pileHeight}px`;
+      el.style.marginTop = '';
+      return;
+    }
+    el.style.height = `${card}px`;
+    // the earlier card of a pair wears card-covered (it gives way); the later one pulls itself up
+    // over it with a negative margin-top - never the same row, or the later card would peek too.
+    // bucket-rows' own flex `gap` still applies UNDER a margin (they add, never cancel each
+    // other), so the margin has to cancel gap too or every peek band comes out gap px too tall -
+    // which is exactly what ran a 35-card column's real height past what computePileFit sized it
+    // for (each of n-1 pairs quietly adding one gap) and off the bottom of the screen with it
+    const nextIsCard = i < rows.length - 1 && rows[i + 1].type === 'card';
+    const prevIsCard = i > 0 && rows[i - 1].type === 'card';
+    el.classList.toggle('card-covered', nextIsCard);
+    el.style.marginTop = prevIsCard ? `${-(card - PEEK + gap)}px` : '';
   });
-  rowEls.forEach((el, i) => { el.style.marginTop = slides[i] ? `${slides[i]}px` : ''; });
 }
 
-// pure: sorted cards, the index currently focused (or null - no excursion yet), and which edge the
-// excursion started from -> the ordered list of rows to draw. at rest (or at either edge) the
-// fixed first two and last two are full and everything between is one pile. mid-excursion, the
-// anchor's own pair (the edge the user came from) stays full and fixed while the OTHER pair moves
-// with focus - a top-anchored excursion piles passed cards at the top, a bottom-anchored one piles
-// them at the bottom, and the shrinking middle pile sits between the two moving/fixed pairs either way
-function computePileLayout(sorted, focusIndex, anchor) {
+// pure: the total card count, the room/width/gap a resting column has to fill, and one pile in the
+// middle -> [front, back] stack sizes. each starts at 1 and grows one card at a time, round-robin,
+// front first, for as long as the next card still fits without pushing the column into a scroll -
+// so the two stacks differ by at most one and the pile only ever holds what is left over.
+// NO PILE WHEN IT ISN'T NEEDED: first tried as one continuous peeked run of every card, no pile at
+// all - if that alone fits, front takes everything and back stays empty (computePileLayout's own
+// pile() guard then never emits a pile row, since front already reaches the far end)
+function computeStackCounts(total, available, width, gap) {
+  if (available == null) return [2, 2];
+  const card = squareCard(width);
+  const allPeeked = (total - 1) * PEEK + card;
+  if (allPeeked <= available) return [total, 0];
+  const fixed = PILE + 2 * gap;
+  const sizes = [1, 1];
+  const used = () => (sizes[0] - 1) * PEEK + card + (sizes[1] - 1) * PEEK + card + fixed;
+  if (used() > available) return sizes;
+  let next = 0;
+  while (sizes[0] + sizes[1] < total - 1) {
+    sizes[next] += 1;
+    if (used() > available) { sizes[next] -= 1; break; }
+    next = 1 - next;
+  }
+  return sizes;
+}
+
+// pure: sorted cards, the index currently focused (or null - no excursion yet), which edge the
+// excursion started from, and the room/width/gap to size the resting stacks by -> the ordered list
+// of rows to draw. at rest OR at either edge, the front and back stacks each grow from 1 card,
+// round-robin, front stack first, for as long as the next card still fits without scrolling -
+// everything between is one pile, or no pile at all if every card fit that way. focus at idx 0 or
+// n-1 is always still rendered (every stack is >=1 card); focus at idx 1 or n-2 needs its side to
+// have grown to at least 2, so it only falls back to a fixed [2, 2] on a column tight enough that
+// computeStackCounts stalls at its own 1-card floor - anything roomier keeps the round-robin sizes
+// even while a key is moving focus. mid-excursion (focus genuinely in the middle), the anchor's
+// own pair (the edge the user came from) stays full and fixed at 2 while the OTHER pair moves with
+// focus - a top-anchored excursion piles passed cards at the top, a bottom-anchored one piles them
+// at the bottom, and the shrinking middle pile sits between the two moving/fixed pairs either way
+function computePileLayout(sorted, focusIndex, anchor, available, width, gap) {
   const n = sorted.length;
   const inMiddle = focusIndex != null && anchor && focusIndex >= 2 && focusIndex <= n - 3;
   const out = [];
   const card = idx => ({type: 'card', idx, card: sorted[idx]});
   const pile = (from, to) => { if (to >= from) out.push({type: 'pile', cards: sorted.slice(from, to + 1)}); };
   if (!inMiddle) {
-    out.push(card(0), card(1));
-    pile(2, n - 3);
-    out.push(card(n - 2), card(n - 1));
+    // round-robin sizing applies here too, focused or not - it only gives way to a fixed 2 when
+    // the round-robin size would leave the FOCUSED card itself out of the rendered stack (idx 1
+    // needs front>=2, idx n-2 needs back>=2 - idx 0 and n-1 are always covered, since every stack
+    // is at least 1 card). that only happens in a genuinely tight column, where computeStackCounts
+    // stalls at its own [1,1] floor - anything roomier than that keeps the round-robin sizes
+    let [front, back] = computeStackCounts(n, available, width, gap);
+    const rendered = focusIndex == null || focusIndex < front || focusIndex >= n - back;
+    if (!rendered) [front, back] = [2, 2];
+    for (let i = 0; i < front; i++) out.push(card(i));
+    pile(front, n - 1 - back);
+    for (let i = n - back; i < n; i++) out.push(card(i));
     return out;
   }
   if (anchor === 'top') {
@@ -352,16 +567,21 @@ function drawColumn(bucketRowsEl) {
     sorted.forEach((c, idx) => bucketRowsEl.appendChild(buildFullRow(c, idx)));
     bucketRowsEl.style.maxHeight = state.expanded && !state.fits ? `${availableColumnHeight(bucketRowsEl)}px` : '';
     bucketRowsEl.classList.toggle('bucket-rows-expanded', !!state.expanded && !state.fits);
-    bucketRowsEl.classList.remove('bucket-rows-piled');
+    bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls');
+    applyCardShadows(bucketRowsEl);
     return;
   }
   bucketRowsEl.style.maxHeight = '';
   bucketRowsEl.classList.remove('bucket-rows-expanded');
   bucketRowsEl.classList.add('bucket-rows-piled');
-  computePileLayout(sorted, state.focusIndex, state.anchor).forEach(entry => {
+  const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || BUCKET_ROW_GAP;
+  const width = bucketRowsEl.getBoundingClientRect().width;
+  const available = availableColumnHeight(bucketRowsEl);
+  computePileLayout(sorted, state.focusIndex, state.anchor, available, width, gap).forEach(entry => {
     bucketRowsEl.appendChild(entry.type === 'pile' ? buildPileRow(entry.cards, status) : buildFullRow(entry.card, entry.idx, false));
   });
   fitPiledColumn(bucketRowsEl);
+  applyCardShadows(bucketRowsEl);
 }
 
 function focusPileIndex(bucketRowsEl, idx) {
@@ -442,7 +662,8 @@ function wireColumnFocus(bucketRowsEl) {
 function renderBucketColumn(bucketEl, cards, status) {
   const bucketRowsEl = bucketEl.querySelector('.bucket-rows');
   const sorted = sortColumnCards(cards);
-  const fits = stackHeight(sorted.length, CARD_STRIP_HEIGHT) <= availableColumnHeight(bucketRowsEl);
+  const width = bucketRowsEl.getBoundingClientRect().width;
+  const fits = stackHeight(sorted.length, squareCard(width)) <= availableColumnHeight(bucketRowsEl);
   bucketRowsEl._pile = {sorted, status, fits, focusIndex: null, anchor: null, expanded: bucketRowsEl._pile?.expanded || false};
   renderColumnHeader(bucketEl, cards, status);
   drawColumn(bucketRowsEl);
