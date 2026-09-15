@@ -172,6 +172,13 @@ body {
    transform keeps the fan's 140ms slide, and indicate.js re-places its marker once this settles */
 .card-strip { transition: transform 140ms, filter 140ms; }
 .card-strip:focus { transform: scale(1.03); filter: saturate(1.4) brightness(1.15); }
+/* PILED CARDS NEVER SCALE ON FOCUS. indicate.js's marker glides to the card's own boundingClientRect,
+   which a 1.03x scale grows past the card's own footprint - straight into a covered neighbour above
+   or below it (the whole point of a stack is that footprint is all a covered card has left, and a
+   covering card's own growth pushes further over it too). a piled card is any non-fan-item full card
+   (fitPiledColumn drops fan-item for both members of a pair); it keeps the same colour/intensity cue
+   as the plain fan, just without the transform that would draw over a neighbour */
+.card-strip:not(.fan-item):focus { transform: none; }
 /* the plain fan (unpiled) wants a focused card lifted above the ones already covering it - a
    piled pair does not: computePileFit always keeps the later card on top of the earlier one, and
    a stray z-index here would let a focused-but-earlier card pop over it regardless of that */
