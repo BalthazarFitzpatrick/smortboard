@@ -114,61 +114,63 @@ def test_boards_overview_never_counts_orchestrator_turns(store):
     assert overview["orchestrator_turns_counted"] is False
 
 
-# -- 1db20994's accepted/refused outcome groups, for the c panel's redesigned cost overview -----
+# -- the c panel's redesigned 3x3 grid: total / accepted / refused, keyed off card status --------
 
 
-def test_outcome_groups_are_empty_with_no_cards(store):
-    groups = boards_overview(store)["outcome_groups"]
-    assert groups["accepted"] == {"cards": 0, "cost_usd": 0, "cost_per_pr_usd": None}
-    assert groups["refused"] == {"cards": 0, "cost_usd": 0, "cost_per_pr_usd": None}
+def test_cost_groups_are_empty_with_no_cards(store):
+    groups = boards_overview(store)["cost_groups"]
+    empty = {
+        "cards": 0,
+        "cost_usd": 0,
+        "prs": 0,
+        "cost_per_card_usd": None,
+        "cost_per_pr_usd": None,
+    }
+    assert groups["total"] == empty
+    assert groups["accepted"] == empty
+    assert groups["refused"] == empty
 
 
-def test_outcome_groups_count_a_merged_pr_as_accepted(store):
+def test_cost_groups_count_an_accepted_card_by_status_not_outcome(store):
     board = store.create_board("b")
     card = store.create_card(board["id"], None, "a card")
     _clean_run(store, card["id"])
+    store.update_card(card["id"], status="accepted")
 
-    groups = boards_overview(store)["outcome_groups"]
+    groups = boards_overview(store)["cost_groups"]
     assert groups["accepted"]["cards"] == 1
+    assert groups["accepted"]["prs"] == 1
     assert groups["accepted"]["cost_usd"] == pytest.approx(0.13)
+    assert groups["accepted"]["cost_per_card_usd"] == pytest.approx(0.13)
     assert groups["accepted"]["cost_per_pr_usd"] == pytest.approx(0.13)
     assert groups["refused"]["cards"] == 0
-    assert groups["refused"]["cost_per_pr_usd"] is None
+    assert groups["refused"]["cost_per_card_usd"] is None
+    assert groups["total"]["cards"] == 1
+    assert groups["total"]["cost_usd"] == pytest.approx(0.13)
 
 
-def test_outcome_groups_count_a_run_that_never_reached_the_worker_as_refused(store):
+def test_cost_groups_count_a_rejected_card_as_refused(store):
     board = store.create_board("b")
     card = store.create_card(board["id"], None, "a card")
     store.append_event(card["id"], "lifecycle_started", {})
     store.append_event(card["id"], "result", _worker_result(cost=0.05))
-    # no worker_summary event - _attempt_outcome reads that as "refused": never reached the worker
+    store.update_card(card["id"], status="rejected")
 
-    groups = boards_overview(store)["outcome_groups"]
+    groups = boards_overview(store)["cost_groups"]
     assert groups["refused"] == {
         "cards": 1,
         "cost_usd": pytest.approx(0.05),
-        "cost_per_pr_usd": pytest.approx(0.05),
+        "prs": 0,
+        "cost_per_card_usd": pytest.approx(0.05),
+        "cost_per_pr_usd": None,
     }
     assert groups["accepted"]["cards"] == 0
+    assert groups["total"]["cards"] == 1
 
 
-def test_outcome_groups_count_a_rejected_review_as_refused_not_accepted(store):
-    board = store.create_board("b")
-    card = store.create_card(board["id"], None, "a card")
-    store.append_event(card["id"], "lifecycle_started", {})
-    store.append_event(card["id"], "result", _worker_result(cost=0.20))
-    store.append_event(card["id"], "worker_summary", {"text": "did the thing"})
-    store.append_event(card["id"], "review_gate", {"approved": False, "findings": ["nope"]})
-
-    groups = boards_overview(store)["outcome_groups"]
-    assert groups["refused"]["cards"] == 1
-    assert groups["refused"]["cost_usd"] == pytest.approx(0.20)
-    assert groups["accepted"]["cards"] == 0
-
-
-def test_outcome_groups_exclude_a_card_still_blocked_on_crash(store):
-    # CRASH and USAGE_LIMIT count in neither group - the run stopped short of both a pull request
-    # and a refusal, so it names neither outcome
+def test_cost_groups_count_a_still_open_card_in_total_only(store):
+    # todo/doing/checking/blocked count toward total spend but neither accepted nor refused -
+    # the card has not reached either final status yet
     board = store.create_board("b")
     card = store.create_card(board["id"], None, "a card")
     store.append_event(card["id"], "lifecycle_started", {})
@@ -176,15 +178,19 @@ def test_outcome_groups_exclude_a_card_still_blocked_on_crash(store):
     store.append_event(card["id"], "worker_summary", {"text": "working"})
     store.append_event(card["id"], "run_orphaned", {})
 
-    groups = boards_overview(store)["outcome_groups"]
+    groups = boards_overview(store)["cost_groups"]
+    assert groups["total"]["cards"] == 1
+    assert groups["total"]["cost_usd"] == pytest.approx(0.40)
     assert groups["accepted"]["cards"] == 0
     assert groups["refused"]["cards"] == 0
 
 
-def test_outcome_groups_ignore_a_card_never_run(store):
+def test_cost_groups_include_a_card_never_run_in_total_only(store):
     board = store.create_board("b")
     store.create_card(board["id"], None, "never run")
-    groups = boards_overview(store)["outcome_groups"]
+    groups = boards_overview(store)["cost_groups"]
+    assert groups["total"]["cards"] == 1
+    assert groups["total"]["cost_usd"] == 0
     assert groups["accepted"]["cards"] == 0
     assert groups["refused"]["cards"] == 0
 
