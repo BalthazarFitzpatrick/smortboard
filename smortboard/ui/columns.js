@@ -626,6 +626,30 @@ function drawColumn(bucketRowsEl) {
   bucketRowsEl._rowRoles = nextRoles;
 }
 
+// indicate.js's marker is domain-free and glides to a target's whole box - right for a plain card,
+// wrong for a covered one, which only shows its own peek band (fitPiledColumn's negative margin
+// slides the covering card up over the rest of it). a covered card stays covered: this clips the
+// shared marker to the visible band (the target's own top down to where its covering neighbour
+// begins), so the marker's sides and bottom edge never run across a card sitting on top of it.
+// every card-focusing call site in this app goes through here instead of indicateFocus directly -
+// a plain or covering card gets no clip at all, same behaviour as before this existed
+function indicateCardFocus(target) {
+  indicateFocus(target);
+  const marker = document.querySelector('.focus-marker');
+  if (!marker) return;
+  const next = target.classList?.contains('card-covered') ? target.nextElementSibling : null;
+  const clip = () => {
+    if (!next) { marker.style.clipPath = ''; return; }
+    const visible = next.getBoundingClientRect().top - target.getBoundingClientRect().top;
+    marker.style.clipPath = visible > 0 ? `inset(0 0 calc(100% - ${visible}px) 0)` : '';
+  };
+  clip();
+  // indicate.js re-places the marker on the next frame and again once the target's own slide
+  // transition ends - the clip has to be reapplied after each, or the full box flashes back
+  globalThis.requestAnimationFrame?.(clip);
+  target.addEventListener('transitionend', clip, {once: true});
+}
+
 function focusPileIndex(bucketRowsEl, idx) {
   const rows = Array.from(bucketRowsEl.children);
   rows.forEach(row => { row.tabIndex = -1; });
@@ -633,7 +657,7 @@ function focusPileIndex(bucketRowsEl, idx) {
   if (!target) return;
   target.tabIndex = 0;
   target.focus();
-  indicateFocus(target);
+  indicateCardFocus(target);
 }
 
 // ArrowDown/Up inside a piled column, intercepted ahead of buckets.js's own roving nav (see
@@ -740,7 +764,7 @@ function refitPiledColumns() {
   if (!strip) return;
   strip.tabIndex = 0;
   strip.focus();
-  indicateFocus(strip);
+  indicateCardFocus(strip);
 }
 
 if (typeof window !== 'undefined') {
