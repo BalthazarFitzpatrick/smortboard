@@ -94,11 +94,11 @@ window.addEventListener('resize', () => {
   }, 150);
 });
 
-// ---- dense column presentation: a full column as itself, or two full cards top and bottom with
-// a pile of card-edges holding the rest ---------------------------------------------------------
+// ---- dense column presentation: a full column as itself, or a small group of full cards between
+// two piles of card-edges holding the rest (column motion option C, below) ----------------------
 // board.js's renderBuckets calls renderBucketColumn per status column, passing the .bucket element
 // (label + rows) and the column's status; card_panel.js's renderCardStrip builds every real card,
-// full-size whether it sits at rest or mid-excursion. presentation only - never touches card status
+// full-size whether it sits at rest or in the moving group. presentation only - never touches card status
 // or any stored state, only which cards are drawn full vs folded into a pile right now
 
 // tuning-page constants: css custom properties on body (layout.css), read once here so the sizing
@@ -112,8 +112,8 @@ function readGapVar(name, fallback) {
 }
 
 const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
-const MIN_PILED_CARDS = 5; // below this, front stack + pile + back stack has nothing left to pile
-const PILE = 100; // a pile's fixed height - never shrinks, only grows with whatever is left over
+const MIN_PILED_CARDS = 5; // below this, a group between two piles has nothing left to pile
+const PILE = 100; // a pile's fixed height - never shrinks or grows
 const PEEK = readGapVar('--stack-peek', 60); // the title-strip band an earlier card still shows
 const PILE_GAP_ABOVE = readGapVar('--pile-gap-above', 5); // extra space above a pile, past the row gap
 const PILE_GAP_BELOW = readGapVar('--pile-gap-below', 5); // extra space below a pile, past the row gap
@@ -259,6 +259,16 @@ function applyCardShadows(bucketRowsEl) {
     }
     cardIndex += 1;
   });
+  // a piled column cuts what runs past its edge, so the shadows of those rows are cut at the same
+  // line - only on the side that clips (the bottom when top-anchored, the top when bottom-anchored)
+  const clips = bucketRowsEl.classList.contains('bucket-rows-piled') && !bucketRowsEl.classList.contains('bucket-rows-scrolls');
+  if (!clips) { layer.style.clipPath = ''; return; }
+  const rowsRect = bucketRowsEl.getBoundingClientRect();
+  const reach = SHADOW_RADIUS + SHADOW_CORE + 20;
+  const fromBottom = bucketRowsEl.classList.contains('bucket-rows-bottom');
+  const top = rowsRect.top - bucketRect.top - (fromBottom ? 0 : reach);
+  const bottom = bucketRect.bottom - rowsRect.bottom - (fromBottom ? reach : 0);
+  layer.style.clipPath = `inset(${top}px -${reach}px ${bottom}px -${reach}px)`;
 }
 
 function isAttentionCard(card) {
@@ -440,7 +450,7 @@ function buildPileRow(cards, status) {
 }
 
 // a piled column drops fan-item: its -80% margin pulled the card after a pile up over the pile,
-// and its focus slide pushed the bottom pair off screen - computePileFit places these instead
+// and its focus slide pushed the bottom pair off screen - fitPiledColumn places these instead
 function buildFullRow(card, idx, fanned = true) {
   const strip = renderCardStrip(card);
   strip.dataset.idx = String(idx);
@@ -448,141 +458,115 @@ function buildFullRow(card, idx, fanned = true) {
   return strip;
 }
 
-// pure: rows in order ({type: 'card'|'pile'}), the available height, the row gap and the column's
-// own width -> one square card height and one pile height. the pile is fixed at PILE and grows
-// with the leftover by at most one more PEEK (160px) - past that the extra stays as empty space
-// at the column's bottom rather than stretching the pile further. cards shrink first, never below
-// MIN_CARD - past that the column scrolls instead of shrinking further (the only case that scrolls)
-function computePileFit(rows, available, gap, width) {
-  const piles = rows.filter(r => r.type === 'pile').length;
-  const stacks = [];
-  rows.forEach(r => {
-    if (r.type === 'pile') { stacks.push(null); return; }
-    if (stacks.length && stacks[stacks.length - 1] !== null) stacks[stacks.length - 1] += 1;
-    else stacks.push(1);
-  });
-  const groups = stacks.filter(n => n !== null);
-  // real gaps sit only BETWEEN groups/piles - a stack's own cards overlap via negative margin-top
-  // (fitPiledColumn), so a run of consecutive cards costs peek increments, never rows.length-1 gaps.
-  // each pile also carries its own above/below knob (0 today - see layout.css), same margin the
-  // css actually draws on .card-pile, so the two never disagree about how tall a pile's slot is
-  const fixedGaps = Math.max(0, groups.length + piles - 1) * gap + piles * (PILE_GAP_ABOVE + PILE_GAP_BELOW);
-  const pileFixed = piles * PILE;
-  const peekTotal = groups.reduce((sum, n) => sum + (n - 1) * PEEK, 0);
-  const used = card => groups.length * card + peekTotal + pileFixed + fixedGaps;
-  const full = squareCard(width);
-  let card = full;
-  let scrolls = false;
-  if (used(full) > available) {
-    const denom = groups.length || 1;
-    card = Math.max(MIN_CARD, Math.floor((available - peekTotal - pileFixed - fixedGaps) / denom));
-    scrolls = used(card) > available;
-  }
-  const leftover = Math.max(0, available - used(card));
-  const pileHeight = PILE + (piles && !scrolls ? Math.min(PEEK, Math.floor(leftover / piles)) : 0);
-  return {card, pileHeight, scrolls};
+// ---- column motion, option C (derived/column_motion, operator-approved): a group of at most n
+// cards sits between a pile above and a pile below. inside the group, passed cards are PEEK strips
+// and the focused card is open. stepping past the group's end draws one card off the lower pile and
+// puts the group's oldest onto the upper pile, so the group never grows past n ------------------
+
+const EDGE_CARDS = 2; // the column's last (or first) cards shown past the far pile, cut at the edge
+
+// pure: the tallest a group of n cards gets - the focused card open at the group's start, the
+// group's last card still full below it, every card between a PEEK strip
+function groupHeight(n, card) {
+  return n <= 1 ? card : 2 * card + (n - 2) * PEEK;
 }
 
-// measures the drawn rows and applies computePileFit - the column's own width decides the square
-// card size, not a measured dom height. an earlier card in a stack keeps only its PEEK-tall title
-// band showing, overlapped by the one drawn after it (which keeps the regular drop shadow, so the
-// cover reads as a real card on top rather than a shorter box)
-function fitPiledColumn(bucketRowsEl) {
+// pure: one pile's share of the column - its own height, its above/below knobs (the same margins
+// .card-pile draws) and the one flex gap between it and the group
+function pileSlot(gap) {
+  return PILE + PILE_GAP_ABOVE + PILE_GAP_BELOW + gap;
+}
+
+// pure: the total card count and the room/row gap/width a column has -> {n, card, piles, scrolls}.
+// every card as one group when even its tallest shape fits (no piles at all), else the largest n
+// in {3, 2} whose tallest group plus both piles fits, else 1. only when even 1 card at square size
+// cannot fit do cards shrink (never below MIN_CARD), and past that floor the column scrolls
+function computeGroupFit(total, available, gap, width) {
+  const full = squareCard(width);
+  if (groupHeight(total, full) <= available) return {n: total, card: full, piles: false, scrolls: false};
+  const piles = 2 * pileSlot(gap);
+  for (const n of [3, 2, 1]) {
+    if (groupHeight(n, full) + piles <= available) return {n, card: full, piles: true, scrolls: false};
+  }
+  const card = Math.max(MIN_CARD, Math.floor(available - piles));
+  return {n: 1, card, piles: true, scrolls: card + piles > available};
+}
+
+// pure: moves the group only as far as focus left it - one card for one arrow press - and flips
+// the anchor at either end: the last card anchors the column to the bottom edge, and only the
+// first card anchors it back to the top
+function placeGroup(total, n, focusIndex, start, anchor) {
+  let next = start ?? 0;
+  let side = anchor || 'top';
+  if (focusIndex != null) {
+    if (focusIndex === 0) side = 'top';
+    if (focusIndex === total - 1) side = 'bottom';
+    if (focusIndex < next) next = focusIndex;
+    if (focusIndex > next + n - 1) next = focusIndex - n + 1;
+  }
+  return {start: Math.max(0, Math.min(next, total - n)), anchor: side};
+}
+
+// pure: sorted cards, the focused index (or null at rest), the group's prior start and anchor, and
+// n -> {start, anchor, rows}. top anchor: pile above, group, pile below, then the column's last
+// cards, cut by the column's bottom edge. bottom anchor mirrors it: the first cards (cut by the top
+// edge), pile above, group, pile below. a card row's join says how it meets the row before it:
+// 'peek' slides over that card leaving a PEEK strip, 'flush' starts at the open focused card's
+// bottom edge, 'none' is plain flow
+function computePileLayout(sorted, focusIndex, start, anchor, n) {
+  const total = sorted.length;
+  const place = placeGroup(total, n, focusIndex, start, anchor);
+  const end = place.start + n; // one past the group's last card
+  const edge = Math.min(n, EDGE_CARDS);
+  const rows = [];
+  const pile = (from, to, side) => {
+    if (to > from) rows.push({type: 'pile', side, cards: sorted.slice(from, to)});
+  };
+  const run = (from, to, part) => {
+    for (let i = from; i < to; i++) {
+      const join = i === from ? 'none' : i - 1 === focusIndex ? 'flush' : 'peek';
+      rows.push({type: 'card', idx: i, card: sorted[i], join, part});
+    }
+  };
+  if (place.anchor === 'top') {
+    const tailFrom = Math.max(end, total - edge);
+    pile(0, place.start, 'above');
+    run(place.start, end, 'group');
+    pile(end, tailFrom, 'below');
+    run(tailFrom, total, 'edge');
+  } else {
+    const headTo = Math.min(edge, place.start);
+    run(0, headTo, 'edge');
+    pile(headTo, place.start, 'above');
+    run(place.start, end, 'group');
+    pile(end, total, 'below');
+  }
+  rows.forEach((row, i) => {
+    if (row.type === 'card') row.covered = rows[i + 1]?.join === 'peek';
+  });
+  return {start: place.start, anchor: place.anchor, rows};
+}
+
+// applies computeGroupFit to the drawn rows: every card the fit's square size, every pile PILE, and
+// each card's join as a margin. bucket-rows' own flex `gap` still applies UNDER a margin (they add,
+// never cancel), so a peek margin cancels the gap too, or every strip comes out gap px too tall.
+// the column is exactly `available` tall and clips what runs past it, no scrollbar
+function fitPiledColumn(bucketRowsEl, fit, anchor, available, gap) {
   const rowEls = Array.from(bucketRowsEl.children);
-  const rows = rowEls.map(el => ({type: el.classList.contains('card-pile') ? 'pile' : 'card'}));
-  const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || BUCKET_ROW_GAP;
-  const width = bucketRowsEl.getBoundingClientRect().width;
-  const {card, pileHeight, scrolls} = computePileFit(rows, availableColumnHeight(bucketRowsEl), gap, width);
-  bucketRowsEl.classList.toggle('bucket-rows-scrolls', scrolls);
+  bucketRowsEl.classList.toggle('bucket-rows-scrolls', fit.scrolls);
+  bucketRowsEl.classList.toggle('bucket-rows-bottom', fit.piles && !fit.scrolls && anchor === 'bottom');
+  bucketRowsEl.style.height = `${available}px`;
   rowEls.forEach((el, i) => {
-    if (rows[i].type === 'pile') {
-      el.style.height = `${pileHeight}px`;
+    if (el.classList.contains('card-pile')) {
+      el.style.height = `${PILE}px`;
       el.style.marginTop = '';
       return;
     }
-    el.style.height = `${card}px`;
-    // the earlier card of a pair wears card-covered (it gives way); the later one pulls itself up
-    // over it with a negative margin-top - never the same row, or the later card would peek too.
-    // bucket-rows' own flex `gap` still applies UNDER a margin (they add, never cancel each
-    // other), so the margin has to cancel gap too or every peek band comes out gap px too tall -
-    // which is exactly what ran a 35-card column's real height past what computePileFit sized it
-    // for (each of n-1 pairs quietly adding one gap) and off the bottom of the screen with it
-    const nextIsCard = i < rows.length - 1 && rows[i + 1].type === 'card';
-    const prevIsCard = i > 0 && rows[i - 1].type === 'card';
-    el.classList.toggle('card-covered', nextIsCard);
-    el.style.marginTop = prevIsCard ? `${-(card - PEEK + gap)}px` : '';
+    el.style.height = `${fit.card}px`;
+    const join = el.dataset.join;
+    el.classList.toggle('card-covered', rowEls[i + 1]?.dataset?.join === 'peek');
+    el.style.marginTop = join === 'peek' ? `${-(fit.card - PEEK + gap)}px` : join === 'flush' ? `${-gap}px` : '';
   });
-}
-
-// pure: the total card count, the room/width/gap a resting column has to fill, and one pile in the
-// middle -> [front, back] stack sizes. each starts at 1 and grows one card at a time, round-robin,
-// front first, for as long as the next card still fits without pushing the column into a scroll -
-// so the two stacks differ by at most one and the pile only ever holds what is left over.
-// NO PILE WHEN IT ISN'T NEEDED: first tried as one continuous peeked run of every card, no pile at
-// all - if that alone fits, front takes everything and back stays empty (computePileLayout's own
-// pile() guard then never emits a pile row, since front already reaches the far end)
-function computeStackCounts(total, available, width, gap) {
-  if (available == null) return [2, 2];
-  const card = squareCard(width);
-  const allPeeked = (total - 1) * PEEK + card;
-  if (allPeeked <= available) return [total, 0];
-  const fixed = PILE + 2 * gap + PILE_GAP_ABOVE + PILE_GAP_BELOW;
-  const sizes = [1, 1];
-  const used = () => (sizes[0] - 1) * PEEK + card + (sizes[1] - 1) * PEEK + card + fixed;
-  if (used() > available) return sizes;
-  let next = 0;
-  while (sizes[0] + sizes[1] < total - 1) {
-    sizes[next] += 1;
-    if (used() > available) { sizes[next] -= 1; break; }
-    next = 1 - next;
-  }
-  return sizes;
-}
-
-// pure: sorted cards, the index currently focused (or null - no excursion yet), which edge the
-// excursion started from, and the room/width/gap to size the resting stacks by -> the ordered list
-// of rows to draw. at rest OR at either edge, the front and back stacks each grow from 1 card,
-// round-robin, front stack first, for as long as the next card still fits without scrolling -
-// everything between is one pile, or no pile at all if every card fit that way. focus at idx 0 or
-// n-1 is always still rendered (every stack is >=1 card); focus at idx 1 or n-2 needs its side to
-// have grown to at least 2, so it only falls back to a fixed [2, 2] on a column tight enough that
-// computeStackCounts stalls at its own 1-card floor - anything roomier keeps the round-robin sizes
-// even while a key is moving focus. mid-excursion (focus genuinely in the middle), the anchor's
-// own pair (the edge the user came from) stays full and fixed at 2 while the OTHER pair moves with
-// focus - a top-anchored excursion piles passed cards at the top, a bottom-anchored one piles them
-// at the bottom, and the shrinking middle pile sits between the two moving/fixed pairs either way
-function computePileLayout(sorted, focusIndex, anchor, available, width, gap) {
-  const n = sorted.length;
-  const inMiddle = focusIndex != null && anchor && focusIndex >= 2 && focusIndex <= n - 3;
-  const out = [];
-  const card = idx => ({type: 'card', idx, card: sorted[idx]});
-  const pile = (from, to) => { if (to >= from) out.push({type: 'pile', cards: sorted.slice(from, to + 1)}); };
-  if (!inMiddle) {
-    // round-robin sizing applies here too, focused or not - it only gives way to a fixed 2 when
-    // the round-robin size would leave the FOCUSED card itself out of the rendered stack (idx 1
-    // needs front>=2, idx n-2 needs back>=2 - idx 0 and n-1 are always covered, since every stack
-    // is at least 1 card). that only happens in a genuinely tight column, where computeStackCounts
-    // stalls at its own [1,1] floor - anything roomier than that keeps the round-robin sizes
-    let [front, back] = computeStackCounts(n, available, width, gap);
-    const rendered = focusIndex == null || focusIndex < front || focusIndex >= n - back;
-    if (!rendered) [front, back] = [2, 2];
-    for (let i = 0; i < front; i++) out.push(card(i));
-    pile(front, n - 1 - back);
-    for (let i = n - back; i < n; i++) out.push(card(i));
-    return out;
-  }
-  if (anchor === 'top') {
-    pile(0, focusIndex - 2);
-    out.push(card(focusIndex - 1), card(focusIndex));
-    pile(focusIndex + 1, n - 3);
-    out.push(card(n - 2), card(n - 1));
-  } else {
-    out.push(card(0), card(1));
-    pile(2, focusIndex - 1);
-    out.push(card(focusIndex), card(focusIndex + 1));
-    pile(focusIndex + 2, n - 1);
-  }
-  return out;
 }
 
 // true if a card's role (drawn full, or folded into a pile) changed since the prior draw - a
@@ -592,7 +576,7 @@ function roleChanged(id, role, priorRoles) {
 }
 
 // redraws bucketRowsEl from its own _pile state - expanded and "fits anyway" both mean every card
-// full in one plain list; otherwise the excursion-aware split above. every row that is new in its
+// full in one plain list; otherwise the group between two piles above. every row that is new in its
 // current role (a card appearing, or moving in/out of a pile) gets .row-enter (layout.css); a row
 // whose role is unchanged - the common case, a resize refit or an unchanged poll - gets nothing
 function drawColumn(bucketRowsEl) {
@@ -610,8 +594,9 @@ function drawColumn(bucketRowsEl) {
       bucketRowsEl.appendChild(strip);
     });
     bucketRowsEl.style.maxHeight = state.expanded && !state.fits ? `${availableColumnHeight(bucketRowsEl)}px` : '';
+    bucketRowsEl.style.height = '';
     bucketRowsEl.classList.toggle('bucket-rows-expanded', !!state.expanded && !state.fits);
-    bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls');
+    bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls', 'bucket-rows-bottom');
     applyCardShadows(bucketRowsEl);
     bucketRowsEl._rowRoles = nextRoles;
     return;
@@ -622,7 +607,11 @@ function drawColumn(bucketRowsEl) {
   const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || BUCKET_ROW_GAP;
   const width = bucketRowsEl.getBoundingClientRect().width;
   const available = availableColumnHeight(bucketRowsEl);
-  computePileLayout(sorted, state.focusIndex, state.anchor, available, width, gap).forEach(entry => {
+  const fit = computeGroupFit(sorted.length, available, gap, width);
+  const layout = computePileLayout(sorted, state.focusIndex, state.start, state.anchor, fit.n);
+  state.start = layout.start;
+  state.anchor = layout.anchor;
+  layout.rows.forEach(entry => {
     if (entry.type === 'pile') {
       const entering = entry.cards.some(c => roleChanged(c.id, 'pile', priorRoles));
       const el = buildPileRow(entry.cards, status);
@@ -631,12 +620,13 @@ function drawColumn(bucketRowsEl) {
       bucketRowsEl.appendChild(el);
     } else {
       const strip = buildFullRow(entry.card, entry.idx, false);
+      strip.dataset.join = entry.join;
       if (roleChanged(entry.card.id, 'card', priorRoles)) strip.classList.add('row-enter');
       nextRoles.set(entry.card.id, 'card');
       bucketRowsEl.appendChild(strip);
     }
   });
-  fitPiledColumn(bucketRowsEl);
+  fitPiledColumn(bucketRowsEl, fit, layout.anchor, available, gap);
   applyCardShadows(bucketRowsEl);
   bucketRowsEl._rowRoles = nextRoles;
 }
@@ -679,9 +669,9 @@ function focusPileIndex(bucketRowsEl, idx) {
 }
 
 // ArrowDown/Up inside a piled column, intercepted ahead of buckets.js's own roving nav (see
-// wireColumnFocus) so a press draws the next card off the pile instead of landing focus on the
-// pile itself. idx 0 going up, or the last idx going down, falls through untouched - buckets.js's
-// default nav exits the column (onExitTop) or clamps in place, same as any other column
+// wireColumnFocus) so a press moves focus one card and the group follows it (placeGroup) instead of
+// landing focus on a pile. idx 0 going up, or the last idx going down, falls through untouched -
+// buckets.js's default nav exits the column (onExitTop) or clamps in place, same as any other column
 function handlePileKey(bucketRowsEl, evt) {
   const state = bucketRowsEl._pile;
   if (!state || state.expanded || state.fits || state.sorted.length < MIN_PILED_CARDS) return;
@@ -693,12 +683,7 @@ function handlePileKey(bucketRowsEl, evt) {
   if (dir === 1 && idx >= n - 1) return;
   if (dir === -1 && idx <= 0) return;
   const nextIdx = idx + dir;
-  const nextInMiddle = nextIdx >= 2 && nextIdx <= n - 3;
-  let anchor = state.anchor;
-  if (!nextInMiddle) anchor = null;
-  else if (!anchor) anchor = idx <= 1 ? 'top' : idx >= n - 2 ? 'bottom' : (dir === 1 ? 'top' : 'bottom');
   state.focusIndex = nextIdx;
-  state.anchor = anchor;
   evt.preventDefault();
   evt.stopPropagation();
   drawColumn(bucketRowsEl);
@@ -747,22 +732,24 @@ function wireColumnFocus(bucketRowsEl) {
 }
 
 // builds one status column - every card full if it fits (or expanded, or too few to pile), else
-// two full top, a pile, two full bottom - replacing bucketEl's header and rows. card_panel.js's
-// renderCardStrip renders every real card, full-size whether at rest or mid-excursion
+// the group between two piles, top-anchored at rest - replacing bucketEl's header and rows.
+// card_panel.js's renderCardStrip renders every real card, full-size whether at rest or moving
 function renderBucketColumn(bucketEl, cards, status) {
   const bucketRowsEl = bucketEl.querySelector('.bucket-rows');
   const sorted = sortColumnCards(cards);
   const width = bucketRowsEl.getBoundingClientRect().width;
   const fits = stackHeight(sorted.length, squareCard(width)) <= availableColumnHeight(bucketRowsEl);
-  bucketRowsEl._pile = {sorted, status, fits, focusIndex: null, anchor: null, expanded: bucketRowsEl._pile?.expanded || false};
+  bucketRowsEl._pile = {
+    sorted, status, fits, focusIndex: null, start: 0, anchor: 'top',
+    expanded: bucketRowsEl._pile?.expanded || false,
+  };
   renderColumnHeader(bucketEl, cards, status);
   drawColumn(bucketRowsEl);
   wireColumnFocus(bucketRowsEl);
 }
 
-// ---- resize refit: card size, stack counts and pile height all come from the column's own
-// measured width/height (computeStackCounts, computePileFit), which only a real resize (not a
-// poll) can change. refits every already-piled column from its own _pile state alone - no refetch,
+// ---- resize refit: card size and the group's n both come from the column's own measured
+// width/height (computeGroupFit), which only a real resize (not a poll) can change. refits every already-piled column from its own _pile state alone - no refetch,
 // no full renderBuckets - and recomputes `fits` too, since widening a column can drop its pile
 // entirely, same as renderBucketColumn does on first draw --------------------------------------
 
