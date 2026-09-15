@@ -203,72 +203,47 @@ function shadowImage(w, h) {
   return out;
 }
 
-// draws every card strip's shadow as an absolutely-positioned image, layered by the shadow layer's
-// own DOM order - a later row's shadow is appended after an earlier row's, so it paints on top,
-// same as the strip covering it does. lives on .bucket (not .bucket-rows), one layer per bucket,
-// rebuilt from the rows' own measured position - real geometry, not the sizing math's own guess
+// every card strip carries its own shadow as a child <canvas>, so the shadow is part of the card:
+// it rides every slide, focus lift, refit and resize the card does and can never be left behind
+// where a card used to be - the one shared layer per bucket it replaces was placed once from
+// measured rects and went stale the moment a card moved (the operator's 2026-09-15 screenshots).
+// paint order comes free: layout.css gives every strip z-index 0, and the canvas z-index -1 inside
+// that stacking context puts it over every earlier card, under its own card and every later one
 function applyCardShadows(bucketRowsEl) {
-  const bucketEl = bucketRowsEl.closest('.bucket');
-  if (!bucketEl) return;
-  let layer = bucketEl.querySelector('.card-shadow-layer');
-  if (!layer) {
-    layer = document.createElement('div');
-    layer.className = 'card-shadow-layer';
-    bucketEl.appendChild(layer);
-  }
-  layer.innerHTML = '';
-  const bucketRect = bucketEl.getBoundingClientRect();
-  // z-index interleaves shadow and card, 4 apart per row: a shadow sits above the card BEFORE it
-  // (which it covers) but below the card it belongs to and everything after - same order the
-  // tuner's own DOM nesting gives for free, done explicitly since the shadows live in one shared
-  // layer rather than one wrapper per card (see .bucket's own z-index:0 - its own stacking context).
-  // the gap (was 2) leaves room for a lift: an attention card's ring glow, or a focused card's own
-  // inset ring (layout.css), sit in that same paint order and used to lose to the next card's
-  // shadow painting over them - lifting just that one row, only above that one shadow and still
-  // below the next card itself, shows the ring/frame without uncovering anything
-  const ROW_STEP = 4;
-  const DECORATION_LIFT = 3;
-  let cardIndex = 0;
+  bucketRowsEl.closest?.('.bucket')?.querySelector('.card-shadow-layer')?.remove();
   Array.from(bucketRowsEl.children).forEach(row => {
-    if (!row.classList.contains('card-strip')) return; // piles keep their own existing shadow
-    const rect = row.getBoundingClientRect();
-    const w = Math.round(rect.width), h = Math.round(rect.height);
-    const base = cardIndex * ROW_STEP;
-    // only the piled layout actually overlaps cards (buildFullRow drops fan-item there) - the
-    // plain list's own fan-item:focus z-index lift stays the only one in play for that case, so
-    // this never fights it
-    if (!row.classList.contains('fan-item')) {
-      const decorated = row.classList.contains('card-attention') || row === document.activeElement;
-      row.style.zIndex = String(decorated ? base + DECORATION_LIFT : base);
-    }
-    if (w && h) {
-      const shade = shadowImage(w, h);
-      // a fresh <canvas> per row, repainted from the cached ImageData - never an <img src="data:...">,
-      // see shadowImage's own comment for why
-      const canvas = document.createElement('canvas');
-      canvas.className = 'card-shade';
-      canvas.width = shade.cw;
-      canvas.height = shade.ch;
-      canvas.getContext('2d').putImageData(shade.imageData, 0, 0);
-      canvas.style.top = `${(rect.top - bucketRect.top) - shade.pad}px`;
-      canvas.style.left = `${(rect.left - bucketRect.left) - shade.pad}px`;
-      canvas.style.width = `${shade.cw}px`;
-      canvas.style.height = `${shade.ch}px`;
-      canvas.style.zIndex = String(base - 2);
-      layer.appendChild(canvas);
-    }
-    cardIndex += 1;
+    if (row.classList.contains('card-strip')) attachCardShadow(row); // piles keep their own shadow
   });
-  // a piled column cuts what runs past its edge, so the shadows of those rows are cut at the same
-  // line - only on the side that clips (the bottom when top-anchored, the top when bottom-anchored)
-  const clips = bucketRowsEl.classList.contains('bucket-rows-piled') && !bucketRowsEl.classList.contains('bucket-rows-scrolls');
-  if (!clips) { layer.style.clipPath = ''; return; }
-  const rowsRect = bucketRowsEl.getBoundingClientRect();
-  const reach = SHADOW_RADIUS + SHADOW_CORE + 20;
-  const fromBottom = bucketRowsEl.classList.contains('bucket-rows-bottom');
-  const top = rowsRect.top - bucketRect.top - (fromBottom ? 0 : reach);
-  const bottom = bucketRect.bottom - rowsRect.bottom - (fromBottom ? reach : 0);
-  layer.style.clipPath = `inset(${top}px -${reach}px ${bottom}px -${reach}px)`;
+}
+
+// the layout box, not getBoundingClientRect - that one includes a focus scale or a slide in flight.
+// a canvas already sized for this box is kept, so a repeat call costs one measurement
+function attachCardShadow(row) {
+  const rect = row.getBoundingClientRect();
+  const w = Math.round(row.offsetWidth || rect.width);
+  const h = Math.round(row.offsetHeight || rect.height);
+  const size = `${w}x${h}`;
+  const old = row.children.find ? row.children.find(c => c.classList?.contains('card-shade'))
+    : row.querySelector('.card-shade');
+  if (old && old.dataset.size === size) return;
+  old?.remove();
+  if (!w || !h) return;
+  const shade = shadowImage(w, h);
+  // a fresh <canvas> per row, repainted from the cached ImageData - never an <img src="data:...">,
+  // see shadowImage's own comment for why
+  const canvas = document.createElement('canvas');
+  canvas.className = 'card-shade';
+  canvas.dataset.size = size;
+  canvas.width = shade.cw;
+  canvas.height = shade.ch;
+  canvas.getContext('2d').putImageData(shade.imageData, 0, 0);
+  // absolute children sit against the padding box, so the card's own border is stepped back out
+  const css = globalThis.getComputedStyle?.(row);
+  canvas.style.top = `${-(shade.pad + (parseFloat(css?.borderTopWidth) || 0))}px`;
+  canvas.style.left = `${-(shade.pad + (parseFloat(css?.borderLeftWidth) || 0))}px`;
+  canvas.style.width = `${shade.cw}px`;
+  canvas.style.height = `${shade.ch}px`;
+  row.appendChild(canvas);
 }
 
 function isAttentionCard(card) {
@@ -412,8 +387,11 @@ function updateExpandButton(bucketEl) {
 
 // the room a column actually has below its own top, down to the viewport's bottom edge - real
 // measurement, taken fresh per render since a window resize or drawer changes it
+// measured from the rows' content top: a piled column's shadow-room padding (layout.css) sits above
+// it and is cancelled by an equal negative margin, so the content itself never moved
 function availableColumnHeight(bucketRowsEl) {
-  const top = bucketRowsEl.getBoundingClientRect().top;
+  const pad = parseFloat(globalThis.getComputedStyle?.(bucketRowsEl)?.paddingTop) || 0;
+  const top = bucketRowsEl.getBoundingClientRect().top + pad;
   return Math.max(0, (window.innerHeight || 0) - top - 24);
 }
 
@@ -518,13 +496,16 @@ function computePileLayout(sorted, focusIndex, start, anchor, n) {
   const place = placeGroup(total, n, focusIndex, start, anchor);
   const end = place.start + n; // one past the group's last card
   const edge = Math.min(n, EDGE_CARDS);
+  // at rest the group's first card is the open one, exactly as focus landing on it draws it - so
+  // focus arriving at card 1 finds it open rather than a covered strip (the mockup has no rest state)
+  const open = focusIndex ?? place.start;
   const rows = [];
   const pile = (from, to, side) => {
     if (to > from) rows.push({type: 'pile', side, cards: sorted.slice(from, to)});
   };
   const run = (from, to, part) => {
     for (let i = from; i < to; i++) {
-      const join = i === from ? 'none' : i - 1 === focusIndex ? 'flush' : 'peek';
+      const join = i === from ? 'none' : i - 1 === open ? 'flush' : 'peek';
       rows.push({type: 'card', idx: i, card: sorted[i], join, part});
     }
   };
@@ -569,90 +550,165 @@ function fitPiledColumn(bucketRowsEl, fit, anchor, available, gap) {
   });
 }
 
-// true if a card's role (drawn full, or folded into a pile) changed since the prior draw - a
-// plain refit or poll redraw that reproduces the same roles reports nothing new, so nothing animates
+// true if a card's role (drawn full, or folded into which pile) changed since the prior draw - a
+// plain refit or poll redraw that reproduces the same roles reports nothing new
 function roleChanged(id, role, priorRoles) {
   return priorRoles.get(id) !== role;
 }
 
+// ---- motion: a redraw replaces every row, so each row is replayed from where it was drawn last
+// to where it is drawn now (flip) - a step reads as the column moving, never as a redraw. same
+// duration and ease-out as .row-enter; the css translate/scale properties, never transform, so a
+// focus lift (transform) or the fan's own slide (transform) run underneath it untouched ----------
+
+const ROW_MOTION_MS = 140; // .row-enter's own duration (layout.css)
+const ROW_EASING = 'ease-out';
+const REST_FRAME = {translate: '0px 0px', scale: '1 1', opacity: 1};
+const GROW_FRAME = {translate: '0px 0px', scale: '0.9 0.6', opacity: 0}; // a pile forming or emptying
+
+// a row's identity across redraws: a card by its id, a pile by the side it sits on
+function rowKey(el) {
+  return el.classList.contains('card-pile') ? `pile-${el.dataset.side}` : `card-${el.dataset.cardId}`;
+}
+
+function measureRows(bucketRowsEl) {
+  return new Map(Array.from(bucketRowsEl.children).map(el => [rowKey(el), {el, rect: el.getBoundingClientRect()}]));
+}
+
+// pure: the translate and scale that put a box drawn at `to` back over `from`. css scales about
+// the element's centre, so the translate is the difference between the two centres
+function flipDelta(from, to) {
+  return {
+    x: (from.left + from.width / 2) - (to.left + to.width / 2),
+    y: (from.top + from.height / 2) - (to.top + to.height / 2),
+    sx: to.width ? from.width / to.width : 1,
+    sy: to.height ? from.height / to.height : 1,
+  };
+}
+
+function flipFrame(delta, opacity = 1) {
+  return {translate: `${delta.x}px ${delta.y}px`, scale: `${delta.sx} ${delta.sy}`, opacity};
+}
+
+function movesAtAll(delta) {
+  return Math.abs(delta.x) + Math.abs(delta.y) > 0.5 || Math.abs(delta.sx - 1) + Math.abs(delta.sy - 1) > 0.005;
+}
+
+// no motion at all under prefers-reduced-motion, on a first draw, or without the web animations api
+function motionAllowed(bucketRowsEl, before) {
+  if (!before.size || typeof bucketRowsEl.animate !== 'function') return false;
+  return !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+}
+
+// a row that left the drawn rows - a card folded onto a pile, or a pile that emptied - replayed once
+// as its own detached node from where it was, into the pile's box (or shrinking away) while it
+// fades. z-index -1 in .bucket's stacking context keeps it under every live row; it drops .row so
+// buckets.js's nav never counts it
+function ghostRow(bucketEl, prior, toRect) {
+  const ghost = prior.el;
+  const base = bucketEl.getBoundingClientRect();
+  ghost.classList.remove('row', 'row-enter');
+  ghost.classList.add('row-ghost');
+  Object.assign(ghost.style, {
+    position: 'absolute', margin: '0', zIndex: '-1',
+    left: `${prior.rect.left - base.left}px`, top: `${prior.rect.top - base.top}px`,
+    width: `${prior.rect.width}px`, height: `${prior.rect.height}px`,
+  });
+  bucketEl.appendChild(ghost);
+  const end = toRect ? flipFrame(flipDelta(toRect, prior.rect), 0) : GROW_FRAME;
+  const anim = ghost.animate([REST_FRAME, end], {duration: ROW_MOTION_MS, easing: ROW_EASING, fill: 'forwards'});
+  anim.onfinish = anim.oncancel = () => ghost.remove();
+}
+
+// every drawn row against the snapshot taken before the redraw: one still here slides from its old
+// box; a card just drawn off a pile starts at that pile's old box; a pile just formed grows in; a
+// row that is new outright gets the plain .row-enter fade. then the rows that went away: a card
+// now on a pile shrinks into that pile's new box, and an emptied pile shrinks away where it was
+function animateRows(bucketRowsEl, before, priorRoles, nextRoles) {
+  const now = measureRows(bucketRowsEl);
+  const play = (el, from) => el.animate([from, REST_FRAME], {duration: ROW_MOTION_MS, easing: ROW_EASING});
+  now.forEach(({el, rect}, key) => {
+    const prior = before.get(key);
+    if (prior) {
+      const delta = flipDelta(prior.rect, rect);
+      if (movesAtAll(delta)) play(el, flipFrame(delta));
+    } else if (el.classList.contains('card-pile')) {
+      play(el, GROW_FRAME);
+    } else {
+      const pile = before.get(priorRoles.get(el.dataset.cardId));
+      if (pile) play(el, flipFrame(flipDelta(pile.rect, rect), 0));
+      else el.classList.add('row-enter');
+    }
+  });
+  const bucketEl = bucketRowsEl.closest('.bucket');
+  if (!bucketEl) return;
+  before.forEach((prior, key) => {
+    if (now.has(key)) return;
+    if (key.startsWith('pile-')) { ghostRow(bucketEl, prior, null); return; }
+    const pile = now.get(nextRoles.get(prior.el.dataset.cardId));
+    if (pile) ghostRow(bucketEl, prior, pile.rect);
+  });
+}
+
 // redraws bucketRowsEl from its own _pile state - expanded and "fits anyway" both mean every card
-// full in one plain list; otherwise the group between two piles above. every row that is new in its
-// current role (a card appearing, or moving in/out of a pile) gets .row-enter (layout.css); a row
-// whose role is unchanged - the common case, a resize refit or an unchanged poll - gets nothing
+// full in one plain list; otherwise the group between two piles above. every row is then replayed
+// from its prior box (animateRows); with no motion allowed, a row new in its current role (a card
+// appearing, or moving in/out of a pile) gets the plain .row-enter fade instead, as before
 function drawColumn(bucketRowsEl) {
   const state = bucketRowsEl._pile;
   const priorRoles = bucketRowsEl._rowRoles || new Map();
   const nextRoles = new Map();
+  const before = measureRows(bucketRowsEl);
+  const motion = motionAllowed(bucketRowsEl, before);
+  const place = (el, role, cards) => {
+    if (!motion && cards.some(c => roleChanged(c.id, role, priorRoles))) el.classList.add('row-enter');
+    cards.forEach(c => nextRoles.set(c.id, role));
+    bucketRowsEl.appendChild(el);
+  };
   bucketRowsEl.innerHTML = '';
   if (!state) { bucketRowsEl._rowRoles = nextRoles; return; }
   const {sorted, status} = state;
   if (state.expanded || state.fits || sorted.length < MIN_PILED_CARDS) {
-    sorted.forEach((c, idx) => {
-      const strip = buildFullRow(c, idx);
-      if (roleChanged(c.id, 'card', priorRoles)) strip.classList.add('row-enter');
-      nextRoles.set(c.id, 'card');
-      bucketRowsEl.appendChild(strip);
-    });
+    sorted.forEach((c, idx) => place(buildFullRow(c, idx), 'card', [c]));
     bucketRowsEl.style.maxHeight = state.expanded && !state.fits ? `${availableColumnHeight(bucketRowsEl)}px` : '';
     bucketRowsEl.style.height = '';
     bucketRowsEl.classList.toggle('bucket-rows-expanded', !!state.expanded && !state.fits);
     bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls', 'bucket-rows-bottom');
-    applyCardShadows(bucketRowsEl);
-    bucketRowsEl._rowRoles = nextRoles;
-    return;
+  } else {
+    bucketRowsEl.style.maxHeight = '';
+    bucketRowsEl.classList.remove('bucket-rows-expanded');
+    bucketRowsEl.classList.add('bucket-rows-piled');
+    const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || BUCKET_ROW_GAP;
+    const width = bucketRowsEl.getBoundingClientRect().width;
+    const available = availableColumnHeight(bucketRowsEl);
+    const fit = computeGroupFit(sorted.length, available, gap, width);
+    const layout = computePileLayout(sorted, state.focusIndex, state.start, state.anchor, fit.n);
+    state.start = layout.start;
+    state.anchor = layout.anchor;
+    layout.rows.forEach(entry => {
+      if (entry.type === 'pile') {
+        const el = buildPileRow(entry.cards, status);
+        el.dataset.side = entry.side;
+        place(el, `pile-${entry.side}`, entry.cards);
+      } else {
+        const strip = buildFullRow(entry.card, entry.idx, false);
+        strip.dataset.join = entry.join;
+        place(strip, 'card', [entry.card]);
+      }
+    });
+    fitPiledColumn(bucketRowsEl, fit, layout.anchor, available, gap);
   }
-  bucketRowsEl.style.maxHeight = '';
-  bucketRowsEl.classList.remove('bucket-rows-expanded');
-  bucketRowsEl.classList.add('bucket-rows-piled');
-  const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || BUCKET_ROW_GAP;
-  const width = bucketRowsEl.getBoundingClientRect().width;
-  const available = availableColumnHeight(bucketRowsEl);
-  const fit = computeGroupFit(sorted.length, available, gap, width);
-  const layout = computePileLayout(sorted, state.focusIndex, state.start, state.anchor, fit.n);
-  state.start = layout.start;
-  state.anchor = layout.anchor;
-  layout.rows.forEach(entry => {
-    if (entry.type === 'pile') {
-      const entering = entry.cards.some(c => roleChanged(c.id, 'pile', priorRoles));
-      const el = buildPileRow(entry.cards, status);
-      if (entering) el.classList.add('row-enter');
-      entry.cards.forEach(c => nextRoles.set(c.id, 'pile'));
-      bucketRowsEl.appendChild(el);
-    } else {
-      const strip = buildFullRow(entry.card, entry.idx, false);
-      strip.dataset.join = entry.join;
-      if (roleChanged(entry.card.id, 'card', priorRoles)) strip.classList.add('row-enter');
-      nextRoles.set(entry.card.id, 'card');
-      bucketRowsEl.appendChild(strip);
-    }
-  });
-  fitPiledColumn(bucketRowsEl, fit, layout.anchor, available, gap);
   applyCardShadows(bucketRowsEl);
+  if (motion) animateRows(bucketRowsEl, before, priorRoles, nextRoles);
   bucketRowsEl._rowRoles = nextRoles;
 }
 
-// indicate.js's marker is domain-free and glides to a target's whole box - right for a plain card,
-// wrong for a covered one, which only shows its own peek band (fitPiledColumn's negative margin
-// slides the covering card up over the rest of it). a covered card stays covered: this clips the
-// shared marker to the visible band (the target's own top down to where its covering neighbour
-// begins), so the marker's sides and bottom edge never run across a card sitting on top of it.
-// every card-focusing call site in this app goes through here instead of indicateFocus directly -
-// a plain or covering card gets no clip at all, same behaviour as before this existed
+// indicate.js's shared marker frames a plain (fan) card. a card in a piled column draws its own
+// focus ring instead (layout.css), which rides the card's own lift and is covered by exactly what
+// covers the card - layout.css hides the marker while one has focus. every card-focusing call site
+// in this app still goes through here, so a per-card tweak has one place to land
 function indicateCardFocus(target) {
   indicateFocus(target);
-  const marker = document.querySelector('.focus-marker');
-  if (!marker) return;
-  const next = target.classList?.contains('card-covered') ? target.nextElementSibling : null;
-  const clip = () => {
-    if (!next) { marker.style.clipPath = ''; return; }
-    const visible = next.getBoundingClientRect().top - target.getBoundingClientRect().top;
-    marker.style.clipPath = visible > 0 ? `inset(0 0 calc(100% - ${visible}px) 0)` : '';
-  };
-  clip();
-  // indicate.js re-places the marker on the next frame and again once the target's own slide
-  // transition ends - the clip has to be reapplied after each, or the full box flashes back
-  globalThis.requestAnimationFrame?.(clip);
-  target.addEventListener('transitionend', clip, {once: true});
 }
 
 function focusPileIndex(bucketRowsEl, idx) {
@@ -663,9 +719,11 @@ function focusPileIndex(bucketRowsEl, idx) {
   target.tabIndex = 0;
   target.focus();
   indicateCardFocus(target);
-  // applyCardShadows' decoration lift reads document.activeElement - drawColumn's own call (just
-  // before this) ran ahead of target.focus(), so it never saw the new target as focused
-  applyCardShadows(bucketRowsEl);
+}
+
+// a column drawn as the group between two piles, rather than every card in one plain list
+function isPiled(state) {
+  return !!state && !state.expanded && !state.fits && state.sorted.length >= MIN_PILED_CARDS;
 }
 
 // ArrowDown/Up inside a piled column, intercepted ahead of buckets.js's own roving nav (see
@@ -674,7 +732,7 @@ function focusPileIndex(bucketRowsEl, idx) {
 // buckets.js's default nav exits the column (onExitTop) or clamps in place, same as any other column
 function handlePileKey(bucketRowsEl, evt) {
   const state = bucketRowsEl._pile;
-  if (!state || state.expanded || state.fits || state.sorted.length < MIN_PILED_CARDS) return;
+  if (!isPiled(state)) return;
   if (evt.key !== 'ArrowDown' && evt.key !== 'ArrowUp') return;
   const n = state.sorted.length;
   const row = evt.target.closest?.('[data-idx]');
@@ -719,16 +777,28 @@ function wireColumnFocus(bucketRowsEl) {
   if (bucketRowsEl._densityWired) return;
   bucketRowsEl._densityWired = true;
   bucketRowsEl.addEventListener('keydown', evt => handlePileKey(bucketRowsEl, evt), {capture: true});
+  // a press lands focus before its click, and a redraw then would swap the row out from under the
+  // click that opens the card - a pointer's focus leaves the column as drawn until a later refocus
+  bucketRowsEl.addEventListener('pointerdown', () => {
+    bucketRowsEl._pointerFocus = true;
+    setTimeout(() => { bucketRowsEl._pointerFocus = false; });
+  }, {capture: true});
+  // focus arriving any other way - buckets.js's left/right nav, tab, a card panel closing - redraws
+  // the column around it, so the focused card is always the open one (the start of the column used
+  // to show card 1 as a covered strip under the marker)
   bucketRowsEl.addEventListener('focusin', evt => {
     const row = evt.target.closest?.('[data-idx]');
-    if (row && bucketRowsEl._pile) bucketRowsEl._pile.focusIndex = Number(row.dataset.idx);
-    // a plain mouse/tab focus move (not through handlePileKey) still needs the decoration lift
-    // reapplied against the new document.activeElement
-    applyCardShadows(bucketRowsEl);
+    const state = bucketRowsEl._pile;
+    if (!row || !state || bucketRowsEl._pointerFocus) return;
+    const idx = Number(row.dataset.idx);
+    if (state.focusIndex === idx) return;
+    state.focusIndex = idx;
+    if (!isPiled(state)) return;
+    drawColumn(bucketRowsEl);
+    focusPileIndex(bucketRowsEl, idx);
+    // this event names a row the redraw just replaced - the refocus above announced the new one
+    evt.stopPropagation();
   });
-  // losing focus (a covered card in particular) drops the lift the same way - reapply with no
-  // row matching document.activeElement inside this column
-  bucketRowsEl.addEventListener('focusout', () => applyCardShadows(bucketRowsEl));
 }
 
 // builds one status column - every card full if it fits (or expanded, or too few to pile), else
