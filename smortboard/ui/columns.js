@@ -556,19 +556,35 @@ function computePileLayout(sorted, focusIndex, anchor, available, width, gap) {
   return out;
 }
 
+// true if a card's role (drawn full, or folded into a pile) changed since the prior draw - a
+// plain refit or poll redraw that reproduces the same roles reports nothing new, so nothing animates
+function roleChanged(id, role, priorRoles) {
+  return priorRoles.get(id) !== role;
+}
+
 // redraws bucketRowsEl from its own _pile state - expanded and "fits anyway" both mean every card
-// full in one plain list; otherwise the excursion-aware split above
+// full in one plain list; otherwise the excursion-aware split above. every row that is new in its
+// current role (a card appearing, or moving in/out of a pile) gets .row-enter (layout.css); a row
+// whose role is unchanged - the common case, a resize refit or an unchanged poll - gets nothing
 function drawColumn(bucketRowsEl) {
   const state = bucketRowsEl._pile;
+  const priorRoles = bucketRowsEl._rowRoles || new Map();
+  const nextRoles = new Map();
   bucketRowsEl.innerHTML = '';
-  if (!state) return;
+  if (!state) { bucketRowsEl._rowRoles = nextRoles; return; }
   const {sorted, status} = state;
   if (state.expanded || state.fits || sorted.length < MIN_PILED_CARDS) {
-    sorted.forEach((c, idx) => bucketRowsEl.appendChild(buildFullRow(c, idx)));
+    sorted.forEach((c, idx) => {
+      const strip = buildFullRow(c, idx);
+      if (roleChanged(c.id, 'card', priorRoles)) strip.classList.add('row-enter');
+      nextRoles.set(c.id, 'card');
+      bucketRowsEl.appendChild(strip);
+    });
     bucketRowsEl.style.maxHeight = state.expanded && !state.fits ? `${availableColumnHeight(bucketRowsEl)}px` : '';
     bucketRowsEl.classList.toggle('bucket-rows-expanded', !!state.expanded && !state.fits);
     bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls');
     applyCardShadows(bucketRowsEl);
+    bucketRowsEl._rowRoles = nextRoles;
     return;
   }
   bucketRowsEl.style.maxHeight = '';
@@ -578,10 +594,22 @@ function drawColumn(bucketRowsEl) {
   const width = bucketRowsEl.getBoundingClientRect().width;
   const available = availableColumnHeight(bucketRowsEl);
   computePileLayout(sorted, state.focusIndex, state.anchor, available, width, gap).forEach(entry => {
-    bucketRowsEl.appendChild(entry.type === 'pile' ? buildPileRow(entry.cards, status) : buildFullRow(entry.card, entry.idx, false));
+    if (entry.type === 'pile') {
+      const entering = entry.cards.some(c => roleChanged(c.id, 'pile', priorRoles));
+      const el = buildPileRow(entry.cards, status);
+      if (entering) el.classList.add('row-enter');
+      entry.cards.forEach(c => nextRoles.set(c.id, 'pile'));
+      bucketRowsEl.appendChild(el);
+    } else {
+      const strip = buildFullRow(entry.card, entry.idx, false);
+      if (roleChanged(entry.card.id, 'card', priorRoles)) strip.classList.add('row-enter');
+      nextRoles.set(entry.card.id, 'card');
+      bucketRowsEl.appendChild(strip);
+    }
   });
   fitPiledColumn(bucketRowsEl);
   applyCardShadows(bucketRowsEl);
+  bucketRowsEl._rowRoles = nextRoles;
 }
 
 function focusPileIndex(bucketRowsEl, idx) {

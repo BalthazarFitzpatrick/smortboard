@@ -177,6 +177,19 @@ body {
    a stray z-index here would let a focused-but-earlier card pop over it regardless of that */
 .card-strip.fan-item:focus { z-index: 2; }
 
+/* ---- insert/draw animation: only a genuinely new row (a card or pile that was not there in that
+   role last render) gets this - drawColumn tags it via the .row-enter class, so a plain refit or
+   poll redraw that reproduces the same rows plays nothing. short on purpose: this is a stack of
+   cards settling into place, not a page transition */
+@keyframes row-enter-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.row-enter { animation: row-enter-in 140ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .row-enter { animation: none; }
+}
+
 /* ---- dense column presentation: a pile standing in for every card the column folded away -------
    real card edges, not a placeholder box: a few layers stacked straight behind a top face, each
    3px lower than the one above, so only their bottom edges show - the board's square 2px edge */
