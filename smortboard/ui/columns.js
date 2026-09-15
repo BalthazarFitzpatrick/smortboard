@@ -118,6 +118,122 @@ function squareCard(width) {
   return Math.max(width, PORTRAIT_BELOW);
 }
 
+// ---- card shadow: a pixel field, not a css box-shadow (box-shadow can't put more darkness at a
+// corner than along a side) - ported from derived/shadow_tuner/index.html, operator-approved
+// values. drawn outside each card's own overflow box (applyCardShadows), so a later card's shadow
+// falls on the earlier card it covers, the way the tuner's own cardwrap/shade pair does -------
+
+const SHADOW_STRENGTH = 0.83; // darkest point, at the corners
+const SHADOW_CORE = 1.5; // solid band right at the edge before the fade starts, in px
+const SHADOW_SIDE = 10.5; // how far the shadow reaches out along the long sides and the top, in px
+const SHADOW_SIDE_STRENGTH = 0.58; // the sides' darkness as a share of the corners'
+const SHADOW_RADIUS = 21; // how far the shadow reaches out around each corner, in px
+const SHADOW_CREEP = 87; // how far along each edge the corner's reach/darkness carry before fading
+const SHADOW_SOFT = 1.6; // fade curve: 1 is linear, higher drops off faster near the edge
+const SHADOW_BOTTOM = true; // the bottom edge casts a shadow too
+const SHADOW_DROP_Y = false; // no downward nudge
+
+// pure: a point (x, y) relative to a w x h card's top-left corner -> 0..255 alpha at that point.
+// dx/dy alone (a side) fades over SIDE (or blends toward RADIUS near a corner, over CREEP); both
+// nonzero (past a corner) fades over RADIUS - so a corner reaches further and stays darker longer
+function shadowAlpha(x, y, w, h) {
+  const dx = x < 0 ? -x : x > w ? x - w : 0;
+  const dy = y < 0 ? -y : y > h ? y - h : 0;
+  if (!dx && !dy) return 0;
+  if (!SHADOW_BOTTOM && y > h) return 0;
+  const fall = (d, span) => {
+    if (d <= SHADOW_CORE) return 1;
+    if (span <= 0) return 0;
+    const t = 1 - (d - SHADOW_CORE) / span;
+    return t <= 0 ? 0 : Math.pow(t, SHADOW_SOFT);
+  };
+  let a;
+  if (dx && dy) {
+    a = fall(Math.hypot(dx, dy), SHADOW_RADIUS);
+  } else {
+    const u = dx ? Math.min(Math.max(y, 0), Math.max(h - y, 0)) : Math.min(Math.max(x, 0), Math.max(w - x, 0));
+    const k = SHADOW_CREEP > 0 ? Math.max(0, 1 - u / SHADOW_CREEP) : 0;
+    const spanHere = SHADOW_SIDE + (SHADOW_RADIUS - SHADOW_SIDE) * k;
+    const strengthHere = SHADOW_SIDE_STRENGTH + (1 - SHADOW_SIDE_STRENGTH) * k;
+    a = fall(dx || dy, spanHere) * strengthHere;
+  }
+  return Math.round(255 * SHADOW_STRENGTH * a);
+}
+
+// one canvas per card size, generated once and cached - never per frame or per redraw. reach pads
+// the canvas past the card's own box on every side (the top if SHADOW_BOTTOM is off), which is
+// exactly what a plain css box-shadow could never place outside an overflow:hidden card
+const shadowImageCache = new Map();
+function shadowImage(w, h) {
+  const key = `${w}x${h}`;
+  if (shadowImageCache.has(key)) return shadowImageCache.get(key);
+  const reach = Math.max(SHADOW_SIDE, SHADOW_RADIUS) + SHADOW_CORE;
+  const pad = Math.ceil(reach) + 3;
+  const cw = w + 2 * pad, ch = h + 2 * pad;
+  const canvas = document.createElement('canvas');
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(cw, ch);
+  const oy = SHADOW_DROP_Y ? 2 : 0;
+  for (let py = 0; py < ch; py++) {
+    const y = py - pad - oy;
+    for (let px = 0; px < cw; px++) {
+      const alpha = shadowAlpha(px - pad, y, w, h);
+      if (alpha > 0) img.data[(py * cw + px) * 4 + 3] = alpha;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const out = {url: canvas.toDataURL(), pad, cw, ch};
+  shadowImageCache.set(key, out);
+  return out;
+}
+
+// draws every card strip's shadow as an absolutely-positioned image, layered by the shadow layer's
+// own DOM order - a later row's shadow is appended after an earlier row's, so it paints on top,
+// same as the strip covering it does. lives on .bucket (not .bucket-rows), one layer per bucket,
+// rebuilt from the rows' own measured position - real geometry, not the sizing math's own guess
+function applyCardShadows(bucketRowsEl) {
+  const bucketEl = bucketRowsEl.closest('.bucket');
+  if (!bucketEl) return;
+  let layer = bucketEl.querySelector('.card-shadow-layer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.className = 'card-shadow-layer';
+    bucketEl.appendChild(layer);
+  }
+  layer.innerHTML = '';
+  const bucketRect = bucketEl.getBoundingClientRect();
+  // z-index interleaves shadow and card, 2 apart per row: a shadow sits above the card BEFORE it
+  // (which it covers) but below the card it belongs to and everything after - same order the
+  // tuner's own DOM nesting gives for free, done explicitly since the shadows live in one shared
+  // layer rather than one wrapper per card (see .bucket's own z-index:0 - its own stacking context)
+  let cardIndex = 0;
+  Array.from(bucketRowsEl.children).forEach(row => {
+    if (!row.classList.contains('card-strip')) return; // piles keep their own existing shadow
+    const rect = row.getBoundingClientRect();
+    const w = Math.round(rect.width), h = Math.round(rect.height);
+    // only the piled layout actually overlaps cards (buildFullRow drops fan-item there) - the
+    // plain list's own fan-item:focus z-index lift stays the only one in play for that case, so
+    // this never fights it
+    if (!row.classList.contains('fan-item')) row.style.zIndex = String(cardIndex * 2);
+    if (w && h) {
+      const shade = shadowImage(w, h);
+      const img = document.createElement('img');
+      img.className = 'card-shade';
+      img.alt = '';
+      img.src = shade.url;
+      img.style.top = `${(rect.top - bucketRect.top) - shade.pad}px`;
+      img.style.left = `${(rect.left - bucketRect.left) - shade.pad}px`;
+      img.style.width = `${shade.cw}px`;
+      img.style.height = `${shade.ch}px`;
+      img.style.zIndex = String(cardIndex * 2 - 1);
+      layer.appendChild(img);
+    }
+    cardIndex += 1;
+  });
+}
+
 function isAttentionCard(card) {
   // the board handling a card itself reads as working, not as waiting on fabian - cardClasses
   // already draws it that way (card-working wins over card-attention), the header count has to
@@ -448,6 +564,7 @@ function drawColumn(bucketRowsEl) {
     bucketRowsEl.style.maxHeight = state.expanded && !state.fits ? `${availableColumnHeight(bucketRowsEl)}px` : '';
     bucketRowsEl.classList.toggle('bucket-rows-expanded', !!state.expanded && !state.fits);
     bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls');
+    applyCardShadows(bucketRowsEl);
     return;
   }
   bucketRowsEl.style.maxHeight = '';
@@ -460,6 +577,7 @@ function drawColumn(bucketRowsEl) {
     bucketRowsEl.appendChild(entry.type === 'pile' ? buildPileRow(entry.cards, status) : buildFullRow(entry.card, entry.idx, false));
   });
   fitPiledColumn(bucketRowsEl);
+  applyCardShadows(bucketRowsEl);
 }
 
 function focusPileIndex(bucketRowsEl, idx) {

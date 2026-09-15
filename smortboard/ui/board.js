@@ -277,6 +277,7 @@ function redrawCardStrip(card) {
   bucket.appendChild(strip);
   old.remove();
   if (hadFocus) { strip.focus(); indicateFocus(strip); }
+  applyCardShadows(bucket);
 }
 
 async function followRunsOnce() {
