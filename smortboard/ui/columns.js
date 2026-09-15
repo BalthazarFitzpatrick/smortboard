@@ -306,9 +306,10 @@ function buildFullRow(card, idx, fanned = true) {
 }
 
 // pure: rows in order ({type: 'card'|'pile'}), the available height, the row gap and the column's
-// own width -> one square card height and one pile height. the pile is fixed at PILE and only
-// ever grows with whatever is left over; cards shrink first, never below MIN_CARD - past that the
-// column scrolls instead of shrinking further (the only case that scrolls)
+// own width -> one square card height and one pile height. the pile is fixed at PILE and grows
+// with the leftover by at most one more PEEK (146px) - past that the extra stays as empty space
+// at the column's bottom rather than stretching the pile further. cards shrink first, never below
+// MIN_CARD - past that the column scrolls instead of shrinking further (the only case that scrolls)
 function computePileFit(rows, available, gap, width) {
   const piles = rows.filter(r => r.type === 'pile').length;
   const stacks = [];
@@ -318,7 +319,9 @@ function computePileFit(rows, available, gap, width) {
     else stacks.push(1);
   });
   const groups = stacks.filter(n => n !== null);
-  const fixedGaps = Math.max(0, rows.length - 1) * gap;
+  // real gaps sit only BETWEEN groups/piles - a stack's own cards overlap via negative margin-top
+  // (fitPiledColumn), so a run of consecutive cards costs peek increments, never rows.length-1 gaps
+  const fixedGaps = Math.max(0, groups.length + piles - 1) * gap;
   const pileFixed = piles * PILE;
   const peekTotal = groups.reduce((sum, n) => sum + (n - 1) * PEEK, 0);
   const used = card => groups.length * card + peekTotal + pileFixed + fixedGaps;
@@ -331,7 +334,7 @@ function computePileFit(rows, available, gap, width) {
     scrolls = used(card) > available;
   }
   const leftover = Math.max(0, available - used(card));
-  const pileHeight = PILE + (piles && !scrolls ? Math.floor(leftover / piles) : 0);
+  const pileHeight = PILE + (piles && !scrolls ? Math.min(PEEK, Math.floor(leftover / piles)) : 0);
   return {card, pileHeight, scrolls};
 }
 
@@ -365,10 +368,15 @@ function fitPiledColumn(bucketRowsEl) {
 // pure: the total card count, the room/width/gap a resting column has to fill, and one pile in the
 // middle -> [front, back] stack sizes. each starts at 1 and grows one card at a time, round-robin,
 // front first, for as long as the next card still fits without pushing the column into a scroll -
-// so the two stacks differ by at most one and the pile only ever holds what is left over
+// so the two stacks differ by at most one and the pile only ever holds what is left over.
+// NO PILE WHEN IT ISN'T NEEDED: first tried as one continuous peeked run of every card, no pile at
+// all - if that alone fits, front takes everything and back stays empty (computePileLayout's own
+// pile() guard then never emits a pile row, since front already reaches the far end)
 function computeStackCounts(total, available, width, gap) {
   if (available == null) return [2, 2];
   const card = squareCard(width);
+  const allPeeked = (total - 1) * PEEK + card;
+  if (allPeeked <= available) return [total, 0];
   const fixed = PILE + 2 * gap;
   const sizes = [1, 1];
   const used = () => (sizes[0] - 1) * PEEK + card + (sizes[1] - 1) * PEEK + card + fixed;
@@ -384,12 +392,16 @@ function computeStackCounts(total, available, width, gap) {
 
 // pure: sorted cards, the index currently focused (or null - no excursion yet), which edge the
 // excursion started from, and the room/width/gap to size the resting stacks by -> the ordered list
-// of rows to draw. at rest (or at either edge) the front and back stacks each grow from 1 card,
+// of rows to draw. at rest OR at either edge, the front and back stacks each grow from 1 card,
 // round-robin, front stack first, for as long as the next card still fits without scrolling -
-// everything between is one pile. mid-excursion, the anchor's own pair (the edge the user came
-// from) stays full and fixed at 2 while the OTHER pair moves with focus - a top-anchored excursion
-// piles passed cards at the top, a bottom-anchored one piles them at the bottom, and the shrinking
-// middle pile sits between the two moving/fixed pairs either way
+// everything between is one pile, or no pile at all if every card fit that way. focus at idx 0 or
+// n-1 is always still rendered (every stack is >=1 card); focus at idx 1 or n-2 needs its side to
+// have grown to at least 2, so it only falls back to a fixed [2, 2] on a column tight enough that
+// computeStackCounts stalls at its own 1-card floor - anything roomier keeps the round-robin sizes
+// even while a key is moving focus. mid-excursion (focus genuinely in the middle), the anchor's
+// own pair (the edge the user came from) stays full and fixed at 2 while the OTHER pair moves with
+// focus - a top-anchored excursion piles passed cards at the top, a bottom-anchored one piles them
+// at the bottom, and the shrinking middle pile sits between the two moving/fixed pairs either way
 function computePileLayout(sorted, focusIndex, anchor, available, width, gap) {
   const n = sorted.length;
   const inMiddle = focusIndex != null && anchor && focusIndex >= 2 && focusIndex <= n - 3;
@@ -397,10 +409,14 @@ function computePileLayout(sorted, focusIndex, anchor, available, width, gap) {
   const card = idx => ({type: 'card', idx, card: sorted[idx]});
   const pile = (from, to) => { if (to >= from) out.push({type: 'pile', cards: sorted.slice(from, to + 1)}); };
   if (!inMiddle) {
-    // dynamic round-robin sizing only applies to the true resting view (no excursion started
-    // yet) - the moment a key press sets a focus index, the edge pair goes back to a fixed 2 so
-    // nav keeps landing on a real rendered card one step away, same as before this change
-    const [front, back] = focusIndex == null ? computeStackCounts(n, available, width, gap) : [2, 2];
+    // round-robin sizing applies here too, focused or not - it only gives way to a fixed 2 when
+    // the round-robin size would leave the FOCUSED card itself out of the rendered stack (idx 1
+    // needs front>=2, idx n-2 needs back>=2 - idx 0 and n-1 are always covered, since every stack
+    // is at least 1 card). that only happens in a genuinely tight column, where computeStackCounts
+    // stalls at its own [1,1] floor - anything roomier than that keeps the round-robin sizes
+    let [front, back] = computeStackCounts(n, available, width, gap);
+    const rendered = focusIndex == null || focusIndex < front || focusIndex >= n - back;
+    if (!rendered) [front, back] = [2, 2];
     for (let i = 0; i < front; i++) out.push(card(i));
     pile(front, n - 1 - back);
     for (let i = n - back; i < n; i++) out.push(card(i));
