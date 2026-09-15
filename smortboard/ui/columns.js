@@ -218,19 +218,29 @@ function applyCardShadows(bucketRowsEl) {
   }
   layer.innerHTML = '';
   const bucketRect = bucketEl.getBoundingClientRect();
-  // z-index interleaves shadow and card, 2 apart per row: a shadow sits above the card BEFORE it
+  // z-index interleaves shadow and card, 4 apart per row: a shadow sits above the card BEFORE it
   // (which it covers) but below the card it belongs to and everything after - same order the
   // tuner's own DOM nesting gives for free, done explicitly since the shadows live in one shared
-  // layer rather than one wrapper per card (see .bucket's own z-index:0 - its own stacking context)
+  // layer rather than one wrapper per card (see .bucket's own z-index:0 - its own stacking context).
+  // the gap (was 2) leaves room for a lift: an attention card's ring glow, or a focused card's own
+  // inset ring (layout.css), sit in that same paint order and used to lose to the next card's
+  // shadow painting over them - lifting just that one row, only above that one shadow and still
+  // below the next card itself, shows the ring/frame without uncovering anything
+  const ROW_STEP = 4;
+  const DECORATION_LIFT = 3;
   let cardIndex = 0;
   Array.from(bucketRowsEl.children).forEach(row => {
     if (!row.classList.contains('card-strip')) return; // piles keep their own existing shadow
     const rect = row.getBoundingClientRect();
     const w = Math.round(rect.width), h = Math.round(rect.height);
+    const base = cardIndex * ROW_STEP;
     // only the piled layout actually overlaps cards (buildFullRow drops fan-item there) - the
     // plain list's own fan-item:focus z-index lift stays the only one in play for that case, so
     // this never fights it
-    if (!row.classList.contains('fan-item')) row.style.zIndex = String(cardIndex * 2);
+    if (!row.classList.contains('fan-item')) {
+      const decorated = row.classList.contains('card-attention') || row === document.activeElement;
+      row.style.zIndex = String(decorated ? base + DECORATION_LIFT : base);
+    }
     if (w && h) {
       const shade = shadowImage(w, h);
       // a fresh <canvas> per row, repainted from the cached ImageData - never an <img src="data:...">,
@@ -244,7 +254,7 @@ function applyCardShadows(bucketRowsEl) {
       canvas.style.left = `${(rect.left - bucketRect.left) - shade.pad}px`;
       canvas.style.width = `${shade.cw}px`;
       canvas.style.height = `${shade.ch}px`;
-      canvas.style.zIndex = String(cardIndex * 2 - 1);
+      canvas.style.zIndex = String(base - 2);
       layer.appendChild(canvas);
     }
     cardIndex += 1;
@@ -663,6 +673,9 @@ function focusPileIndex(bucketRowsEl, idx) {
   target.tabIndex = 0;
   target.focus();
   indicateCardFocus(target);
+  // applyCardShadows' decoration lift reads document.activeElement - drawColumn's own call (just
+  // before this) ran ahead of target.focus(), so it never saw the new target as focused
+  applyCardShadows(bucketRowsEl);
 }
 
 // ArrowDown/Up inside a piled column, intercepted ahead of buckets.js's own roving nav (see
@@ -724,7 +737,13 @@ function wireColumnFocus(bucketRowsEl) {
   bucketRowsEl.addEventListener('focusin', evt => {
     const row = evt.target.closest?.('[data-idx]');
     if (row && bucketRowsEl._pile) bucketRowsEl._pile.focusIndex = Number(row.dataset.idx);
+    // a plain mouse/tab focus move (not through handlePileKey) still needs the decoration lift
+    // reapplied against the new document.activeElement
+    applyCardShadows(bucketRowsEl);
   });
+  // losing focus (a covered card in particular) drops the lift the same way - reapply with no
+  // row matching document.activeElement inside this column
+  bucketRowsEl.addEventListener('focusout', () => applyCardShadows(bucketRowsEl));
 }
 
 // builds one status column - every card full if it fits (or expanded, or too few to pile), else

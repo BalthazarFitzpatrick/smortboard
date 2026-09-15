@@ -26,7 +26,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {sortColumnCards, computePileLayout, computeStackCounts, letterCounts, renderBucketColumn,
   handlePileKey, MIN_PILED_CARDS, computePileFit, fitPiledColumn, squareCard, PILE, PEEK, MIN_CARD,
   PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
-  shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus,
+  shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus, applyCardShadows,
   PILE_GAP_ABOVE, PILE_GAP_BELOW, BUCKET_ROW_GAP};`)(SpyMenu, SpyDrawer);
 
 // fixture heights below are derived from the module's own tuning constants, not typed pixel
@@ -620,6 +620,41 @@ globalThis.window.innerHeight = 800;
 
   mod.indicateCardFocus(covering);
   assert.equal(marker.style.clipPath, '', 'the covering card keeps its full, unclipped frame');
+}
+
+// ---- applyCardShadows: a decorated row (focused, or attention) clears the shadow the next card
+// casts over it - it must out-rank that one shadow, but never the next card itself, or the
+// decoration would draw over a neighbour / uncover a covered card, exactly what it must not do ----
+
+{
+  const cards = Array.from({length: 12}, (_, i) => card(`z${i}`, 'todo'));
+  const {bucketRows} = buildColumn(REST_2X2_HEIGHT, cards); // 2 full + pile + 2 full
+  const strips = fullCards(bucketRows);
+  const covered = strips.find(s => s.className.includes('card-covered'));
+  const covering = bucketRows.children[bucketRows.children.indexOf(covered) + 1];
+  covered.getBoundingClientRect = () => ({top: 100, left: 0, right: 0, bottom: 330, width: 230, height: 230});
+  covering.getBoundingClientRect = () => ({top: 100 + mod.PEEK, left: 0, right: 0, bottom: 380, width: 230, height: 230});
+
+  mod.applyCardShadows(bucketRows);
+  const plainZ = Number(covered.style.zIndex);
+  const coveringZ = Number(covering.style.zIndex);
+  // the shade canvases are appended in row order, one per full card - covering's own is at its
+  // same position among them, since piles never get one (applyCardShadows skips card-pile rows)
+  const coveringShadeZ = Number(document.querySelectorAll('.card-shade')[strips.indexOf(covering)].style.zIndex);
+  assert.ok(coveringShadeZ > plainZ, 'at rest, the covering card\'s shadow paints over the covered card');
+
+  covered.focus();
+  mod.applyCardShadows(bucketRows);
+  const focusedZ = Number(covered.style.zIndex);
+  assert.ok(focusedZ > coveringShadeZ, 'focused, the covered card clears the shadow covering it');
+  assert.ok(focusedZ < coveringZ, 'but still stays below the card actually covering it - never uncovered');
+  covered.blur?.();
+
+  covered.className += ' card-attention';
+  mod.applyCardShadows(bucketRows);
+  const attentionZ = Number(covered.style.zIndex);
+  assert.ok(attentionZ > coveringShadeZ, 'an attention ring clears the covering shadow the same way');
+  assert.ok(attentionZ < coveringZ, 'and also never climbs above the card covering it');
 }
 
 console.log('ok');
