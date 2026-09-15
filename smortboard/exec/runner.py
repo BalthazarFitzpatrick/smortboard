@@ -73,6 +73,10 @@ SYSTEM_PROMPT = (
     "- short lines, one fact per line; no paragraph longer than three lines\n"
     "- plain-text structure: CAPITAL labels and '- ' bullets, a blank line between sections; no "
     "**bold**, no # headers, no tables\n\n"
+    "If your diff touches smortboard/ui/, end your final message with one more line: "
+    "SCREENSHOT: <what to open> naming the view the board should screenshot once your work lands "
+    "- default to naming the board itself if there is nothing more specific to point at. Leave the "
+    "line out entirely for a change that touches nothing under smortboard/ui/.\n\n"
     "End every run with this block as your final message, the call to action first:\n"
     f"ACTION: <the one thing {OPERATOR_NAME} must do next - 'review the PR', 'answer the question "
     "below', 'widen the lease to X, then re-run' - or 'none'>\n"
@@ -352,6 +356,20 @@ _SESSION_LIMIT_PATTERN = re.compile(
     r"session limit.*?resets\s+(?P<when>.+?)\s*\(UTC\)", re.IGNORECASE
 )
 
+# text an unreachable/overloaded api leaves behind - a transient outage, not the card's fault, so
+# this is retried automatically rather than left for a human like CRASH
+_API_UNREACHABLE_PATTERN = re.compile(
+    r"unable to connect to (the )?api|connection\s*refused|connection\s*reset|"
+    r"\b5\d{2}\b.{0,20}\b(error|status)\b|\boverloaded\b",
+    re.IGNORECASE,
+)
+
+
+def _api_unreachable_signal(result_event: dict[str, Any]) -> bool:
+    text = result_event.get("result") or ""
+    return bool(_API_UNREACHABLE_PATTERN.search(text))
+
+
 _SESSION_LIMIT_TIME_FORMATS = ("%I:%M%p", "%I%p")
 # each paired with the current year, appended before parsing - a bare "%b %d" is ambiguous about
 # which year it means and Python 3.15 will start refusing it outright
@@ -428,6 +446,8 @@ def classify_result(result_event: dict[str, Any]) -> str | None:
         return "AGENT_QUESTION"
     if _session_limit_text_signal(result_event):
         return "USAGE_LIMIT"
+    if _api_unreachable_signal(result_event):
+        return "API_UNREACHABLE"
     if result_event.get("is_error"):
         return "CRASH"
     return None

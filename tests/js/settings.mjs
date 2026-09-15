@@ -4,17 +4,21 @@
 // run: node tests/js/settings.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element} from './dom_stub.mjs';
+import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 // a tiny fake server: GET returns the current settings, PATCH replaces
 // mission_control_read_paths wholesale - '~' expands server-side, an unknown path is refused by
 // name, exactly like the real store's _check_read_paths.
 const EXPANDS = {'~/Documents/screenshots': '/home/op/Documents/screenshots'};
-const settingsState = {mission_control_read_paths: []};
+const settingsState = {mission_control_read_paths: [], max_parallel: null};
+const boardsState = [
+  {id: 'b1', name: 'alpha', max_parallel: null},
+  {id: 'b2', name: 'beta', max_parallel: 1},
+];
 const calls = [];
 function stubJson(status, body) {
   return {ok: status >= 200 && status < 300, status, json: async () => body};
@@ -26,6 +30,22 @@ function expandReadPath(raw) {
 }
 function fetchStub(path, opts) {
   calls.push({path, opts});
+  if (path === '/api/boards' && (!opts || !opts.method || opts.method === 'GET')) {
+    return Promise.resolve(stubJson(200, boardsState.map(b => ({...b}))));
+  }
+  const boardMatch = /^\/api\/boards\/([^/]+)$/.exec(path);
+  if (boardMatch && opts && opts.method === 'PATCH') {
+    const board = boardsState.find(b => b.id === boardMatch[1]);
+    if (!board) return Promise.resolve(stubJson(404, {error: 'no board'}));
+    const body = JSON.parse(opts.body);
+    if ('max_parallel' in body) {
+      if (body.max_parallel !== null && (!Number.isInteger(body.max_parallel) || body.max_parallel <= 0)) {
+        return Promise.resolve(stubJson(400, {error: 'max_parallel must be a positive integer or null'}));
+      }
+      board.max_parallel = body.max_parallel;
+    }
+    return Promise.resolve(stubJson(200, {...board}));
+  }
   // anything else never answers, as on main: board.js's own startup fetches (loadBoards) would
   // otherwise reject unhandled and end the run before a single assertion
   if (path !== '/api/settings') return new Promise(() => {});
@@ -40,6 +60,12 @@ function fetchStub(path, opts) {
         resolved.push(expanded);
       }
       settingsState.mission_control_read_paths = resolved;
+    }
+    if ('max_parallel' in body) {
+      if (body.max_parallel !== null && (!Number.isInteger(body.max_parallel) || body.max_parallel <= 0)) {
+        return Promise.resolve(stubJson(400, {error: 'max_parallel must be a positive integer or null'}));
+      }
+      settingsState.max_parallel = body.max_parallel;
     }
     return Promise.resolve(stubJson(200, {...settingsState}));
   }
@@ -67,9 +93,10 @@ function SpyDrawer() {
 class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; } refresh() {} close() {} }
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+  smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, rp, BINDINGS,
+;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, rp, pl, BINDINGS,
   buttonRef: () => document.querySelector('.settings-button'),
   addButtonRef: () => document.querySelector('.boards-create-row .toggle')};`)(SpyMenu, SpyDrawer);
 
@@ -94,11 +121,22 @@ assert.ok(!boardBar.children.includes(button), 'the button must not live inside 
 button.onclick();
 assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel');
 
-// ---- the panel renders both sections: the credential-profile toggle and "mission control can read"
+// ---- the panel renders all four sections: credential profiles, mission control can read,
+// parallelism, mall cam interval (cf90bacc)
 await flush();
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 2, 'credential profiles, then mission control can read');
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 4,
+  'credential profiles, mission control can read, how many cards run at once, mall cam interval');
 assert.ok(mod.st.listEl.querySelector('.settings-auto-switch-checkbox'), 'the credential section carries the auto-switch toggle');
 assert.ok(mod.rp.listEl.querySelector('.hazard-placeholder'), 'no folders yet shows a placeholder, not nothing');
+
+// ---- the parallelism section loads the global cap and one row per board -------------------------
+assert.equal(mod.pl.globalInput.value, '', 'an unset global cap renders as an empty field, not 0');
+const boardRows = mod.pl.boardsList.querySelectorAll('.board-row');
+assert.equal(boardRows.length, 2, 'one row per board');
+assert.equal(boardRows[0].querySelector('.board-name').textContent, 'alpha');
+assert.equal(boardRows[0].querySelector('input').value, '', 'alpha has no board-specific limit');
+assert.equal(boardRows[1].querySelector('.board-name').textContent, 'beta');
+assert.equal(boardRows[1].querySelector('input').value, '1', 'beta already carries its own limit');
 
 // ---- adding a path PATCHes the whole list, and stores the server's expanded absolute path -------
 mod.rp.input.value = '~/Documents/screenshots';
@@ -124,6 +162,29 @@ mod.rp.listEl.querySelector('.board-delete').onclick();
 await flush();
 assert.deepEqual(settingsState.mission_control_read_paths, [], 'removing the only path clears the setting');
 assert.ok(mod.rp.listEl.querySelector('.hazard-placeholder'), 'the list falls back to the empty placeholder');
+
+// ---- saving the global cap PATCHes /api/settings ------------------------------------------------
+mod.pl.globalInput.value = '3';
+mod.pl.globalInput._listeners.blur.forEach(fn => fn());
+await flush();
+assert.equal(settingsState.max_parallel, 3, 'the global cap is saved');
+
+// ---- zero, negative and non-numeric values are refused without a PATCH landing ------------------
+mod.pl.globalInput.value = '0';
+mod.pl.globalInput._listeners.blur.forEach(fn => fn());
+await flush();
+assert.equal(settingsState.max_parallel, 3, 'a zero value never reaches the server');
+assert.ok(mod.pl.globalStatus.textContent.includes('positive'), 'the field explains why it refused');
+
+// ---- a board's own row PATCHes /api/boards/<id>, and an empty value clears the limit -------------
+boardRows[0].querySelector('input').value = '2';
+boardRows[0].querySelector('input')._listeners.blur.forEach(fn => fn());
+await flush();
+assert.equal(boardsState[0].max_parallel, 2, 'alpha now carries its own limit');
+boardRows[1].querySelector('input').value = '';
+boardRows[1].querySelector('input')._listeners.blur.forEach(fn => fn());
+await flush();
+assert.equal(boardsState[1].max_parallel, null, "clearing the field removes beta's limit");
 
 // ---- a click on the backdrop itself closes it, a click inside the panel does not ---------------
 mod.st.backdrop._listeners.mousedown.forEach(fn => fn({target: mod.st.panel}));

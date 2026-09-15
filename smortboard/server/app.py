@@ -29,10 +29,12 @@ from smortboard.orchestrator import (
 )
 from smortboard.preflight import run_preflight
 from smortboard.prompts import ROLES
+from smortboard.pulls import open_pull_requests
+from smortboard.repo_image import build_repo_image
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
-from smortboard.scheduler import SchedulerRegistry, conflicting_run
+from smortboard.scheduler import SchedulerRegistry, conflicting_run, relabel_stale_crashes
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import (
@@ -64,11 +66,13 @@ _ROUTES = [
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "POST"),
     (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)$"), "PATCH"),
+    (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)/image/build$"), "POST"),
     (re.compile(r"^/api/cards$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "DELETE"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)$"), "DELETE"),
+    (re.compile(r"^/api/boards/(?P<board_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/comments$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/attachments$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/attachments/(?P<attachment_id>[^/]+)$"), "GET"),
@@ -107,10 +111,12 @@ _ROUTES = [
     (re.compile(r"^/api/attention$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/answer$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/lease/approve$"), "POST"),
+    (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)/lease/(?P<lease_id>[^/]+)$"), "DELETE"),
     (re.compile(r"^/api/profiles$"), "GET"),
     (re.compile(r"^/api/profiles$"), "POST"),
     (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)/activate$"), "POST"),
     (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)$"), "DELETE"),
+    (re.compile(r"^/api/pulls$"), "GET"),
 ]
 
 # a full claude setup-token is 108 bytes (see README Setup); this is a shape check, not a network
@@ -222,6 +228,10 @@ def _make_handler(
                 self._handle_create_repo(params["board_id"])
             elif "repo_id" in params and method == "PATCH":
                 self._handle_patch_repo(params["repo_id"])
+            elif "repo_id" in params and path.endswith("/image/build") and method == "POST":
+                self._handle_build_repo_image(params["repo_id"])
+            elif "lease_id" in params and method == "DELETE":
+                self._handle_forget_lease(params["repo_id"], params["lease_id"])
             elif path == "/api/cards" and method == "POST":
                 body = self._read_json()
                 card = store.create_card(**body)
@@ -305,6 +315,8 @@ def _make_handler(
                 self._send_json(200, attention_rows(store))
             elif "card_id" in params and path.endswith("/lease/approve"):
                 self._handle_lease_approve(params["card_id"])
+            elif path == "/api/pulls":
+                self._send_json(200, open_pull_requests(store))
             elif "card_id" in params and path.endswith("/answer"):
                 self._handle_answer(params["card_id"])
             elif path == "/api/profiles" and method == "GET":
@@ -325,6 +337,16 @@ def _make_handler(
             elif "board_id" in params and method == "DELETE":
                 store.delete_board(params["board_id"])
                 self._send_status(204)
+            elif "board_id" in params and method == "PATCH":
+                body = self._read_json()
+                # only this board's own parallel cap is writable here; "unset" arrives as an
+                # explicit null, same convention PATCH /api/settings uses for clearing a value
+                if "max_parallel" in body:
+                    self._send_json(
+                        200, store.set_board_max_parallel(params["board_id"], body["max_parallel"])
+                    )
+                else:
+                    self._send_json(200, store.get_board(params["board_id"]))
             elif "task_id" in params and method == "PATCH":
                 self._handle_patch_task(params["task_id"])
             elif "board_id" in params and path.endswith("/run-all") and method == "POST":
@@ -416,8 +438,14 @@ def _make_handler(
             refused paths and resume. 400 for an empty/invalid path list or a bad glob, 404 for an
             unknown card, 409 when the card is not blocked on LEASE_CONFLICT or the resume itself
             is refused (the lease stays widened either way - see attention.approve_lease).
+
+            `remember: true` also adds the same paths to the repo's remembered globs, so a later
+            card on this repo is never asked again - always the operator's explicit tick, never
+            implied by a plain approve.
             """
-            paths = self._read_json().get("paths")
+            body = self._read_json()
+            paths = body.get("paths")
+            remember = bool(body.get("remember"))
             try:
                 state = approve_lease(store, runs, card_id, paths)
             except ValueError as exc:
@@ -426,7 +454,15 @@ def _make_handler(
             except AnswerRefused as exc:
                 self._send_json(409, {"error": str(exc)})
                 return
+            if remember:
+                repo_id = store.get_card(card_id)["repo_id"]
+                if repo_id:
+                    store.remember_lease_paths(repo_id, paths)
             self._send_json(202, state)
+
+        def _handle_forget_lease(self, repo_id: str, lease_id: str) -> None:
+            """the boards panel's remove on one remembered glob - see Store.forget_lease_path"""
+            self._send_json(200, store.forget_lease_path(repo_id, lease_id))
 
         def _profiles_view(self) -> list[dict]:
             """name, active, present, limited_until only - never the token, per the card's rule"""
@@ -493,16 +529,24 @@ def _make_handler(
         def _handle_patch_card(self, card_id: str) -> None:
             body = self._read_json()
             # the store's own list - a second copy here went stale and refused `model` with a 400
-            unknown = set(body) - CARD_WRITABLE_FIELDS - {"leases"}
+            unknown = set(body) - CARD_WRITABLE_FIELDS - {"leases", "depends_on"}
             if unknown:
                 self._send_json(400, {"error": f"not writable: {sorted(unknown)}"})
                 return
+            # shapes are checked before anything is written, so a bad depends_on
+            # can't leave a lease change (or vice versa) committed behind a 400
             leases = body.pop("leases", None)
+            if leases is not None and not isinstance(leases, list):
+                self._send_json(400, {"error": "leases must be a list of globs"})
+                return
+            depends_on = body.pop("depends_on", None)
+            if depends_on is not None and not isinstance(depends_on, list):
+                self._send_json(400, {"error": "depends_on must be a list of card ids"})
+                return
             if leases is not None:
-                if not isinstance(leases, list):
-                    self._send_json(400, {"error": "leases must be a list of globs"})
-                    return
                 store.set_leases(card_id, leases)
+            if depends_on is not None:
+                store.set_dependencies(card_id, depends_on)
             card = store.update_card(card_id, **body) if body else store.get_card(card_id)
             self._send_json(200, card)
 
@@ -578,6 +622,20 @@ def _make_handler(
                 repo = store.set_repo_image(repo_id, body["image"])
             self._send_json(200, repo)
 
+        def _handle_build_repo_image(self, repo_id: str) -> None:
+            """builds this repo's own test image and sets it as the repo's image on success.
+
+            404 for an unknown repo; 400 with the build's log tail on a failed or unrecognised
+            build - the operator reads the reason in the panel, not a terminal.
+            """
+            repo = store.get_repo(repo_id)
+            result = build_repo_image(repo)
+            if not result.ok:
+                self._send_json(400, {"error": result.log, "stack": result.stack})
+                return
+            updated = store.set_repo_image(repo_id, result.tag)
+            self._send_json(200, {**updated, "build_log": result.log})
+
         def _handle_patch_task(self, task_id: str) -> None:
             # only "done" is exposed here - add_task/remove_task stay store-only, for a human
             body = self._read_json()
@@ -607,6 +665,7 @@ def _make_handler(
             body = self._read_json()
             message = (body.get("message") or "").strip()
             client_id = body.get("client_id")
+            mode = body.get("mode") if body.get("mode") in ("planning", "manage") else "planning"
             if not message:
                 self._send_json(400, {"error": "message must not be empty"})
                 return
@@ -623,7 +682,7 @@ def _make_handler(
             store.add_orchestrator_message(board_id, "fabian", message)
             if client_id:
                 accepted_messages[board_id].append(client_id)
-            orchestrator.start(board_id, message, message_already_stored=True)
+            orchestrator.start(board_id, message, message_already_stored=True, mode=mode)
             self._send_json(202, self._orchestrator_view(board_id))
 
         def _fold_view(self, board_id: str) -> dict:
@@ -856,6 +915,10 @@ def build_server(
 ) -> HTTPServer:
     # a new board has no runs, so any card still mid-run lost the last board process under it
     recovered = recover_orphaned_runs(store)
+    # one-time: a CRASH card blocked before the classifier learned session-limit/api-unreachable
+    # wording becomes USAGE_LIMIT/API_UNREACHABLE instead, so it is picked up by the auto-retry
+    # paths rather than sitting mislabeled
+    relabel_stale_crashes(store)
     # single-threaded: the store's sqlite3 connection is bound to the thread that opened it. card
     # runs are the exception and get their own thread and their own connection - see runs.py
     runs = RunRegistry(store.path, token_path=token_path)

@@ -439,6 +439,44 @@ def _sum_spend_by_model(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"model": model, "cost_usd": round(cost, 6)} for model, cost in totals.items()]
 
 
+def _card_outcome_group(store: Store, card: dict[str, Any]) -> tuple[str, float] | None:
+    """which of the c panel's two groups this card's latest attempt belongs to, and its total
+    cost across all attempts - None for a card still running, never run, or blocked on anything
+    else (CRASH, USAGE_LIMIT, a lease wait, ...): those count in neither group."""
+    telemetry = _telemetry_for(store, card)
+    if not telemetry["attempts"]:
+        return None
+    outcome = telemetry["attempts"][-1]["outcome"]
+    if outcome == "pull request":
+        return "accepted", telemetry["totals"]["cost_usd"]
+    if outcome in ("refused", "blocked: REVIEW_REJECTED"):
+        return "refused", telemetry["totals"]["cost_usd"]
+    return None
+
+
+def _empty_group() -> dict[str, Any]:
+    return {"cards": 0, "cost_usd": 0.0, "cost_per_pr_usd": None}
+
+
+def _cost_outcome_groups(store: Store) -> dict[str, Any]:
+    """total cost and card count for the c panel's accepted/refused split, across every board -
+    an em dash's worth of nothing (None) rather than a divide-by-zero when a group is empty."""
+    groups = {"accepted": _empty_group(), "refused": _empty_group()}
+    for board in store.list_boards():
+        for card in store.list_cards(board["id"]):
+            result = _card_outcome_group(store, card)
+            if result is None:
+                continue
+            name, cost = result
+            groups[name]["cards"] += 1
+            groups[name]["cost_usd"] += cost
+    for group in groups.values():
+        group["cost_usd"] = round(group["cost_usd"], 6)
+        if group["cards"]:
+            group["cost_per_pr_usd"] = round(group["cost_usd"] / group["cards"], 6)
+    return groups
+
+
 def boards_overview(store: Store) -> dict[str, Any]:
     """one row per board, costliest first, plus a totals row across every board - the c panel's
     data. orchestrator (mission-control) turns are never counted here: build_board_snapshot's
@@ -462,7 +500,12 @@ def boards_overview(store: Store) -> dict[str, Any]:
     total_prs = totals["pull_requests_opened"]
     totals["cost_per_pr_usd"] = round(totals["cost_usd"] / total_prs, 6) if total_prs else None
 
-    return {"boards": rows, "totals": totals, "orchestrator_turns_counted": False}
+    return {
+        "boards": rows,
+        "totals": totals,
+        "orchestrator_turns_counted": False,
+        "outcome_groups": _cost_outcome_groups(store),
+    }
 
 
 def _finished_card_evidence(store: Store, card: dict[str, Any]) -> dict[str, Any] | None:

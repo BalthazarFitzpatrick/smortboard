@@ -114,6 +114,81 @@ def test_boards_overview_never_counts_orchestrator_turns(store):
     assert overview["orchestrator_turns_counted"] is False
 
 
+# -- 1db20994's accepted/refused outcome groups, for the c panel's redesigned cost overview -----
+
+
+def test_outcome_groups_are_empty_with_no_cards(store):
+    groups = boards_overview(store)["outcome_groups"]
+    assert groups["accepted"] == {"cards": 0, "cost_usd": 0, "cost_per_pr_usd": None}
+    assert groups["refused"] == {"cards": 0, "cost_usd": 0, "cost_per_pr_usd": None}
+
+
+def test_outcome_groups_count_a_merged_pr_as_accepted(store):
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "a card")
+    _clean_run(store, card["id"])
+
+    groups = boards_overview(store)["outcome_groups"]
+    assert groups["accepted"]["cards"] == 1
+    assert groups["accepted"]["cost_usd"] == pytest.approx(0.13)
+    assert groups["accepted"]["cost_per_pr_usd"] == pytest.approx(0.13)
+    assert groups["refused"]["cards"] == 0
+    assert groups["refused"]["cost_per_pr_usd"] is None
+
+
+def test_outcome_groups_count_a_run_that_never_reached_the_worker_as_refused(store):
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "a card")
+    store.append_event(card["id"], "lifecycle_started", {})
+    store.append_event(card["id"], "result", _worker_result(cost=0.05))
+    # no worker_summary event - _attempt_outcome reads that as "refused": never reached the worker
+
+    groups = boards_overview(store)["outcome_groups"]
+    assert groups["refused"] == {
+        "cards": 1,
+        "cost_usd": pytest.approx(0.05),
+        "cost_per_pr_usd": pytest.approx(0.05),
+    }
+    assert groups["accepted"]["cards"] == 0
+
+
+def test_outcome_groups_count_a_rejected_review_as_refused_not_accepted(store):
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "a card")
+    store.append_event(card["id"], "lifecycle_started", {})
+    store.append_event(card["id"], "result", _worker_result(cost=0.20))
+    store.append_event(card["id"], "worker_summary", {"text": "did the thing"})
+    store.append_event(card["id"], "review_gate", {"approved": False, "findings": ["nope"]})
+
+    groups = boards_overview(store)["outcome_groups"]
+    assert groups["refused"]["cards"] == 1
+    assert groups["refused"]["cost_usd"] == pytest.approx(0.20)
+    assert groups["accepted"]["cards"] == 0
+
+
+def test_outcome_groups_exclude_a_card_still_blocked_on_crash(store):
+    # CRASH and USAGE_LIMIT count in neither group - the run stopped short of both a pull request
+    # and a refusal, so it names neither outcome
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "a card")
+    store.append_event(card["id"], "lifecycle_started", {})
+    store.append_event(card["id"], "result", _worker_result(cost=0.40))
+    store.append_event(card["id"], "worker_summary", {"text": "working"})
+    store.append_event(card["id"], "run_orphaned", {})
+
+    groups = boards_overview(store)["outcome_groups"]
+    assert groups["accepted"]["cards"] == 0
+    assert groups["refused"]["cards"] == 0
+
+
+def test_outcome_groups_ignore_a_card_never_run(store):
+    board = store.create_board("b")
+    store.create_card(board["id"], None, "never run")
+    groups = boards_overview(store)["outcome_groups"]
+    assert groups["accepted"]["cards"] == 0
+    assert groups["refused"]["cards"] == 0
+
+
 # -- the /api/costs route end to end over real http -----------------------------------------
 
 

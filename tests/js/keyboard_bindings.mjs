@@ -3,10 +3,10 @@
 // exact same BINDINGS table those branches dispatch on. run: node tests/js/keyboard_bindings.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element} from './dom_stub.mjs';
+import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 // never resolves (nothing in this file awaits a fetch), but records what was asked for so y/x can
@@ -53,6 +53,7 @@ function SpyDrawer(opts) {
 }
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+  smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('telemetry.js'), smort('costs.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {BINDINGS, BINDING_GROUPS, buildDrawers, boardsRef: () => boards, overlayRows,
@@ -63,7 +64,7 @@ const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter
   'KeyG', 'KeyW', 'KeyF', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
   'KeyE', 'KeyJ', 'Delete',
   'KeyT', 'KeyS',
-  'KeyP', 'KeyN', 'KeyH', 'KeyO', 'KeyB', 'Slash', 'Comma', 'Period',
+  'KeyP', 'KeyN', 'KeyV', 'KeyH', 'KeyO', 'KeyB', 'Slash', 'Comma', 'Period',
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
 const boundCodes = mod.BINDINGS.map(b => b.code);
 CONTRACT_KEYS.forEach(code => assert.ok(boundCodes.includes(code), `${code} must be in BINDINGS`));

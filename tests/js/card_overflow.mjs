@@ -4,10 +4,10 @@
 // was actually opened, even if focus sits elsewhere. run: node tests/js/card_overflow.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element} from './dom_stub.mjs';
+import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 // method-aware stub: cycleCardModel GETs the card then PATCHes it on the same path, so a
@@ -62,7 +62,7 @@ function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('board.js')].join('\n;\n');
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {renderCardStrip, openMoveStatusMenu};`)(SpyMenu, SpyDrawer);
 
@@ -83,8 +83,10 @@ setResponse('GET', '/api/cards/c1/outcome', 200, {});
 const overflow = strip.querySelector('.card-overflow');
 assert.ok(overflow, 'the strip should render a ... trigger');
 
-overflow.onclick();
+let stopped = false;
+overflow.onclick({stopPropagation: () => { stopped = true; }});
 assert.equal(menus.length, 1, 'clicking ... should open exactly one menu');
+assert.ok(stopped, 'the click must not bubble to the strip and also open the card behind the menu');
 const overflowItems = menus[0].opts.sections[0].items.map(i => i.id);
 assert.deepEqual(overflowItems, ['edit', 'model', 'status', 'delete'],
   'the menu should offer edit, change model, move status and delete');
@@ -97,7 +99,7 @@ assert.equal(backdrops().length, 0, 'closed back down before the next assertion'
 
 // ---- picking delete opens a confirm; nothing is deleted before that confirm is answered
 menus = [];
-overflow.onclick();
+overflow.onclick({stopPropagation(){}});
 menus[0].pick('delete');
 assert.equal(menus.length, 2, 'delete should open a second, confirming menu');
 assert.equal(menus[1].opts.title, 'delete this card?');
@@ -112,7 +114,7 @@ assert.equal(writes().length, 0, "keep it should not call the api");
 
 // ---- confirming actually deletes it
 menus = [];
-overflow.onclick();
+overflow.onclick({stopPropagation(){}});
 menus[0].pick('delete');
 menus[1].pick('delete');
 await flush();
@@ -146,7 +148,7 @@ calls.length = 0;
 setResponse('GET', '/api/cards/c1', 200, {id: 'c1', model: null});
 setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', model: 'haiku'});
 menus = [];
-overflow.onclick();
+overflow.onclick({stopPropagation(){}});
 menus[0].pick('model');
 await flush();
 const modelPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');

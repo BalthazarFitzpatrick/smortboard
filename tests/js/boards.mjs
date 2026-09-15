@@ -4,10 +4,10 @@
 // run: node tests/js/boards.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element} from './dom_stub.mjs';
+import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 // method-aware stub map, since GET and POST both hit "/api/boards" - a single path->response map
@@ -62,6 +62,7 @@ class SpyMenu {
 }
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+  smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('boards.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {toggleBoardsPanel, openBoardsPanel, closeBoardsPanel, bp, BINDINGS, boardsRef: () => boards};`)(SpyMenu, SpyDrawer);

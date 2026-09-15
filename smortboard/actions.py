@@ -42,6 +42,10 @@ _ACTIONS = {
         "Its branch no longer merges cleanly with the base - resume it (n or r) so the worker "
         "merges the base branch and resolves the conflict, then commits the result.",
     ),
+    "API_UNREACHABLE": (
+        "retrying",
+        "The api was unreachable - the board is retrying it automatically with backoff.",
+    ),
     "refused": ("fix, then r", "Fix what the note says, then press r to run it again."),
     "stopped": ("press r", "Press r to run it again - its worktree and commits are kept."),
     "review": ("y or x", "Review the pull request, then press y to accept or x to reject."),

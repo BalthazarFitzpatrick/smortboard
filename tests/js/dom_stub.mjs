@@ -3,7 +3,22 @@
 // selector support (tag, .class, [attr="val"], #id, single descendant combinator) for board.js's
 // own querySelector calls plus what shell.js / buckets.js / expand.js need internally.
 
+import {readFileSync} from 'node:fs';
+
 export class Element {}
+
+// ui_base's assets: a sibling ../smortui checkout when developing the two repos in lockstep, else
+// the installed package's own copy (UI_BASE_ASSETS_DIR, set by test_js_suite.py) - so the same
+// test runs unchanged on a machine with the sibling checkout and inside the gate container, which
+// has neither the checkout nor a fetchable one
+export function uiBaseAsset(root, name) {
+  try {
+    return readFileSync(new URL(`../smortui/ui_base/assets/${name}`, root), 'utf8');
+  } catch (err) {
+    if (err.code !== 'ENOENT' || !process.env.UI_BASE_ASSETS_DIR) throw err;
+    return readFileSync(`${process.env.UI_BASE_ASSETS_DIR}/${name}`, 'utf8');
+  }
+}
 
 function compoundMatch(el, compound) {
   if (compound.startsWith('#')) return el.id === compound.slice(1);
@@ -52,6 +67,12 @@ export function element(tag, className = '') {
     removeEventListener(type, fn) { el._listeners[type] = (el._listeners[type] || []).filter(f => f !== fn); },
     appendChild(child) { child.parentNode = el; el.children.push(child); return child; },
     append(...kids) { kids.forEach(k => el.appendChild(k)); },
+    insertBefore(child, ref) {
+      child.parentNode = el;
+      const at = ref ? el.children.indexOf(ref) : -1;
+      if (at === -1) el.children.push(child); else el.children.splice(at, 0, child);
+      return child;
+    },
     remove() {
       if (el.parentNode) el.parentNode.children = el.parentNode.children.filter(c => c !== el);
       el.parentNode = null; el.removed = true;
@@ -80,6 +101,15 @@ export function element(tag, className = '') {
         if (on) this.add(name); else this.remove(name);
         return on;
       },
+    },
+  });
+  // a getter, not a plain field: siblings are added and removed constantly (a column re-render
+  // replaces its whole child list), so this has to read parentNode.children fresh each time
+  Object.defineProperty(el, 'previousElementSibling', {
+    get() {
+      if (!el.parentNode) return null;
+      const idx = el.parentNode.children.indexOf(el);
+      return idx > 0 ? el.parentNode.children[idx - 1] : null;
     },
   });
   // like a browser: `el.innerHTML = ''` empties the element, which is how a column is redrawn.
@@ -119,6 +149,7 @@ export function installStubDom({fetchImpl} = {}) {
     body: element('body'),
     activeElement: null,
     createElement: element,
+    createTextNode(text) { return Object.assign(element('#text'), {textContent: String(text)}); },
     getElementById(id) { return queryAll(root, `#${id}`)[0] || null; },
     addEventListener(type, fn) { (docListeners[type] ||= []).push(fn); },
     removeEventListener(type, fn) { docListeners[type] = (docListeners[type] || []).filter(f => f !== fn); },

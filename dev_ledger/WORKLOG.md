@@ -676,3 +676,53 @@ the operator to delete or keep.
 - operator approved (2026-09-14): each repo gets a development branch; cards branch from it, sync with it at hand-over, and the board merges them into it; the operator merges development into main now and then. main stays unreachable for the board.
 - units: review/integrate.py (merge commit built with commit-tree, pushed as a fast-forward, refuses protected bases, a moved base is a retry), lifecycle (after the PR opens on a non-protected base: sync, retest when anything came in, land, accept, keep one standing development-into-main PR), tests for both.
 - deploy: create development on each repo's remote from main, set each repo's default_branch to development, restart the board.
+
+## 2026-09-14T20:29Z - wowtomate-fixes-and-board-cleanup [76b838] - development branch live, board.js split, dense columns, house cleaned
+- every repo on the board now bases on development; the board lands finished cards there (#115) and one standing development-into-main PR (#116) is the operator's to merge. direct sessions land on development from worktrees; the main checkout stays on development and only fast-forwards, since the live board runs from it.
+- fold widened (631574e): the board computes lease overlaps into the snapshot, the model groups small overlapping cards, and the board refuses any group over 4 cards or 12 criteria or with a card that shares no lease with the rest.
+- board.js split into chat.js, shortcuts.js, card_panel.js and columns.js (ae42ce2..1fd02fd), salvaged from card 72030909's own commit e36f238 after it hit its budget cap; screenshots before and after matched. dense columns (948a9b3) on top; this entry's fix keeps a dense column inside the viewport (measured: last row at 939px of 1000) with a trailing "more" aggregate, and hides the short id on chips, where it was cut off.
+- cards 72030909, b5d3ed7d, 917877ad, d3ba1625 and 5d779d18 removed from the board (built directly or dropped by the operator). 21 local and 12 remote merged branches and 16 worktrees removed.
+
+## 2026-09-15T00:00Z - board-self-heal-plan - self-heal spike plan for stuck cards
+Plan, landed one fix at a time on development, worktree `smortboard-worktrees/self-heal`,
+branch `feature/board-self-heal`:
+- Fix A: API_UNREACHABLE joins BLOCKED_REASON_CODES (schema migration 12, same recreate-table
+  pattern as MERGE_CONFLICT's migration 11). classify_result recognizes connection-refused/reset,
+  5xx and overloaded text. scheduler retries an API_UNREACHABLE card itself with backoff
+  2/10/30 min, three attempts, then leaves it blocked for the operator; each retry is an event
+  plus a board comment naming the next retry time. USAGE_LIMIT's existing profile-rotate/pause
+  path had a gap where the card that hit the limit was dropped from the queue rather than
+  rejoining it once the pause lapsed - fixed. one-time relabel_stale_crashes (wired into
+  build_server) turns an old CRASH card into USAGE_LIMIT/API_UNREACHABLE if its last result text
+  matches, logged as a `relabeled` event.
+- Fix B: budget/turn-capped runs with commits continue to test+review instead of blocking.
+- Fix C: MERGE_CONFLICT resumes itself once automatically, twice stays blocked.
+- Fix D: /api/attention excludes cards the board is already handling automatically.
+
+## 2026-09-14T22:54Z — wowtomate-fixes-and-board-cleanup [76b838]
+Landed all 7 assigned cards on development, one commit per card: aa32d46e (js suite in the
+test gate), 71f97352 (remembered lease approvals), 71207021 (cross-board pull request panel,
+resolving its board.js/BINDINGS split conflict into shortcuts.js), 29382fc3 (proved the
+restart-clears-attention behavior already existed in lifecycle.py, added the tests that name
+it), 6c290823 (global + per-board parallel caps), 06e09da8 (shift+tab planning/managing mode
+for mission control), 3facb458 (repo_image.py builds a repo's own test image - backend only,
+no UI button or preflight staleness check, to avoid the UI-focused session's files). Salvaged
+existing card/* branch work for the first three and the fifth (via git merge, resolving one
+schema.py migration-number conflict and the board.js/shortcuts.js split); built the rest from
+scratch. Full suite green throughout (793 pytest, 25 js) except where noted per-card.
+
+## 2026-09-15T00:20Z — session_01Q7ysyPb6CZxFenAKTou9L1 [b57fb28]
+Landed A (three loose ends: queued cta text, deduped handled_by_board retry text, column
+attention count) plus six of the seven UI cards on development, one commit each: 3919ce56
+(reverted the oversized CTA button, restored a coloured/bold compact note), 1db20994 (c cost
+overview redesign with accepted/refused groups - the drop-shadow fix was already landed
+tonight), 9bd5a207 (partial - doing-column live-agent ordering, overview/detail split,
+overflow-click fix; the Cmd/Ctrl+F filter was not attempted, out of budget for a full separate
+feature), d1ecc364 (salvaged 2e0acbf, fixed two bugs in its own test that meant it never
+actually passed), 8082e7af (salvaged adc7859, reapplied onto the ES-module split), cf90bacc
+(dependency b1304faf was accepted; closed the three gaps against an already-largely-built mall
+cam feature). da44f144 was salvaged (3b77748) but its reviewer rejected it for a real
+architecture violation - the formatting primitives belong in ui_base, a separate pinned-sha
+repo out of this worktree's scope - so it was left undone rather than re-landing the same
+violation; see the final report for the exact finding. Full suite green throughout (800
+pytest, all js) except where noted. Worktree and branch removed after this entry.

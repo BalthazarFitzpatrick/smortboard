@@ -185,6 +185,213 @@ SETTINGS_SECTIONS.push({
   onOpen: loadReadPaths,
 });
 
+// ---- how many cards run at once: one global cap, plus an optional cap per board ----------------
+// the global number is the one seat count shared across every board (scheduler.py's runs.active());
+// a board's own number only ever holds it back further, never past the global cap - an unset board
+// row behaves exactly like today, no board-specific limit at all.
+
+const pl = {globalInput: null, globalStatus: null, boardsList: null};
+
+function parallelParseInput(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null; // empty means "no limit" / "use the global default"
+  const value = Number(trimmed);
+  return Number.isInteger(value) && value > 0 ? value : undefined; // undefined marks it invalid
+}
+
+function buildGlobalParallelRow() {
+  const row = document.createElement('div');
+  row.className = 'boards-create-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'numeric';
+  input.className = 'board-name-input text-field settings-parallel-input';
+  input.placeholder = String(2); // scheduler.DEFAULT_MAX_PARALLEL, kept in sync by eye
+  const status = document.createElement('span');
+  status.className = 'boards-status';
+
+  async function save() {
+    const value = parallelParseInput(input.value);
+    if (value === undefined) {
+      status.textContent = 'must be a positive whole number';
+      status.className = 'boards-status boards-error';
+      return;
+    }
+    const {ok, body} = await apiOrError('/api/settings', {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({max_parallel: value}),
+    });
+    status.textContent = ok ? 'saved' : (body && body.error) || 'could not save';
+    status.className = ok ? 'boards-status' : 'boards-status boards-error';
+  }
+
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    save();
+  });
+  input.addEventListener('blur', save);
+
+  row.append(input, status);
+  Object.assign(pl, {globalInput: input, globalStatus: status});
+  return row;
+}
+
+function renderBoardParallelRow(board) {
+  const row = document.createElement('div');
+  row.className = 'board-row';
+  const label = document.createElement('span');
+  label.className = 'board-name field-label';
+  label.textContent = board.name;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'numeric';
+  input.className = 'board-name-input text-field settings-parallel-input';
+  input.placeholder = 'no limit';
+  input.value = board.max_parallel == null ? '' : String(board.max_parallel);
+  const status = document.createElement('span');
+  status.className = 'boards-status';
+
+  async function save() {
+    const value = parallelParseInput(input.value);
+    if (value === undefined) {
+      status.textContent = 'must be a positive whole number, or empty for no limit';
+      status.className = 'boards-status boards-error';
+      return;
+    }
+    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({max_parallel: value}),
+    });
+    status.textContent = ok ? '' : (body && body.error) || 'could not save';
+    status.className = ok ? 'boards-status' : 'boards-status boards-error';
+  }
+
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    save();
+  });
+  input.addEventListener('blur', save);
+
+  row.append(label, input, status);
+  return row;
+}
+
+async function loadParallelSection() {
+  try {
+    const settings = await api('/api/settings');
+    pl.globalInput.value = settings.max_parallel == null ? '' : String(settings.max_parallel);
+    pl.globalStatus.textContent = '';
+  } catch (err) {
+    pl.globalStatus.textContent = `could not load: ${err.message}`;
+    pl.globalStatus.className = 'boards-status boards-error';
+  }
+  try {
+    const boards = await api('/api/boards');
+    clearChildren(pl.boardsList);
+    boards.forEach(b => pl.boardsList.appendChild(renderBoardParallelRow(b)));
+  } catch (err) {
+    clearChildren(pl.boardsList);
+    pl.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
+  }
+}
+
+function buildParallelSection() {
+  const box = document.createElement('div');
+  const globalLabel = document.createElement('div');
+  globalLabel.className = 'field-label';
+  globalLabel.textContent = 'global (shared across every board)';
+  const boardsLabel = document.createElement('div');
+  boardsLabel.className = 'field-label';
+  boardsLabel.textContent = 'per board (blank = no board-specific limit)';
+  const boardsList = document.createElement('div');
+  boardsList.className = 'boards-list';
+  Object.assign(pl, {boardsList});
+  box.append(globalLabel, buildGlobalParallelRow(), boardsLabel, boardsList);
+  return box;
+}
+
+SETTINGS_SECTIONS.push({
+  label: 'how many cards run at once',
+  node: buildParallelSection(),
+  onOpen: loadParallelSection,
+});
+
+// ---- mall cam interval (cf90bacc): how long the workforce drawer holds each active card before -
+// advancing to the next one, when it is cycling rather than pinned to one card. empty means chat.js's
+// own default (10s) - same empty-is-default convention buildGlobalParallelRow already uses
+
+const mallCam = {input: null, status: null};
+
+function mallCamParseInput(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null; // empty means "use the default"
+  const value = Number(trimmed);
+  return Number.isInteger(value) && value > 0 ? value : undefined; // undefined marks it invalid
+}
+
+function buildMallCamSection() {
+  const row = document.createElement('div');
+  row.className = 'boards-create-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'numeric';
+  input.className = 'board-name-input text-field settings-parallel-input';
+  input.placeholder = String(DEFAULT_MALL_CAM_SECONDS);
+  const status = document.createElement('span');
+  status.className = 'boards-status';
+
+  async function save() {
+    const value = mallCamParseInput(input.value);
+    if (value === undefined) {
+      status.textContent = 'must be a positive whole number';
+      status.className = 'boards-status boards-error';
+      return;
+    }
+    const {ok, body} = await apiOrError('/api/settings', {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mall_cam_interval_seconds: value}),
+    });
+    status.textContent = ok ? 'saved' : (body && body.error) || 'could not save';
+    status.className = ok ? 'boards-status' : 'boards-status boards-error';
+  }
+
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    save();
+  });
+  input.addEventListener('blur', save);
+
+  row.append(input, status);
+  Object.assign(mc, {input, status});
+  return row;
+}
+
+async function loadMallCamSection() {
+  try {
+    const settings = await api('/api/settings');
+    mc.input.value = settings.mall_cam_interval_seconds == null ? '' : String(settings.mall_cam_interval_seconds);
+    mc.status.textContent = '';
+  } catch (err) {
+    mc.status.textContent = `could not load: ${err.message}`;
+    mc.status.className = 'boards-status boards-error';
+  }
+}
+
+SETTINGS_SECTIONS.push({
+  label: 'mall cam: seconds per card while auto-cycling the workforce drawer',
+  node: buildMallCamSection(),
+  onOpen: loadMallCamSection,
+});
+
 function buildSettingsSection(section) {
   const box = document.createElement('div');
   box.className = 'settings-section';

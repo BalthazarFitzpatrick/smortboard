@@ -51,9 +51,12 @@ def test_a_blocked_cards_last_comment_ends_with_its_action(store):
 def test_the_inbox_row_carries_the_action_first(store):
     board_id = store.create_board("b")["id"]
     card = store.create_card(board_id, None, "c")
-    store.update_card(card["id"], blocked_reason_code="USAGE_LIMIT", review_flag=True)
+    # DEPENDENCY_REJECTED, not USAGE_LIMIT - USAGE_LIMIT is retried by the board itself
+    # (Fix A/D) and excluded from the inbox while that retry is pending; see test_attention.py's
+    # handled_by_board coverage for that behavior
+    store.update_card(card["id"], blocked_reason_code="DEPENDENCY_REJECTED", review_flag=True)
     (row,) = attention_rows(store)
-    assert row["action"] == next_action("USAGE_LIMIT")
+    assert row["action"] == next_action("DEPENDENCY_REJECTED")
     assert row["hint"] == row["action"]  # no answer box, so the hint says the same thing
 
 

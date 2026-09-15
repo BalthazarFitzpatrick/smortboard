@@ -4,10 +4,10 @@
 // run: node tests/js/mission_control.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element} from './dom_stub.mjs';
+import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 const responses = new Map();
@@ -65,12 +65,14 @@ function SpyDrawer(opts) {
 const badgeSpySrc = 'const __badgeCalls = []; const __rawIndicateBadge = indicateBadge; ' +
   'indicateBadge = (host, n) => { __badgeCalls.push(n); return __rawIndicateBadge(host, n); };';
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), badgeSpySrc, uiBase('shell.js'),
-  smort('messageQueue.js'), smort('board.js')].join('\n;\n');
+  smort('messageQueue.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'),
+  smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {
   loadRoster, jumpToCard, usageSections, sendMissionControl, renderMissionControl, mc, mcQueueFor,
   resolveWorkforceTarget, loadWorkforce, wf, buildDrawers, drawers, onBoardEnter, createMessageQueue,
   boardIdRef: () => currentBoardId, __badgeCalls,
+  cycleWorkforce, loadMallCamSeconds, mallCamSecondsRef: () => mallCamSeconds, resetWorkforceTarget,
 };`)(SpyMenu, SpyDrawer);
 
 mod.buildDrawers();
@@ -174,7 +176,17 @@ assert.equal(mod.boardIdRef(), 'b1');
 
 mod.drawers.right.open(); // triggers openMissionControl -> loadMissionControl
 await new Promise(r => setTimeout(r, 0));
-assert.equal(mod.mc.header.textContent, 'mission control - opus', 'the header names the model');
+assert.equal(mod.mc.header.textContent, 'mission control - planning - opus', 'the header names the mode and the model - planning by default');
+
+// ---- shift+tab toggles the mode; plain tab must not ----------------------------------------------
+const shiftTab = () => mod.mc.input._listeners.keydown.forEach(fn => fn({code: 'Tab', shiftKey: true, preventDefault() {}}));
+const plainTab = () => mod.mc.input._listeners.keydown.forEach(fn => fn({code: 'Tab', shiftKey: false, preventDefault() {}}));
+plainTab();
+assert.equal(mod.mc.header.textContent, 'mission control - planning - opus', 'a plain tab does not toggle the mode');
+shiftTab();
+assert.equal(mod.mc.header.textContent, 'mission control - managing - opus', 'shift+tab switches to managing');
+shiftTab();
+assert.equal(mod.mc.header.textContent, 'mission control - planning - opus', 'a second shift+tab switches back');
 
 responses.set('/api/boards/b1/orchestrator', stubJson(202, {
   messages: [
@@ -193,6 +205,7 @@ assert.ok(post, 'sending should POST to the board orchestrator route');
 const posted = JSON.parse(post.opts.body);
 assert.equal(posted.message, 'build the login card', 'the post body carries the message');
 assert.equal(typeof posted.client_id, 'string', 'and the queue id, so the server can ignore a resend');
+assert.equal(posted.mode, 'planning', 'the current mode travels with every post - planning here, the two shift+tabs above cancelled out');
 const thinkingLine = mod.mc.log.children.find(c => c.className.includes('author-thinking'));
 assert.ok(thinkingLine, 'a thinking reply shows the dim thinking line');
 // close before the 1500ms poll fires - closing clears mc.poll so the process can exit
@@ -371,4 +384,58 @@ strip.focus();
 document._dispatch('keydown', {code: 'Comma', key: ',', target: strip, preventDefault() {}});
 assert.ok(!mod.drawers.left.isOpen(), 'the same , closes the drawer it opened');
 
+// ---- mall cam (cf90bacc): manual navigation pins, the interval is read from settings, and a
+// board switch drops any stale pin left from the board just departed --------------------------
+
+// a mall cam of three, mid-cycle - prev/next is the operator taking over, so it pins
+mod.wf.pinned = false;
+mod.wf.working = [{card_id: 'w1'}, {card_id: 'w2'}, {card_id: 'w3'}];
+mod.wf.index = 0;
+mod.wf.cardId = 'w1';
+responses.set('/api/cards/w2/conversation', stubJson(200,
+  {card_id: 'w2', title: 'w2', running: false, phase: null, delivery: 'next_run', messages: []}));
+mod.cycleWorkforce(1);
+assert.equal(mod.wf.cardId, 'w2', 'stepping by hand still moves to the next card');
+assert.equal(mod.wf.pinned, true, 'stepping by hand pins the drawer - the auto-cycle stops');
+
+// the internal timer's own advance passes {manual: false} and must not pin
+mod.wf.pinned = false;
+responses.set('/api/cards/w3/conversation', stubJson(200,
+  {card_id: 'w3', title: 'w3', running: false, phase: null, delivery: 'next_run', messages: []}));
+mod.cycleWorkforce(1, {manual: false});
+assert.equal(mod.wf.pinned, false, "the timer's own advance does not pin");
+
+// the interval comes from settings, falling back to the 10s default on anything invalid
+responses.set('/api/settings', stubJson(200, {mall_cam_interval_seconds: '25'}));
+await mod.loadMallCamSeconds();
+assert.equal(mod.mallCamSecondsRef(), 25, 'a valid setting overrides the default');
+responses.set('/api/settings', stubJson(200, {mall_cam_interval_seconds: null}));
+await mod.loadMallCamSeconds();
+assert.equal(mod.mallCamSecondsRef(), 10, 'an unset setting falls back to the default');
+responses.set('/api/settings', stubJson(200, {mall_cam_interval_seconds: 'not a number'}));
+await mod.loadMallCamSeconds();
+assert.equal(mod.mallCamSecondsRef(), 10, 'a bad value falls back to the default rather than breaking the cycle');
+
+// a board switch drops the stale pin, so the next open resolves fresh for the new board
+mod.wf.pinned = true;
+mod.wf.cardId = 'stale-card';
+mod.wf.working = [{card_id: 'stale-card'}];
+mod.resetWorkforceTarget();
+assert.equal(mod.wf.pinned, false, 'a board switch clears the pin');
+assert.equal(mod.wf.cardId, null, 'and the stale card id with it');
+assert.deepEqual(mod.wf.working, [], 'and the stale roster it was cycling');
+
+// onBoardEnter itself calls resetWorkforceTarget - a board switch through the real entry point,
+// not just the helper in isolation
+mod.wf.pinned = true;
+mod.wf.cardId = 'stale-card-2';
+responses.set('/api/boards/b1/cards', stubJson(200, []));
+await mod.onBoardEnter('b1');
+assert.equal(mod.wf.pinned, false, 'entering a board clears a pin left over from the last one');
+assert.equal(mod.wf.cardId, null);
+
 console.log('ok');
+// the workforce drawer's own rotate/poll timers (wf.rotate, wf.poll) are not proven cleared by
+// the , close above, unlike mc.poll - rather than guess at board.js's close handler, end the
+// process explicitly so a leftover timer cannot hang `node tests/js/mission_control.mjs`
+process.exit(0);

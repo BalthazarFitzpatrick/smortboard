@@ -410,12 +410,31 @@ _LEDGER_RULES = (
 )
 
 
-def build_turn_prompt(snapshot: dict[str, Any], message: str, mounts: str = "") -> str:
+_PLANNING_MODE_RULES = (
+    "You are in PLANNING MODE. Do not create, update or delete any card - the `cards` field of "
+    "your reply is ignored entirely in this mode, whatever it holds. Talk through the plan in "
+    "`reply` instead, and when the plan is settled end `reply` with a terse summary, one line per "
+    'card, in exactly this form: "create: <title>", "update: <title> - <what>", '
+    '"delete: <title>". Omit the summary while the plan is still being worked out.'
+)
+
+_MANAGE_MODE_RULES = (
+    "You are in MANAGE MODE. When nothing needs clarifying, act: propose cards in `cards` as "
+    "before and they will be created for real. There is no update or delete verb yet - only new "
+    "cards are created from this field."
+)
+
+
+def build_turn_prompt(
+    snapshot: dict[str, Any], message: str, mounts: str = "", mode: str = "planning"
+) -> str:
     return (
         "Board snapshot:\n"
         + json.dumps(snapshot, indent=2)
         + "\n\n"
         + _LEDGER_RULES
+        + "\n\n"
+        + (_PLANNING_MODE_RULES if mode != "manage" else _MANAGE_MODE_RULES)
         + (f"\n\n{mounts}" if mounts else "")
         + f"\n\n{OPERATOR_NAME}'s new message:\n"
         + message
@@ -511,6 +530,7 @@ def run_orchestrator_turn(
     store_message: bool = True,
     board_url: str | None = None,
     screenshot_taker: ScreenshotTaker | None = None,
+    mode: str = "manage",
 ) -> OrchestratorTurnResult:
     """one full turn: store fabian's message, run the orchestrator, create the cards it proposed,
     store its reply and the new plan. a failed or unparseable run stores a board error message
@@ -519,6 +539,9 @@ def run_orchestrator_turn(
     `store_message=False` skips the store for the http path, which already stored it itself.
     a `screenshot` in the reply triggers exactly one re-run with the image readable; the
     intermediate "let me look" reply is never shown to fabian - only the re-run's reply is.
+
+    `mode` is "planning" (default) or "manage" - planning never creates a card even if the reply
+    proposes some (the turn prompt tells the orchestrator so too); manage creates them as before.
     """
     if store_message:
         store.add_orchestrator_message(board_id, "fabian", message)
@@ -535,7 +558,7 @@ def run_orchestrator_turn(
         [repo["name"] for repo in snapshot["repos"]],
         [Path(p).name for p in read_paths if Path(p).exists()],
     )
-    prompt = build_turn_prompt(snapshot, message, mounts)
+    prompt = build_turn_prompt(snapshot, message, mounts, mode)
     run = runner or _real_runner(store, board_id, token_path, system_prompt, read_paths)
 
     try:
@@ -571,6 +594,16 @@ def run_orchestrator_turn(
 
     created_by_title: dict[str, str] = {}
     created_summaries: list[dict[str, str]] = []
+
+    # PLANNING MODE NEVER TOUCHES A CARD. the prompt already told the orchestrator not to propose
+    # any, but a reply is model output, not a contract - so the code enforces it too, and says so
+    # rather than silently dropping cards fabian might expect to see created.
+    if mode != "manage" and proposed:
+        warnings.append(
+            f"planning mode: {len(proposed)} proposed card(s) were not created - switch to "
+            "managing (shift+tab) to act on them"
+        )
+        proposed = []
 
     for spec in proposed:
         title = str(spec.get("title") or "").strip()
@@ -668,10 +701,12 @@ class OrchestratorRegistry:
         message: str,
         runner: OrchestratorRunner | None = None,
         message_already_stored: bool = False,
+        mode: str = "manage",
     ) -> bool:
         """starts a turn, or refuses if one is already thinking on this board. returns whether it
         started. `message_already_stored` lets the http handler store fabian's message itself,
-        synchronously, before this returns."""
+        synchronously, before this returns. `mode` is "planning" (talk only, never create/update a
+        card) or "manage" (act on what the orchestrator proposes) - see run_orchestrator_turn."""
         with self._lock:
             if self._thinking.get(board_id, False):
                 return False
@@ -680,7 +715,7 @@ class OrchestratorRegistry:
 
         thread = threading.Thread(
             target=self._run,
-            args=(board_id, message, runner, message_already_stored),
+            args=(board_id, message, runner, message_already_stored, mode),
             daemon=True,
         )
         thread.start()
@@ -692,6 +727,7 @@ class OrchestratorRegistry:
         message: str,
         runner: OrchestratorRunner | None,
         message_already_stored: bool,
+        mode: str = "manage",
     ) -> None:
         store = Store(self._db_path)  # this thread's own connection, never the server's
         try:
@@ -704,6 +740,7 @@ class OrchestratorRegistry:
                 token_path=profiles.token_path_for_run(self._token_path),
                 runner=runner,
                 store_message=not message_already_stored,
+                mode=mode,
             )
             with self._lock:
                 self._error[board_id] = result.error

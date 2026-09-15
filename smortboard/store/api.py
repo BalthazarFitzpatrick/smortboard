@@ -39,6 +39,8 @@ CARD_WRITABLE_FIELDS = {
 # gate_timeout_seconds caps the test gate - unset means review.gates.GATE_TIMEOUT_SECONDS (600)
 # auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - "off" parks the board until
 # the reset instead (the pre-profiles behaviour), unset means on
+# mall_cam_interval_seconds is the workforce drawer's auto-cycle period (cf90bacc) - unset means
+# chat.js's own default (10)
 _SETTING_KEYS = (
     "findings_route",
     "orchestrator_model",
@@ -48,6 +50,7 @@ _SETTING_KEYS = (
     "resume_briefing",
     "gate_timeout_seconds",
     "auto_switch_profiles",
+    "mall_cam_interval_seconds",
 )
 
 # writable settings that are not plain strings. mission_control_read_paths is a json list of
@@ -59,6 +62,25 @@ _EXTRA_SETTING_KEYS = ("mission_control_read_paths",)
 def _check_findings_route(value: str | None) -> None:
     if value is not None and value not in FINDINGS_ROUTES:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
+
+
+def _check_positive_int(name: str, value: Any) -> None:
+    """unset (None) means no cap; anything else must be a positive whole number - zero, a
+    negative number and anything that does not parse as one are all refused. a numeric string
+    passes too (store.set_setting is called directly with one in a few places, same as the
+    settings table always stored these as text before this check existed)."""
+    if value is None:
+        return
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
+    if isinstance(value, str):
+        if not value.strip().lstrip("-").isdigit():
+            raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
+        value = int(value)
+    elif not isinstance(value, int):
+        raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
 
 
 def _check_read_paths(value: Any) -> list[str]:
@@ -152,6 +174,15 @@ class Store:
         rows = self._conn.execute("SELECT * FROM boards ORDER BY position").fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    def set_board_max_parallel(self, board_id: str, value: int | None) -> dict[str, Any]:
+        """this board's own cap, on top of the global one - None means no board-specific limit,
+        just the global max_parallel setting, exactly as if this column never existed"""
+        self.get_board(board_id)  # 404 for an unknown board rather than a silent no-op update
+        _check_positive_int("max_parallel", value)
+        self._conn.execute("UPDATE boards SET max_parallel = ? WHERE id = ?", (value, board_id))
+        self._conn.commit()
+        return self.get_board(board_id)
+
     # -- repos ---------------------------------------------------------------
 
     def create_repo(
@@ -215,17 +246,67 @@ class Store:
         self._conn.commit()
         return self.get_repo(repo_id)
 
-    def get_repo(self, repo_id: str) -> dict[str, Any]:
+    def get_repo_row(self, repo_id: str) -> dict[str, Any]:
+        """the repos row alone, with no remembered_leases query - get_repo's own building block,
+        so remember_lease_paths/forget_lease_path don't pay for a list they throw away"""
         row = self._conn.execute("SELECT * FROM repos WHERE id = ?", (repo_id,)).fetchone()
         if row is None:
             raise NotFoundError(f"no repo {repo_id}")
         return _row_to_dict(row)
 
+    def get_repo(self, repo_id: str) -> dict[str, Any]:
+        repo = self.get_repo_row(repo_id)
+        repo["remembered_leases"] = self.remembered_leases(repo_id)
+        return repo
+
     def list_repos(self, board_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT * FROM repos WHERE board_id = ? ORDER BY name", (board_id,)
         ).fetchall()
+        repos = [_row_to_dict(r) for r in rows]
+        for repo in repos:
+            repo["remembered_leases"] = self.remembered_leases(repo["id"])
+        return repos
+
+    def remembered_leases(self, repo_id: str) -> list[dict[str, Any]]:
+        """the repo's remembered globs, oldest first - approved once from the inbox with
+        "remember for this repo" ticked, permitted on every card on this repo since"""
+        rows = self._conn.execute(
+            "SELECT * FROM repo_remembered_leases WHERE repo_id = ? ORDER BY created_at, rowid",
+            (repo_id,),
+        ).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+    def remember_lease_paths(self, repo_id: str, globs: list[str]) -> list[dict[str, Any]]:
+        """adds paths to the repo's remembered globs, skipping ones already there.
+
+        Always an explicit operator choice - the "remember for this repo" tick on a lease
+        approval is the only caller, never something a card or a run triggers on its own.
+        """
+        self.get_repo_row(repo_id)  # raises NotFoundError on a bad id
+        cleaned = [_check_lease_glob(glob) for glob in globs]
+        existing = {row["path_glob"] for row in self.remembered_leases(repo_id)}
+        now = _now()
+        for glob in cleaned:
+            if glob in existing:
+                continue
+            self._conn.execute(
+                "INSERT INTO repo_remembered_leases (id, repo_id, path_glob, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (_new_id(), repo_id, glob, now),
+            )
+            existing.add(glob)
+        self._conn.commit()
+        return self.remembered_leases(repo_id)
+
+    def forget_lease_path(self, repo_id: str, lease_id: str) -> list[dict[str, Any]]:
+        """removes one remembered glob - the boards panel's undo for remember_lease_paths"""
+        self.get_repo_row(repo_id)  # raises NotFoundError on a bad id
+        self._conn.execute(
+            "DELETE FROM repo_remembered_leases WHERE id = ? AND repo_id = ?", (lease_id, repo_id)
+        )
+        self._conn.commit()
+        return self.remembered_leases(repo_id)
 
     def delete_board(self, board_id: str) -> None:
         """removes a board, its repos, and every card on it.
@@ -266,8 +347,13 @@ class Store:
         leases: list[str] | None = None,
         model: str | None = None,
         ledger_task: str | None = None,
+        depends_on: list[str] | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
+        # validated before any insert - a brand new card can never be part of an existing
+        # cycle or depend on itself (its id does not exist yet), so only existence matters
+        cleaned_deps = list(dict.fromkeys(depends_on or []))
+        self._check_dependency_ids_exist(cleaned_deps)
         card_id = _new_id()
         now = _now()
         self._conn.execute(
@@ -308,6 +394,11 @@ class Store:
             self._conn.execute(
                 "INSERT INTO card_leases (id, card_id, path_glob) VALUES (?, ?, ?)",
                 (_new_id(), card_id, glob),
+            )
+        for dep_id in cleaned_deps:
+            self._conn.execute(
+                "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
+                (card_id, dep_id),
             )
         self._conn.commit()
         return self.get_card(card_id)
@@ -461,6 +552,10 @@ class Store:
             raise UnknownFieldError(f"no setting {key!r}")
         if key == "findings_route":
             _check_findings_route(value)
+        if key == "max_parallel":
+            _check_positive_int("max_parallel", value)
+        if key == "mall_cam_interval_seconds":
+            _check_positive_int("mall_cam_interval_seconds", value)
         stored = value
         # a list is the panel's whole-list replace and is checked path by path; a string is already
         # json and stored as given, which mission_control_read_paths() reads tolerantly
@@ -716,6 +811,63 @@ class Store:
         self._conn.commit()
 
     # -- dependencies (card_deps is the single source, queried both ways) ------
+
+    def _check_dependency_ids_exist(self, card_ids: list[str]) -> None:
+        if not card_ids:
+            return
+        placeholders = ",".join("?" * len(card_ids))
+        rows = self._conn.execute(
+            f"SELECT id FROM cards WHERE id IN ({placeholders})", card_ids
+        ).fetchall()
+        found = {row["id"] for row in rows}
+        missing = [dep_id for dep_id in card_ids if dep_id not in found]
+        if missing:
+            raise ValueError(f"no card {missing[0]}")
+
+    def _check_no_dependency_cycle(self, card_id: str, new_deps: list[str]) -> None:
+        """raises ValueError if giving card_id exactly new_deps would create a cycle.
+
+        walks the graph as it would look after the change - card_id's own edges become
+        new_deps, every other card's edges are as stored - and fails if that walk from
+        new_deps ever reaches back to card_id.
+        """
+        graph: dict[str, list[str]] = {card_id: new_deps}
+        for row in self._conn.execute("SELECT card_id, depends_on_card_id FROM card_deps"):
+            if row["card_id"] != card_id:
+                graph.setdefault(row["card_id"], []).append(row["depends_on_card_id"])
+        stack = list(new_deps)
+        seen: set[str] = set()
+        while stack:
+            node = stack.pop()
+            if node == card_id:
+                raise ValueError(f"dependency cycle: {card_id} would depend on itself")
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(graph.get(node, []))
+
+    def set_dependencies(self, card_id: str, depends_on: list[str]) -> dict[str, Any]:
+        """replaces a card's whole dependency list, the same way set_leases replaces leases.
+
+        validated before anything is written: an unknown id, a self-dependency, or a cycle
+        would leave the board unable to schedule cards, so all three are refused outright and
+        nothing changes.
+        """
+        self._card_row(card_id)  # raises NotFoundError on a bad card_id itself
+        cleaned = list(dict.fromkeys(depends_on))
+        if card_id in cleaned:
+            raise ValueError(f"a card cannot depend on itself: {card_id}")
+        self._check_dependency_ids_exist(cleaned)
+        self._check_no_dependency_cycle(card_id, cleaned)
+        self._conn.execute("DELETE FROM card_deps WHERE card_id = ?", (card_id,))
+        for dep_id in cleaned:
+            self._conn.execute(
+                "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
+                (card_id, dep_id),
+            )
+        self._conn.execute("UPDATE cards SET updated_at = ? WHERE id = ?", (_now(), card_id))
+        self._conn.commit()
+        return self.get_card(card_id)
 
     def add_dependency(self, card_id: str, depends_on_card_id: str) -> None:
         self._conn.execute(
