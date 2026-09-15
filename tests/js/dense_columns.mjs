@@ -26,7 +26,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {sortColumnCards, computePileLayout, computeStackCounts, letterCounts, renderBucketColumn,
   handlePileKey, MIN_PILED_CARDS, computePileFit, fitPiledColumn, squareCard, PILE, PEEK, MIN_CARD,
   PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
-  shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS};`)(SpyMenu, SpyDrawer);
+  shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus};`)(SpyMenu, SpyDrawer);
 
 function card(id, status, extra = {}) {
   return {id, title: `card ${id}`, status, workstream: '', ...extra};
@@ -566,6 +566,31 @@ globalThis.window.innerHeight = 800;
   assert.equal(fullCards(bucketRows).length, 12, 'every card renders full after the resize');
   const stillFocused = bucketRows.children.find(r => r.focused);
   assert.ok(stillFocused && stillFocused.dataset.cardId === 'w0', 'focus stays on the same card through the refit');
+}
+
+// ---- indicateCardFocus: a covered card's marker clips to its own visible peek band, never the
+// full box that would otherwise run across the card covering it. a covering (or plain) card keeps
+// its full frame -------------------------------------------------------------------------------
+
+{
+  const cards = Array.from({length: 12}, (_, i) => card(`m${i}`, 'todo'));
+  const {bucketRows} = buildColumn(840, cards); // 2 full + pile + 2 full - the front pair overlaps
+  const covered = fullCards(bucketRows).find(s => s.className.includes('card-covered'));
+  const covering = bucketRows.children[bucketRows.children.indexOf(covered) + 1];
+  assert.ok(covered && covering, 'a covered card and the one covering it both exist');
+
+  // real geometry: the covering card's own top sits PEEK px below the covered card's top - only
+  // that top band is what fitPiledColumn actually leaves visible
+  covered.getBoundingClientRect = () => ({top: 100, left: 0, right: 0, bottom: 330, width: 230, height: 230});
+  covering.getBoundingClientRect = () => ({top: 100 + mod.PEEK, left: 0, right: 0, bottom: 380, width: 230, height: 230});
+
+  mod.indicateCardFocus(covered);
+  const marker = document.querySelector('.focus-marker');
+  assert.equal(marker.style.clipPath, `inset(0 0 calc(100% - ${mod.PEEK}px) 0)`,
+    'a covered card clips the marker to its own peek band, not its full (unclipped) box');
+
+  mod.indicateCardFocus(covering);
+  assert.equal(marker.style.clipPath, '', 'the covering card keeps its full, unclipped frame');
 }
 
 console.log('ok');
