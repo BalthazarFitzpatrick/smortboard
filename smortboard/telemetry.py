@@ -439,41 +439,55 @@ def _sum_spend_by_model(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"model": model, "cost_usd": round(cost, 6)} for model, cost in totals.items()]
 
 
-def _card_outcome_group(store: Store, card: dict[str, Any]) -> tuple[str, float] | None:
-    """which of the c panel's two groups this card's latest attempt belongs to, and its total
-    cost across all attempts - None for a card still running, never run, or blocked on anything
-    else (CRASH, USAGE_LIMIT, a lease wait, ...): those count in neither group."""
-    telemetry = _telemetry_for(store, card)
-    if not telemetry["attempts"]:
-        return None
-    outcome = telemetry["attempts"][-1]["outcome"]
-    if outcome == "pull request":
-        return "accepted", telemetry["totals"]["cost_usd"]
-    if outcome in ("refused", "blocked: REVIEW_REJECTED"):
-        return "refused", telemetry["totals"]["cost_usd"]
-    return None
+def _card_prs_opened(telemetry: dict[str, Any]) -> int:
+    """how many of this card's attempts ended in a pull request - a card can be re-run after
+    a merge, so this is a count, not a bool"""
+    return sum(1 for a in telemetry["attempts"] if a["outcome"] == "pull request")
 
 
 def _empty_group() -> dict[str, Any]:
-    return {"cards": 0, "cost_usd": 0.0, "cost_per_pr_usd": None}
+    return {
+        "cards": 0,
+        "cost_usd": 0.0,
+        "prs": 0,
+        "cost_per_card_usd": None,
+        "cost_per_pr_usd": None,
+    }
+
+
+def _add_to_group(group: dict[str, Any], cost: float, prs: int) -> None:
+    group["cards"] += 1
+    group["cost_usd"] += cost
+    group["prs"] += prs
+
+
+def _finalize_group(group: dict[str, Any]) -> None:
+    group["cost_usd"] = round(group["cost_usd"], 6)
+    if group["cards"]:
+        group["cost_per_card_usd"] = round(group["cost_usd"] / group["cards"], 6)
+    if group["prs"]:
+        group["cost_per_pr_usd"] = round(group["cost_usd"] / group["prs"], 6)
 
 
 def _cost_outcome_groups(store: Store) -> dict[str, Any]:
-    """total cost and card count for the c panel's accepted/refused split, across every board -
-    an em dash's worth of nothing (None) rather than a divide-by-zero when a group is empty."""
-    groups = {"accepted": _empty_group(), "refused": _empty_group()}
+    """the c panel's 3x3 grid: total (every card), accepted (status == accepted), refused
+    (status == rejected) - each with its own spend, price per card and price per pr, so the two
+    divisions can be checked against the card/pr counts shown beside them. a queued or still-
+    running card counts in total only, never in accepted or refused. an em dash's worth of
+    nothing (None) rather than a divide-by-zero when a group is empty."""
+    groups = {"total": _empty_group(), "accepted": _empty_group(), "refused": _empty_group()}
     for board in store.list_boards():
         for card in store.list_cards(board["id"]):
-            result = _card_outcome_group(store, card)
-            if result is None:
-                continue
-            name, cost = result
-            groups[name]["cards"] += 1
-            groups[name]["cost_usd"] += cost
+            telemetry = _telemetry_for(store, card)
+            cost = telemetry["totals"]["cost_usd"]
+            prs = _card_prs_opened(telemetry)
+            _add_to_group(groups["total"], cost, prs)
+            if card.get("status") == "accepted":
+                _add_to_group(groups["accepted"], cost, prs)
+            elif card.get("status") == "rejected":
+                _add_to_group(groups["refused"], cost, prs)
     for group in groups.values():
-        group["cost_usd"] = round(group["cost_usd"], 6)
-        if group["cards"]:
-            group["cost_per_pr_usd"] = round(group["cost_usd"] / group["cards"], 6)
+        _finalize_group(group)
     return groups
 
 
@@ -504,7 +518,7 @@ def boards_overview(store: Store) -> dict[str, Any]:
         "boards": rows,
         "totals": totals,
         "orchestrator_turns_counted": False,
-        "outcome_groups": _cost_outcome_groups(store),
+        "cost_groups": _cost_outcome_groups(store),
     }
 
 
