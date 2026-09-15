@@ -113,10 +113,10 @@ function readGapVar(name, fallback) {
 
 const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
 const MIN_PILED_CARDS = 5; // below this, front stack + pile + back stack has nothing left to pile
-const PILE = 96; // a pile's fixed height - never shrinks, only grows with whatever is left over
-const PEEK = readGapVar('--stack-peek', 50); // the title-strip band an earlier card still shows
-const PILE_GAP_ABOVE = readGapVar('--pile-gap-above', 0); // extra space above a pile, past the row gap
-const PILE_GAP_BELOW = readGapVar('--pile-gap-below', 0); // extra space below a pile, past the row gap
+const PILE = 100; // a pile's fixed height - never shrinks, only grows with whatever is left over
+const PEEK = readGapVar('--stack-peek', 60); // the title-strip band an earlier card still shows
+const PILE_GAP_ABOVE = readGapVar('--pile-gap-above', 5); // extra space above a pile, past the row gap
+const PILE_GAP_BELOW = readGapVar('--pile-gap-below', 5); // extra space below a pile, past the row gap
 const MIN_CARD = PILE + 16; // cards shrink no further than this before the column scrolls instead
 const PORTRAIT_BELOW = 230; // a column narrower than this keeps 230px of card height (portrait)
 
@@ -435,7 +435,7 @@ function buildFullRow(card, idx, fanned = true) {
 
 // pure: rows in order ({type: 'card'|'pile'}), the available height, the row gap and the column's
 // own width -> one square card height and one pile height. the pile is fixed at PILE and grows
-// with the leftover by at most one more PEEK (146px) - past that the extra stays as empty space
+// with the leftover by at most one more PEEK (160px) - past that the extra stays as empty space
 // at the column's bottom rather than stretching the pile further. cards shrink first, never below
 // MIN_CARD - past that the column scrolls instead of shrinking further (the only case that scrolls)
 function computePileFit(rows, available, gap, width) {

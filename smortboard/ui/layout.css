@@ -11,11 +11,12 @@ body {
   flex-direction: column;
   --shadow-lift: 0 2px 5px rgba(0, 0, 0, 0.35);
   /* the tuning page's three knobs - columns.js reads these same three back for its sizing maths,
-     so changing a value here is the one edit that moves both the layout and the drawing. today's
-     numbers are exactly what the code already used before these existed - not a value change */
-  --pile-gap-above: 0px;
-  --pile-gap-below: 0px;
-  --stack-peek: 50px;
+     so changing a value here is the one edit that moves both the layout and the drawing. tuned
+     against derived/gap_tuner/index.html: 15px total above/below a pile, with the piled column's
+     own 10px row gap already part of that - these two knobs are only the extra past it */
+  --pile-gap-above: 5px;
+  --pile-gap-below: 5px;
+  --stack-peek: 60px;
 }
 
 .board-bar {
@@ -206,11 +207,11 @@ body {
 /* ---- dense column presentation: a pile standing in for every card the column folded away -------
    real card edges, not a placeholder box: a few layers stacked straight behind a top face, each
    3px lower than the one above, so only their bottom edges show - the board's square 2px edge */
-/* height lands inline from columns.js's computePileFit - fixed at 96px (PILE), only ever growing
-   with the column's own leftover space; 96px here is only the fallback before that runs */
+/* height lands inline from columns.js's computePileFit - fixed at 100px (PILE), only ever growing
+   with the column's own leftover space; 100px here is only the fallback before that runs */
 .card-pile {
   position: relative;
-  height: 96px;
+  height: 100px;
   flex: 0 0 auto;
   box-sizing: border-box;
   cursor: pointer;
