@@ -11,6 +11,8 @@ export class Element {}
 // its no-motion path everywhere else. on, every call is recorded (log, and el._animations) and
 // returns a handle whose onfinish/oncancel the test can fire itself - no real time passes
 export const stubMotion = {on: false, log: []};
+// no layout either: a test that needs real row boxes sets rect(el) -> a box, or null for the default
+export const stubLayout = {rect: null};
 function recordAnimation(el, keyframes, options) {
   const anim = {el, keyframes, options, onfinish: null, oncancel: null, cancel() { anim.oncancel?.(); }};
   (el._animations ||= []).push(anim);
@@ -99,7 +101,7 @@ export function element(tag, className = '') {
     contains(other) { let cur = other; while (cur) { if (cur === el) return true; cur = cur.parentNode; } return false; },
     querySelector(sel) { return queryAll(el, sel)[0] || null; },
     querySelectorAll(sel) { return queryAll(el, sel); },
-    getBoundingClientRect: () => ({left: 0, top: 0, right: 0, bottom: 0, width: 100, height: 30}),
+    getBoundingClientRect: () => stubLayout.rect?.(el) ?? ({left: 0, top: 0, right: 0, bottom: 0, width: 100, height: 30}),
     setAttribute(name, v) { el[name] = v; },
     removeAttribute(name) { delete el[name]; },
     classList: {
