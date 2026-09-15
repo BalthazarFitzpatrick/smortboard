@@ -123,10 +123,16 @@ body {
 /* an expanded column becomes a normal scrolling list, capped to the room the column actually has -
    collapsing it (same button) drops both and it rejoins the page's own scroll */
 .bucket-rows.bucket-rows-expanded { overflow-y: auto; padding-right: 4px; }
-/* a piled column spends its height on cards and piles, not gaps - columns.js reads this gap back */
-.bucket-rows.bucket-rows-piled { gap: 10px; overflow: visible; }
-/* only a piled column that truly can't shrink its cards any further scrolls - a pile's own jittered
-   edges may still poke a few px past the column box without forcing this on (computePileFit) */
+/* a piled column spends its height on cards and piles, not gaps - columns.js reads this gap back.
+   it is exactly the room the window leaves (fitPiledColumn), and what runs past that is cut at the
+   edge with no scrollbar - vertically only, so a pile's jittered layers still poke out sideways */
+.bucket-rows.bucket-rows-piled { gap: 10px; overflow-x: visible; overflow-y: clip; }
+/* a fixed-height flex column would otherwise squeeze its cards to fit instead of cutting them */
+.bucket-rows.bucket-rows-piled > .card-strip { flex-shrink: 0; }
+/* bottom-anchored (focus reached the last card): the rows pin to the bottom edge, so the column's
+   first cards are the ones cut, at the top - never the piles */
+.bucket-rows.bucket-rows-piled.bucket-rows-bottom { justify-content: flex-end; }
+/* only a piled column that truly can't shrink its cards any further scrolls (computeGroupFit) */
 .bucket-rows.bucket-rows-piled.bucket-rows-scrolls { overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
 
 /* collapsed card: a wide flat strip - makeExpander reads its own rect as the animation's starting
@@ -193,7 +199,7 @@ body {
   box-shadow: inset 0 0 0 3px var(--cream), inset 0 0 16px 3px color-mix(in srgb, var(--cream) 65%, transparent);
 }
 /* the plain fan (unpiled) wants a focused card lifted above the ones already covering it - a
-   piled pair does not: computePileFit always keeps the later card on top of the earlier one, and
+   piled pair does not: applyCardShadows always keeps the later card on top of the earlier one, and
    a stray z-index here would let a focused-but-earlier card pop over it regardless of that */
 .card-strip.fan-item:focus { z-index: 2; }
 
@@ -213,8 +219,8 @@ body {
 /* ---- dense column presentation: a pile standing in for every card the column folded away -------
    real card edges, not a placeholder box: a few layers stacked straight behind a top face, each
    3px lower than the one above, so only their bottom edges show - the board's square 2px edge */
-/* height lands inline from columns.js's computePileFit - fixed at 100px (PILE), only ever growing
-   with the column's own leftover space; 100px here is only the fallback before that runs */
+/* height lands inline from columns.js's fitPiledColumn - fixed at 100px (PILE); 100px here is only
+   the fallback before that runs */
 .card-pile {
   position: relative;
   height: 100px;
