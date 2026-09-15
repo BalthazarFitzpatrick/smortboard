@@ -669,3 +669,41 @@ function renderBucketColumn(bucketEl, cards, status) {
   drawColumn(bucketRowsEl);
   wireColumnFocus(bucketRowsEl);
 }
+
+// ---- resize refit: card size, stack counts and pile height all come from the column's own
+// measured width/height (computeStackCounts, computePileFit), which only a real resize (not a
+// poll) can change. refits every already-piled column from its own _pile state alone - no refetch,
+// no full renderBuckets - and recomputes `fits` too, since widening a column can drop its pile
+// entirely, same as renderBucketColumn does on first draw --------------------------------------
+
+function refitColumn(bucketRowsEl) {
+  const state = bucketRowsEl._pile;
+  if (!state) return;
+  const width = bucketRowsEl.getBoundingClientRect().width;
+  state.fits = stackHeight(state.sorted.length, squareCard(width)) <= availableColumnHeight(bucketRowsEl);
+  drawColumn(bucketRowsEl);
+}
+
+const PILE_REFIT_DEBOUNCE_MS = 100;
+let pileRefitTimer = null;
+
+// keeps focus on whatever card had it, by id - drawColumn always rebuilds the row it lives in, so
+// the dom node itself never survives a refit even when nothing about that card actually changed
+function refitPiledColumns() {
+  const activeCardId = document.activeElement?.dataset?.cardId ?? null;
+  document.querySelectorAll('#bucket-row .bucket-rows').forEach(refitColumn);
+  refreshBucketNav();
+  if (!activeCardId) return;
+  const strip = document.querySelector(`.card-strip[data-card-id="${activeCardId}"]`);
+  if (!strip) return;
+  strip.tabIndex = 0;
+  strip.focus();
+  indicateFocus(strip);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', () => {
+    clearTimeout(pileRefitTimer);
+    pileRefitTimer = setTimeout(refitPiledColumns, PILE_REFIT_DEBOUNCE_MS);
+  });
+}

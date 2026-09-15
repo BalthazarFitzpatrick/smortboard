@@ -9,7 +9,7 @@ const root = new URL('../../', import.meta.url);
 const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
-installStubDom({fetchImpl: () => new Promise(() => {})});
+const {dispatchWindow} = installStubDom({fetchImpl: () => new Promise(() => {})});
 const boardBar = element('div', 'board-bar');
 boardBar.id = 'board-bar';
 const bucketRow = element('div', 'bucket-row');
@@ -26,7 +26,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {sortColumnCards, computePileLayout, computeStackCounts, letterCounts, renderBucketColumn,
   handlePileKey, MIN_PILED_CARDS, computePileFit, fitPiledColumn, squareCard, PILE, PEEK, MIN_CARD,
   PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
-  shadowImageCache};`)(SpyMenu, SpyDrawer);
+  shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS};`)(SpyMenu, SpyDrawer);
 
 function card(id, status, extra = {}) {
   return {id, title: `card ${id}`, status, workstream: '', ...extra};
@@ -542,6 +542,30 @@ globalThis.window.innerHeight = 800;
   const expectedTop = mod.pileLayerJitter(pile._cards[0].id);
   const topTransform = layers.at(-1).style.transform;
   assert.ok(topTransform.includes(expectedTop.dx.toFixed(1)), 'the first (bottom) card is the last layer appended - painted on top, under the face');
+}
+
+// ---- resize refit: a window resize event redraws every piled column from its own state, picking
+// up its new measured size, debounced - no full renderBuckets, no cards refetched -----------------
+
+{
+  const cards = Array.from({length: 12}, (_, i) => card(`w${i}`, 'todo'));
+  const {bucketEl, bucketRows} = buildColumn(840, cards); // starts piled: 2 full + pile + 2 full
+  bucketRow.appendChild(bucketEl); // refitPiledColumns finds columns under #bucket-row
+  assert.equal(piles(bucketRows).length, 1, 'starts piled at the narrow/short size');
+  const focused = fullCards(bucketRows)[0];
+  focused.tabIndex = 0;
+  focused.focus();
+
+  // the window grows: the same column now has room for every card peeked, no pile needed
+  bucketRows.getBoundingClientRect = () => ({top: 800 - 24 - 2000, left: 0, right: 0, bottom: 0, width: 300, height: 0});
+  dispatchWindow('resize', {});
+  assert.equal(piles(bucketRows).length, 1, 'debounced - nothing changes on the raw event itself');
+  await new Promise(resolve => setTimeout(resolve, mod.PILE_REFIT_DEBOUNCE_MS + 60));
+
+  assert.equal(piles(bucketRows).length, 0, 'the debounced refit drops the pile once the column has room for every card');
+  assert.equal(fullCards(bucketRows).length, 12, 'every card renders full after the resize');
+  const stillFocused = bucketRows.children.find(r => r.focused);
+  assert.ok(stillFocused && stillFocused.dataset.cardId === 'w0', 'focus stays on the same card through the refit');
 }
 
 console.log('ok');

@@ -175,10 +175,14 @@ export function installStubDom({fetchImpl} = {}) {
   document.appendChild(document.body);
   document._dispatch = (type, evt) => (docListeners[type] || []).forEach(fn => fn(evt));
 
+  const winListeners = {};
   globalThis.window = {
     innerWidth: 1200, innerHeight: 800,
-    addEventListener() {}, removeEventListener() {},
+    addEventListener(type, fn) { (winListeners[type] ||= []).push(fn); },
+    removeEventListener(type, fn) { winListeners[type] = (winListeners[type] || []).filter(f => f !== fn); },
   };
+  // a test drives this instead of a real resize event - synchronous, same as the browser's own
+  window._dispatch = (type, evt) => (winListeners[type] || []).forEach(fn => fn(evt));
   globalThis.requestAnimationFrame = fn => fn();
   // ui_base's indicate.js reads a marker's transform; no layout here, so nothing is ever moved
   globalThis.getComputedStyle = () => ({transform: 'none', getPropertyValue: () => ''});
@@ -189,5 +193,5 @@ export function installStubDom({fetchImpl} = {}) {
   };
   globalThis.fetch = fetchImpl || (() => new Promise(() => {})); // never resolves unless overridden
 
-  return {document: globalThis.document, dispatchDoc: document._dispatch};
+  return {document: globalThis.document, dispatchDoc: document._dispatch, dispatchWindow: window._dispatch};
 }
