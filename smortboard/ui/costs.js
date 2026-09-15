@@ -6,9 +6,9 @@ function costPerPrLabel(row) {
   return row.cost_per_pr_usd == null ? null : `${formatUsd(row.cost_per_pr_usd)} / pr`;
 }
 
-// an em dash rather than a divide-by-zero when a group holds no cards yet
-function costPerPrCell(costPerPr) {
-  return costPerPr == null ? '—' : formatUsd(costPerPr);
+// an em dash rather than a divide-by-zero when a group or figure holds no cards/prs yet
+function dashOrUsd(value) {
+  return value == null ? '—' : formatUsd(value);
 }
 
 function plural(count, word) {
@@ -22,19 +22,31 @@ function costCell(text, cls = '') {
   return cell;
 }
 
-// one outcome group (accepted / refused): card count, total spend, spend per pr - the redesigned
-// summary 1db20994 asked for, read straight off outcome_groups so an empty group never divides by
-// zero, it just shows the dash
+const COST_GROUP_ORDER = ['total', 'accepted', 'refused'];
+
+// one cell of the 3x3 grid: spend, price per card, price per pr for one group - card/pr counts
+// shown small beside the figures they divide, so the two divisions can be checked by eye
 function costGroupBox(title, group) {
   const box = document.createElement('div');
   box.className = `cost-group cost-group-${title}`;
-  box.appendChild(costCell(`${title} · ${plural(group.cards, 'card')}`, 'cost-group-title'));
-  box.appendChild(costCell(formatUsd(group.cost_usd), 'cost-group-figure'));
-  box.appendChild(costCell(`${costPerPrCell(group.cost_per_pr_usd)} / pr`, 'cost-group-figure'));
+  box.appendChild(costCell(title, 'cost-group-title'));
+  box.appendChild(costCell(`${formatUsd(group.cost_usd)} spend`, 'cost-group-figure'));
+  box.appendChild(costCell(`${dashOrUsd(group.cost_per_card_usd)} / card`, 'cost-group-figure'));
+  box.appendChild(costCell(`${dashOrUsd(group.cost_per_pr_usd)} / pr`, 'cost-group-figure'));
+  box.appendChild(costCell(`${plural(group.cards, 'card')} · ${plural(group.prs, 'pr')}`, 'cost-group-counts'));
   return box;
 }
 
-const COST_COLUMNS = ['board', 'share', 'spend', 'runs', 'accepted', 'prs', 'per pr', 'on refusals'];
+// the 3x3 grid: total, accepted, refused left to right - each carrying its own spend / per-card /
+// per-pr, read straight off cost_groups so an empty group shows the dash rather than dividing by zero
+function costGroupsGrid(costGroups) {
+  const grid = document.createElement('div');
+  grid.className = 'cost-groups-grid';
+  COST_GROUP_ORDER.forEach(name => grid.appendChild(costGroupBox(name, costGroups[name])));
+  return grid;
+}
+
+const COST_COLUMNS = ['board', 'share', 'spend', 'runs', 'accepted', 'prs', 'per pr', 'spend w/ denial'];
 
 // one board: its name, its share of all spend as a bar, then the figures in aligned columns
 function boardCostRow(row, share) {
@@ -59,7 +71,7 @@ function totalsFoot(totals) {
   const foot = document.createElement('div');
   foot.className = 'card-foot usage-foot cost-foot';
   const wasteNote = totals.refusal_cost_usd
-    ? ` - ${formatUsd(totals.refusal_cost_usd)} on runs with refusals`
+    ? ` - ${formatUsd(totals.refusal_cost_usd)} on runs with a permission denial`
     : '';
   const prNote = totals.cost_per_pr_usd == null ? '' : ` - ${costPerPrLabel(totals)}`;
   foot.appendChild(
@@ -98,15 +110,11 @@ function costsOverviewSections(data) {
   const card = document.createElement('div');
   card.className = 'usage-card usage-wide cost-card';
 
-  // the total leads, then the two outcome groups - what a scan of the panel needs first, before
-  // the per-board detail table below it
-  card.appendChild(costCell(`total cost: ${formatUsd(total)}`, 'field-label cost-total'));
-  const groups = data.outcome_groups || {accepted: {cards: 0, cost_usd: 0, cost_per_pr_usd: null},
-    refused: {cards: 0, cost_usd: 0, cost_per_pr_usd: null}};
-  const groupsRow = document.createElement('div');
-  groupsRow.className = 'cost-groups';
-  groupsRow.append(costGroupBox('accepted', groups.accepted), costGroupBox('refused', groups.refused));
-  card.appendChild(groupsRow);
+  // the 3x3 grid leads - total / accepted / refused, each with spend, per-card and per-pr - what
+  // a scan of the panel needs first, before the per-board detail table below it
+  const emptyGroup = {cards: 0, cost_usd: 0, prs: 0, cost_per_card_usd: null, cost_per_pr_usd: null};
+  const groups = data.cost_groups || {total: emptyGroup, accepted: emptyGroup, refused: emptyGroup};
+  card.appendChild(costGroupsGrid(groups));
   card.appendChild(textLine('', 'h-divider'));
 
   const rows = document.createElement('div');
