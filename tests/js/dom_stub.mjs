@@ -122,6 +122,24 @@ export function element(tag, className = '') {
       if (html === '') { el.children.forEach(c => { c.parentNode = null; }); el.children = []; }
     },
   });
+  // just enough canvas to let a pixel-field generator (the card shadow image) run and cache - a
+  // 2d context that records an ImageData's alpha channel, and toDataURL folds it into one string
+  // deterministic per field, so two identical fields produce the same "image" without a real gpu
+  if (tag === 'canvas') {
+    let widthV = 0, heightV = 0, painted = null;
+    Object.defineProperty(el, 'width', {get: () => widthV, set: v => { widthV = v; }});
+    Object.defineProperty(el, 'height', {get: () => heightV, set: v => { heightV = v; }});
+    el.getContext = () => ({
+      createImageData: (w, h) => ({width: w, height: h, data: new Uint8ClampedArray(w * h * 4)}),
+      putImageData: imgData => { painted = imgData; },
+    });
+    el.toDataURL = () => {
+      if (!painted) return 'data:image/stub;empty';
+      let sum = 0;
+      for (let i = 3; i < painted.data.length; i += 4) sum += painted.data[i];
+      return `data:image/stub,${widthV}x${heightV}:${sum}`;
+    };
+  }
   // a textarea's growth math needs just enough geometry to be meaningful: clientHeight tracks the
   // visible box (one unit per row), scrollHeight tracks the content (one unit per line the value
   // actually breaks into) - a real browser's own units, not these, drive the real thing

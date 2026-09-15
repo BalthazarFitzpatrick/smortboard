@@ -25,7 +25,8 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {sortColumnCards, computePileLayout, computeStackCounts, letterCounts, renderBucketColumn,
   handlePileKey, MIN_PILED_CARDS, computePileFit, fitPiledColumn, squareCard, PILE, PEEK, MIN_CARD,
-  PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS};`)(SpyMenu, SpyDrawer);
+  PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
+  shadowImageCache};`)(SpyMenu, SpyDrawer);
 
 function card(id, status, extra = {}) {
   return {id, title: `card ${id}`, status, workstream: '', ...extra};
@@ -251,6 +252,39 @@ function piles(bucketRows) {
   assert.equal(mod.squareCard(500), 500, 'wide enough - a plain square');
   assert.equal(mod.squareCard(230), 230, 'exactly at the portrait line - still square');
   assert.equal(mod.squareCard(180), mod.PORTRAIT_BELOW, 'narrower than 230 - keeps 230px of height, turns portrait');
+}
+
+// ---- card shadow: a pixel field ported from derived/shadow_tuner/index.html - darkest at a ------
+// corner, generated once per size and cached, never per frame or per redraw
+
+{
+  // a corner (both dx and dy past the edge) reaches further and stays darker longer than a side -
+  // that is the whole reason a plain css box-shadow (one radius, one spread) can't make this
+  const corner = mod.shadowAlpha(-5, -5, 300, 300);
+  const topSide = mod.shadowAlpha(150, -5, 300, 300); // same distance out, but mid-side, not a corner
+  const bottomSide = mod.shadowAlpha(150, 305, 300, 300); // the bottom edge, on by default
+  const inside = mod.shadowAlpha(150, 150, 300, 300); // inside the card - no shadow at all
+  assert.ok(corner > topSide, 'a corner point is darker than a side point the same distance out');
+  assert.ok(topSide > 0 && bottomSide > 0, 'both the top and the (default-on) bottom edge cast a shadow');
+  assert.equal(inside, 0, 'nothing inside the card itself');
+  // far along an edge, past the corner's creep, the side settles to its own (lower) strength
+  const nearCorner = mod.shadowAlpha(5, -1, 300, 300);
+  const farAlongTop = mod.shadowAlpha(150, -1, 300, 300);
+  assert.ok(nearCorner >= farAlongTop, 'close to a corner is at least as dark as the middle of an edge');
+}
+
+{
+  // generated once per size, cached by it - a second call for the same size returns the very same
+  // object, not a freshly-drawn one, and shadowImageCache holds exactly one entry either way
+  mod.shadowImageCache.clear();
+  const a = mod.shadowImage(300, 300);
+  const b = mod.shadowImage(300, 300);
+  assert.equal(a, b, 'the same size returns the cached image, not a redraw');
+  assert.equal(mod.shadowImageCache.size, 1);
+  const c = mod.shadowImage(180, 230); // a portrait card's own size - a different cache entry
+  assert.notEqual(a, c);
+  assert.equal(mod.shadowImageCache.size, 2);
+  assert.ok(a.url && c.url, 'each cached entry carries a real image url');
 }
 
 // ---- computePileFit: the pile is fixed at 96px and only ever grows with the leftover -------------
