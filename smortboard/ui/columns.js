@@ -113,10 +113,10 @@ function readGapVar(name, fallback) {
 
 const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
 const MIN_PILED_CARDS = 5; // below this, front stack + pile + back stack has nothing left to pile
-const PILE = 96; // a pile's fixed height - never shrinks, only grows with whatever is left over
-const PEEK = readGapVar('--stack-peek', 50); // the title-strip band an earlier card still shows
-const PILE_GAP_ABOVE = readGapVar('--pile-gap-above', 0); // extra space above a pile, past the row gap
-const PILE_GAP_BELOW = readGapVar('--pile-gap-below', 0); // extra space below a pile, past the row gap
+const PILE = 100; // a pile's fixed height - never shrinks, only grows with whatever is left over
+const PEEK = readGapVar('--stack-peek', 60); // the title-strip band an earlier card still shows
+const PILE_GAP_ABOVE = readGapVar('--pile-gap-above', 5); // extra space above a pile, past the row gap
+const PILE_GAP_BELOW = readGapVar('--pile-gap-below', 5); // extra space below a pile, past the row gap
 const MIN_CARD = PILE + 16; // cards shrink no further than this before the column scrolls instead
 const PORTRAIT_BELOW = 230; // a column narrower than this keeps 230px of card height (portrait)
 
@@ -172,9 +172,12 @@ function shadowAlpha(x, y, w, h) {
   return Math.round(255 * SHADOW_STRENGTH * a);
 }
 
-// one canvas per card size, generated once and cached - never per frame or per redraw. reach pads
-// the canvas past the card's own box on every side (the top if SHADOW_BOTTOM is off), which is
-// exactly what a plain css box-shadow could never place outside an overflow:hidden card
+// one ImageData per card size, generated once and cached - never per frame or per redraw. reach
+// pads the canvas past the card's own box on every side (the top if SHADOW_BOTTOM is off), which
+// is exactly what a plain css box-shadow could never place outside an overflow:hidden card.
+// cached as ImageData, not a canvas.toDataURL() string: a data-uri <img> painted this alpha-only
+// (straight-black) content invisibly in some real layouts (headless-verified against the tuner,
+// 1067c3e) - a live <canvas> per instance, repainted from the same cached pixels, always composites
 const shadowImageCache = new Map();
 function shadowImage(w, h) {
   const key = `${w}x${h}`;
@@ -182,21 +185,20 @@ function shadowImage(w, h) {
   const reach = Math.max(SHADOW_SIDE, SHADOW_RADIUS) + SHADOW_CORE;
   const pad = Math.ceil(reach) + 3;
   const cw = w + 2 * pad, ch = h + 2 * pad;
-  const canvas = document.createElement('canvas');
-  canvas.width = cw;
-  canvas.height = ch;
-  const ctx = canvas.getContext('2d');
-  const img = ctx.createImageData(cw, ch);
+  const scratch = document.createElement('canvas');
+  scratch.width = cw;
+  scratch.height = ch;
+  const ctx = scratch.getContext('2d');
+  const imageData = ctx.createImageData(cw, ch);
   const oy = SHADOW_DROP_Y ? 2 : 0;
   for (let py = 0; py < ch; py++) {
     const y = py - pad - oy;
     for (let px = 0; px < cw; px++) {
       const alpha = shadowAlpha(px - pad, y, w, h);
-      if (alpha > 0) img.data[(py * cw + px) * 4 + 3] = alpha;
+      if (alpha > 0) imageData.data[(py * cw + px) * 4 + 3] = alpha;
     }
   }
-  ctx.putImageData(img, 0, 0);
-  const out = {url: canvas.toDataURL(), pad, cw, ch};
+  const out = {imageData, pad, cw, ch};
   shadowImageCache.set(key, out);
   return out;
 }
@@ -231,16 +233,19 @@ function applyCardShadows(bucketRowsEl) {
     if (!row.classList.contains('fan-item')) row.style.zIndex = String(cardIndex * 2);
     if (w && h) {
       const shade = shadowImage(w, h);
-      const img = document.createElement('img');
-      img.className = 'card-shade';
-      img.alt = '';
-      img.src = shade.url;
-      img.style.top = `${(rect.top - bucketRect.top) - shade.pad}px`;
-      img.style.left = `${(rect.left - bucketRect.left) - shade.pad}px`;
-      img.style.width = `${shade.cw}px`;
-      img.style.height = `${shade.ch}px`;
-      img.style.zIndex = String(cardIndex * 2 - 1);
-      layer.appendChild(img);
+      // a fresh <canvas> per row, repainted from the cached ImageData - never an <img src="data:...">,
+      // see shadowImage's own comment for why
+      const canvas = document.createElement('canvas');
+      canvas.className = 'card-shade';
+      canvas.width = shade.cw;
+      canvas.height = shade.ch;
+      canvas.getContext('2d').putImageData(shade.imageData, 0, 0);
+      canvas.style.top = `${(rect.top - bucketRect.top) - shade.pad}px`;
+      canvas.style.left = `${(rect.left - bucketRect.left) - shade.pad}px`;
+      canvas.style.width = `${shade.cw}px`;
+      canvas.style.height = `${shade.ch}px`;
+      canvas.style.zIndex = String(cardIndex * 2 - 1);
+      layer.appendChild(canvas);
     }
     cardIndex += 1;
   });
@@ -435,7 +440,7 @@ function buildFullRow(card, idx, fanned = true) {
 
 // pure: rows in order ({type: 'card'|'pile'}), the available height, the row gap and the column's
 // own width -> one square card height and one pile height. the pile is fixed at PILE and grows
-// with the leftover by at most one more PEEK (146px) - past that the extra stays as empty space
+// with the leftover by at most one more PEEK (160px) - past that the extra stays as empty space
 // at the column's bottom rather than stretching the pile further. cards shrink first, never below
 // MIN_CARD - past that the column scrolls instead of shrinking further (the only case that scrolls)
 function computePileFit(rows, available, gap, width) {
