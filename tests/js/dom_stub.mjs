@@ -7,6 +7,17 @@ import {readFileSync} from 'node:fs';
 
 export class Element {}
 
+// the web animations api, off unless a test turns it on: code that checks for el.animate then runs
+// its no-motion path everywhere else. on, every call is recorded (log, and el._animations) and
+// returns a handle whose onfinish/oncancel the test can fire itself - no real time passes
+export const stubMotion = {on: false, log: []};
+function recordAnimation(el, keyframes, options) {
+  const anim = {el, keyframes, options, onfinish: null, oncancel: null};
+  (el._animations ||= []).push(anim);
+  stubMotion.log.push(anim);
+  return anim;
+}
+
 // ui_base's assets: a sibling ../smortui checkout when developing the two repos in lockstep, else
 // the installed package's own copy (UI_BASE_ASSETS_DIR, set by test_js_suite.py) - so the same
 // test runs unchanged on a machine with the sibling checkout and inside the gate container, which
@@ -102,6 +113,9 @@ export function element(tag, className = '') {
         return on;
       },
     },
+  });
+  Object.defineProperty(el, 'animate', {
+    get: () => (stubMotion.on ? (keyframes, options) => recordAnimation(el, keyframes, options) : undefined),
   });
   // a getter, not a plain field: siblings are added and removed constantly (a column re-render
   // replaces its whole child list), so this has to read parentNode.children fresh each time

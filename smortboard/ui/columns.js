@@ -496,9 +496,9 @@ function computePileLayout(sorted, focusIndex, start, anchor, n) {
   const place = placeGroup(total, n, focusIndex, start, anchor);
   const end = place.start + n; // one past the group's last card
   const edge = Math.min(n, EDGE_CARDS);
-  // at rest the group's first card is the open one, exactly as focus landing on it draws it - so
-  // focus arriving at card 1 finds it open rather than a covered strip (the mockup has no rest state)
-  const open = focusIndex ?? place.start;
+  // only a focused card is open. at rest every card is covered by the next, the way the fan rests -
+  // focus landing on one redraws the column around it (wireColumnFocus), leaving covers it again
+  const open = focusIndex;
   const rows = [];
   const pile = (from, to, side) => {
     if (to > from) rows.push({type: 'pile', side, cards: sorted.slice(from, to)});
@@ -557,14 +557,22 @@ function roleChanged(id, role, priorRoles) {
 }
 
 // ---- motion: a redraw replaces every row, so each row is replayed from where it was drawn last
-// to where it is drawn now (flip) - a step reads as the column moving, never as a redraw. same
-// duration and ease-out as .row-enter; the css translate/scale properties, never transform, so a
+// to where it is drawn now (flip) - a step reads as the column moving, never as a redraw. a plain
+// step runs at .row-enter's duration and ease-out, a step that touches a pile at the pile's slower
+// timing (planPileMotion); the css translate/scale/clip-path properties, never transform, so a
 // focus lift (transform) or the fan's own slide (transform) run underneath it untouched ----------
 
 const ROW_MOTION_MS = 140; // .row-enter's own duration (layout.css)
 const ROW_EASING = 'ease-out';
+// a step that moves a card onto or off a pile is slower and softer, so the eye can follow the card:
+// it travels for PILE_MOTION_MS, lands, then dissolves into the pile face over PILE_SETTLE_MS
+const PILE_MOTION_MS = 300;
+const PILE_SETTLE_MS = 120;
+const PILE_EASING = 'cubic-bezier(0.45, 0, 0.25, 1)';
+const PILE_FACE_INSET = 11; // .card-pile-count's own top/bottom inset (layout.css) - the face box
+const CLIP_REACH = 40; // a clip this far outside the card keeps its own shadow canvas uncut
 const REST_FRAME = {translate: '0px 0px', scale: '1 1', opacity: 1};
-const GROW_FRAME = {translate: '0px 0px', scale: '0.9 0.6', opacity: 0}; // a pile forming or emptying
+const GROW_FRAME = {translate: '0px 0px', scale: '0.9 0.6', opacity: 0}; // a pile emptying
 
 // a row's identity across redraws: a card by its id, a pile by the side it sits on
 function rowKey(el) {
@@ -600,53 +608,146 @@ function motionAllowed(bucketRowsEl, before) {
   return !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
 }
 
-// a row that left the drawn rows - a card folded onto a pile, or a pile that emptied - replayed once
-// as its own detached node from where it was, into the pile's box (or shrinking away) while it
-// fades. z-index -1 in .bucket's stacking context keeps it under every live row; it drops .row so
-// buckets.js's nav never counts it
-function ghostRow(bucketEl, prior, toRect) {
+// pure: which cards a redraw moves onto or off each pile, from every card's role before and after,
+// and the timing the whole redraw then runs at - any pile change slows every row to the pile's
+// timing, so the rows below slide with the card. a pile a card lands on shows its new count only
+// when that card lands (countAt); a card lifting off leaves at once, so that count changes at 0
+function planPileMotion(priorRoles, nextRoles) {
+  const piles = new Map();
+  const entry = key => piles.get(key) || piles.set(key, {landing: [], lifting: []}).get(key);
+  nextRoles.forEach((role, id) => {
+    const was = priorRoles.get(id);
+    if (was === undefined || was === role) return;
+    if (role.startsWith('pile-')) entry(role).landing.push(id);
+    if (was.startsWith('pile-')) entry(was).lifting.push(id);
+  });
+  piles.forEach(pile => { pile.countAt = pile.landing.length ? PILE_MOTION_MS : 0; });
+  const piled = piles.size > 0;
+  return {piles, duration: piled ? PILE_MOTION_MS : ROW_MOTION_MS, easing: piled ? PILE_EASING : ROW_EASING};
+}
+
+// the landing moment as a share of a travel-then-settle animation's whole run
+const PILE_LAND_OFFSET = PILE_MOTION_MS / (PILE_MOTION_MS + PILE_SETTLE_MS);
+
+// pure: a pile row's box -> its face, the top layer the count sits on and a card lands on
+function pileFace(rect) {
+  const inset = Math.min(PILE_FACE_INSET, rect.height / 2);
+  return {left: rect.left, top: rect.top + inset, width: rect.width, height: rect.height - 2 * inset};
+}
+
+// pure: the frame that lays a card drawn at `card` over a pile face - moved so its top meets the
+// face's top and cut from the bottom to the face's height, so its title strip stays readable and
+// it keeps its own look the whole way, never squashed
+function faceFrame(card, face) {
+  const cut = Math.max(0, card.height - face.height);
+  return {
+    translate: `${face.left - card.left}px ${face.top - card.top}px`,
+    clipPath: `inset(-${CLIP_REACH}px -${CLIP_REACH}px ${cut}px -${CLIP_REACH}px)`,
+  };
+}
+const OPEN_CLIP = `inset(-${CLIP_REACH}px -${CLIP_REACH}px -${CLIP_REACH}px -${CLIP_REACH}px)`;
+
+// lifts a node out of the drawn rows so it can be replayed once where it was: absolute against the
+// bucket, dropping .row so buckets.js's nav never counts it, removed when its animation ends
+function detachAsGhost(bucketEl, prior, zIndex) {
   const ghost = prior.el;
   const base = bucketEl.getBoundingClientRect();
   ghost.classList.remove('row', 'row-enter');
   ghost.classList.add('row-ghost');
   Object.assign(ghost.style, {
-    position: 'absolute', margin: '0', zIndex: '-1',
+    position: 'absolute', margin: '0', zIndex,
     left: `${prior.rect.left - base.left}px`, top: `${prior.rect.top - base.top}px`,
     width: `${prior.rect.width}px`, height: `${prior.rect.height}px`,
   });
   bucketEl.appendChild(ghost);
-  const end = toRect ? flipFrame(flipDelta(toRect, prior.rect), 0) : GROW_FRAME;
-  const anim = ghost.animate([REST_FRAME, end], {duration: ROW_MOTION_MS, easing: ROW_EASING, fill: 'forwards'});
+  return ghost;
+}
+
+// a pile that emptied shrinks away where it was, under every live row (z-index -1 in .bucket's
+// stacking context) - the card lifting off it is drawn over it
+function ghostPile(bucketEl, prior, timing) {
+  const ghost = detachAsGhost(bucketEl, prior, '-1');
+  const anim = ghost.animate([REST_FRAME, GROW_FRAME], {...timing, fill: 'forwards'});
   anim.onfinish = anim.oncancel = () => ghost.remove();
 }
 
+// a card folded onto a pile keeps its own face while it travels there, over every row, then
+// dissolves into the pile face once it has landed - the pile's count ticks at that same moment
+function travelOntoPile(bucketEl, prior, face) {
+  const ghost = detachAsGhost(bucketEl, prior, '3');
+  const landed = faceFrame(prior.rect, face);
+  const anim = ghost.animate([
+    {translate: '0px 0px', clipPath: OPEN_CLIP, opacity: 1, offset: 0, easing: PILE_EASING},
+    {...landed, opacity: 1, offset: PILE_LAND_OFFSET, easing: 'linear'},
+    {...landed, opacity: 0, offset: 1},
+  ], {duration: PILE_MOTION_MS + PILE_SETTLE_MS, fill: 'forwards'});
+  anim.onfinish = anim.oncancel = () => ghost.remove();
+}
+
+// the reverse: a card drawn off a pile starts as that pile's face and grows down into its own box,
+// above the pile it leaves (.row-lifting) until it has settled
+function liftOffPile(el, rect, face, timing) {
+  el.classList.add('row-lifting');
+  const anim = el.animate([{...faceFrame(rect, face), offset: 0}, {translate: '0px 0px', clipPath: OPEN_CLIP}], timing);
+  el.animate([{opacity: 0}, {opacity: 1}], {duration: PILE_SETTLE_MS, easing: 'ease-out'});
+  anim.onfinish = anim.oncancel = () => el.classList.remove('row-lifting');
+}
+
+// a pile that did not exist before stays unseen while its first card travels to it, and appears
+// under that card as it lands
+function formUnderLanding(el) {
+  el.animate([{opacity: 0, offset: 0}, {opacity: 0, offset: PILE_LAND_OFFSET}, {opacity: 1, offset: 1}],
+    {duration: PILE_MOTION_MS + PILE_SETTLE_MS});
+}
+
+// swaps a pile's count for the one `cards` gives - a pop on the number when it is a landing tick
+function setPileCount(pileEl, cards, status, pop) {
+  const face = pileEl.querySelector('.card-pile-count');
+  if (!face) return;
+  face.innerHTML = '';
+  const counts = countsNode(letterCounts(cards, status));
+  face.appendChild(counts);
+  if (pop) counts.animate?.([{scale: '1.35'}, {scale: '1'}], {duration: 2 * PILE_SETTLE_MS, easing: 'ease-out'});
+}
+
+// a pile a card is landing on keeps the count it had until the card gets there
+function tickOnLanding(pileEl, priorCards, status, countAt) {
+  setPileCount(pileEl, priorCards, status, false);
+  setTimeout(() => setPileCount(pileEl, pileEl._cards, status, true), countAt);
+}
+
 // every drawn row against the snapshot taken before the redraw: one still here slides from its old
-// box; a card just drawn off a pile starts at that pile's old box; a pile just formed grows in; a
-// row that is new outright gets the plain .row-enter fade. then the rows that went away: a card
-// now on a pile shrinks into that pile's new box, and an emptied pile shrinks away where it was
-function animateRows(bucketRowsEl, before, priorRoles, nextRoles) {
+// box; a card just drawn off a pile lifts off that pile's face; a pile just formed appears as its
+// first card lands on it; a row that is new outright gets the plain .row-enter fade. then the rows
+// that went away: a card now on a pile travels onto that pile's face, an emptied pile shrinks away
+function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) {
   const now = measureRows(bucketRowsEl);
-  const play = (el, from) => el.animate([from, REST_FRAME], {duration: ROW_MOTION_MS, easing: ROW_EASING});
+  const timing = {duration: plan.duration, easing: plan.easing};
   now.forEach(({el, rect}, key) => {
     const prior = before.get(key);
     if (prior) {
       const delta = flipDelta(prior.rect, rect);
-      if (movesAtAll(delta)) play(el, flipFrame(delta));
-    } else if (el.classList.contains('card-pile')) {
-      play(el, GROW_FRAME);
-    } else {
-      const pile = before.get(priorRoles.get(el.dataset.cardId));
-      if (pile) play(el, flipFrame(flipDelta(pile.rect, rect), 0));
-      else el.classList.add('row-enter');
+      if (movesAtAll(delta)) el.animate([flipFrame(delta), REST_FRAME], timing);
     }
+    if (el.classList.contains('card-pile')) {
+      const pile = plan.piles.get(key);
+      if (!pile?.landing.length) { if (!prior) el.animate([GROW_FRAME, REST_FRAME], timing); return; }
+      if (prior) tickOnLanding(el, prior.el._cards || [], status, pile.countAt);
+      else formUnderLanding(el);
+      return;
+    }
+    if (prior) return;
+    const from = before.get(priorRoles.get(el.dataset.cardId));
+    if (from) liftOffPile(el, rect, pileFace(from.rect), timing);
+    else el.classList.add('row-enter');
   });
   const bucketEl = bucketRowsEl.closest('.bucket');
   if (!bucketEl) return;
   before.forEach((prior, key) => {
     if (now.has(key)) return;
-    if (key.startsWith('pile-')) { ghostRow(bucketEl, prior, null); return; }
+    if (key.startsWith('pile-')) { ghostPile(bucketEl, prior, timing); return; }
     const pile = now.get(nextRoles.get(prior.el.dataset.cardId));
-    if (pile) ghostRow(bucketEl, prior, pile.rect);
+    if (pile) travelOntoPile(bucketEl, prior, pileFace(pile.rect));
   });
 }
 
@@ -699,14 +800,14 @@ function drawColumn(bucketRowsEl) {
     fitPiledColumn(bucketRowsEl, fit, layout.anchor, available, gap);
   }
   applyCardShadows(bucketRowsEl);
-  if (motion) animateRows(bucketRowsEl, before, priorRoles, nextRoles);
+  if (motion) animateRows(bucketRowsEl, before, planPileMotion(priorRoles, nextRoles), priorRoles, nextRoles, status);
   bucketRowsEl._rowRoles = nextRoles;
 }
 
-// indicate.js's shared marker frames a plain (fan) card. a card in a piled column draws its own
-// focus ring instead (layout.css), which rides the card's own lift and is covered by exactly what
-// covers the card - layout.css hides the marker while one has focus. every card-focusing call site
-// in this app still goes through here, so a per-card tweak has one place to land
+// every card, fanned or piled, draws its own focus ring (layout.css), which rides the card's own
+// lift and is covered by exactly what covers the card - layout.css hides indicate.js's shared marker
+// while any card has focus, so the two never draw together. the marker is still placed, so it glides
+// on from here when focus moves off the cards. every card-focusing call site goes through here
 function indicateCardFocus(target) {
   indicateFocus(target);
 }
@@ -799,6 +900,22 @@ function wireColumnFocus(bucketRowsEl) {
     // this event names a row the redraw just replaced - the refocus above announced the new one
     evt.stopPropagation();
   });
+  // focus stepping out to another column or the board bar puts the column back at rest: the card
+  // that was open is covered by the next again, as the fan does. a panel or menu opened from a card
+  // is not leaving - redrawing then would swap the strip out from under the panel's own animation
+  bucketRowsEl.addEventListener('focusout', evt => {
+    const to = evt.relatedTarget;
+    if (!to || bucketRowsEl.contains(to) || !to.closest?.('#bucket-row, .board-bar')) return;
+    requestAnimationFrame(() => leaveColumn(bucketRowsEl));
+  });
+}
+
+// the redraw waits a frame, until focus has landed - never while the old row is mid-blur
+function leaveColumn(bucketRowsEl) {
+  const state = bucketRowsEl._pile;
+  if (!state || state.focusIndex == null || bucketRowsEl.contains(document.activeElement)) return;
+  state.focusIndex = null;
+  if (isPiled(state)) drawColumn(bucketRowsEl);
 }
 
 // builds one status column - every card full if it fits (or expanded, or too few to pile), else

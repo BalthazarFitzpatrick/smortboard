@@ -198,21 +198,24 @@ body {
 /* done is lichen, an edge like every other state: the fills are too flat at card size. measured
    under simulated deuteranopia it stays delta-e 54 from the rejected red, and 2.6x brighter */
 .card-strip.card-accepted { border-color: var(--status-good); }
-/* focus is indicate.js's gliding marker, not a ring drawn by each card */
+/* the card draws its own focus ring (below), not the browser outline */
 .card-strip:focus-visible { outline: none; }
-/* the focused card is the one being read: a touch larger and its own colours a step more intense.
-   transform keeps the fan's 140ms slide, and indicate.js re-places its marker once this settles */
+/* ONE FOCUS LOOK FOR EVERY CARD, FANNED OR PILED, IN EVERY COLUMN (operator, 2026-09-15): a touch
+   larger, its own colours a step more intense, and its own ring - an inset frame plus an inner glow,
+   half the width it first shipped at - so the ring scales with the lift and is covered by exactly
+   what covers the card. transform keeps the fan's 140ms slide */
 .card-strip { transition: transform 140ms, filter 140ms, box-shadow 140ms; }
-.card-strip:focus { transform: scale(1.03); filter: saturate(1.7) brightness(1.4); }
-/* A PILED CARD LIFTS LIKE ANY OTHER AND DRAWS ITS OWN FOCUS RING. the ring is on the card itself -
-   an inset frame plus an inner glow, half the width it shipped at (operator, 2026-09-15) - so it
-   scales with the card's lift and is covered by exactly what covers the card. indicate.js's shared
-   marker is a fixed overlay above everything: on a stacked card it glided to the scaled box and
-   drew over the neighbours, so it stays hidden while a piled card has focus (the rule below) */
-.card-strip:not(.fan-item):focus {
+.card-strip:focus {
+  transform: scale(1.03);
+  filter: saturate(1.7) brightness(1.4);
   box-shadow: inset 0 0 0 3px var(--cream), inset 0 0 8px 1.5px color-mix(in srgb, var(--cream) 65%, transparent);
 }
-body:has(.card-strip:not(.fan-item):focus) .focus-marker { opacity: 0; }
+/* indicate.js's shared marker is a fixed overlay above everything: over a card it framed the
+   unscaled box on top of the card's own ring and drew over the neighbours, so it stays hidden
+   while any card has focus and shows again for whatever takes focus next */
+body:has(.card-strip:focus) .focus-marker { opacity: 0; }
+/* a card lifting off a pile (columns.js liftOffPile) is drawn over the pile it leaves */
+.card-strip.row-lifting { z-index: 3; }
 /* the plain fan (unpiled) wants a focused card lifted above the ones already covering it - a
    piled pair does not: applyCardShadows always keeps the later card on top of the earlier one, and
    a stray z-index here would let a focused-but-earlier card pop over it regardless of that */
