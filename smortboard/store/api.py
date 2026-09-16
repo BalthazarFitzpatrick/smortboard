@@ -112,6 +112,20 @@ def _check_lease_glob(value: Any) -> str:
     return glob
 
 
+def _clean_leases(globs: list[Any]) -> list[str]:
+    """valid, unique globs in first-seen order; a glob the store would refuse is dropped rather
+    than rejecting the whole card - shared by consolidate and the orchestrator's proposed cards"""
+    kept: list[str] = []
+    for glob in globs:
+        try:
+            glob = _check_lease_glob(glob)
+        except ValueError:
+            continue
+        if glob not in kept:
+            kept.append(glob)
+    return kept
+
+
 # card_criteria has deliberately no entry here and no update_criteria method anywhere in this
 # file. acceptance criteria are the contract a card is judged against; a card agent that could
 # edit its own criteria could move its own goalposts. add_task/remove_task/set_task_done exist
@@ -557,9 +571,17 @@ class Store:
         if key == "mall_cam_interval_seconds":
             _check_positive_int("mall_cam_interval_seconds", value)
         stored = value
-        # a list is the panel's whole-list replace and is checked path by path; a string is already
-        # json and stored as given, which mission_control_read_paths() reads tolerantly
-        if key == "mission_control_read_paths" and isinstance(value, list):
+        # a list is the panel's whole-list replace; a string arrives pre-serialized (e.g. from a
+        # card agent) and is parsed back to a list first - either way it goes through
+        # _check_read_paths before it can ever be mounted read-only into a container
+        if key == "mission_control_read_paths":
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"mission_control_read_paths must be a list of paths, not {value!r}"
+                    ) from exc
             stored = json.dumps(_check_read_paths(value)) if value else None
         if stored is None:
             self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))

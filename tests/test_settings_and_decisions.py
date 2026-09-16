@@ -124,6 +124,21 @@ def test_mission_control_read_paths_expand_and_reject_relative(store, tmp_path, 
         store.set_setting("mission_control_read_paths", [str(tmp_path / "not-a-dir.txt")])
 
 
+def test_mission_control_read_paths_json_string_is_checked_like_the_list(store, tmp_path):
+    import json
+
+    folder = tmp_path / "screenshots"
+    folder.mkdir()
+
+    # a string arrives already-serialized and must be checked exactly like the list form,
+    # not stored as given - a string of a bad path is refused the same way the list is
+    with pytest.raises(ValueError, match="absolute"):
+        store.set_setting("mission_control_read_paths", json.dumps(["relative/path"]))
+
+    settings = store.set_setting("mission_control_read_paths", json.dumps([str(folder)]))
+    assert settings["mission_control_read_paths"] == [str(folder)]
+
+
 def test_settings_travel_in_the_export_bundle(store, tmp_path):
     store.set_setting("findings_route", "fix")
     store.export(tmp_path / "bundle.json")
