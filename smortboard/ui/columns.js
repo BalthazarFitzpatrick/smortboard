@@ -320,9 +320,11 @@ function updateExpandButton(bucketEl) {
   const expandBtn = bucketEl.querySelector('.bucket-expand');
   const state = bucketRowsEl?._pile;
   if (!expandBtn || !state) return;
-  // only a column dense enough to overlap has anything to expand - a spread one already shows all
-  const pileable = state.regime > 1;
-  expandBtn.hidden = !pileable;
+  // A FANNED COLUMN ONLY. a spread one already shows everything, and once the piles are in they are
+  // the affordance themselves - clicking a pile expands the column - so the header carries no button
+  // for it, the way no other shortcut here has one. `state.regime` is always the natural regime,
+  // set from the measurement on every draw, so an expanded column still knows what it would be
+  expandBtn.hidden = state.regime !== 2;
   expandBtn.textContent = state.expanded ? 'collapse' : 'expand';
 }
 
@@ -760,7 +762,11 @@ function leaveColumn(bucketRowsEl) {
   const state = bucketRowsEl._pile;
   if (!state || state.focusIndex == null || bucketRowsEl.contains(document.activeElement)) return;
   state.focusIndex = null;
-  if (isPiled(state)) drawColumn(bucketRowsEl);
+  // a piled column expanded by clicking a pile has no header button to collapse it again, so
+  // leaving is what puts it back - the same rule that re-covers the card that was open
+  const wasExpanded = state.expanded && state.regime > 2;
+  if (wasExpanded) state.expanded = false;
+  if (wasExpanded || isPiled(state)) drawColumn(bucketRowsEl);
 }
 
 // builds one status column - spread, fanned, or fanned between two piles, whichever its own
