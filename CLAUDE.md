@@ -78,9 +78,9 @@ consumer, so there is no need to pay for it up front.
 this project spans repos. `ui_base` (`../ui_base`) is the shared interface package - read its
 `CLAUDE.md` before writing any interface code. all final results live here in smortboard.
 
-ledgers: `TASKS.jsonl` and `WORKLOG.md` live in the private `private-ledgers` repo
-(`../private-ledgers/smortboard/`, branch `sync`). The root files are untracked, gitignored symlinks
-into it; nothing about them is ever committed here.
+ledgers: `TASKS.jsonl` and `WORKLOG.md` live in a private ledger repo checked out beside this
+one. The root files are untracked, gitignored symlinks into it; nothing about them is ever
+committed here.
 
 ## Constraints and Gotchas
 

@@ -46,7 +46,7 @@ __pycache__/
 # card worktrees - full repo copies the board cuts per card; ruff and git status reached into them
 .claude/worktrees/
 
-# ledgers live in the private private-ledgers repo; these are local symlinks into it
+# ledgers live in a private repo; these are local symlinks into it
 TASKS.jsonl
 WORKLOG.md
 dev_ledger/

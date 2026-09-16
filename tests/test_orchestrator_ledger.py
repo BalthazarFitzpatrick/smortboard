@@ -108,10 +108,10 @@ def test_an_untracked_ledger_symlink_into_a_private_repo_is_read_from_disk(tmp_p
     _git(repo, "config", "user.name", "a")
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "first")
-    private = tmp_path / "private-ledgers" / "repo"
+    private = tmp_path / "ledgers" / "repo"
     private.mkdir(parents=True)
     (private / "TASKS.jsonl").write_text("".join(json.dumps(t) + "\n" for t in TASKS))
-    (repo / "TASKS.jsonl").symlink_to("../private-ledgers/repo/TASKS.jsonl")
+    (repo / "TASKS.jsonl").symlink_to("../ledgers/repo/TASKS.jsonl")
 
     store = Store(tmp_path / "board.db")
     board_id = store.create_board("dev")["id"]
