@@ -26,7 +26,7 @@ from smortboard.orchestrator import (
     _snapshot_repos,
 )
 from smortboard.scheduler import globs_may_overlap
-from smortboard.store.api import Store, _check_lease_glob
+from smortboard.store.api import Store, _clean_leases
 
 FOLDABLE_STATUS = "todo"
 # one agent's worth of work: a group past either cap is refused by the board, whatever the model
@@ -137,19 +137,6 @@ def parse_fold_reply(raw: str) -> tuple[str, list[Any]]:
     if not isinstance(summary, str) or not isinstance(groups, list):
         raise ValueError("malformed fold response shape")
     return summary, groups
-
-
-def _clean_leases(globs: list[Any]) -> list[str]:
-    """valid, unique globs in first-seen order; a glob the store would refuse is dropped"""
-    kept: list[str] = []
-    for glob in globs:
-        try:
-            glob = _check_lease_glob(glob)
-        except ValueError:
-            continue
-        if glob not in kept:
-            kept.append(glob)
-    return kept
 
 
 def _fold(

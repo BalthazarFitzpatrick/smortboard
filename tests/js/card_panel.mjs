@@ -89,7 +89,7 @@ const waiting = mod.cardPanelHtml({...card, next_action: 'Press r to run it agai
 assert.ok(waiting.includes('<div class="card-next">next: Press r to run it again.</div>'),
   'the panel should say what to do next');
 assert.ok(!html1.includes('card-next'), 'a card with no action shows no next line');
-// a operator comment keeps its own block, so its line breaks survive
+// an operator comment keeps its own block, so its line breaks survive
 const commented = mod.cardPanelHtml({...card, comments: [{author: 'operator', body: 'a\nb'}]}, outcome);
 assert.ok(commented.includes('<div class="comment-body">a\nb</div>'), 'a comment body is its own block');
 

@@ -369,8 +369,8 @@ def test_a_prompt_with_no_saves_is_unset(store):
 
 def test_orchestrator_messages_and_plan_round_trip(store):
     board = store.create_board("b")
-    operator = store.add_orchestrator_message(board["id"], "operator", "build the thing")
-    assert operator["cards"] == []
+    operator_msg = store.add_orchestrator_message(board["id"], "operator", "build the thing")
+    assert operator_msg["cards"] == []
     reply = store.add_orchestrator_message(
         board["id"], "orchestrator", "on it", cards=[{"id": "c1", "title": "the thing"}]
     )
@@ -593,3 +593,92 @@ def test_an_existing_database_migrates_to_merge_conflict(tmp_path):
 
         with pytest.raises(BlockedReasonInvalidError):
             store.update_card("c1", blocked_reason_code="NOT_A_REAL_REASON")
+
+
+def test_an_existing_database_migrates_the_old_author_key_to_operator(tmp_path):
+    """a board.db stuck at migration 15 still has the old personal author key on its
+    orchestrator_messages (CHECK constraint) and comments (no CHECK) rows - migration 16 rebuilds
+    the former and updates the latter in place, and "operator" must work for new rows after"""
+    from smortboard.store.schema import _MIGRATIONS
+
+    db_path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys = ON")
+    for script in _MIGRATIONS[:15]:
+        conn.executescript(script)
+    conn.execute("PRAGMA user_version = 15")
+    conn.execute(
+        "INSERT INTO boards (id, name, position, created_at) VALUES ('b1','Phase 1',0,'t')"
+    )
+    conn.execute(
+        "INSERT INTO repos (id, board_id, name, path, default_branch) "
+        "VALUES ('r1','b1','repo','/repo','main')"
+    )
+    conn.execute(
+        "INSERT INTO cards (id, board_id, repo_id, title, status, position, created_at, updated_at) "
+        "VALUES ('c1','b1','r1','old card','doing',0,'t','t')"
+    )
+    conn.execute(
+        "INSERT INTO comments (id, card_id, author, body, created_at) "
+        "VALUES ('cm1','c1','fab' || 'ian','an old note','t')"
+    )
+    # migration 6 now creates orchestrator_messages with the CHECK already fixed, so an old row
+    # under the pre-fix CHECK has to be faked by recreating the table the way it looked before
+    conn.execute("DROP TABLE orchestrator_messages")
+    conn.execute(
+        """
+        CREATE TABLE orchestrator_messages (
+            id TEXT PRIMARY KEY,
+            board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+            author TEXT NOT NULL CHECK (author IN ('fab' || 'ian', 'orchestrator', 'board')),
+            body TEXT NOT NULL,
+            cards_json TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO orchestrator_messages (id, board_id, author, body, created_at) "
+        "VALUES ('m1','b1','fab' || 'ian','build the thing','t')"
+    )
+    conn.commit()
+    conn.close()
+
+    with Store(db_path) as store:
+        card = store.get_card("c1")
+        assert card["comments"][0]["author"] == "operator"
+        assert card["comments"][0]["body"] == "an old note"
+
+        messages = store.list_orchestrator_messages("b1")
+        assert messages[0]["author"] == "operator"
+        assert messages[0]["body"] == "build the thing"
+
+        # inserting new rows under the new CHECK still works
+        store.add_comment("c1", "operator", "a fresh note")
+        added = store.add_orchestrator_message("b1", "operator", "a fresh message")
+        assert added["author"] == "operator"
+
+
+@pytest.mark.parametrize("glob", ["/abs/path.py", "../other/**"])
+def test_create_card_refuses_a_glob_the_guard_could_never_match(store, glob):
+    with pytest.raises(ValueError):
+        _make_board_and_card(store, leases=[glob])
+
+
+@pytest.mark.parametrize("image", ["--privileged", "-v/:/host", "img name", "", 7])
+def test_repo_image_that_could_read_as_a_docker_flag_is_refused(store, image):
+    board = store.create_board("b")
+    with pytest.raises(ValueError):
+        store.create_repo(board["id"], "r", "/tmp/r", "main", image=image)
+    repo = store.create_repo(board["id"], "r", "/tmp/r", "main", image="ghcr.io/o/card:1.2")
+    with pytest.raises(ValueError):
+        store.set_repo_image(repo["id"], image)
+
+
+@pytest.mark.parametrize("model", ["--dangerously-skip-permissions", "x; y", "a b", ""])
+def test_card_model_that_could_read_as_a_claude_flag_is_refused(store, model):
+    with pytest.raises(ValueError):
+        _make_board_and_card(store, model=model)
+    _, card = _make_board_and_card(store, model="claude-opus-5[1m]")
+    with pytest.raises(ValueError):
+        store.update_card(card["id"], model=model)
