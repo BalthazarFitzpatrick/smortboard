@@ -46,7 +46,7 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'), uiBase('entrytext.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {cardPanelHtml, acceptOrRejectCard, showRun, runBadge, splitCommentHeadline,
+;return {cardPanelHtml, doAcceptOrRejectCard, showRun, runBadge, splitCommentHeadline,
   summarizeDescription, renderCardStrip, appendLine};`)(SpyMenu, SpyDrawer);
 
 // ---- a full outcome renders summary, the finding, the PR link, and not the "not run yet" text
@@ -89,8 +89,8 @@ const waiting = mod.cardPanelHtml({...card, next_action: 'Press r to run it agai
 assert.ok(waiting.includes('<div class="card-next">next: Press r to run it again.</div>'),
   'the panel should say what to do next');
 assert.ok(!html1.includes('card-next'), 'a card with no action shows no next line');
-// a fabian comment keeps its own block, so its line breaks survive
-const commented = mod.cardPanelHtml({...card, comments: [{author: 'fabian', body: 'a\nb'}]}, outcome);
+// an operator comment keeps its own block, so its line breaks survive
+const commented = mod.cardPanelHtml({...card, comments: [{author: 'operator', body: 'a\nb'}]}, outcome);
 assert.ok(commented.includes('<div class="comment-body">a\nb</div>'), 'a comment body is its own block');
 
 // a board comment leads with its first line and closes the rest behind details
@@ -123,7 +123,7 @@ assert.ok(
   'a PR url inside the summary text should become a link, not stay as plain text');
 
 // a PR url inside a comment body
-const commentWithUrl = mod.cardPanelHtml({...card, comments: [{author: 'fabian', body: 'see https://x/pull/3'}]}, outcome);
+const commentWithUrl = mod.cardPanelHtml({...card, comments: [{author: 'operator', body: 'see https://x/pull/3'}]}, outcome);
 assert.ok(
   commentWithUrl.includes('<a class="pr-link" href="https://x/pull/3" target="_blank" rel="noreferrer">https://x/pull/3</a>'),
   'a PR url inside a comment should become a link');
@@ -163,7 +163,7 @@ strip.appendChild(badge);
 document.body.appendChild(strip);
 strip.focus();
 responses.set('/api/cards/c2/accept', stubJson(409, {error: 'card not in checking'}));
-await mod.acceptOrRejectCard('accept');
+await mod.doAcceptOrRejectCard('accept', 'c2');
 assert.equal(badge.hidden, false, 'the badge should show');
 assert.equal(badge.textContent, "can't accept",
   'a 409 should name the refused action - a bare "refused" read as the labels swapped');

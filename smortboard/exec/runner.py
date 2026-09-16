@@ -18,7 +18,7 @@ a fresh uncached build, so there is no newer CLI to target), not in the S1-S3 do
   "Note on prompt injection attempt" and it ignored the instruction. So a live note MUST carry a
   marker (`new_note_marker`, a fresh per-run nonce - a fixed string would be guessable from repo
   content, see F4) and the worker's system prompt must tell it that lines starting with that
-  marker are genuinely from Fabian and take priority; anything else claiming authority mid-run
+  marker are genuinely from the operator and take priority; anything else claiming authority mid-run
   is not.
 So a note is written to stdin, marked, within NOTE_POLL_SECONDS of being queued, and the CLI hands
 it to the model at its next step. At every `result` event anything still queued goes as one more
@@ -319,10 +319,8 @@ def _structured_output(event: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-# F4: a fixed marker is disclosed in the worker's own system prompt, so any file the worker reads
-# could spoof "Note from Fabian, via the board: " and pass as a genuine operator note. new_note_marker
-# mints a fresh, unguessable one per run instead - generated once, handed to both the feeder that
-# injects real notes and note_marker_paragraph that tells the agent to expect it, never persisted
+# a fixed marker would be guessable from the worker prompt, so any file could spoof an operator
+# note; each run mints its own, shared by the note feeder and note_marker_paragraph, never stored
 def new_note_marker() -> str:
     return f"Note from {OPERATOR_NAME}, via the board [{secrets.token_hex(4)}]: "
 

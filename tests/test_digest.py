@@ -29,7 +29,7 @@ def test_an_empty_board_digests_cleanly(store, board_and_repo):
     board_id, _ = board_and_repo
     result = board_digest(store, board_id, since=0)
     assert result["pull_requests"] == []
-    assert result["waiting_on_fabian"] == []
+    assert result["waiting_on_operator"] == []
     assert result["runs_and_spend"] == {"runs": 0, "total_cost_usd": 0}
 
 
@@ -100,7 +100,7 @@ def test_agent_question_uses_the_agents_own_final_text(store, board_and_repo):
     store.append_event(card["id"], "worker_summary", {"text": "which auth flow should I use?"})
 
     result = board_digest(store, board_id, since=0)
-    row = result["waiting_on_fabian"][0]
+    row = result["waiting_on_operator"][0]
     assert row["reason"] == "AGENT_QUESTION"
     assert row["question"] == "which auth flow should I use?"
 
@@ -112,7 +112,7 @@ def test_every_other_block_reason_uses_the_boards_own_note(store, board_and_repo
     store.add_comment(card["id"], author="smortboard", body="`pytest` exited 1.")
 
     result = board_digest(store, board_id, since=0)
-    row = result["waiting_on_fabian"][0]
+    row = result["waiting_on_operator"][0]
     assert row["question"] == "`pytest` exited 1."
 
 
@@ -120,7 +120,7 @@ def test_a_card_with_no_block_reason_is_not_waiting_on_anyone(store, board_and_r
     board_id, repo_id = board_and_repo
     store.create_card(board_id, repo_id, "still todo")
     result = board_digest(store, board_id, since=0)
-    assert result["waiting_on_fabian"] == []
+    assert result["waiting_on_operator"] == []
 
 
 def test_runs_and_spend_are_summed_since_the_cutoff(store, board_and_repo):

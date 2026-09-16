@@ -67,7 +67,7 @@ def test_a_turn_creates_cards_resolves_repo_and_deps_and_flags_the_unknown_repo(
     assert store.get_dependencies(by_title["b"]["id"]) == [by_title["a"]["id"]]
 
     messages = store.list_orchestrator_messages(board["id"])
-    assert [m["author"] for m in messages] == ["fabian", "board", "orchestrator"]
+    assert [m["author"] for m in messages] == ["operator", "board", "orchestrator"]
     assert "nope" in messages[1]["body"]
     assert messages[1]["author"] == "board"
     reply = messages[2]
@@ -87,7 +87,7 @@ def test_planning_mode_creates_no_card_and_says_so_on_the_board(store, board):
         m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
     ]
     assert any("2 proposed card" in note for note in board_notes)
-    # fabian's reply still lands - planning mode is a conversation, not a refusal
+    # the operator's reply still lands - planning mode is a conversation, not a refusal
     reply = [
         m for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "orchestrator"
     ]
@@ -155,7 +155,7 @@ def test_a_failing_runner_stores_a_board_error_and_leaves_no_plan(store, board):
     assert result.error is not None
 
     messages = store.list_orchestrator_messages(board["id"])
-    assert [m["author"] for m in messages] == ["fabian", "board"]
+    assert [m["author"] for m in messages] == ["operator", "board"]
     assert "no docker" in messages[1]["body"]
     assert store.get_plan(board["id"]) is None
 
@@ -300,3 +300,27 @@ def test_a_proposed_card_with_no_lease_is_created_but_flagged(store, board):
         m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
     ]
     assert any('"bare" has no lease' in note for note in notes)
+
+
+@pytest.mark.parametrize("greedy", [["**"], ["**/*"], ["*/**"], ["*"], ["/etc/**"], ["../x"]])
+def test_a_proposed_catch_all_or_climbing_lease_is_dropped_not_stored(store, board, greedy):
+    """a model-proposed catch-all would let the worker write anywhere - the board drops it like
+    any other invalid glob rather than passing it straight to create_card"""
+    base = TWO_CARDS["cards"][0]
+    payload = {"reply": "ok", "plan": "p", "cards": [{**base, "title": "greedy", "leases": greedy}]}
+    run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
+    card = next(c for c in store.list_cards(board["id"]) if c["title"] == "greedy")
+    assert card["leases"] == []
+    notes = [
+        m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
+    ]
+    assert any('"greedy" has no lease' in note for note in notes)
+
+
+def test_a_proposed_lease_keeps_its_literal_globs(store, board):
+    base = TWO_CARDS["cards"][0]
+    leases = ["**", "src/**", "docs/*.md"]
+    payload = {"reply": "ok", "plan": "p", "cards": [{**base, "title": "mixed", "leases": leases}]}
+    run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
+    card = next(c for c in store.list_cards(board["id"]) if c["title"] == "mixed")
+    assert sorted(row["path_glob"] for row in card["leases"]) == ["docs/*.md", "src/**"]

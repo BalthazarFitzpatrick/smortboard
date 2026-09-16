@@ -90,6 +90,7 @@ def test_the_worker_container_re_reads_test_command_for_its_bash_allowlist_and_b
     info = create_worktree(repo_path, "card-x")
     token = tmp_path / "token"
     token.write_text("secret")
+    token.chmod(0o600)
 
     seen = {}
 
