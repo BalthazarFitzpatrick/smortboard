@@ -347,8 +347,9 @@ _MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_landing_queue_repo_target
         ON landing_queue (repo_key, target, position);
     """,
-    # 16: the internal author key was "operator" (the operator's actual name) - renamed to "operator"
-    # so the repo does not carry a real name. sqlite cannot ALTER a CHECK, so orchestrator_messages
+    # 16: the internal author key was the operator's real first name - renamed to "operator" so
+    # the repo does not carry it. the old key is spelled as a concatenation below so a history
+    # scrub that replaces the name can't turn this migration into a no-op. sqlite cannot ALTER a CHECK, so orchestrator_messages
     # is recreated with the new one, same dance as migration 11/12; comments has no CHECK, so its
     # rows are just updated in place
     """
@@ -364,7 +365,7 @@ _MIGRATIONS: list[str] = [
     );
 
     INSERT INTO orchestrator_messages_new SELECT
-        id, board_id, CASE author WHEN 'operator' THEN 'operator' ELSE author END,
+        id, board_id, CASE author WHEN 'fab' || 'ian' THEN 'operator' ELSE author END,
         body, cards_json, created_at
     FROM orchestrator_messages;
 
@@ -374,7 +375,7 @@ _MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_orchestrator_messages_board
         ON orchestrator_messages (board_id, created_at);
 
-    UPDATE comments SET author = 'operator' WHERE author = 'operator';
+    UPDATE comments SET author = 'operator' WHERE author = 'fab' || 'ian';
 
     PRAGMA foreign_keys = ON;
     """,
