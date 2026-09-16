@@ -884,13 +884,15 @@ def test_two_boards_get_independent_schedulers(store, board_and_repo):
 
 @pytest.fixture
 def server(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        runs_module,
-        "run_card_lifecycle",
-        lambda store, cid, on_phase=None, **k: SimpleNamespace(
-            phase="opened", pr_url=None, blocked_reason_code=None, refusal=None
-        ),
-    )
+    # the fake run holds until the test lets it finish, so a response is never raced by a run that
+    # already ended - an instant fake made run-all's reply sometimes list the card nowhere
+    release = threading.Event()
+
+    def _held_run(store, cid, on_phase=None, **k):
+        release.wait(5)
+        return SimpleNamespace(phase="opened", pr_url=None, blocked_reason_code=None, refusal=None)
+
+    monkeypatch.setattr(runs_module, "run_card_lifecycle", _held_run)
     ready = threading.Event()
     holder = {}
 
@@ -910,7 +912,8 @@ def server(tmp_path, monkeypatch):
     thread.start()
     ready.wait()
     port = holder["server"].server_address[1]
-    yield f"http://127.0.0.1:{port}", holder["board_id"], holder["card_id"]
+    yield f"http://127.0.0.1:{port}", holder["board_id"], holder["card_id"], release
+    release.set()
     holder["server"].shutdown()
     thread.join()
     holder["server"].server_close()
@@ -937,15 +940,16 @@ def _wait(predicate, timeout=5.0):
 
 
 def test_run_all_starts_the_boards_todo_cards_over_http(server):
-    base, board_id, card_id = server
+    base, board_id, card_id, release = server
     status, body = _call(f"{base}/api/boards/{board_id}/run-all", method="POST")
     assert status == 202
     assert card_id in body["running"] or card_id in body["queued"]
+    release.set()
     assert _wait(lambda: _call(f"{base}/api/boards/{board_id}/schedule")[1]["running"] == [])
 
 
 def test_schedule_endpoint_reports_an_empty_board_cleanly(server):
-    base, board_id, _ = server
+    base, board_id, _, _ = server
     status, body = _call(f"{base}/api/boards/{board_id}/schedule")
     assert status == 200
     assert body == {
@@ -959,7 +963,7 @@ def test_schedule_endpoint_reports_an_empty_board_cleanly(server):
 
 
 def test_run_all_stop_clears_the_queue_over_http(server):
-    base, board_id, _ = server
+    base, board_id, _, _ = server
     _call(f"{base}/api/boards/{board_id}/run-all", method="POST")
     status, body = _call(f"{base}/api/boards/{board_id}/run-all/stop", method="POST")
     assert status == 200
@@ -967,7 +971,7 @@ def test_run_all_stop_clears_the_queue_over_http(server):
 
 
 def test_run_all_on_an_unknown_board_is_a_404(server):
-    base, _, _ = server
+    base, _, _, _ = server
     status, _ = _call(f"{base}/api/boards/nope/run-all", method="POST")
     assert status == 404
 
@@ -987,7 +991,7 @@ def _patch_json(url, body):
 
 
 def test_patch_board_max_parallel_over_http(server):
-    base, board_id, _ = server
+    base, board_id, _, _ = server
     status, body = _patch_json(f"{base}/api/boards/{board_id}", {"max_parallel": 2})
     assert status == 200
     assert body["max_parallel"] == 2
