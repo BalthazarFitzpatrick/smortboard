@@ -32,6 +32,8 @@ from smortboard.exec.runner import (
     build_command,
     commands_preamble,
     lease_preamble,
+    new_note_marker,
+    note_marker_paragraph,
     run_process,
 )
 from smortboard.exec.worktrees import (
@@ -357,7 +359,13 @@ class ContainerBackend:
             leases = [row["path_glob"] for row in lease_rows or []]
             brief = WORKSPACE_PREAMBLE + lease_preamble(leases) + commands_preamble(repo) + prompt
             name = container_name("worker", card_id)
-            cmd = self._docker_command(clone_path, brief, settings_path, model, repo, store, name)
+            # minted once per run: the same nonce goes into the system prompt (so the agent knows
+            # what a genuine note looks like) and into the feeder (so that's what a real note
+            # carries) - see F4, a fixed marker is guessable from anything the worker reads
+            note_marker = new_note_marker()
+            cmd = self._docker_command(
+                clone_path, brief, settings_path, model, repo, store, note_marker, name
+            )
             # the token is a plain first line the container's shell consumes with `read -r`; the
             # brief follows as the first stream-json turn, and stdin stays open for live steering
             result = run_process(
@@ -368,6 +376,7 @@ class ContainerBackend:
                 token_line=token + "\n",
                 stream_prompt=brief,
                 pending_notes=pending_notes,
+                note_marker=note_marker,
                 container_name=name,
                 on_process=on_process,
             )
@@ -411,6 +420,7 @@ class ContainerBackend:
         model: str,
         repo: dict[str, Any] | None,
         store: Store | None = None,
+        note_marker: str | None = None,
         name: str | None = None,
     ) -> list[str]:
         mount, inner_settings = guard_mount(settings_path)
@@ -419,7 +429,9 @@ class ContainerBackend:
             inner_settings,
             model=model,
             allowed_tools=allowed_tools_for_repo(repo),
-            system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT) + HEADLESS_RULES,
+            system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT)
+            + HEADLESS_RULES
+            + note_marker_paragraph(note_marker or new_note_marker()),
             stream_input=True,
         )
         # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK INSIDE THE CONTAINER. the host's token
