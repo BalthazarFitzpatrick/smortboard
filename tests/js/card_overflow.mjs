@@ -62,7 +62,7 @@ function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {renderCardStrip, openMoveStatusMenu};`)(SpyMenu, SpyDrawer);
 
