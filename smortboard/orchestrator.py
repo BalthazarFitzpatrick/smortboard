@@ -25,6 +25,7 @@ from typing import Any, Protocol
 
 from smortboard import profiles
 from smortboard.exec.backends import (
+    CONTAINER_HARDENING_FLAGS,
     card_image,
     container_name,
     docker_available,
@@ -233,6 +234,7 @@ def _real_runner(
                 "-i",
                 "--name",
                 name,
+                *CONTAINER_HARDENING_FLAGS,
                 *snapshot.mount_args,
                 *shot_mount,
                 "-w",

@@ -60,6 +60,15 @@ WORKSPACE_PREAMBLE = (
     f"Your working directory is {_CONTAINER_WORKDIR}, the repository root. "
     f"Give file tools absolute paths under {_CONTAINER_WORKDIR}.\n\n"
 )
+# container hardening applied to every card/gate/reviewer/orchestrator `docker run` - cheap
+# defense-in-depth on top of the `--rm`, no-socket, no-host-mount containment already in place
+CONTAINER_HARDENING_FLAGS = [
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    "--pids-limit=512",
+    "--memory=4g",
+]
+
 # a card's guards (settings, lease, hooks) are mounted read-only here, outside /workspace, so the
 # agent can neither edit its own guard nor sweep it into a commit
 CONTAINER_GUARD_DIR = "/smortboard"
@@ -331,6 +340,10 @@ class ContainerBackend:
         branch = current_branch(worktree_path)
         try:
             self._clone(worktree_path, clone_path, branch)
+            # the card image now runs as a non-root uid (docker/card.Dockerfile), which rarely
+            # matches the host uid that owns this tempdir - open it up so the container can still
+            # write its commits into a mount it does not otherwise share ownership with
+            subprocess.run(["chmod", "-R", "go+rwX", str(clone_path)], check=True)
             # the card's own lease, prepended to its brief: the backend has the store and the id,
             # so no caller has to remember to pass what is already recorded
             # lease ROWS, not strings: get_card returns dicts, and handing those straight to
@@ -421,6 +434,7 @@ class ContainerBackend:
             "--rm",
             "-i",  # stdin stays open exactly long enough to hand the token over
             *(["--name", name] if name else []),
+            *CONTAINER_HARDENING_FLAGS,
             "-v",
             f"{clone_path}:{_CONTAINER_WORKDIR}:rw",
             *mount,

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.exec.backends import (
+    CONTAINER_HARDENING_FLAGS,
     card_image,
     container_name,
     docker_available,
@@ -163,6 +164,7 @@ def _docker_command(
         "--rm",
         "-i",
         *(["--name", name] if name else []),
+        *CONTAINER_HARDENING_FLAGS,
         "-v",
         f"{Path(work_path)}:/workspace:ro",  # the reviewer inspects, it never writes
         *mount,
