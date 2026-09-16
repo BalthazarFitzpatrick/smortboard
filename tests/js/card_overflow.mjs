@@ -62,7 +62,7 @@ function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {renderCardStrip, openMoveStatusMenu};`)(SpyMenu, SpyDrawer);
 
@@ -150,6 +150,10 @@ setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', model: 'haiku'});
 menus = [];
 overflow.onclick({stopPropagation(){}});
 menus[0].pick('model');
+await flush();
+assert.equal(menus.length, 2, 'change model should open a confirm before it patches anything');
+assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0, 'no write before the confirm is answered');
+menus[1].pick('confirm');
 await flush();
 const modelPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
 assert.ok(modelPatch && JSON.parse(modelPatch.opts.body).model === 'haiku',

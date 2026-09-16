@@ -94,41 +94,18 @@ window.addEventListener('resize', () => {
   }, 150);
 });
 
-// ---- dense column presentation: a full column as itself, or two full cards top and bottom with
-// a pile of card-edges holding the rest ---------------------------------------------------------
+// ---- dense column presentation: a full column as itself, or a small group of full cards between
+// two piles of card-edges holding the rest (column motion option C, below) ----------------------
 // board.js's renderBuckets calls renderBucketColumn per status column, passing the .bucket element
 // (label + rows) and the column's status; card_panel.js's renderCardStrip builds every real card,
-// full-size whether it sits at rest or mid-excursion. presentation only - never touches card status
+// full-size whether it sits at rest or in the moving group. presentation only - never touches card status
 // or any stored state, only which cards are drawn full vs folded into a pile right now
 
-// tuning-page constants: css custom properties on body (layout.css), read once here so the sizing
-// maths and the actual drawn gap always agree - a fallback matches today's value exactly, so a
-// missing var (an older stylesheet, or this test stub) changes nothing
-function readGapVar(name, fallback) {
-  const target = (typeof document !== 'undefined' && (document.documentElement || document.body)) || null;
-  const css = target && globalThis.getComputedStyle?.(target);
-  const raw = parseFloat(css?.getPropertyValue?.(name) || '');
-  return Number.isFinite(raw) ? raw : fallback;
-}
-
-const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
-const MIN_PILED_CARDS = 5; // below this, front stack + pile + back stack has nothing left to pile
-const PILE = 100; // a pile's fixed height - never shrinks, only grows with whatever is left over
-const PEEK = readGapVar('--stack-peek', 60); // the title-strip band an earlier card still shows
-const PILE_GAP_ABOVE = readGapVar('--pile-gap-above', 5); // extra space above a pile, past the row gap
-const PILE_GAP_BELOW = readGapVar('--pile-gap-below', 5); // extra space below a pile, past the row gap
-const MIN_CARD = PILE + 16; // cards shrink no further than this before the column scrolls instead
-const PORTRAIT_BELOW = 230; // a column narrower than this keeps 230px of card height (portrait)
-
-function stackHeight(count, rowHeight) {
-  return count ? count * rowHeight + (count - 1) * BUCKET_ROW_GAP : 0;
-}
-
-// a card is as tall as the column is wide - square - down to PORTRAIT_BELOW, where it keeps that
-// height and turns portrait instead of shrinking further
-function squareCard(width) {
-  return Math.max(width, PORTRAIT_BELOW);
-}
+// tuning knobs, the card box and every pure fit/layout/motion helper now live in ui_base's
+// pile.js (readGapVar, squareCard, stackHeight, fanHeight, pileSlot, computeColumnFit, placeGroup,
+// computeColumnLayout, pileByRecency, pileLayerJitter, the fold and flip frames, planPileMotion).
+// what stays here is what a pile means to THIS board: which state paints which edge, how a count
+// reads, and every dom builder and animation player that turns those numbers into rows
 
 // ---- card shadow: a pixel field, not a css box-shadow (box-shadow can't put more darkness at a
 // corner than along a side) - ported from derived/shadow_tuner/index.html, operator-approved
@@ -203,66 +180,51 @@ function shadowImage(w, h) {
   return out;
 }
 
-// draws every card strip's shadow as an absolutely-positioned image, layered by the shadow layer's
-// own DOM order - a later row's shadow is appended after an earlier row's, so it paints on top,
-// same as the strip covering it does. lives on .bucket (not .bucket-rows), one layer per bucket,
-// rebuilt from the rows' own measured position - real geometry, not the sizing math's own guess
+// every card strip carries its own shadow as a child <canvas>, so the shadow is part of the card:
+// it rides every slide, focus lift, refit and resize the card does and can never be left behind
+// where a card used to be - the one shared layer per bucket it replaces was placed once from
+// measured rects and went stale the moment a card moved (the operator's 2026-09-15 screenshots).
+// paint order comes free: layout.css gives every strip z-index 0, and the canvas z-index -1 inside
+// that stacking context puts it over every earlier card, under its own card and every later one
 function applyCardShadows(bucketRowsEl) {
-  const bucketEl = bucketRowsEl.closest('.bucket');
-  if (!bucketEl) return;
-  let layer = bucketEl.querySelector('.card-shadow-layer');
-  if (!layer) {
-    layer = document.createElement('div');
-    layer.className = 'card-shadow-layer';
-    bucketEl.appendChild(layer);
-  }
-  layer.innerHTML = '';
-  const bucketRect = bucketEl.getBoundingClientRect();
-  // z-index interleaves shadow and card, 4 apart per row: a shadow sits above the card BEFORE it
-  // (which it covers) but below the card it belongs to and everything after - same order the
-  // tuner's own DOM nesting gives for free, done explicitly since the shadows live in one shared
-  // layer rather than one wrapper per card (see .bucket's own z-index:0 - its own stacking context).
-  // the gap (was 2) leaves room for a lift: an attention card's ring glow, or a focused card's own
-  // inset ring (layout.css), sit in that same paint order and used to lose to the next card's
-  // shadow painting over them - lifting just that one row, only above that one shadow and still
-  // below the next card itself, shows the ring/frame without uncovering anything
-  const ROW_STEP = 4;
-  const DECORATION_LIFT = 3;
-  let cardIndex = 0;
+  bucketRowsEl.closest?.('.bucket')?.querySelector('.card-shadow-layer')?.remove();
   Array.from(bucketRowsEl.children).forEach(row => {
-    if (!row.classList.contains('card-strip')) return; // piles keep their own existing shadow
-    const rect = row.getBoundingClientRect();
-    const w = Math.round(rect.width), h = Math.round(rect.height);
-    const base = cardIndex * ROW_STEP;
-    // only the piled layout actually overlaps cards (buildFullRow drops fan-item there) - the
-    // plain list's own fan-item:focus z-index lift stays the only one in play for that case, so
-    // this never fights it
-    if (!row.classList.contains('fan-item')) {
-      const decorated = row.classList.contains('card-attention') || row === document.activeElement;
-      row.style.zIndex = String(decorated ? base + DECORATION_LIFT : base);
-    }
-    if (w && h) {
-      const shade = shadowImage(w, h);
-      // a fresh <canvas> per row, repainted from the cached ImageData - never an <img src="data:...">,
-      // see shadowImage's own comment for why
-      const canvas = document.createElement('canvas');
-      canvas.className = 'card-shade';
-      canvas.width = shade.cw;
-      canvas.height = shade.ch;
-      canvas.getContext('2d').putImageData(shade.imageData, 0, 0);
-      canvas.style.top = `${(rect.top - bucketRect.top) - shade.pad}px`;
-      canvas.style.left = `${(rect.left - bucketRect.left) - shade.pad}px`;
-      canvas.style.width = `${shade.cw}px`;
-      canvas.style.height = `${shade.ch}px`;
-      canvas.style.zIndex = String(base - 2);
-      layer.appendChild(canvas);
-    }
-    cardIndex += 1;
+    if (row.classList.contains('card-strip')) attachCardShadow(row); // piles keep their own shadow
   });
 }
 
+// the layout box, not getBoundingClientRect - that one includes a focus scale or a slide in flight.
+// a canvas already sized for this box is kept, so a repeat call costs one measurement
+function attachCardShadow(row) {
+  const rect = row.getBoundingClientRect();
+  const w = Math.round(row.offsetWidth || rect.width);
+  const h = Math.round(row.offsetHeight || rect.height);
+  const size = `${w}x${h}`;
+  const old = row.children.find ? row.children.find(c => c.classList?.contains('card-shade'))
+    : row.querySelector('.card-shade');
+  if (old && old.dataset.size === size) return;
+  old?.remove();
+  if (!w || !h) return;
+  const shade = shadowImage(w, h);
+  // a fresh <canvas> per row, repainted from the cached ImageData - never an <img src="data:...">,
+  // see shadowImage's own comment for why
+  const canvas = document.createElement('canvas');
+  canvas.className = 'card-shade';
+  canvas.dataset.size = size;
+  canvas.width = shade.cw;
+  canvas.height = shade.ch;
+  canvas.getContext('2d').putImageData(shade.imageData, 0, 0);
+  // absolute children sit against the padding box, so the card's own border is stepped back out
+  const css = globalThis.getComputedStyle?.(row);
+  canvas.style.top = `${-(shade.pad + (parseFloat(css?.borderTopWidth) || 0))}px`;
+  canvas.style.left = `${-(shade.pad + (parseFloat(css?.borderLeftWidth) || 0))}px`;
+  canvas.style.width = `${shade.cw}px`;
+  canvas.style.height = `${shade.ch}px`;
+  row.appendChild(canvas);
+}
+
 function isAttentionCard(card) {
-  // the board handling a card itself reads as working, not as waiting on operator - cardClasses
+  // the board handling a card itself reads as working, not as waiting on the operator - cardClasses
   // already draws it that way (card-working wins over card-attention), the header count has to
   // agree or it flags a card nobody needs to look at
   if (card.handled_by_board) return false;
@@ -277,43 +239,6 @@ function cardEdgeVar(card) {
   if (card.status === 'rejected') return 'var(--fill-warn)';
   if (card.status === 'accepted') return 'var(--status-good)';
   return 'var(--grey-border)';
-}
-
-// ---- pile jitter: each drawn layer offset and rotated from that card's own id, so the same set
-// of cards always draws the same pile and only changes when a card enters or leaves it. fnv-1a
-// into a mulberry32 stream - picked in the jitter picker (derived/pile_picker), option E -------
-
-function fnv1aHash(text) {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-const jitterBetween = (r, lo, hi) => lo + (hi - lo) * r();
-const clampPileY = y => Math.max(-10, Math.min(10, y));
-
-// pure: a card id -> its layer's offset and rotation. dx +-8px, dy +-10px (clamped, same as the
-// row gap a layer may protrude into), rotation +-0.6..2.2deg with a random sign
-function pileLayerJitter(cardId) {
-  const r = mulberry32(fnv1aHash(cardId));
-  const dx = jitterBetween(r, -8, 8);
-  const dy = clampPileY(jitterBetween(r, -10, 10));
-  const rot = (r() < 0.5 ? -1 : 1) * jitterBetween(r, 0.6, 2.2);
-  return {dx, dy, rot};
 }
 
 // one letter per column status, plus attention - accepted borrows 'v' and rejected 'r' so neither
@@ -395,40 +320,40 @@ function updateExpandButton(bucketEl) {
   const expandBtn = bucketEl.querySelector('.bucket-expand');
   const state = bucketRowsEl?._pile;
   if (!expandBtn || !state) return;
-  const pileable = !state.fits && state.sorted.length >= MIN_PILED_CARDS;
-  expandBtn.hidden = !pileable;
+  // A FANNED COLUMN ONLY. a spread one already shows everything, and once the piles are in they are
+  // the affordance themselves - clicking a pile expands the column - so the header carries no button
+  // for it, the way no other shortcut here has one. `state.regime` is always the natural regime,
+  // set from the measurement on every draw, so an expanded column still knows what it would be
+  expandBtn.hidden = state.regime !== 2;
   expandBtn.textContent = state.expanded ? 'collapse' : 'expand';
 }
 
 // the room a column actually has below its own top, down to the viewport's bottom edge - real
 // measurement, taken fresh per render since a window resize or drawer changes it
+// measured from the rows' content top: a piled column's shadow-room padding (layout.css) sits above
+// it and is cancelled by an equal negative margin, so the content itself never moved
 function availableColumnHeight(bucketRowsEl) {
-  const top = bucketRowsEl.getBoundingClientRect().top;
+  const pad = parseFloat(globalThis.getComputedStyle?.(bucketRowsEl)?.paddingTop) || 0;
+  const top = bucketRowsEl.getBoundingClientRect().top + pad;
   return Math.max(0, (window.innerHeight || 0) - top - 24);
 }
 
-const MAX_PILE_LAYERS = 8; // more than this and the desk-pile look stops reading as individual cards
-
-// a desk pile of real card edges behind the top one, each nudged and turned a little from its own
-// card's id (pileLayerJitter) and wearing that card's own state edge - what protrudes tells you
-// what is inside. bottom first: the first drawn card sits furthest back, the last right under the
-// face. jitter stays inside the row gap (clamped to +-10px) so a layer never reaches a neighbour
-function buildPileRow(cards, status) {
+// a desk pile of real cards, each nudged and turned a little from its own card's id
+// (pileLayerJitter) and wearing that card's own state edge - what protrudes tells you what is
+// inside. painted back to front, so THE CARD THAT WENT ON LAST IS THE ONE ON TOP, jittered like
+// every other layer and carrying its own title - there is no flat card-sized face standing in for
+// it any more. jitter stays inside the row gap (clamped to +-10px) so a layer never reaches a
+// neighbour, and the count rides over the whole pile as its own level badge (layout.css)
+function buildPileRow(cards, status, side) {
   const el = document.createElement('div');
   // the pile wears the state edge a card would: attention if it holds one, else doing's own
   const state = cards.some(isAttentionCard) ? ' card-pile-attention' : status === 'doing' ? ' card-pile-doing' : '';
   el.className = `row card-pile${state}`;
   el.tabIndex = -1;
   el.dataset.pile = 'true';
-  const drawn = cards.slice(0, Math.min(MAX_PILE_LAYERS, cards.length));
+  const drawn = pileByRecency(cards, side).slice(0, Math.min(MAX_PILE_LAYERS, cards.length));
   for (let i = drawn.length - 1; i >= 0; i--) {
-    const source = drawn[i];
-    const {dx, dy, rot} = pileLayerJitter(source.id);
-    const layer = document.createElement('div');
-    layer.className = 'card-pile-layer';
-    layer.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) rotate(${rot.toFixed(2)}deg)`;
-    layer.style.borderColor = cardEdgeVar(source);
-    el.appendChild(layer);
+    el.appendChild(buildPileLayer(drawn[i], i === 0));
   }
   const count = document.createElement('div');
   count.className = 'card-pile-count';
@@ -439,230 +364,298 @@ function buildPileRow(cards, status) {
   return el;
 }
 
-// a piled column drops fan-item: its -80% margin pulled the card after a pile up over the pile,
-// and its focus slide pushed the bottom pair off screen - computePileFit places these instead
-function buildFullRow(card, idx, fanned = true) {
+// one drawn card in a pile. the topmost one is a real card rather than an edge: it names the card
+// the fold just delivered, so what you see on the pile is what went onto it
+function buildPileLayer(card, isTop) {
+  const {dx, dy, rot} = pileLayerJitter(card.id);
+  const layer = document.createElement('div');
+  layer.className = isTop ? 'card-pile-layer card-pile-top' : 'card-pile-layer';
+  layer.dataset.pileCard = card.id; // NOT cardId - board.js's focusedCardId() reads that one off any ancestor
+  layer.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) rotate(${rot.toFixed(2)}deg)`;
+  layer.style.borderColor = cardEdgeVar(card);
+  if (!isTop) return layer;
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = card.title || '';
+  layer.appendChild(title);
+  return layer;
+}
+
+// every card row, whichever regime draws it - fitColumn gives it its height and its join
+function buildFullRow(card, idx) {
   const strip = renderCardStrip(card);
   strip.dataset.idx = String(idx);
-  if (!fanned) strip.classList.remove('fan-item');
   return strip;
 }
 
-// pure: rows in order ({type: 'card'|'pile'}), the available height, the row gap and the column's
-// own width -> one square card height and one pile height. the pile is fixed at PILE and grows
-// with the leftover by at most one more PEEK (160px) - past that the extra stays as empty space
-// at the column's bottom rather than stretching the pile further. cards shrink first, never below
-// MIN_CARD - past that the column scrolls instead of shrinking further (the only case that scrolls)
-function computePileFit(rows, available, gap, width) {
-  const piles = rows.filter(r => r.type === 'pile').length;
-  const stacks = [];
-  rows.forEach(r => {
-    if (r.type === 'pile') { stacks.push(null); return; }
-    if (stacks.length && stacks[stacks.length - 1] !== null) stacks[stacks.length - 1] += 1;
-    else stacks.push(1);
-  });
-  const groups = stacks.filter(n => n !== null);
-  // real gaps sit only BETWEEN groups/piles - a stack's own cards overlap via negative margin-top
-  // (fitPiledColumn), so a run of consecutive cards costs peek increments, never rows.length-1 gaps.
-  // each pile also carries its own above/below knob (0 today - see layout.css), same margin the
-  // css actually draws on .card-pile, so the two never disagree about how tall a pile's slot is
-  const fixedGaps = Math.max(0, groups.length + piles - 1) * gap + piles * (PILE_GAP_ABOVE + PILE_GAP_BELOW);
-  const pileFixed = piles * PILE;
-  const peekTotal = groups.reduce((sum, n) => sum + (n - 1) * PEEK, 0);
-  const used = card => groups.length * card + peekTotal + pileFixed + fixedGaps;
-  const full = squareCard(width);
-  let card = full;
-  let scrolls = false;
-  if (used(full) > available) {
-    const denom = groups.length || 1;
-    card = Math.max(MIN_CARD, Math.floor((available - peekTotal - pileFixed - fixedGaps) / denom));
-    scrolls = used(card) > available;
-  }
-  const leftover = Math.max(0, available - used(card));
-  const pileHeight = PILE + (piles && !scrolls ? Math.min(PEEK, Math.floor(leftover / piles)) : 0);
-  return {card, pileHeight, scrolls};
-}
+// ---- column motion, option C (derived/column_motion, operator-approved): a group of at most n
+// cards sits between a pile above and a pile below, the fan's own overlap inside the group and the
+// focused card open with nothing over it. the geometry that picks the regime and lays out the rows
+// is ui_base's (computeColumnFit, placeGroup, computeColumnLayout); what follows applies it to real
+// dom -----------------------------------------------------------------------------------------
 
-// measures the drawn rows and applies computePileFit - the column's own width decides the square
-// card size, not a measured dom height. an earlier card in a stack keeps only its PEEK-tall title
-// band showing, overlapped by the one drawn after it (which keeps the regular drop shadow, so the
-// cover reads as a real card on top rather than a shorter box)
-function fitPiledColumn(bucketRowsEl) {
-  const rowEls = Array.from(bucketRowsEl.children);
-  const rows = rowEls.map(el => ({type: el.classList.contains('card-pile') ? 'pile' : 'card'}));
-  const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || BUCKET_ROW_GAP;
-  const width = bucketRowsEl.getBoundingClientRect().width;
-  const {card, pileHeight, scrolls} = computePileFit(rows, availableColumnHeight(bucketRowsEl), gap, width);
-  bucketRowsEl.classList.toggle('bucket-rows-scrolls', scrolls);
-  rowEls.forEach((el, i) => {
-    if (rows[i].type === 'pile') {
-      el.style.height = `${pileHeight}px`;
+// applies the fit to the drawn rows: EVERY card the fit's one height, every pile PILE, and each
+// card's join as a negative top margin. bucket-rows' own flex `gap` still applies UNDER a margin
+// (they add, never cancel), so each margin cancels the gap too, or every card would come out gap px
+// low. regime 1 states no margin at all and the flex gap is the whole spacing; regimes 2 and 3 pin
+// the column to exactly `available` and clip what runs past it, no scrollbar
+function fitColumn(bucketRowsEl, fit, anchor, available, gap) {
+  const spread = fit.regime === 1;
+  bucketRowsEl.classList.toggle('bucket-rows-expanded', !!fit.expanded);
+  bucketRowsEl.classList.toggle('bucket-rows-piled', !spread);
+  bucketRowsEl.classList.toggle('bucket-rows-scrolls', !spread && fit.scrolls);
+  bucketRowsEl.classList.toggle('bucket-rows-bottom', fit.piles && !fit.scrolls && anchor === 'bottom');
+  bucketRowsEl.style.maxHeight = fit.expanded && fit.scrolls ? `${available}px` : '';
+  bucketRowsEl.style.height = spread ? '' : `${available}px`;
+  Array.from(bucketRowsEl.children).forEach(el => {
+    if (el.classList.contains('card-pile')) {
+      el.style.height = `${PILE}px`;
       el.style.marginTop = '';
       return;
     }
-    el.style.height = `${card}px`;
-    // the earlier card of a pair wears card-covered (it gives way); the later one pulls itself up
-    // over it with a negative margin-top - never the same row, or the later card would peek too.
-    // bucket-rows' own flex `gap` still applies UNDER a margin (they add, never cancel each
-    // other), so the margin has to cancel gap too or every peek band comes out gap px too tall -
-    // which is exactly what ran a 35-card column's real height past what computePileFit sized it
-    // for (each of n-1 pairs quietly adding one gap) and off the bottom of the screen with it
-    const nextIsCard = i < rows.length - 1 && rows[i + 1].type === 'card';
-    const prevIsCard = i > 0 && rows[i - 1].type === 'card';
-    el.classList.toggle('card-covered', nextIsCard);
-    el.style.marginTop = prevIsCard ? `${-(card - PEEK + gap)}px` : '';
+    const join = el.dataset.join;
+    el.classList.toggle('card-covered', el.dataset.covered === 'true');
+    el.style.height = `${fit.card}px`;
+    el.style.marginTop = join === 'peek' ? `${-(fit.card - PEEK + gap)}px` : join === 'flush' ? `${-gap}px` : '';
   });
 }
 
-// pure: the total card count, the room/width/gap a resting column has to fill, and one pile in the
-// middle -> [front, back] stack sizes. each starts at 1 and grows one card at a time, round-robin,
-// front first, for as long as the next card still fits without pushing the column into a scroll -
-// so the two stacks differ by at most one and the pile only ever holds what is left over.
-// NO PILE WHEN IT ISN'T NEEDED: first tried as one continuous peeked run of every card, no pile at
-// all - if that alone fits, front takes everything and back stays empty (computePileLayout's own
-// pile() guard then never emits a pile row, since front already reaches the far end)
-function computeStackCounts(total, available, width, gap) {
-  if (available == null) return [2, 2];
-  const card = squareCard(width);
-  const allPeeked = (total - 1) * PEEK + card;
-  if (allPeeked <= available) return [total, 0];
-  const fixed = PILE + 2 * gap + PILE_GAP_ABOVE + PILE_GAP_BELOW;
-  const sizes = [1, 1];
-  const used = () => (sizes[0] - 1) * PEEK + card + (sizes[1] - 1) * PEEK + card + fixed;
-  if (used() > available) return sizes;
-  let next = 0;
-  while (sizes[0] + sizes[1] < total - 1) {
-    sizes[next] += 1;
-    if (used() > available) { sizes[next] -= 1; break; }
-    next = 1 - next;
-  }
-  return sizes;
-}
-
-// pure: sorted cards, the index currently focused (or null - no excursion yet), which edge the
-// excursion started from, and the room/width/gap to size the resting stacks by -> the ordered list
-// of rows to draw. at rest OR at either edge, the front and back stacks each grow from 1 card,
-// round-robin, front stack first, for as long as the next card still fits without scrolling -
-// everything between is one pile, or no pile at all if every card fit that way. focus at idx 0 or
-// n-1 is always still rendered (every stack is >=1 card); focus at idx 1 or n-2 needs its side to
-// have grown to at least 2, so it only falls back to a fixed [2, 2] on a column tight enough that
-// computeStackCounts stalls at its own 1-card floor - anything roomier keeps the round-robin sizes
-// even while a key is moving focus. mid-excursion (focus genuinely in the middle), the anchor's
-// own pair (the edge the user came from) stays full and fixed at 2 while the OTHER pair moves with
-// focus - a top-anchored excursion piles passed cards at the top, a bottom-anchored one piles them
-// at the bottom, and the shrinking middle pile sits between the two moving/fixed pairs either way
-function computePileLayout(sorted, focusIndex, anchor, available, width, gap) {
-  const n = sorted.length;
-  const inMiddle = focusIndex != null && anchor && focusIndex >= 2 && focusIndex <= n - 3;
-  const out = [];
-  const card = idx => ({type: 'card', idx, card: sorted[idx]});
-  const pile = (from, to) => { if (to >= from) out.push({type: 'pile', cards: sorted.slice(from, to + 1)}); };
-  if (!inMiddle) {
-    // round-robin sizing applies here too, focused or not - it only gives way to a fixed 2 when
-    // the round-robin size would leave the FOCUSED card itself out of the rendered stack (idx 1
-    // needs front>=2, idx n-2 needs back>=2 - idx 0 and n-1 are always covered, since every stack
-    // is at least 1 card). that only happens in a genuinely tight column, where computeStackCounts
-    // stalls at its own [1,1] floor - anything roomier than that keeps the round-robin sizes
-    let [front, back] = computeStackCounts(n, available, width, gap);
-    const rendered = focusIndex == null || focusIndex < front || focusIndex >= n - back;
-    if (!rendered) [front, back] = [2, 2];
-    for (let i = 0; i < front; i++) out.push(card(i));
-    pile(front, n - 1 - back);
-    for (let i = n - back; i < n; i++) out.push(card(i));
-    return out;
-  }
-  if (anchor === 'top') {
-    pile(0, focusIndex - 2);
-    out.push(card(focusIndex - 1), card(focusIndex));
-    pile(focusIndex + 1, n - 3);
-    out.push(card(n - 2), card(n - 1));
-  } else {
-    out.push(card(0), card(1));
-    pile(2, focusIndex - 1);
-    out.push(card(focusIndex), card(focusIndex + 1));
-    pile(focusIndex + 2, n - 1);
-  }
-  return out;
-}
-
-// true if a card's role (drawn full, or folded into a pile) changed since the prior draw - a
-// plain refit or poll redraw that reproduces the same roles reports nothing new, so nothing animates
+// true if a card's role (drawn full, or folded into which pile) changed since the prior draw - a
+// plain refit or poll redraw that reproduces the same roles reports nothing new
 function roleChanged(id, role, priorRoles) {
   return priorRoles.get(id) !== role;
 }
 
-// redraws bucketRowsEl from its own _pile state - expanded and "fits anyway" both mean every card
-// full in one plain list; otherwise the excursion-aware split above. every row that is new in its
-// current role (a card appearing, or moving in/out of a pile) gets .row-enter (layout.css); a row
-// whose role is unchanged - the common case, a resize refit or an unchanged poll - gets nothing
+// ---- motion: a redraw replaces every row, so each row is replayed from where it was drawn last
+// to where it is drawn now. the frames themselves are ui_base's (flipDelta, cardFlipFrames,
+// foldFrames, planPileMotion and the timings they run at); this half is the dom work - finding the
+// rows, lifting a leaving one out of the flow as a ghost, and seating it where it paints ---------
+
+// a row's identity across redraws: a card by its id, a pile by the side it sits on
+function rowKey(el) {
+  return el.classList.contains('card-pile') ? `pile-${el.dataset.side}` : `card-${el.dataset.cardId}`;
+}
+
+// the drawn rows only - a ghost still folding into (or growing out of) a pile is not one of them
+function measureRows(bucketRowsEl) {
+  const rows = Array.from(bucketRowsEl.children).filter(el => !el.classList.contains('row-ghost'));
+  return new Map(rows.map(el => [rowKey(el), {el, rect: el.getBoundingClientRect()}]));
+}
+
+// no motion at all under prefers-reduced-motion, on a first draw, or without the web animations api
+function motionAllowed(bucketRowsEl, before) {
+  if (!before.size || typeof bucketRowsEl.animate !== 'function') return false;
+  return !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+}
+
+// lifts a node out of the drawn flow so it can be replayed once where it was: absolute against the
+// bucket, dropping .row and its idx so buckets.js's nav and the pile keys never count it, removed
+// when its animation ends. the caller seats it where it paints
+function detachAsGhost(bucketEl, prior) {
+  const ghost = prior.el;
+  const base = bucketEl.getBoundingClientRect();
+  ghost.classList.remove('row', 'row-enter');
+  ghost.classList.add('row-ghost');
+  delete ghost.dataset.idx;
+  Object.assign(ghost.style, {
+    position: 'absolute', margin: '0', zIndex: '0',
+    left: `${prior.rect.left - base.left}px`, top: `${prior.rect.top - base.top}px`,
+    width: `${prior.rect.width}px`, height: `${prior.rect.height}px`,
+  });
+  return ghost;
+}
+
+// a pile that emptied shrinks away where it was. the card drawn off it stays under it, so it sits
+// right over that card in paint order; with no card drawn off it, under every live row (z-index -1
+// in .bucket's stacking context)
+function ghostPile(bucketEl, prior, timing, over) {
+  const ghost = detachAsGhost(bucketEl, prior);
+  if (over) {
+    ghost.dataset.over = over.dataset.cardId;
+    over.parentNode.insertBefore(ghost, over.nextElementSibling);
+  } else {
+    ghost.style.zIndex = '-1';
+    bucketEl.appendChild(ghost);
+  }
+  // a card growing back out of it takes its place from the first frame, so the pile hands over at
+  // once rather than shrinking on top of it
+  const anim = ghost.animate(over ? PILE_HANDOVER_OUT : [REST_FRAME, GROW_FRAME], {...timing, fill: 'forwards'});
+  anim.onfinish = anim.oncancel = () => ghost.remove();
+}
+
+// EVERY card that goes onto a pile is eaten the same way, whether that pile was already there or is
+// forming in this very room: it shrinks into the edge facing the pile and is gone. it never slides
+// through the pile and out the far side, which is what the mouth-slide it replaces did
+function foldIntoPile(bucketEl, prior, pile, timing) {
+  const ghost = seatGhostAtPile(bucketEl, prior, pile);
+  // it still holds the room the rows below are sliding up into, so it stays over them - and under
+  // the pile, which is the only thing allowed to take that room from it
+  ghost.style.zIndex = '1';
+  pile.el.style.zIndex = '2';
+  const {open, folded} = foldFrames(prior.rect, isAbovePile(pile.el));
+  const anim = ghost.animate([open, folded], {...timing, fill: 'forwards'});
+  anim.onfinish = anim.oncancel = () => { pile.el.style.zIndex = ''; ghost.remove(); };
+}
+
+// a leaving card's ghost, seated right before the pile in paint order so the pile and every row
+// after it paint over it
+function seatGhostAtPile(bucketEl, prior, pile) {
+  const ghost = detachAsGhost(bucketEl, prior);
+  ghost.dataset.into = pile.el.dataset.side;
+  pile.el.parentNode.insertBefore(ghost, pile.el);
+  return ghost;
+}
+
+const isAbovePile = pileEl => pileEl?.dataset?.side === 'above';
+
+// the exact mirror of foldIntoPile: a card drawn off a pile is spat out of the edge that faces it,
+// growing from nothing to full height in its own place - it never starts whole somewhere inside the
+// pile and travels out. it takes the room the rows are sliding out of, so it stays over them, and
+// stays under the pile it came from for as long as that pile is still there
+function growOutOfPile(el, rect, from, timing, pileEl) {
+  const {open, folded} = foldFrames(rect, isAbovePile(from.el));
+  el.style.zIndex = '1';
+  if (pileEl) pileEl.style.zIndex = '2';
+  const anim = el.animate([folded, open], timing);
+  anim.onfinish = anim.oncancel = () => {
+    el.style.zIndex = '';
+    if (pileEl) pileEl.style.zIndex = '';
+  };
+}
+
+// a redraw replaces every row, but a card still folding into a pile (or a pile still shrinking over
+// the card drawn off it) keeps going: re-seated where it paints against the new rows, or dropped
+// once what it was seated against is gone
+function reseatGhosts(bucketRowsEl, ghosts) {
+  const rows = Array.from(bucketRowsEl.children);
+  ghosts.forEach(ghost => {
+    const {into, over} = ghost.dataset;
+    const pile = into && rows.find(r => r.classList.contains('card-pile') && r.dataset.side === into);
+    const card = over && rows.find(r => r.dataset.cardId === over);
+    // the pile it folded into is drawn for real now, so the ghost drops back under it and the rows
+    if (pile) { ghost.style.zIndex = '0'; bucketRowsEl.insertBefore(ghost, pile); }
+    else if (card) bucketRowsEl.insertBefore(ghost, card.nextElementSibling);
+    else ghost.remove();
+  });
+}
+
+// swaps a pile's count for the one `cards` gives - a pop on the number when it is a landing tick.
+// a pile forming shows no count at all until its first card is in
+function setPileCount(pileEl, cards, status, pop) {
+  const face = pileEl.querySelector('.card-pile-count');
+  if (!face) return;
+  face.innerHTML = '';
+  if (!cards.length) return;
+  const counts = countsNode(letterCounts(cards, status));
+  face.appendChild(counts);
+  if (pop) counts.animate?.([{scale: '1.35'}, {scale: '1'}], {duration: 2 * PILE_SETTLE_MS, easing: 'ease-out'});
+}
+
+// a pile eating a card keeps the count it had until the card is all the way in
+function tickOnLanding(pileEl, priorCards, status, countAt) {
+  setPileCount(pileEl, priorCards, status, false);
+  setTimeout(() => setPileCount(pileEl, pileEl._cards, status, true), countAt);
+}
+
+// every drawn row against the snapshot taken before the redraw: one still here slides from its old
+// box; a card just drawn off a pile grows out of it; a pile just formed grows in; a row that is new
+// outright gets the plain .row-enter fade. then the rows that went away: a card now on a pile is
+// eaten by it, an emptied pile shrinks away over the card drawn off it
+function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) {
+  const now = measureRows(bucketRowsEl);
+  const timing = {duration: plan.duration, easing: plan.easing};
+  const drawnOff = new Map(); // a pile's key -> the last row drawn off it
+  now.forEach(({el, rect}, key) => {
+    const prior = before.get(key);
+    const isPile = el.classList.contains('card-pile');
+    if (prior && movesAtAll(flipDelta(prior.rect, rect))) {
+      // a pile is always the same box, so its flip is a plain slide; a card's height really changes
+      if (isPile) el.animate([flipFrame(flipDelta(prior.rect, rect)), REST_FRAME], timing);
+      else el.animate(cardFlipFrames(prior.rect, rect), timing);
+    }
+    if (isPile) {
+      const pile = plan.piles.get(key);
+      // a pile forming under a card folding into it waits for that card; one forming on its own grows
+      if (!prior) el.animate(pile?.landing.length ? PILE_HANDOVER_IN : [GROW_FRAME, REST_FRAME], timing);
+      if (pile?.landing.length) tickOnLanding(el, prior?.el._cards || [], status, pile.countAt);
+      return;
+    }
+    if (prior) return;
+    const fromKey = priorRoles.get(el.dataset.cardId);
+    const from = before.get(fromKey);
+    if (!from) { el.classList.add('row-enter'); return; }
+    growOutOfPile(el, rect, from, timing, now.get(fromKey)?.el);
+    drawnOff.set(fromKey, el);
+  });
+  const bucketEl = bucketRowsEl.closest('.bucket');
+  if (!bucketEl) return;
+  before.forEach((prior, key) => {
+    if (now.has(key)) return;
+    if (key.startsWith('pile-')) { ghostPile(bucketEl, prior, timing, drawnOff.get(key)); return; }
+    const pileKey = nextRoles.get(prior.el.dataset.cardId);
+    const pile = now.get(pileKey);
+    if (pile) foldIntoPile(bucketEl, prior, pile, timing);
+  });
+}
+
+// redraws bucketRowsEl from its own _pile state: ONE path for every column, the regime deciding
+// whether its cards spread, fan, or fan between two piles. expanded is the one override - the
+// operator asked for the whole column as a scrolling list, so it spreads however dense it is. every
+// row is then replayed from its prior box (animateRows); with no motion allowed, a row new in its
+// current role (a card appearing, or moving in/out of a pile) gets the plain .row-enter fade
 function drawColumn(bucketRowsEl) {
   const state = bucketRowsEl._pile;
   const priorRoles = bucketRowsEl._rowRoles || new Map();
   const nextRoles = new Map();
+  const before = measureRows(bucketRowsEl);
+  const ghosts = Array.from(bucketRowsEl.children).filter(el => el.classList.contains('row-ghost'));
+  const motion = motionAllowed(bucketRowsEl, before);
+  const place = (el, role, cards) => {
+    if (!motion && cards.some(c => roleChanged(c.id, role, priorRoles))) el.classList.add('row-enter');
+    cards.forEach(c => nextRoles.set(c.id, role));
+    bucketRowsEl.appendChild(el);
+  };
   bucketRowsEl.innerHTML = '';
   if (!state) { bucketRowsEl._rowRoles = nextRoles; return; }
   const {sorted, status} = state;
-  if (state.expanded || state.fits || sorted.length < MIN_PILED_CARDS) {
-    sorted.forEach((c, idx) => {
-      const strip = buildFullRow(c, idx);
-      if (roleChanged(c.id, 'card', priorRoles)) strip.classList.add('row-enter');
-      nextRoles.set(c.id, 'card');
-      bucketRowsEl.appendChild(strip);
-    });
-    bucketRowsEl.style.maxHeight = state.expanded && !state.fits ? `${availableColumnHeight(bucketRowsEl)}px` : '';
-    bucketRowsEl.classList.toggle('bucket-rows-expanded', !!state.expanded && !state.fits);
-    bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls');
-    applyCardShadows(bucketRowsEl);
-    bucketRowsEl._rowRoles = nextRoles;
-    return;
-  }
-  bucketRowsEl.style.maxHeight = '';
-  bucketRowsEl.classList.remove('bucket-rows-expanded');
-  bucketRowsEl.classList.add('bucket-rows-piled');
-  const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || BUCKET_ROW_GAP;
+  const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || CARD_GAP;
   const width = bucketRowsEl.getBoundingClientRect().width;
   const available = availableColumnHeight(bucketRowsEl);
-  computePileLayout(sorted, state.focusIndex, state.anchor, available, width, gap).forEach(entry => {
+  const natural = computeColumnFit(sorted.length, available, gap, width);
+  state.regime = natural.regime;
+  // expanded draws the column spread whatever its regime says, scrolling if that overflows
+  const fit = state.expanded
+    ? {...natural, regime: 1, n: sorted.length, piles: false, scrolls: natural.regime > 1, expanded: true}
+    : natural;
+  const layout = computeColumnLayout(sorted, state.focusIndex, state.start, state.anchor, fit);
+  state.start = layout.start;
+  state.anchor = layout.anchor;
+  layout.rows.forEach(entry => {
     if (entry.type === 'pile') {
-      const entering = entry.cards.some(c => roleChanged(c.id, 'pile', priorRoles));
-      const el = buildPileRow(entry.cards, status);
-      if (entering) el.classList.add('row-enter');
-      entry.cards.forEach(c => nextRoles.set(c.id, 'pile'));
-      bucketRowsEl.appendChild(el);
+      const el = buildPileRow(entry.cards, status, entry.side);
+      el.dataset.side = entry.side;
+      place(el, `pile-${entry.side}`, entry.cards);
     } else {
-      const strip = buildFullRow(entry.card, entry.idx, false);
-      if (roleChanged(entry.card.id, 'card', priorRoles)) strip.classList.add('row-enter');
-      nextRoles.set(entry.card.id, 'card');
-      bucketRowsEl.appendChild(strip);
+      const strip = buildFullRow(entry.card, entry.idx);
+      strip.dataset.part = entry.part;
+      strip.dataset.join = entry.join;
+      strip.dataset.covered = String(entry.covered);
+      place(strip, 'card', [entry.card]);
     }
   });
-  fitPiledColumn(bucketRowsEl);
+  fitColumn(bucketRowsEl, fit, layout.anchor, available, gap);
   applyCardShadows(bucketRowsEl);
+  reseatGhosts(bucketRowsEl, ghosts);
+  if (motion) animateRows(bucketRowsEl, before, planPileMotion(priorRoles, nextRoles), priorRoles, nextRoles, status);
   bucketRowsEl._rowRoles = nextRoles;
 }
 
-// indicate.js's marker is domain-free and glides to a target's whole box - right for a plain card,
-// wrong for a covered one, which only shows its own peek band (fitPiledColumn's negative margin
-// slides the covering card up over the rest of it). a covered card stays covered: this clips the
-// shared marker to the visible band (the target's own top down to where its covering neighbour
-// begins), so the marker's sides and bottom edge never run across a card sitting on top of it.
-// every card-focusing call site in this app goes through here instead of indicateFocus directly -
-// a plain or covering card gets no clip at all, same behaviour as before this existed
+// every card, in any column type, draws its own focus ring (layout.css), which rides the card's own
+// lift and is covered by exactly what covers the card - layout.css hides indicate.js's shared marker
+// while any card has focus, so the two never draw together. the marker is still placed, so it glides
+// on from here when focus moves off the cards. every card-focusing call site goes through here
 function indicateCardFocus(target) {
   indicateFocus(target);
-  const marker = document.querySelector('.focus-marker');
-  if (!marker) return;
-  const next = target.classList?.contains('card-covered') ? target.nextElementSibling : null;
-  const clip = () => {
-    if (!next) { marker.style.clipPath = ''; return; }
-    const visible = next.getBoundingClientRect().top - target.getBoundingClientRect().top;
-    marker.style.clipPath = visible > 0 ? `inset(0 0 calc(100% - ${visible}px) 0)` : '';
-  };
-  clip();
-  // indicate.js re-places the marker on the next frame and again once the target's own slide
-  // transition ends - the clip has to be reapplied after each, or the full box flashes back
-  globalThis.requestAnimationFrame?.(clip);
-  target.addEventListener('transitionend', clip, {once: true});
 }
 
 function focusPileIndex(bucketRowsEl, idx) {
@@ -673,18 +666,21 @@ function focusPileIndex(bucketRowsEl, idx) {
   target.tabIndex = 0;
   target.focus();
   indicateCardFocus(target);
-  // applyCardShadows' decoration lift reads document.activeElement - drawColumn's own call (just
-  // before this) ran ahead of target.focus(), so it never saw the new target as focused
-  applyCardShadows(bucketRowsEl);
+}
+
+// a column whose cards overlap - fanned or piled. the arrow keys drive it card by card, since the
+// focused card has to be redrawn open with nothing over it
+function isPiled(state) {
+  return !!state && !state.expanded && state.regime > 1;
 }
 
 // ArrowDown/Up inside a piled column, intercepted ahead of buckets.js's own roving nav (see
-// wireColumnFocus) so a press draws the next card off the pile instead of landing focus on the
-// pile itself. idx 0 going up, or the last idx going down, falls through untouched - buckets.js's
-// default nav exits the column (onExitTop) or clamps in place, same as any other column
+// wireColumnFocus) so a press moves focus one card and the group follows it (placeGroup) instead of
+// landing focus on a pile. idx 0 going up, or the last idx going down, falls through untouched -
+// buckets.js's default nav exits the column (onExitTop) or clamps in place, same as any other column
 function handlePileKey(bucketRowsEl, evt) {
   const state = bucketRowsEl._pile;
-  if (!state || state.expanded || state.fits || state.sorted.length < MIN_PILED_CARDS) return;
+  if (!isPiled(state)) return;
   if (evt.key !== 'ArrowDown' && evt.key !== 'ArrowUp') return;
   const n = state.sorted.length;
   const row = evt.target.closest?.('[data-idx]');
@@ -693,12 +689,7 @@ function handlePileKey(bucketRowsEl, evt) {
   if (dir === 1 && idx >= n - 1) return;
   if (dir === -1 && idx <= 0) return;
   const nextIdx = idx + dir;
-  const nextInMiddle = nextIdx >= 2 && nextIdx <= n - 3;
-  let anchor = state.anchor;
-  if (!nextInMiddle) anchor = null;
-  else if (!anchor) anchor = idx <= 1 ? 'top' : idx >= n - 2 ? 'bottom' : (dir === 1 ? 'top' : 'bottom');
   state.focusIndex = nextIdx;
-  state.anchor = anchor;
   evt.preventDefault();
   evt.stopPropagation();
   drawColumn(bucketRowsEl);
@@ -734,44 +725,77 @@ function wireColumnFocus(bucketRowsEl) {
   if (bucketRowsEl._densityWired) return;
   bucketRowsEl._densityWired = true;
   bucketRowsEl.addEventListener('keydown', evt => handlePileKey(bucketRowsEl, evt), {capture: true});
+  // a press lands focus before its click, and a redraw then would swap the row out from under the
+  // click that opens the card - a pointer's focus leaves the column as drawn until a later refocus
+  bucketRowsEl.addEventListener('pointerdown', () => {
+    bucketRowsEl._pointerFocus = true;
+    setTimeout(() => { bucketRowsEl._pointerFocus = false; });
+  }, {capture: true});
+  // focus arriving any other way - buckets.js's left/right nav, tab, a card panel closing - redraws
+  // the column around it, so the focused card is always the open one (the start of the column used
+  // to show card 1 as a covered strip under the marker)
   bucketRowsEl.addEventListener('focusin', evt => {
     const row = evt.target.closest?.('[data-idx]');
-    if (row && bucketRowsEl._pile) bucketRowsEl._pile.focusIndex = Number(row.dataset.idx);
-    // a plain mouse/tab focus move (not through handlePileKey) still needs the decoration lift
-    // reapplied against the new document.activeElement
-    applyCardShadows(bucketRowsEl);
+    const state = bucketRowsEl._pile;
+    if (!row || !state || bucketRowsEl._pointerFocus) return;
+    const idx = Number(row.dataset.idx);
+    if (state.focusIndex === idx) return;
+    state.focusIndex = idx;
+    if (!isPiled(state)) return;
+    drawColumn(bucketRowsEl);
+    focusPileIndex(bucketRowsEl, idx);
+    // this event names a row the redraw just replaced - the refocus above announced the new one
+    evt.stopPropagation();
   });
-  // losing focus (a covered card in particular) drops the lift the same way - reapply with no
-  // row matching document.activeElement inside this column
-  bucketRowsEl.addEventListener('focusout', () => applyCardShadows(bucketRowsEl));
+  // focus stepping out to another column or the board bar puts the column back at rest: the card
+  // that was open shows its band again. a panel or menu opened from a card
+  // is not leaving - redrawing then would swap the strip out from under the panel's own animation
+  bucketRowsEl.addEventListener('focusout', evt => {
+    const to = evt.relatedTarget;
+    if (!to || bucketRowsEl.contains(to) || !to.closest?.('#bucket-row, .board-bar')) return;
+    requestAnimationFrame(() => leaveColumn(bucketRowsEl));
+  });
 }
 
-// builds one status column - every card full if it fits (or expanded, or too few to pile), else
-// two full top, a pile, two full bottom - replacing bucketEl's header and rows. card_panel.js's
-// renderCardStrip renders every real card, full-size whether at rest or mid-excursion
+// the redraw waits a frame, until focus has landed - never while the old row is mid-blur
+function leaveColumn(bucketRowsEl) {
+  const state = bucketRowsEl._pile;
+  if (!state || state.focusIndex == null || bucketRowsEl.contains(document.activeElement)) return;
+  state.focusIndex = null;
+  // a piled column expanded by clicking a pile has no header button to collapse it again, so
+  // leaving is what puts it back - the same rule that re-covers the card that was open
+  const wasExpanded = state.expanded && state.regime > 2;
+  if (wasExpanded) state.expanded = false;
+  if (wasExpanded || isPiled(state)) drawColumn(bucketRowsEl);
+}
+
+// builds one status column - spread, fanned, or fanned between two piles, whichever its own
+// measurement picks (computeColumnFit), top-anchored at rest - replacing bucketEl's header and
+// rows. card_panel.js's renderCardStrip renders every real card, full-size in every regime
 function renderBucketColumn(bucketEl, cards, status) {
   const bucketRowsEl = bucketEl.querySelector('.bucket-rows');
   const sorted = sortColumnCards(cards);
-  const width = bucketRowsEl.getBoundingClientRect().width;
-  const fits = stackHeight(sorted.length, squareCard(width)) <= availableColumnHeight(bucketRowsEl);
-  bucketRowsEl._pile = {sorted, status, fits, focusIndex: null, anchor: null, expanded: bucketRowsEl._pile?.expanded || false};
+  bucketRowsEl._pile = {
+    sorted, status, regime: 1, focusIndex: null, start: 0, anchor: 'top',
+    expanded: bucketRowsEl._pile?.expanded || false,
+  };
   renderColumnHeader(bucketEl, cards, status);
-  drawColumn(bucketRowsEl);
+  drawColumn(bucketRowsEl); // the regime is only known once the column has measured itself
+  updateExpandButton(bucketEl);
   wireColumnFocus(bucketRowsEl);
 }
 
-// ---- resize refit: card size, stack counts and pile height all come from the column's own
-// measured width/height (computeStackCounts, computePileFit), which only a real resize (not a
-// poll) can change. refits every already-piled column from its own _pile state alone - no refetch,
+// ---- resize refit: card size and the group's n both come from the column's own measured
+// width/height (computeColumnFit), which only a real resize (not a poll) can change. refits every
+// column from its own _pile state alone - no refetch,
 // no full renderBuckets - and recomputes `fits` too, since widening a column can drop its pile
 // entirely, same as renderBucketColumn does on first draw --------------------------------------
 
 function refitColumn(bucketRowsEl) {
-  const state = bucketRowsEl._pile;
-  if (!state) return;
-  const width = bucketRowsEl.getBoundingClientRect().width;
-  state.fits = stackHeight(state.sorted.length, squareCard(width)) <= availableColumnHeight(bucketRowsEl);
-  drawColumn(bucketRowsEl);
+  if (!bucketRowsEl._pile) return;
+  drawColumn(bucketRowsEl); // remeasures width and room, so the regime is picked again from scratch
+  const bucketEl = bucketRowsEl.closest?.('.bucket');
+  if (bucketEl) updateExpandButton(bucketEl);
 }
 
 const PILE_REFIT_DEBOUNCE_MS = 100;

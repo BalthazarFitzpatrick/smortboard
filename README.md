@@ -44,7 +44,8 @@ Linux and Windows: see [Setup](#setup).
 uv run smortboard
 ```
 
-It opens http://127.0.0.1:8000/ui/index.html. Keep that terminal open. Closing it stops the board
+It opens http://127.0.0.1:8000/ui/index.html with a one-time `?key=` the board swaps for a
+cookie. A tab opened by hand has no key; use the printed link. Keep that terminal open. Closing it stops the board
 and any card that is running.
 
 **5. Board 1 and its repo:**
@@ -69,7 +70,22 @@ Anything that needs you lands in the inbox, `n`. The board never merges into mai
 
 ![Both side panels open: a working agent's transcript with a live note on the left, the orchestrator planning cards on the right](docs/images/hero-agents.jpg)
 
-<sub>The board, an open card, and the two agent panels. Example content, from a demo database.</sub>
+<sub>The board, an open card, and the two agent panels. Every screenshot on this page is the demo
+board below - invented projects, invented cards.</sub>
+
+## Look before you install
+
+One command, no Docker, no token, no repo - a throwaway board of three invented projects:
+
+```bash
+uv run smortboard --demo
+```
+
+It seeds a fresh database in a temporary directory and serves it on port 8001, so it stands beside
+the board already on 8000 rather than colliding with it. Your own board is never opened: `--demo`
+ignores `--db` and `SMORTBOARD_DB` alike, and nothing it writes outlives the directory it was
+written into. Runs, gates and pull requests in it are seeded history, not live -
+pressing `r` on a demo card would need Docker and a repo that exists.
 
 ---
 
@@ -230,10 +246,14 @@ orchestrator turns and scheduler ticks each open their own SQLite connection on 
 
 ## Security
 
-- **Local only.** The API has no authentication, so the board binds `127.0.0.1`. `--host` is an
-  explicit opt-in; only use it behind something that authenticates.
-- **The token travels on stdin.** It is a model-only `claude setup-token`. It is never an env var or
-  a mounted file, and never visible to `docker inspect`. On the host it lives in a mode-600 file.
+- **Local only, keyed.** The board binds `127.0.0.1`. Every `/api/` call needs the key in
+  `~/.config/smortboard/api_key` (mode 600), as a cookie or an `X-Smortboard-Key` header. Requests
+  with a foreign `Host`, a cross-site `Origin`, or a non-json body are refused. `--host` is an
+  explicit opt-in; the key is not a substitute for network authentication.
+- **The token travels on stdin.** It is a model-only `claude setup-token`. It is never passed on the
+  `docker` command line or mounted as a file, and never visible to `docker inspect`; inside the
+  container it is read from stdin and exported only to the `claude` process. On the host it lives in
+  a mode-600 file.
 - **Guards are read-only.** A lease hook covers Edit and Write. A bash guard allows only git plus the
   repo's test and lint commands. Both are mounted read-only outside the working tree, so the agent
   can neither edit nor commit them.
@@ -328,7 +348,7 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `w` | run the board | `,` | workforce |
 | `g` | kanban / workstreams | `s` | shortcuts |
 | `/` | type: the open card's comment, or the open chat | `b` | boards and repos |
-| `f` | fold: merge the todo cards one agent should do as one (asks first, costs a model run) | `h` | pre-flight checklist |
+| | | `h` | pre-flight checklist |
 | | | `q` | landing lock: who holds the push lock on each repo, and the queue behind them |
 | | | shift+`p` | credential profiles |
 | | | `1`-`9` | jump to a board |
@@ -540,12 +560,14 @@ If the board is unreachable or the widened set needs editing first, the same thi
 the API:
 
 1. Read the card's note in the inbox (`n`) for the files it asked for.
-2. Find the card's id: `curl -s 127.0.0.1:8000/api/boards` lists the boards, and
-   `curl -s 127.0.0.1:8000/api/boards/<board-id>/cards` lists their cards with ids and titles.
+2. Load the key: `K="X-Smortboard-Key: $(cat ~/.config/smortboard/api_key)"`, and pass `-H "$K"`
+   to every call below.
+   Find the card's id: `curl -s -H "$K" 127.0.0.1:8000/api/boards` lists the boards, and
+   `curl -s -H "$K" 127.0.0.1:8000/api/boards/<board-id>/cards` lists their cards with ids and titles.
 3. Replace the lease. This sets the whole list, so repeat any glob it should keep:
 
    ```bash
-   curl -s -X PATCH 127.0.0.1:8000/api/cards/<card-id> \
+   curl -s -X PATCH -H "$K" 127.0.0.1:8000/api/cards/<card-id> \
      -H 'content-type: application/json' \
      -d '{"leases": ["smortboard/ui/board.js", "smortboard/ui/layout.css", "tests/js/**"]}'
    ```
@@ -553,7 +575,7 @@ the API:
 4. Resume the card with an answer. The next run reads it:
 
    ```bash
-   curl -s -X POST 127.0.0.1:8000/api/cards/<card-id>/answer \
+   curl -s -X POST -H "$K" 127.0.0.1:8000/api/cards/<card-id>/answer \
      -H 'content-type: application/json' \
      -d '{"message": "lease widened to smortboard/ui/board.js, smortboard/ui/layout.css, tests/js/** - go ahead"}'
    ```

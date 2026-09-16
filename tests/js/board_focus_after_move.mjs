@@ -10,7 +10,7 @@ import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
 const root = new URL('../../', import.meta.url);
 const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const STATUS_ORDER = ['todo', 'doing', 'checking', 'accepted', 'rejected'];
 const BOARD_ID = 'b1';
@@ -51,7 +51,7 @@ function setup(cardsByStatus) {
   stub('/api/boards', 'GET', 200, [{id: BOARD_ID, name: 'b'}]);
 
   const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {onBoardEnter, acceptOrRejectCard, reenterIfFocusLost};`)(SpyMenu, SpyDrawer);
+;return {onBoardEnter, doAcceptOrRejectCard, reenterIfFocusLost};`)(SpyMenu, SpyDrawer);
 
   const flatten = () => STATUS_ORDER.flatMap(status =>
     (cardsByStatus[status] || []).map(id => ({id, title: id, status, workstream: 'w'})));
@@ -86,7 +86,7 @@ function moved(cardsByStatus, id, from, to) {
   stub(`/api/boards/${BOARD_ID}/cards`, 'GET', 200,
     Object.entries(moved(layout, 'd2', 'doing', 'accepted')).flatMap(([status, ids]) =>
       ids.map(id => ({id, title: id, status, workstream: 'w'}))));
-  await mod.acceptOrRejectCard('accept');
+  await mod.doAcceptOrRejectCard('accept', 'd2');
   await flush(); await flush();
   assert.equal(document.activeElement.dataset.cardId, 'd1',
     'focus should land on the card that stood directly above the mover');
@@ -105,7 +105,7 @@ function moved(cardsByStatus, id, from, to) {
   stub(`/api/boards/${BOARD_ID}/cards`, 'GET', 200,
     Object.entries(moved(layout, 'a1', 'accepted', 'rejected')).flatMap(([status, ids]) =>
       ids.map(id => ({id, title: id, status, workstream: 'w'}))));
-  await mod.acceptOrRejectCard('reject');
+  await mod.doAcceptOrRejectCard('reject', 'a1');
   await flush(); await flush();
   assert.equal(document.activeElement.dataset.cardId, 't1',
     'focus should hop left over the two empty columns (doing, checking) to todo\'s topmost card');
@@ -124,7 +124,7 @@ function moved(cardsByStatus, id, from, to) {
   stub(`/api/boards/${BOARD_ID}/cards`, 'GET', 200,
     Object.entries(moved(layout, 't1', 'todo', 'accepted')).flatMap(([status, ids]) =>
       ids.map(id => ({id, title: id, status, workstream: 'w'}))));
-  await mod.acceptOrRejectCard('accept');
+  await mod.doAcceptOrRejectCard('accept', 't1');
   await flush(); await flush();
   assert.equal(document.activeElement, document.body,
     'with no card above and no non-empty column to the left, nothing should be focused');

@@ -35,6 +35,11 @@ class SpyMenu {
   // the real Menu swaps a section's rows in place - the overlay's page turns rely on this
   refresh(sections) { this.sections = sections; }
   close() {}
+  // drives a confirm menu's onPick the way a click (or y/enter) would
+  pick(itemId) {
+    const section = this.sections.find(s => (s.items || []).some(i => i.id === itemId));
+    section.onPick(section.items.find(i => i.id === itemId));
+  }
 }
 
 // the drawers are real ui_base components now, so the comma and period keys no longer open a menu
@@ -52,7 +57,7 @@ function SpyDrawer(opts) {
   };
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('telemetry.js'), smort('costs.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
@@ -61,7 +66,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
-  'KeyG', 'KeyW', 'KeyF', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
+  'KeyG', 'KeyW', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
   'KeyE', 'KeyJ', 'Delete',
   'KeyT', 'KeyS',
   'KeyP', 'KeyN', 'KeyV', 'KeyQ', 'KeyH', 'KeyO', 'KeyB', 'Slash', 'Comma', 'Period',
@@ -144,32 +149,30 @@ const overlay = openedMenus[openedMenus.length - 1];
   });
 }
 
-// ---- y and x reach acceptOrRejectCard and post the right route for whatever card is focused
+// ---- r opens a confirm before running; escape (simulated by close(), same as the real Menu's own
+// escape handler) cancels it - no api call either way until the confirm is answered
 const strip = element('div', 'row card card-strip');
 strip.dataset.cardId = 'c9';
 strip.tabIndex = -1;
 bucketRow.appendChild(strip);
 strip.focus();
-press('KeyY');
-press('KeyX');
-assert.ok(fetchCalls.includes('/api/cards/c9/accept'), 'y should post accept for the focused card');
-assert.ok(fetchCalls.includes('/api/cards/c9/reject'), 'x should post reject for the focused card');
+press('KeyR');
+assert.equal(openedMenus[openedMenus.length - 1].title, 'run this card?', 'r should confirm before running');
+assert.ok(!fetchCalls.includes('/api/runtime'), 'no runtime check before the confirm is answered');
+openedMenus[openedMenus.length - 1].menu.close(); // escape cancels - never picks confirm
+assert.ok(!fetchCalls.includes('/api/runtime'), 'cancelling should never reach the api');
 
-// ---- f asks before it folds: n and a second f close the question with no run, y posts the fold
-// for the open board, and y answering the question never also accepts the focused card
-{
-  mod.setBoard('b1');
-  const accepts = () => fetchCalls.filter(p => p === '/api/cards/c9/accept').length;
-  const acceptsBefore = accepts();
-  press('KeyF');
-  assert.equal(openedMenus[openedMenus.length - 1].title, "fold this board's cards?");
-  press('KeyN');
-  press('KeyF'); press('KeyF');
-  assert.ok(!fetchCalls.includes('/api/boards/b1/fold'), 'n and a second f close it without a run');
-  press('KeyF'); press('KeyY');
-  assert.ok(fetchCalls.includes('/api/boards/b1/fold'), 'y posts the fold for the open board');
-  assert.equal(accepts(), acceptsBefore, 'y answers the fold question, it never accepts the card');
-}
+// ---- y and x open a confirm first, and only reach acceptOrRejectCard's route once it is answered
+press('KeyY');
+assert.equal(openedMenus[openedMenus.length - 1].title, 'accept this card?', 'y should confirm before posting');
+assert.ok(!fetchCalls.includes('/api/cards/c9/accept'), 'no request before the confirm is answered');
+openedMenus[openedMenus.length - 1].menu.pick('confirm');
+assert.ok(fetchCalls.includes('/api/cards/c9/accept'), 'confirming should post accept for the focused card');
+
+press('KeyX');
+assert.equal(openedMenus[openedMenus.length - 1].title, 'reject this card?', 'x should confirm before posting');
+openedMenus[openedMenus.length - 1].menu.pick('confirm');
+assert.ok(fetchCalls.includes('/api/cards/c9/reject'), 'confirming should post reject for the focused card');
 
 // ---- p opens the prompt editor (not a Menu, so it never shows up in openedMenus) and p again closes it
 press('KeyP');

@@ -26,8 +26,19 @@ let bucketsApi = null;
 let grouped = false; // g toggles this; workstream layout itself ships post-v1
 let openCard = null; // {cardId, expander, sectionsApi, input} while a card panel is open
 
+// a 401 means this tab has no api key cookie - opened by hand rather than from the printed link
+function noteMissingKey(res) {
+  if (res.status !== 401 || document.getElementById('key-missing')) return;
+  const note = document.createElement('div');
+  note.id = 'key-missing';
+  note.className = 'hazard-label';
+  note.textContent = 'this tab has no api key - open the link smortboard printed in the terminal';
+  document.body.prepend(note);
+}
+
 async function api(path, opts) {
   const res = await fetch(path, opts);
+  noteMissingKey(res);
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.status === 204 ? null : res.json();
 }
@@ -36,6 +47,7 @@ async function api(path, opts) {
 // the caller needs the server's error text, which plain api() discards
 async function apiOrError(path, opts) {
   const res = await fetch(path, opts);
+  noteMissingKey(res);
   const body = res.status === 204 ? null : await res.json().catch(() => null);
   return {ok: res.ok, body};
 }
@@ -52,15 +64,6 @@ function renderBoardBar() {
     btn.textContent = board.name;
     bar.appendChild(btn);
   });
-  // fold acts on whichever board is open. built here with the tabs, since this function wipes the
-  // bar - and not a .nav-tab, which shell.js would treat as one more board
-  if (boards.length) {
-    const fold = document.createElement('div');
-    fold.className = 'toggle board-fold';
-    fold.textContent = 'fold (f)';
-    fold.addEventListener('click', () => openFoldConfirm());
-    bar.appendChild(fold);
-  }
 }
 
 async function loadBoards() {
@@ -177,6 +180,15 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
 }
 
+// a link target from data is only ever a web url, never javascript: or data:
+function safeUrl(url) {
+  try {
+    return ['https:', 'http:'].includes(new URL(url).protocol) ? url : '';
+  } catch (err) {
+    return '';
+  }
+}
+
 
 // ---- running a card (r) -------------------------------------------------------------
 
@@ -209,7 +221,7 @@ function showRun(cardId, text, href, detail) {
   badge.textContent = '';
   // the foot is one line and must stay one line - the long version is the comment the run left
   badge.title = detail || '';
-  if (href) {
+  if (safeUrl(href)) {
     const link = document.createElement('a');
     link.className = 'pr-link';
     link.href = href;
@@ -236,7 +248,10 @@ function reportNotReady(missing) {
 
 async function runFocusedCard(cardId = focusedCardId()) {
   if (!cardId) return;
+  openActionConfirm('run this card?', 'run it', 'cancel', () => doRunFocusedCard(cardId));
+}
 
+async function doRunFocusedCard(cardId) {
   const runtime = await api('/api/runtime');
   if (!runtime.ready) { reportNotReady(runtime.missing); return; }
 
@@ -400,9 +415,14 @@ function slideFrom(strip, from) {
   }));
 }
 
-async function acceptOrRejectCard(action) {
+function acceptOrRejectCard(action) {
   const cardId = actionableCardId();
   if (!cardId) return;
+  const verb = action === 'accept' ? 'accept' : 'reject';
+  openActionConfirm(`${verb} this card?`, verb, 'cancel', () => doAcceptOrRejectCard(action, cardId));
+}
+
+async function doAcceptOrRejectCard(action, cardId) {
   // CLOSE FIRST, THEN MOVE. deciding from inside an open card used to slide the strip into its new
   // column behind a panel still standing over it
   if (openCard) openCard.expander.close();
@@ -462,55 +482,6 @@ function toggleOverlay(key, build) {
   const menu = build();
   openOverlay = {key, menu};
   return menu;
-}
-
-// ---- fold (f) - merge the todo cards one agent should do as one ------------------------------
-
-// ASKS FIRST, every time: a fold is a model run over the whole board, not a free local action
-function openFoldConfirm() {
-  if (!currentBoardId) return;
-  const boardId = currentBoardId;
-  toggleOverlay('KeyF', () => {
-    const note = document.createElement('div');
-    note.className = 'fold-note';
-    note.textContent = 'an agent reads every card and the ledger, then merges the todo cards one '
-      + 'agent should do as one. this costs tokens and takes a few minutes.';
-    const menu = new Menu({
-      title: "fold this board's cards?",
-      sections: [
-        {kind: 'node', node: note},
-        {kind: 'list', items: [{id: 'yes', label: 'yes, fold (y)'}, {id: 'no', label: 'no (n)'}],
-          onPick: item => answerFold(item.id === 'yes', boardId)},
-      ],
-      onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyF') openOverlay = null; },
-    });
-    menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
-    menu.el?.classList.add('menu-centered');
-    return menu;
-  });
-}
-
-function answerFold(yes, boardId = currentBoardId) {
-  if (openOverlay && openOverlay.key === 'KeyF') { openOverlay.menu.close(); openOverlay = null; }
-  if (yes && boardId) startFold(boardId);
-}
-
-let foldPoll = null;
-
-// the board writes its progress and the result into mission control, so that is where it shows;
-// the cards re-render once the fold is done
-async function startFold(boardId) {
-  const {ok} = await apiOrError(`/api/boards/${boardId}/fold`, {method: 'POST'});
-  drawerFor('right').open();
-  if (!ok) return; // a 409 is a fold already running, whose messages are already there
-  clearInterval(foldPoll);
-  foldPoll = setInterval(async () => {
-    const state = await api(`/api/boards/${boardId}/fold`).catch(() => null);
-    if (state && state.running) return;
-    clearInterval(foldPoll);
-    foldPoll = null;
-    if (currentBoardId === boardId) await onBoardEnter(boardId);
-  }, 3000);
 }
 
 // ---- agent roster (a) -----------------------------------------------------------------------

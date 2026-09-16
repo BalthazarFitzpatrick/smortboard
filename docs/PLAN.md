@@ -463,8 +463,9 @@ no virtualenv to manage, and `uv` is already the house toolchain.
 - a **clone** rather than a worktree, because a worktree's `.git` is a pointer file into the parent
   repo: mount only the worktree and git is dead, and committing is the card's whole job
 - the clone is bind-mounted, so the commits are on the host's disk the moment the container exits
-- a card-scoped credential from `claude setup-token`, mounted read-only. Never an environment
-  variable, which `docker inspect` shows to anyone who can run it
+- a card-scoped credential from `claude setup-token`, handed to the container on stdin. Never
+  passed on the `docker` command line or mounted as a file, and never visible to `docker
+  inspect`; inside the container it is read from stdin and exported only to the `claude` process
 - **no GitHub credential at all.** The card commits locally; the board fetches, runs the gates,
   pushes and opens the pull request from the host where the operator's rules apply
 
@@ -512,8 +513,8 @@ get a runtime.
   Restricting egress to that one host is possible inside a container and impractical outside one,
   which is a reason to have the container rather than a claim about what it already does
 - **the token is inside it.** A container is a filesystem boundary, not a credential one. What
-  protects the credential is that it is a *separate* one: a card token can be revoked without
-  touching the operator's own session
+  protects the operator's own session is that the card credential is a *separate* one, scoped to
+  `claude setup-token` rather than the operator's login
 
 ## What a card is, and what it costs
 

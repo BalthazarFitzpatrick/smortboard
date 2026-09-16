@@ -48,7 +48,7 @@ const ROWS = [
 ];
 responses.set('/api/profiles', stubJson(200, ROWS));
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('profiles.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}

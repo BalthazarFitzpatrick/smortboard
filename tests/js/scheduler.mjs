@@ -64,14 +64,19 @@ class SpyMenu {
   openAt(where) { this.where = where; return this; }
   refresh(sections) { this.sections = sections; }
   close() {}
+  pick(itemId) {
+    const section = this.sections.find(s => (s.items || []).some(i => i.id === itemId));
+    section.onPick(section.items.find(i => i.id === itemId));
+  }
 }
 SpyMenu.instances = [];
+const flush = () => new Promise(r => setTimeout(r, 0));
 
 function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('scheduler.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
@@ -88,13 +93,19 @@ function badgeText(cardId) {
     .querySelector('.card-run').textContent;
 }
 
-// ---- w: run-all starts, and the board bar shows a compact status ------------------------------
+// ---- w: run-all opens a confirm first; nothing runs until it is answered ----------------------
 
 queueResponse({running: ['c1'], queued: ['c2'], waiting: {}, paused_until: null});
 await mod.toggleRunAll();
+assert.equal(fetchCalls.filter(c => c.path === '/api/boards/b1/run-all').length, 0,
+  'no request before the confirm is answered');
+const startMenu = SpyMenu.instances[SpyMenu.instances.length - 1];
+assert.equal(startMenu.opts.title, 'run every queued card on this board?');
+startMenu.pick('confirm');
+await flush();
 
 const runAllCall = fetchCalls.find(c => c.path === '/api/boards/b1/run-all');
-assert.ok(runAllCall, 'w should POST run-all for the current board');
+assert.ok(runAllCall, 'confirming w should POST run-all for the current board');
 assert.equal(runAllCall.method, 'POST');
 
 const statusEl = document.getElementById('schedule-status');
@@ -134,7 +145,10 @@ queueResponse({
   running: [], queued: ['c2'], waiting: {c2: 'lease conflict with card c1'},
   paused_until: Math.floor(Date.now() / 1000) + 3600,
 });
-await mod.toggleRunAll(); // scheduleRunning was left true above (still running c1) - this stops it
+// scheduleRunning was cleared by the stop above, so this is a start again and needs a confirm
+await mod.toggleRunAll();
+SpyMenu.instances[SpyMenu.instances.length - 1].pick('confirm');
+await flush();
 // drive one more explicit render call, independent of the toggle's own start/stop branch, over the
 // exact server shape /api/boards/{id}/schedule returns
 mod.renderScheduleStatus({

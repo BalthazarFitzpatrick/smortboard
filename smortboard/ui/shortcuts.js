@@ -16,19 +16,18 @@ const BINDINGS = [
   {code: 'Enter', label: 'enter', action: 'open the focused card', group: 'cards'},
   {code: 'Space', label: 'space', action: 'open the focused card, or close the open one', group: 'cards'},
   {code: 'Escape', label: 'esc', action: 'one level back: input -> panel -> closed', group: 'cards'},
-  {code: 'KeyR', label: 'r', action: 'run the focused card', group: 'cards'},
+  {code: 'KeyR', label: 'r', action: 'run the focused card, with confirmation', group: 'cards'},
   {code: 'KeyK', label: 'k', action: 'stop the focused card if it is running', group: 'cards'},
-  {code: 'KeyY', label: 'y', action: 'accept the focused card', group: 'cards'},
-  {code: 'KeyX', label: 'x', action: 'reject the focused card', group: 'cards'},
-  {code: 'KeyM', label: 'm', action: "cycle the card's model", group: 'cards'},
+  {code: 'KeyY', label: 'y', action: 'accept the focused card, with confirmation', group: 'cards'},
+  {code: 'KeyX', label: 'x', action: 'reject the focused card, with confirmation', group: 'cards'},
+  {code: 'KeyM', label: 'm', action: "cycle the card's model, with confirmation", group: 'cards'},
   {code: 'KeyE', label: 'e', action: 'edit: open the focused card', group: 'cards'},
   {code: 'KeyJ', label: 'j', action: 'move the focused card to another status', group: 'cards'},
   {code: 'Delete', label: 'del', action: 'delete the focused card, with confirmation', group: 'cards'},
   {code: 'KeyT', label: 't', action: "run replay: scrub the focused card's run step by step", group: 'cards'},
   {code: 'Slash', label: '/', action: "type: the open card's comment, or the open chat", group: 'cards'},
   {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
-  {code: 'KeyW', label: 'w', action: 'run the board: start / stop the queue', group: 'cards'},
-  {code: 'KeyF', label: 'f', action: 'fold: merge the todo cards one agent should do as one (asks first)', group: 'cards'},
+  {code: 'KeyW', label: 'w', action: 'run the board: start (with confirmation) / stop the queue', group: 'cards'},
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
   {code: 'KeyI', label: 'i', action: 'cost telemetry: card attempts, or the board cost table', group: 'panels'},
   {code: 'KeyC', label: 'c', action: 'cost overview: spend across every board', group: 'panels'},
@@ -115,13 +114,6 @@ function withModifier(evt) {
 
 document.addEventListener('keydown', evt => {
   if (withModifier(evt)) return;
-  // the fold question owns y and n while it is open - y is otherwise accept, and accepting the
-  // focused card while answering "fold?" would be the worst possible misread
-  if (openOverlay && openOverlay.key === 'KeyF' && (evt.code === 'KeyY' || evt.code === 'KeyN')) {
-    evt.preventDefault();
-    answerFold(evt.code === 'KeyY');
-    return;
-  }
   // the shortcut overlay owns left/right while it is open, ahead of the focus-recovery below -
   // otherwise a lost-focus reentry would eat the very same arrow press as a card move
   if (openOverlay && openOverlay.key === 'KeyS' && (evt.code === 'ArrowLeft' || evt.code === 'ArrowRight')) {
@@ -151,7 +143,6 @@ document.addEventListener('keydown', evt => {
 
   if (evt.code === 'KeyG') { grouped = !grouped; return; }
   if (evt.code === 'KeyW') { toggleRunAll(); return; }
-  if (evt.code === 'KeyF') { openFoldConfirm(); return; }
   if (evt.code === 'KeyU') { openUsagePanel(); return; }
   if (evt.code === 'KeyI') { openTelemetryPanel(); return; }
   if (evt.code === 'KeyC') { openCostsOverviewPanel(); return; }
