@@ -1,4 +1,4 @@
-"""mission control: one message from fabian, one headless turn, cards created by the board.
+"""mission control: one message from the operator, one headless turn, cards created by the board.
 
 The orchestrator proposes; it never writes the store directly. It runs in a throwaway container -
 same handoff as the reviewer (docker_available, read_card_token, token on stdin), with read-only
@@ -32,7 +32,7 @@ from smortboard.exec.backends import (
 )
 from smortboard.exec.repo_snapshot import MOUNT_PARENT, build_repo_snapshot
 from smortboard.exec.runner import build_command, run_process
-from smortboard.operator import OPERATOR_NAME
+from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.prompts import active_prompt
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
 from smortboard.store.api import Store, _clean_leases, _is_catch_all
@@ -156,7 +156,7 @@ def _clean_model(raw: Any) -> tuple[str | None, str | None]:
 
 
 _MESSAGE_HISTORY = 20
-# fabian's actual comment length is unbounded, but the snapshot's cards list stays short - see
+# the operator's actual comment length is unbounded, but the snapshot's cards list stays short - see
 # _snapshot_card
 _BOARD_AUTHOR = "board"
 
@@ -532,19 +532,19 @@ def run_orchestrator_turn(
     screenshot_taker: ScreenshotTaker | None = None,
     mode: str = "manage",
 ) -> OrchestratorTurnResult:
-    """one full turn: store fabian's message, run the orchestrator, create the cards it proposed,
+    """one full turn: store the operator's message, run the orchestrator, create the cards it proposed,
     store its reply and the new plan. a failed or unparseable run stores a board error message
     instead and leaves the plan untouched.
 
     `store_message=False` skips the store for the http path, which already stored it itself.
     a `screenshot` in the reply triggers exactly one re-run with the image readable; the
-    intermediate "let me look" reply is never shown to fabian - only the re-run's reply is.
+    intermediate "let me look" reply is never shown to the operator - only the re-run's reply is.
 
     `mode` is "planning" (default) or "manage" - planning never creates a card even if the reply
     proposes some (the turn prompt tells the orchestrator so too); manage creates them as before.
     """
     if store_message:
-        store.add_orchestrator_message(board_id, "fabian", message)
+        store.add_orchestrator_message(board_id, AUTHOR_KEY, message)
 
     model = store.get_settings().get("orchestrator_model") or DEFAULT_ORCHESTRATOR_MODEL
     system_prompt = active_prompt(store, "orchestrator", ORCHESTRATOR_PROMPT)
@@ -597,7 +597,7 @@ def run_orchestrator_turn(
 
     # PLANNING MODE NEVER TOUCHES A CARD. the prompt already told the orchestrator not to propose
     # any, but a reply is model output, not a contract - so the code enforces it too, and says so
-    # rather than silently dropping cards fabian might expect to see created.
+    # rather than silently dropping cards the operator might expect to see created.
     if mode != "manage" and proposed:
         warnings.append(
             f"planning mode: {len(proposed)} proposed card(s) were not created - switch to "
@@ -708,7 +708,7 @@ class OrchestratorRegistry:
         mode: str = "manage",
     ) -> bool:
         """starts a turn, or refuses if one is already thinking on this board. returns whether it
-        started. `message_already_stored` lets the http handler store fabian's message itself,
+        started. `message_already_stored` lets the http handler store the operator's message itself,
         synchronously, before this returns. `mode` is "planning" (talk only, never create/update a
         card) or "manage" (act on what the orchestrator proposes) - see run_orchestrator_turn."""
         with self._lock:

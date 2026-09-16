@@ -168,7 +168,7 @@ mod.onBoardEnter && (await (async () => {})()); // no-op, keeps this block's sha
 // currentBoardId is set by onBoardEnter, which also fetches /api/boards/b1/cards - stub it
 responses.set('/api/boards/b1/cards', stubJson(200, []));
 responses.set('/api/boards/b1/orchestrator', stubJson(200, {
-  messages: [{id: 'm1', author: 'fabian', body: 'hi', created_at: '', cards: []}],
+  messages: [{id: 'm1', author: 'operator', body: 'hi', created_at: '', cards: []}],
   plan: null, thinking: false, error: null, model: 'opus',
 }));
 await mod.onBoardEnter('b1');
@@ -190,8 +190,8 @@ assert.equal(mod.mc.header.textContent, 'mission control - planning - opus', 'a 
 
 responses.set('/api/boards/b1/orchestrator', stubJson(202, {
   messages: [
-    {id: 'm1', author: 'fabian', body: 'hi', created_at: '', cards: []},
-    {id: 'm2', author: 'fabian', body: 'build the login card', created_at: '', cards: []},
+    {id: 'm1', author: 'operator', body: 'hi', created_at: '', cards: []},
+    {id: 'm2', author: 'operator', body: 'build the login card', created_at: '', cards: []},
   ],
   plan: null, thinking: true, error: null, model: 'opus',
 }));
@@ -272,7 +272,7 @@ mod.drawers.right.close();
     messages: [
       line('orchestrator', 'line one'), line('orchestrator', 'line two'),
       line('orchestrator', 'line three'), line('orchestrator', 'line four'),
-      line('fabian', 'jump please'),
+      line('operator', 'jump please'),
     ],
     thinking: false, error: null, model: 'opus',
   }));
@@ -294,7 +294,7 @@ responses.set('/api/boards/b2/orchestrator', opts => {
   b2PostAttempts += 1;
   if (b2PostAttempts === 1) return stubJson(500, {error: 'boom'});
   return stubJson(200, {
-    messages: [{id: 'm1', author: 'fabian', body: 'retry me', created_at: '', cards: []}],
+    messages: [{id: 'm1', author: 'operator', body: 'retry me', created_at: '', cards: []}],
     plan: null, thinking: false, error: null, model: 'opus',
   });
 });
@@ -315,7 +315,7 @@ await new Promise(r => setTimeout(r, 700)); // past the queue's backoff - the re
 assert.equal(b2PostAttempts, 2, 'the second attempt is the queue retrying on its own, not a resend by hand');
 assert.ok(!mod.mc.log.children.some(c => c.dataset.queueId),
   'once delivered the queued line is gone - the confirmed transcript replaced it');
-assert.ok(mod.mc.log.children.some(c => c.className.includes('author-fabian') && !c.dataset.queueId),
+assert.ok(mod.mc.log.children.some(c => c.className.includes('author-operator') && !c.dataset.queueId),
   'the message now comes from the confirmed transcript, in the order it was sent');
 mod.drawers.right.close();
 

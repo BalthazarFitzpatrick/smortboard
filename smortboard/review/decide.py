@@ -1,7 +1,7 @@
 """the human's call on a finished card: accept it, or reject it and start clean.
 
 The board still never merges. Accepting records the decision and releases the worktree; the pull
-request stays open and merging it is Fabian's. Rejecting keeps the attempt as a read-only diff on
+request stays open and merging it is the operator's. Rejecting keeps the attempt as a read-only diff on
 the card, closes the pull request without deleting its branch, and destroys the local worktree and
 branch - so the next run cuts fresh from base instead of building on work that was turned down.
 """

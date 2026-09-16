@@ -1,4 +1,4 @@
-// attention inbox (n) - every card across every board waiting on fabian, in one panel.
+// attention inbox (n) - every card across every board waiting on the operator, in one panel.
 // NOT a Menu, same reason the prompt editor (board.js) is not one: Menu hijacks arrow/enter/escape
 // on the whole document while open, which would eat every one of those typed into the answer
 // input. built from the same modal-backdrop / panel-floating pair.

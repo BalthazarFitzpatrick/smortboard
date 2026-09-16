@@ -1,4 +1,4 @@
-"""live steering: a note Fabian sends while a card is running reaches the agent at its next step,
+"""live steering: a note the operator sends while a card is running reaches the agent at its next step,
 not only on the card's next run.
 
 Proven mechanic (two spikes, claude 2.1.197 in the card image, haiku): with
