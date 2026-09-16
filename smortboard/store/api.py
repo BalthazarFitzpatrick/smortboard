@@ -1,6 +1,7 @@
 """the store's public surface — callers get dicts, never sql, a cursor or a connection"""
 
 import json
+import re
 import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -62,6 +63,21 @@ _EXTRA_SETTING_KEYS = ("mission_control_read_paths",)
 def _check_findings_route(value: str | None) -> None:
     if value is not None and value not in FINDINGS_ROUTES:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
+
+
+# both reach docker or claude argv as their own item, so a leading "-" would read as a flag
+_IMAGE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,254}$")
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,99}$")
+
+
+def _check_image(value: Any) -> None:
+    if value is not None and not (isinstance(value, str) and _IMAGE_REF.match(value)):
+        raise ValueError(f"image must be a docker image reference or null, not {value!r}")
+
+
+def _check_model(value: Any) -> None:
+    if value is not None and not (isinstance(value, str) and _MODEL_NAME.match(value)):
+        raise ValueError(f"model must be a model name or null, not {value!r}")
 
 
 def _check_positive_int(name: str, value: Any) -> None:
@@ -216,7 +232,9 @@ class Store:
     ) -> dict:
         # no validation here on purpose - the http layer (app.py's repos POST route) validates a
         # person's input with validate_repo before this is ever called; the store itself stays the
-        # thing every other test builds a repo row against without needing a real git checkout
+        # thing every other test builds a repo row against without needing a real git checkout.
+        # the image is the exception: a pure shape check, since it lands in docker argv
+        _check_image(image)
         self.get_board(board_id)  # raises NotFoundError on a bad board id
         repo_id = _new_id()
         self._conn.execute(
@@ -238,6 +256,7 @@ class Store:
         default image.
         """
         self.get_repo(repo_id)  # raises NotFoundError on a bad id
+        _check_image(image)
         self._conn.execute("UPDATE repos SET image = ? WHERE id = ?", (image, repo_id))
         self._conn.commit()
         return self.get_repo(repo_id)
@@ -369,6 +388,7 @@ class Store:
         depends_on: list[str] | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
+        _check_model(model)
         # validated before any insert - a brand new card can never be part of an existing
         # cycle or depend on itself (its id does not exist yet), so only existence matters
         cleaned_deps = list(dict.fromkeys(depends_on or []))
@@ -530,6 +550,8 @@ class Store:
         self._check_blocked_invariant(next_status, next_reason)
         if "findings_route" in fields:
             _check_findings_route(fields["findings_route"])
+        if "model" in fields:
+            _check_model(fields["model"])
 
         merged = {**fields, "status": next_status, "blocked_reason_code": next_reason}
         assignments = ", ".join(f"{key} = ?" for key in merged)
