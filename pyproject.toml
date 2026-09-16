@@ -8,7 +8,7 @@ requires-python = ">=3.11"
 dependencies = [
     "keyring>=25.7.0",
     # pinned to a sha, not a tag: ui_base and smortboard are co-developed in lockstep
-    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@951d85ba85f56b227717e0f013545abbed4fe992",
+    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@313ff9e23cd90f60dccea628479c9623efa9f055",
     # os-correct data dir for the default db location — not the cwd, not a hand-rolled path
     "platformdirs>=4.0",
     # mission control's one screenshot per ask - host-side only, chromium headless. the browser
