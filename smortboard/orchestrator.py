@@ -263,9 +263,11 @@ def _short_id(card_id: str) -> str:
     return card_id[:8]
 
 
-# read on the host from the default branch, never the live checkout, so a card's uncommitted
-# ledger edits never leak in; the root TASKS.jsonl is usually a symlink, hence dev_ledger first
+# a repo that still tracks its ledger is read from the default branch, so uncommitted edits never
+# leak in; otherwise the root TASKS.jsonl is an untracked symlink into a private ledger repo, read
+# from disk - card containers never see it, so nothing a card does can change it
 _LEDGER_PATHS = ("dev_ledger/TASKS.jsonl", "TASKS.jsonl")
+_LEDGER_FILE = "TASKS.jsonl"
 _OPEN_TASK_LIMIT = 80
 _LAYOUT_LIMIT = 60
 
@@ -280,20 +282,33 @@ def _git_show(path: str, ref: str, rel: str) -> str | None:
     return out.stdout if out.returncode == 0 else None
 
 
+def _ledger_rows(text: str) -> list[dict[str, Any]]:
+    rows = []
+    for line in text.splitlines():
+        try:
+            task = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(task, dict):
+            rows.append(task)
+    return rows
+
+
+def _read_ledger(repo: dict[str, Any]) -> list[dict[str, Any]]:
+    for rel in _LEDGER_PATHS:
+        rows = _ledger_rows(_git_show(repo["path"], repo["default_branch"], rel) or "")
+        if rows:
+            return rows
+    try:
+        return _ledger_rows((Path(repo["path"]) / _LEDGER_FILE).read_text())
+    except OSError:
+        return []
+
+
 def _open_tasks(repo: dict[str, Any], links: dict[str, str]) -> list[dict[str, Any]]:
     """the repo's not-done ledger tasks, trimmed for the prompt, each marked with its card if any"""
-    for rel in _LEDGER_PATHS:
-        rows = []
-        for line in (_git_show(repo["path"], repo["default_branch"], rel) or "").splitlines():
-            try:
-                task = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(task, dict):
-                rows.append(task)
-        if rows:
-            break
-    else:
+    rows = _read_ledger(repo)
+    if not rows:
         return []
     tasks = []
     for task in rows:
@@ -405,7 +420,7 @@ def _mounts_description(repo_names: list[str], extra_basenames: list[str]) -> st
 # in the turn prompt rather than ORCHESTRATOR_PROMPT: a stored prompt replaces the code default
 _LEDGER_RULES = (
     "Each repo carries `layout` (its folders with file counts) and `open_tasks` (the not-done tasks "
-    "of its dev_ledger/TASKS.jsonl). To turn a ledger task into a card, set the card's `task_id` to "
+    "of its TASKS.jsonl ledger). To turn a ledger task into a card, set the card's `task_id` to "
     "that task's id; a task with a `linked_card` already has a card, so never propose it again. "
     "Set `task_id` to null for a card that is not a ledger task. Write leases over real paths from "
     "`layout`, gitignore-style: `*` stays inside one folder, `**/` is any depth, none included."
