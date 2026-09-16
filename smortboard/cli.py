@@ -36,6 +36,9 @@ def _default_db_path() -> Path:
     # user data dir, not cwd — `uvx smortboard` run from anywhere should not scatter .db files
     data_dir = Path(user_data_dir(_APP_NAME))
     data_dir.mkdir(parents=True, exist_ok=True)
+    # 0700: the board db holds the card token's blast radius (repo paths, prompts, event logs) -
+    # chmod rather than rely on the mkdir mode, since exist_ok skips mode on an existing dir
+    os.chmod(data_dir, 0o700)
     return data_dir / "smortboard.db"
 
 
