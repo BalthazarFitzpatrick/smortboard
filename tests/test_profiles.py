@@ -357,6 +357,7 @@ def test_save_state_replaces_the_file_rather_than_appending():
 def test_a_usage_limit_run_switches_profile_and_resumes_the_same_card(store, board_and_repo):
     board_id, repo_id = board_and_repo
     store.set_setting("max_parallel", "1")
+    store.set_setting("auto_switch_profiles", "on")  # rotation is opt-in
     profiles.add_profile("second", token="second-token")
     card = store.create_card(board_id, repo_id, "a")
 
@@ -380,6 +381,7 @@ def test_a_usage_limit_run_switches_profile_and_resumes_the_same_card(store, boa
 def test_with_every_profile_limited_the_board_parks_until_the_earliest_reset(store, board_and_repo):
     board_id, repo_id = board_and_repo
     store.set_setting("max_parallel", "1")
+    store.set_setting("auto_switch_profiles", "on")  # rotation is opt-in
     profiles.add_profile("second", token="second-token")
     card = store.create_card(board_id, repo_id, "a")
 
@@ -427,6 +429,29 @@ def test_auto_switch_off_parks_instead_of_rotating(store, board_and_repo):
     view = scheduler.schedule_view()
     assert view["paused_until"] == pytest.approx(resets_at)
     assert runs.started == [card["id"]]  # never resumed a second time
+
+
+def test_rotation_is_opt_in_unset_parks_like_off(store, board_and_repo):
+    # the default with the setting never touched - proves rotation stays off until switched on,
+    # not just that an explicit "off" still works
+    board_id, repo_id = board_and_repo
+    store.set_setting("max_parallel", "1")
+    profiles.add_profile("second", token="second-token")
+    card = store.create_card(board_id, repo_id, "a")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    resets_at = time.time() + 3600
+    store.append_event(card["id"], "rate_limit_event", {"rate_limit_info": {"resetsAt": resets_at}})
+    runs.finish(card["id"], blocked_reason_code="USAGE_LIMIT")
+
+    assert profiles.active_profile() == "default"
+    assert profiles.is_limited("default")
+    view = scheduler.schedule_view()
+    assert view["paused_until"] == pytest.approx(resets_at)
+    assert runs.started == [card["id"]]
 
 
 def test_a_single_profile_board_still_parks_and_writes_no_profile_state(store, board_and_repo):

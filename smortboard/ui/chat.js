@@ -134,10 +134,10 @@ function terminalDom(promptGlyph) {
   return wrap;
 }
 
-// the name shown for the operator's own lines - /health says who; stored rows keep the key "fabian"
+// the name shown for the operator's own lines - /health says who; stored rows keep the key "operator"
 let operatorName = 'you';
 function authorLabel(author) {
-  return author === 'fabian' ? operatorName : author;
+  return author === 'operator' ? operatorName : author;
 }
 
 // author drives the line's colour class; cls overrides it for board/error/thinking lines whose
@@ -271,12 +271,12 @@ function renderMissionControlQueue(boardId) {
   items.forEach(item => {
     let line = mc.log.querySelector(`.terminal-line[data-queue-id="${item.id}"]`);
     if (!line) {
-      line = appendLine(mc.log, 'fabian', item.body);
+      line = appendLine(mc.log, 'operator', item.body);
       line.dataset.queueId = item.id;
       // a queued line is a new line like any other: it follows, or it counts on the pill
       settleAfterAppend(mc.log);
     }
-    line.className = `terminal-line author-fabian queue-${item.state}`;
+    line.className = `terminal-line author-operator queue-${item.state}`;
     let badge = line.querySelector('.terminal-state');
     if (!badge) {
       badge = document.createElement('span');
@@ -525,7 +525,7 @@ async function renderWorkforceConversation() {
 
 async function sendWorkforce(text) {
   if (!wf.cardId) return;
-  appendLine(wf.log, 'fabian', text);
+  appendLine(wf.log, 'operator', text);
   scrollToBottom(wf.log); // sending always jumps to the newest line and resumes following
   try {
     const res = await fetch(`/api/cards/${wf.cardId}/conversation`, {

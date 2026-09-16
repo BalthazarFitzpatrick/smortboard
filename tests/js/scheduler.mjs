@@ -164,7 +164,7 @@ queueResponse({
     {card_id: 'c1', title: 'base card', url: 'https://example/pr/1', merge_after: [], dependency_not_in_batch: false},
     {card_id: 'c3', title: 'dependent card', url: 'https://example/pr/2', merge_after: ['c1'], dependency_not_in_batch: true},
   ],
-  waiting_on_fabian: [{card_id: 'c9', title: 'stuck card', reason: 'AGENT_QUESTION', question: 'which flow?'}],
+  waiting_on_operator: [{card_id: 'c9', title: 'stuck card', reason: 'AGENT_QUESTION', question: 'which flow?'}],
   runs_and_spend: {runs: 4, total_cost_usd: 1.23},
 });
 mod.openDigestPanel();
