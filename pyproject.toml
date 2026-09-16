@@ -38,6 +38,23 @@ build-backend = "hatchling.build"
 packages = ["smortboard"]
 artifacts = ["smortboard/ui/**"]
 
+# hatchling's sdist default is "every git-tracked file" - none of this is needed to pip install
+# or run the package; docker/ is for users who clone and build the card image themselves
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "tests/",
+    "docs/images/",
+    "ui_shots/",
+    "dev_ledger/",
+    "TASKS.jsonl",
+    "WORKLOG.md",
+    "docker/",
+    "tools/",
+    "CLAUDE.md",
+    ".claude/",
+    ".github/",
+]
+
 # ui_base is pinned to a git sha, not a pypi release, while the two repos are co-developed
 [tool.hatch.metadata]
 allow-direct-references = true
