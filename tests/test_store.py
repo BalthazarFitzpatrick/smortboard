@@ -575,3 +575,9 @@ def test_an_existing_database_migrates_to_merge_conflict(tmp_path):
 
         with pytest.raises(BlockedReasonInvalidError):
             store.update_card("c1", blocked_reason_code="NOT_A_REAL_REASON")
+
+
+@pytest.mark.parametrize("glob", ["/abs/path.py", "../other/**"])
+def test_create_card_refuses_a_glob_the_guard_could_never_match(store, glob):
+    with pytest.raises(ValueError):
+        _make_board_and_card(store, leases=[glob])
