@@ -112,6 +112,11 @@ def _check_lease_glob(value: Any) -> str:
     return glob
 
 
+def _is_catch_all(glob: str) -> bool:
+    """a glob with no literal segment, like ** or */**, matches the whole repo"""
+    return all(set(segment) <= set("*?") for segment in glob.split("/"))
+
+
 def _clean_leases(globs: list[Any]) -> list[str]:
     """valid, unique globs in first-seen order; a glob the store would refuse is dropped rather
     than rejecting the whole card - shared by consolidate and the orchestrator's proposed cards"""
@@ -404,7 +409,7 @@ class Store:
                 "INSERT INTO card_criteria (id, card_id, position, text) VALUES (?, ?, ?, ?)",
                 (_new_id(), card_id, i, text),
             )
-        for glob in leases or []:
+        for glob in [_check_lease_glob(glob) for glob in leases or []]:
             self._conn.execute(
                 "INSERT INTO card_leases (id, card_id, path_glob) VALUES (?, ?, ?)",
                 (_new_id(), card_id, glob),

@@ -35,7 +35,7 @@ from smortboard.exec.runner import build_command, run_process
 from smortboard.operator import OPERATOR_NAME
 from smortboard.prompts import active_prompt
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
-from smortboard.store.api import Store, _clean_leases
+from smortboard.store.api import Store, _clean_leases, _is_catch_all
 from smortboard.telemetry import board_evidence
 
 # where a screenshot lands inside the orchestrator's re-run container - mounted read-only, and
@@ -628,11 +628,10 @@ def run_orchestrator_turn(
                     f'so "{title}" was not created'
                 )
                 continue
-        # a model-proposed lease is untrusted the same way any other proposed field is - dropped
-        # through the store's own glob check rather than passed straight to create_card. "**"
-        # passes that check (a human may set it deliberately) but would let an untrusted model
-        # claim the whole repo, so it is dropped here too, same as any other invalid glob
-        leases = [glob for glob in _clean_leases(spec.get("leases") or []) if glob != "**"]
+        # a model-proposed lease is untrusted: invalid globs are dropped, and so is a catch-all
+        # like ** or */** - a human may lease the whole repo, the model may not
+        valid = _clean_leases(spec.get("leases") or [])
+        leases = [glob for glob in valid if not _is_catch_all(glob)]
         if not leases:
             warnings.append(
                 f'"{title}" has no lease, so the board will not run it until one is set'

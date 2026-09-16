@@ -302,11 +302,12 @@ def test_a_proposed_card_with_no_lease_is_created_but_flagged(store, board):
     assert any('"bare" has no lease' in note for note in notes)
 
 
-def test_a_proposed_lease_of_double_star_is_dropped_not_stored(store, board):
-    """a model-proposed ** would let the worker write anywhere - the board drops it like any
-    other invalid glob rather than passing it straight to create_card"""
+@pytest.mark.parametrize("greedy", [["**"], ["**/*"], ["*/**"], ["*"], ["/etc/**"], ["../x"]])
+def test_a_proposed_catch_all_or_climbing_lease_is_dropped_not_stored(store, board, greedy):
+    """a model-proposed catch-all would let the worker write anywhere - the board drops it like
+    any other invalid glob rather than passing it straight to create_card"""
     base = TWO_CARDS["cards"][0]
-    payload = {"reply": "ok", "plan": "p", "cards": [{**base, "title": "greedy", "leases": ["**"]}]}
+    payload = {"reply": "ok", "plan": "p", "cards": [{**base, "title": "greedy", "leases": greedy}]}
     run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
     card = next(c for c in store.list_cards(board["id"]) if c["title"] == "greedy")
     assert card["leases"] == []
@@ -314,3 +315,12 @@ def test_a_proposed_lease_of_double_star_is_dropped_not_stored(store, board):
         m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
     ]
     assert any('"greedy" has no lease' in note for note in notes)
+
+
+def test_a_proposed_lease_keeps_its_literal_globs(store, board):
+    base = TWO_CARDS["cards"][0]
+    leases = ["**", "src/**", "docs/*.md"]
+    payload = {"reply": "ok", "plan": "p", "cards": [{**base, "title": "mixed", "leases": leases}]}
+    run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
+    card = next(c for c in store.list_cards(board["id"]) if c["title"] == "mixed")
+    assert sorted(row["path_glob"] for row in card["leases"]) == ["docs/*.md", "src/**"]
