@@ -573,16 +573,23 @@ const PILE_FACE_INSET = 11; // .card-pile-count's own top/bottom inset (layout.c
 const CLIP_REACH = 40; // a clip this far outside the card keeps its own shadow canvas uncut
 const REST_FRAME = {translate: '0px 0px', scale: '1 1', opacity: 1};
 const GROW_FRAME = {translate: '0px 0px', scale: '0.9 0.6', opacity: 0}; // a pile forming or emptying
+// a pile forming in the room its first card is leaving never grows over that card: the card folds
+// down to the pile's face and the pile only takes over at the end - the mirror when one empties
+const FOLD_HANDOVER = 0.85;
+const PILE_HANDOVER_IN = [{opacity: 0, offset: 0}, {opacity: 0, offset: FOLD_HANDOVER}, {opacity: 1, offset: 1}];
+const PILE_HANDOVER_OUT = [{opacity: 1, offset: 0}, {opacity: 0, offset: 1 - FOLD_HANDOVER}, {opacity: 0, offset: 1}];
 
 // a row's identity across redraws: a card by its id, a pile by the side it sits on
 function rowKey(el) {
   return el.classList.contains('card-pile') ? `pile-${el.dataset.side}` : `card-${el.dataset.cardId}`;
 }
 
-// the drawn rows only - a ghost still sliding into (or shrinking off) a pile is not one of them
+// the drawn rows only - a ghost still sliding into (or shrinking off) a pile is not one of them.
+// a pile's layer boxes are taken here too, at rest: by the time a card's own frames are built the
+// pile may already be animating, and a scaled layer would put its painted edge in the wrong place
 function measureRows(bucketRowsEl) {
   const rows = Array.from(bucketRowsEl.children).filter(el => !el.classList.contains('row-ghost'));
-  return new Map(rows.map(el => [rowKey(el), {el, rect: el.getBoundingClientRect()}]));
+  return new Map(rows.map(el => [rowKey(el), {el, rect: el.getBoundingClientRect(), layers: pileLayers(el)}]));
 }
 
 // pure: the translate and scale that put a box drawn at `to` back over `from`. css scales about
@@ -628,16 +635,26 @@ function planPileMotion(priorRoles, nextRoles) {
   return {piles, duration: piled ? PILE_MOTION_MS : ROW_MOTION_MS, easing: piled ? PILE_EASING : ROW_EASING};
 }
 
-// pure: a pile row's box -> its face, the top layer the count sits on and a card slides in under
-function pileFace(rect) {
+// pure: a pile row's box -> the box it actually paints. the count's face sits PILE_FACE_INSET in
+// from the row box, but a jittered layer edge protrudes past that, and the outermost painted edge
+// is the one a card must reach before anything of it is cut - the row box itself is part gap
+function pileFace(rect, layers = []) {
   const inset = Math.min(PILE_FACE_INSET, rect.height / 2);
-  return {left: rect.left, top: rect.top + inset, width: rect.width, height: rect.height - 2 * inset};
+  const top = Math.min(rect.top + inset, ...layers.map(l => l.top));
+  const bottom = Math.max(rect.top + rect.height - inset, ...layers.map(l => l.bottom));
+  return {left: rect.left, top, width: rect.width, height: bottom - top};
 }
 
-// pure: the pile's mouth for a card at `card` - the face edge that faces the card, its bottom edge
-// for a card below the pile and its top edge for a card above it. a card goes in and out through it
-function pileMouth(pileRect, card) {
-  const face = pileFace(pileRect);
+// the drawn layer boxes of one pile row - what pileFace needs to know how far the pile paints
+function pileLayers(pileEl) {
+  const layers = pileEl?.querySelectorAll?.('.card-pile-layer');
+  return layers ? Array.from(layers, l => l.getBoundingClientRect()) : [];
+}
+
+// pure: the pile's mouth for a card at `card` - the painted edge that faces the card, its bottom
+// edge for a card below the pile and its top edge for a card above it. a card goes in and out there
+function pileMouth(pileRect, card, layers = []) {
+  const face = pileFace(pileRect, layers);
   const above = face.top + face.height / 2 < card.top + card.height / 2;
   return {above, left: face.left, line: above ? face.top + face.height : face.top};
 }
@@ -646,24 +663,40 @@ const px = v => `${Math.round(v * 100) / 100}px`;
 const clipInset = (top, bottom) => `inset(${px(top)} -${CLIP_REACH}px ${px(bottom)} -${CLIP_REACH}px)`;
 
 // pure: a card box and a pile mouth -> `shown`, the card at its own box, and `inside`, the card slid
-// through the mouth until it and its shadow are all past it. both cut the card at the mouth line,
-// so between the two the cut stays put while the card slides: eaten from its edge, never faded.
-// a card whose own box already reaches into the pile is shown whole, shadow included
+// through the mouth until it and its shadow are all past it. the clip is stated in the card's own
+// moving frame on both sides, so the cut lands on the mouth line at every point between them: the
+// card crosses the gap whole and is eaten only at the pile's painted edge, never faded
 function mouthFrames(card, mouth) {
   const r = CLIP_REACH;
   const dx = mouth.left - card.left;
   if (mouth.above) {
     const dy = mouth.line - (card.top + card.height + r);
     return {
-      shown: {translate: '0px 0px', clipPath: clipInset(Math.min(mouth.line - card.top, -r), -r)},
+      shown: {translate: '0px 0px', clipPath: clipInset(mouth.line - card.top, -r)},
       inside: {translate: `${px(dx)} ${px(dy)}`, clipPath: clipInset(card.height + r, -r)},
     };
   }
   const dy = mouth.line + r - card.top;
   return {
-    shown: {translate: '0px 0px', clipPath: clipInset(-r, Math.min(card.top + card.height - mouth.line, -r))},
+    shown: {translate: '0px 0px', clipPath: clipInset(-r, card.top + card.height - mouth.line)},
     inside: {translate: `${px(dx)} ${px(dy)}`, clipPath: clipInset(-r, card.height + r)},
   };
+}
+
+// pure: a card box and the face of a pile forming in its own place -> `open`, the card whole, and
+// `folded`, the card collapsed onto that face. the edge on the pile's side holds and the other
+// travels to meet it, the card's own content cut rather than squashed, so it ends as the pile's
+// top layer exactly. `above` is the side the pile sits on: the column's top pile holds the card's
+// top edge and climbs its bottom, the bottom pile holds the bottom and pushes the top down
+function foldFrames(card, face, above) {
+  const r = CLIP_REACH;
+  const shrink = Math.max(card.height - face.height, 0);
+  const open = {translate: '0px 0px', clipPath: clipInset(-r, -r)};
+  if (above) {
+    return {open, folded: {translate: `0px ${px(face.top - card.top)}`, clipPath: clipInset(-r, shrink)}};
+  }
+  const dy = face.top + face.height - (card.top + card.height);
+  return {open, folded: {translate: `0px ${px(dy)}`, clipPath: clipInset(shrink, -r)}};
 }
 
 // lifts a node out of the drawn flow so it can be replayed once where it was: absolute against the
@@ -695,7 +728,9 @@ function ghostPile(bucketEl, prior, timing, over) {
     ghost.style.zIndex = '-1';
     bucketEl.appendChild(ghost);
   }
-  const anim = ghost.animate([REST_FRAME, GROW_FRAME], {...timing, fill: 'forwards'});
+  // a card growing back out of it takes its place from the first frame, so the pile hands over at
+  // once rather than shrinking on top of it
+  const anim = ghost.animate(over ? PILE_HANDOVER_OUT : [REST_FRAME, GROW_FRAME], {...timing, fill: 'forwards'});
   anim.onfinish = anim.oncancel = () => ghost.remove();
 }
 
@@ -703,13 +738,36 @@ function ghostPile(bucketEl, prior, timing, over) {
 // pile and every row after it paint over it) and cut at the pile's mouth as it passes, so the pile
 // stays on top and the card is gone once it is all the way in - when the pile's count ticks
 function slideIntoPile(bucketEl, prior, pile, timing) {
-  const ghost = detachAsGhost(bucketEl, prior);
-  ghost.dataset.into = pile.el.dataset.side;
-  pile.el.parentNode.insertBefore(ghost, pile.el);
-  const {shown, inside} = mouthFrames(prior.rect, pileMouth(pile.rect, prior.rect));
+  const ghost = seatGhostAtPile(bucketEl, prior, pile);
+  const {shown, inside} = mouthFrames(prior.rect, pileMouth(pile.rect, prior.rect, pile.layers));
   const anim = ghost.animate([shown, inside], {...timing, fill: 'forwards'});
   anim.onfinish = anim.oncancel = () => ghost.remove();
 }
+
+// a card whose pile is forming has nowhere to slide from - the pile is taking the very room the
+// card is leaving, and sliding in would read as the pile materialising on top of it. it folds down
+// onto the pile's face instead, from the edge on the pile's side, and the pile takes over at the end
+function foldIntoPile(bucketEl, prior, pile, timing) {
+  const ghost = seatGhostAtPile(bucketEl, prior, pile);
+  // it still holds the room the rows below are sliding up into, so it stays over them - and under
+  // the pile, which is the only thing allowed to take that room from it
+  ghost.style.zIndex = '1';
+  pile.el.style.zIndex = '2';
+  const {open, folded} = foldFrames(prior.rect, pileFace(pile.rect, pile.layers), isAbovePile(pile.el));
+  const anim = ghost.animate([open, folded], {...timing, fill: 'forwards'});
+  anim.onfinish = anim.oncancel = () => { pile.el.style.zIndex = ''; ghost.remove(); };
+}
+
+// a leaving card's ghost, seated right before the pile in paint order so the pile and every row
+// after it paint over it
+function seatGhostAtPile(bucketEl, prior, pile) {
+  const ghost = detachAsGhost(bucketEl, prior);
+  ghost.dataset.into = pile.el.dataset.side;
+  pile.el.parentNode.insertBefore(ghost, pile.el);
+  return ghost;
+}
+
+const isAbovePile = pileEl => pileEl?.dataset?.side === 'above';
 
 // the reverse: a card drawn off a pile starts all the way in, under it, and slides out through its
 // mouth, uncut once it is clear. the pile is lifted over it until then - a card drawn off the upper
@@ -721,6 +779,17 @@ function slideOutOfPile(el, rect, mouth, timing, pileEl) {
   anim.onfinish = anim.oncancel = () => { if (pileEl) pileEl.style.zIndex = ''; };
 }
 
+// the mirror of foldIntoPile: the last card off a pile that is emptying grows back out of the face
+// the pile occupied, from the same edge, since the pile leaves that room rather than staying to be
+// slid out of
+function growOutOfPile(el, rect, from, timing) {
+  const {open, folded} = foldFrames(rect, pileFace(from.rect, from.layers), isAbovePile(from.el));
+  // it takes the room the rows below are sliding down out of, so it stays over them while it grows
+  el.style.zIndex = '1';
+  const anim = el.animate([folded, open], timing);
+  anim.onfinish = anim.oncancel = () => { el.style.zIndex = ''; };
+}
+
 // a redraw replaces every row, but a card still sliding into a pile (or a pile still shrinking over
 // the card drawn off it) keeps going: re-seated where it paints against the new rows, or dropped
 // once what it was seated against is gone
@@ -730,7 +799,8 @@ function reseatGhosts(bucketRowsEl, ghosts) {
     const {into, over} = ghost.dataset;
     const pile = into && rows.find(r => r.classList.contains('card-pile') && r.dataset.side === into);
     const card = over && rows.find(r => r.dataset.cardId === over);
-    if (pile) bucketRowsEl.insertBefore(ghost, pile);
+    // the pile it folded into is drawn for real now, so the ghost drops back under it and the rows
+    if (pile) { ghost.style.zIndex = '0'; bucketRowsEl.insertBefore(ghost, pile); }
     else if (card) bucketRowsEl.insertBefore(ghost, card.nextElementSibling);
     else ghost.remove();
   });
@@ -769,8 +839,9 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
       if (movesAtAll(delta)) el.animate([flipFrame(delta), REST_FRAME], timing);
     }
     if (el.classList.contains('card-pile')) {
-      if (!prior) el.animate([GROW_FRAME, REST_FRAME], timing);
       const pile = plan.piles.get(key);
+      // a pile forming under a card folding into it waits for that card; one forming on its own grows
+      if (!prior) el.animate(pile?.landing.length ? PILE_HANDOVER_IN : [GROW_FRAME, REST_FRAME], timing);
       if (pile?.landing.length) tickOnLanding(el, prior?.el._cards || [], status, pile.countAt);
       return;
     }
@@ -778,7 +849,9 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
     const fromKey = priorRoles.get(el.dataset.cardId);
     const from = before.get(fromKey);
     if (!from) { el.classList.add('row-enter'); return; }
-    slideOutOfPile(el, rect, pileMouth(from.rect, rect), timing, now.get(fromKey)?.el);
+    const stays = now.get(fromKey);
+    if (stays) slideOutOfPile(el, rect, pileMouth(from.rect, rect, from.layers), timing, stays.el);
+    else growOutOfPile(el, rect, from, timing);
     drawnOff.set(fromKey, el);
   });
   const bucketEl = bucketRowsEl.closest('.bucket');
@@ -786,8 +859,12 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
   before.forEach((prior, key) => {
     if (now.has(key)) return;
     if (key.startsWith('pile-')) { ghostPile(bucketEl, prior, timing, drawnOff.get(key)); return; }
-    const pile = now.get(nextRoles.get(prior.el.dataset.cardId));
-    if (pile) slideIntoPile(bucketEl, prior, pile, timing);
+    const pileKey = nextRoles.get(prior.el.dataset.cardId);
+    const pile = now.get(pileKey);
+    if (!pile) return;
+    // a pile that was already there is slid into through its mouth; one forming here is folded into
+    if (before.has(pileKey)) slideIntoPile(bucketEl, prior, pile, timing);
+    else foldIntoPile(bucketEl, prior, pile, timing);
   });
 }
 
