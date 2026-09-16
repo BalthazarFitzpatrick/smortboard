@@ -378,6 +378,19 @@ The card token is a model-only `claude setup-token`, separate from your own logi
 
 The board never reads Claude Code's own login, and a card never sees it.
 
+**A mode-600 file is not a shortcut.** It is how Claude Code itself keeps credentials on Linux, and
+where macOS falls back to when the Keychain refuses a write
+([Claude Code docs: credential management](https://code.claude.com/docs/en/authentication.md)):
+
+| OS | Claude Code's own login |
+|---|---|
+| Linux | `~/.claude/.credentials.json`, plain JSON, mode 600 |
+| macOS | the encrypted Keychain; `~/.claude/.credentials.json` (mode 600) when the Keychain is locked, e.g. over SSH |
+| Windows | `%USERPROFILE%\.claude\.credentials.json`, restricted by the user profile's access controls |
+
+The card token follows the same rule: a file only your user can read, refused if it is any looser.
+`claude setup-token` saves nothing itself, which is why the token has to be stored by hand.
+
 ### Repos and their test command
 
 A repo must already exist on GitHub with its default branch pushed; the board registers it, it
@@ -413,6 +426,27 @@ Board-wide settings (`PATCH /api/settings`, most also in the settings panel `o`)
 `gate_timeout_seconds`, `auto_switch_profiles`, `mall_cam_interval_seconds`, and
 `mission_control_read_paths` (absolute paths mission control may also read). Per board
 (`PATCH /api/boards/<id>`): its own parallel cap and `daily_budget_usd`.
+
+### Keep main for people
+
+The board and your own Claude Code sessions work best with a `development` branch that agents merge
+into and a `main` only a person merges into. [docs/protect-main.md](docs/protect-main.md) sets that
+up in three steps:
+
+1. create and push `development`, and register it as the repo's default branch
+2. install [`tools/claude-hooks/protect-main.sh`](tools/claude-hooks/protect-main.sh), a Claude Code
+   hook that lets agents merge pull requests into `development` and refuses committing on, pushing
+   to or merging into `main`
+3. add the GitHub ruleset in [`tools/github/protect-main.json`](tools/github/protect-main.json), so
+   `main` stays protected against anything the hook can't see
+
+The hook, for this repo, goes in `.claude/settings.json`:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+  {"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/tools/claude-hooks/protect-main.sh"}
+]}]}}
+```
 
 ### Landing lock
 
