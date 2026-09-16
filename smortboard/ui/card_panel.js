@@ -52,7 +52,7 @@ function cardClasses(card) {
   // both reads as progress. flagged counts too - a refused or stopped card has no reason code
   // but sits in the inbox, and without this the board drew it plain
   // handled_by_board: the board is already retrying this itself, so it reads as working, not as
-  // a thing waiting on operator - the glow is reserved for a card that actually needs him
+  // a thing waiting on the operator - the glow is reserved for a card that actually needs him
   if (card.handled_by_board) classes.push('card-working');
   else if (card.blocked_reason_code || card.review_flag) classes.push('card-attention');
   else if (card.status === 'doing') classes.push('card-working');

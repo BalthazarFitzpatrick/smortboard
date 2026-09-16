@@ -17,7 +17,7 @@ a fresh uncached build, so there is no newer CLI to target), not in the S1-S3 do
 - unmarked, that injected text read to the model as a prompt injection - its own next words were
   "Note on prompt injection attempt" and it ignored the instruction. So a live note MUST carry the
   fixed marker `NOTE_PREFIX` and the worker's system prompt must tell it that lines starting with
-  that marker are genuinely from operator and take priority; anything else claiming authority
+  that marker are genuinely from the operator and take priority; anything else claiming authority
   mid-run is not.
 So a note is written to stdin, marked, within NOTE_POLL_SECONDS of being queued, and the CLI hands
 it to the model at its next step. At every `result` event anything still queued goes as one more

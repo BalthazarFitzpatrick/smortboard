@@ -87,7 +87,7 @@ def test_planning_mode_creates_no_card_and_says_so_on_the_board(store, board):
         m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
     ]
     assert any("2 proposed card" in note for note in board_notes)
-    # operator's reply still lands - planning mode is a conversation, not a refusal
+    # the operator's reply still lands - planning mode is a conversation, not a refusal
     reply = [
         m for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "orchestrator"
     ]
