@@ -1,20 +1,9 @@
 /* smortboard: layout only. every visual primitive - toggle, panel, menu, badge, focus marker,
    hazard stripes - comes from base.css / ui_base. this file positions and sizes them. */
 
-/* the column knobs, ON :root ON PURPOSE - columns.js's readGapVar asks the root element for them,
-   so declared on body they silently resolved to its hardcoded fallbacks instead and a change here
-   would have moved the drawn layout without moving the maths that sizes it.
-   the first two are a pile's extra space past the shared row gap (15px above and below it in
-   total, tuned against derived/gap_tuner/index.html).
-   ONE CARD HEIGHT FOR EVERY COLUMN TYPE, AND IT IS NEVER SHRUNK: --card-gap is the space between
-   two rows that do not overlap, --stack-peek the band a covered card still shows of itself once
-   the card after it is drawn over it. columns.js measures which of the two a column gets */
-:root {
-  --pile-gap-above: 5px;
-  --pile-gap-below: 5px;
-  --card-gap: 10px;
-  --stack-peek: 60px;
-}
+/* the column knobs (--card-gap, --stack-peek, --pile-gap-above/below) and --shadow-lift are
+   ui_base's now, on its own :root - pile.js reads them from there and base.css draws with them.
+   retune a column's spacing by restating one here, not by reintroducing the set */
 
 body {
   margin: 0;
@@ -24,7 +13,6 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  --shadow-lift: 0 2px 5px rgba(0, 0, 0, 0.35);
 }
 
 .board-bar {
@@ -182,8 +170,9 @@ body {
 .card-strip { z-index: 0; }
 .card-strip > .card-shade { position: absolute; z-index: -1; max-width: none; pointer-events: none; }
 /* a row replayed once on its way out - a card sliding in under a pile, or a pile emptying over the
-   card drawn off it. it sits among the rows for its paint order, so it outranks their pointer rule */
-.row-ghost, .bucket-rows.bucket-rows-piled > .row-ghost { pointer-events: none; }
+   card drawn off it. base.css already makes a .row-ghost click-through; this restates it at the
+   specificity that beats the piled column's own pointer rule below */
+.bucket-rows.bucket-rows-piled > .row-ghost { pointer-events: none; }
 /* NO RATIO HERE. every card's height is stated inline by columns.js from the column's own width
    (squareCard), in every column type, so a plain column and a stacked one can never disagree about
    how tall a card is - which is exactly what a css ratio on one path and a measurement on the other
@@ -214,99 +203,21 @@ body {
 /* done is lichen, an edge like every other state: the fills are too flat at card size. measured
    under simulated deuteranopia it stays delta-e 54 from the rejected red, and 2.6x brighter */
 .card-strip.card-accepted { border-color: var(--status-good); }
-/* the card draws its own focus ring (below), not the browser outline */
-.card-strip:focus-visible { outline: none; }
-/* ONE FOCUS LOOK FOR EVERY CARD, FANNED OR PILED, IN EVERY COLUMN (operator, 2026-09-15): a touch
-   larger, its own colours a step more intense, and its own ring - an inset frame plus an inner glow,
-   half the width it first shipped at - so the ring scales with the lift and is covered by exactly
-   what covers the card. transform keeps the fan's 140ms slide */
-.card-strip { transition: transform 140ms, filter 140ms, box-shadow 140ms; }
-.card-strip:focus {
-  transform: scale(1.03);
-  filter: saturate(1.7) brightness(1.4);
-  box-shadow: inset 0 0 0 3px var(--cream), inset 0 0 8px 1.5px color-mix(in srgb, var(--cream) 65%, transparent);
-}
-/* indicate.js's shared marker is a fixed overlay above everything: over a card it framed the
-   unscaled box on top of the card's own ring and drew over the neighbours, so it stays hidden
-   while any card has focus and shows again for whatever takes focus next */
-body:has(.card-strip:focus) .focus-marker { opacity: 0; }
-/* a focused card is lifted above the cards fanned over its neighbours, in every column type: it is
-   drawn open with nothing covering it, and its 1.03 scale would otherwise grow under the card
-   after it. applyCardShadows still keeps each later card on top of the earlier one's shadow */
-.card-strip:focus { z-index: 2; }
+/* THE FOCUS LOOK IS ui_base's .focus-glow NOW (operator, 2026-09-16) - the lift, the card's own
+   inset ring, the inner glow and the coloured light over the whole face, one class with each part
+   on its own token. card_panel.js's cardClasses puts it on every strip, so a card focused in any
+   column type wears it. retune a part here by restating that part's token, not the rule. */
 
-/* ---- insert/draw animation: only a genuinely new row (a card or pile that was not there in that
-   role last render) gets this - drawColumn tags it via the .row-enter class, so a plain refit or
-   poll redraw that reproduces the same rows plays nothing. short on purpose: this is a stack of
-   cards settling into place, not a page transition */
-@keyframes row-enter-in {
-  from { opacity: 0; transform: translateY(4px) scale(0.98); }
-  to { opacity: 1; transform: none; }
-}
-.row-enter { animation: row-enter-in 140ms ease-out; }
-@media (prefers-reduced-motion: reduce) {
-  .row-enter { animation: none; }
-}
-
-/* ---- dense column presentation: a pile standing in for every card the column folded away -------
-   real card edges, not a placeholder box: a few layers stacked straight behind a top face, each
-   3px lower than the one above, so only their bottom edges show - the board's square 2px edge */
-/* height lands inline from columns.js's fitColumn - fixed at 100px (PILE); 100px here is only
-   the fallback before that runs */
-.card-pile {
-  position: relative;
-  height: 100px;
-  flex: 0 0 auto;
-  box-sizing: border-box;
-  cursor: pointer;
-  --pile-edge: var(--grey-border);
-  /* the tuning page's own knobs (declared on body, above) - columns.js's fit maths adds the same
-     two numbers, so a pile's drawn gap and its sized gap never drift apart */
-  margin-top: var(--pile-gap-above);
-  margin-bottom: var(--pile-gap-below);
-}
+/* ---- dense column presentation: the pile itself (.card-pile and its layers, the level count
+   badge, the row-enter fade) is ui_base's. what stays here is what a pile means to THIS board */
 /* a pile wears its column's state edge the way a card does: doing, or attention when it holds one */
 .card-pile.card-pile-doing { --pile-edge: var(--fill-good); }
 .card-pile.card-pile-attention { --pile-edge: var(--fill-attention); }
-.card-pile-layer {
-  position: absolute;
-  inset: 11px 0 11px 0;
-  border: 2px solid var(--pile-edge);
-  border-radius: 0;
-  background: var(--panel-row);
-  box-shadow: var(--shadow-lift);
-}
-/* THE TOP OF A PILE IS A REAL CARD, not a flat face standing in for one: the card that went on
-   last, jittered and turned like every layer under it, carrying its own title. the count used to
-   be a perfectly level card-sized rectangle over the lot, which read as a lid rather than a pile */
-.card-pile-layer.card-pile-top {
-  padding: 8px 12px;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-.card-pile-top .card-title { color: var(--cream); }
-/* THE COUNT STAYS LEVEL whatever the card under it is doing - it is a badge over the whole pile,
-   a sibling of the layers rather than a child of one, so no rotation reaches it */
-.card-pile-count {
-  position: absolute;
-  inset: 11px 0 11px 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
-  padding: 6px 8px;
-  box-sizing: border-box;
-  pointer-events: none;
-}
-.card-pile-count .bucket-counts {
-  background: var(--panel-row);
-  border: 2px solid var(--pile-edge);
-  padding: 0 8px;
-  font-weight: 700;
-  font-size: 1.15em;
-}
+/* the count reads a step larger than the titles under it. ui_base cannot carry this - one font
+   size, app-wide, is a rule of that file - so the one local size on the board lives here */
+.card-pile-count .bucket-counts { font-size: 1.15em; }
 .card-pile-count .count-d { color: var(--fill-good); }
 .card-pile-count .count-a { color: var(--fill-attention); }
-.card-pile:focus-visible { outline: none; }
 
 
 .expand-panel .card-panel {

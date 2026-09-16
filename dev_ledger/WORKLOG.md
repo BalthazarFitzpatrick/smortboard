@@ -758,3 +758,21 @@ suite green: 809 pytest (incl. new file), js suite green. Screenshot at
 Landed on smortboard's `development` directly per the task instructions. **The live board on
 :8000 needs a restart to pick up migration 15 and the new routes/ui.** Worktree and branch removed
 after this entry.
+
+## 2026-09-16 - card ab588f33: the focus glow and the pile/fan layout moved into ui_base
+
+The whole focus treatment and the pile/fan geometry now come from smortui and smortboard's copies
+are gone. `.focus-glow` (base.css) is the lift, the card's own inset ring, the inner glow and the
+coloured light over the whole face, each on its own token; `cardClasses` puts it on every strip.
+`pile.js` holds every pure helper `columns.js` used to define - the card box, the three regimes
+(`computeColumnFit`), the layout and the group's stepping, the fold and flip frames, the layer
+jitter and `planPileMotion`. columns.js went 1086 -> 817 lines and keeps only what a pile means to
+this board: the status letters and edge colours, the dom builders and every animation player.
+
+Pinned by full sha (`1ecfdb14db4e...`) while smortui PR #29 is unmerged. Verified the SERVED asset
+rather than trusting `uv sync`: `/ui/pile.js` on 127.0.0.1:8743 is byte-identical to the branch
+file and there is no local `smortboard/ui/pile.js` to shadow it.
+
+Proof the look did not move: `ui_shots/pile_move_{before,after}{,_focus}.png`, same board, same
+viewport, 8742 before and 8743 after - **0 of 1,600,000 pixels differ, max channel delta 0.** 809
+pytest tests and all 26 `tests/js/*.mjs` green.
