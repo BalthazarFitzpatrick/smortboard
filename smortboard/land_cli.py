@@ -6,7 +6,7 @@ integrate path (smortboard/lifecycle.py, smortboard/review/integrate.py), for an
 card. Always releases the lock, including on ctrl-c.
 
     uv run smortboard-land --repo . -- pytest -q
-    uv run smortboard-land --repo ~/work/consumer-app --target development -- uv run pytest -q
+    uv run smortboard-land --repo ~/work/my-app --target development -- uv run pytest -q
 """
 
 from __future__ import annotations
