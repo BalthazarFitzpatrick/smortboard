@@ -1,6 +1,7 @@
 """the store's public surface — callers get dicts, never sql, a cursor or a connection"""
 
 import json
+import os
 import re
 import sqlite3
 import uuid
@@ -195,6 +196,17 @@ class Store:
         self._conn.execute("PRAGMA foreign_keys = ON")
         migrate(self._conn)
         self._purge_expired_backups()
+        self._secure_db_files()
+
+    def _secure_db_files(self) -> None:
+        """0600 on the db file and its -wal/-shm sidecars - tightened on every open, not just on
+        create, so a db that predates this check is not left readable by the rest of the group"""
+        if str(self.path) == ":memory:":
+            return
+        for suffix in ("", "-wal", "-shm"):
+            candidate = self.path.with_name(self.path.name + suffix)
+            if candidate.exists():
+                os.chmod(candidate, 0o600)
 
     def close(self) -> None:
         self._conn.close()

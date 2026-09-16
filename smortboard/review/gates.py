@@ -21,7 +21,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from smortboard.exec.backends import card_image, container_name, docker_available
+from smortboard.exec.backends import (
+    CONTAINER_HARDENING_FLAGS,
+    card_image,
+    container_name,
+    docker_available,
+)
 from smortboard.store.errors import NotFoundError
 
 # a test suite that has not finished in ten minutes is not going to; the card is stuck rather than
@@ -137,6 +142,7 @@ def run_test_gate(
         name,
         "--network",
         "none",
+        *CONTAINER_HARDENING_FLAGS,
         "-v",
         f"{work_path}:/workspace:ro",  # the gate reads the work, it never changes it
         "-w",
