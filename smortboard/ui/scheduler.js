@@ -86,15 +86,21 @@ async function pollSchedule() {
 // queue - running cards are left to finish, exactly as run-all/stop promises server-side
 async function toggleRunAll() {
   if (!currentBoardId) return;
-  if (scheduleTimer) { clearTimeout(scheduleTimer); scheduleTimer = null; }
-
+  // stopping is never confirmed, same as k - it only winds work down, never starts it
   if (scheduleRunning) {
+    if (scheduleTimer) { clearTimeout(scheduleTimer); scheduleTimer = null; }
     scheduleRunning = false;
     const view = await api(`/api/boards/${currentBoardId}/run-all/stop`, {method: 'POST'});
     renderScheduleStatus(view);
     applyScheduleToCards(view);
     return;
   }
+  openActionConfirm('run every queued card on this board?', 'run the queue', 'cancel', doStartRunAll);
+}
+
+async function doStartRunAll() {
+  if (!currentBoardId) return;
+  if (scheduleTimer) { clearTimeout(scheduleTimer); scheduleTimer = null; }
   scheduleRunning = true;
   const view = await api(`/api/boards/${currentBoardId}/run-all`, {method: 'POST'});
   renderScheduleStatus(view);

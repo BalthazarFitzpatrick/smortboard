@@ -12,7 +12,7 @@
 // relies on globals board.js already defines: api, apiOrError, onBoardEnter, currentBoardId,
 // reenterIfFocusLost.
 
-const pl = {backdrop: null, panel: null, listEl: null, rows: [], activeIndex: 0};
+const pl = {backdrop: null, panel: null, listEl: null, rows: [], activeIndex: 0, confirming: false};
 
 function buildPullsDom() {
   const backdrop = document.createElement('div');
@@ -145,11 +145,18 @@ function openActivePullsRowPR() {
 
 // y accepts the row's card directly, through the same route the board's own y does
 // (/api/cards/{id}/accept) - reimplemented here rather than borrowed from board.js's
-// acceptOrRejectCard because that reads the focused card-strip, and nothing in this panel is one
-async function acceptActivePullsRow() {
+// acceptOrRejectCard because that reads the focused card-strip, and nothing in this panel is one.
+// confirmed the same way board.js's y is: openActionConfirm, not window.confirm
+function acceptActivePullsRow() {
   const index = pl.activeIndex;
   const row = pl.rows[index];
   if (!row) return;
+  pl.confirming = true;
+  openActionConfirm('accept this pull request?', 'accept', 'cancel',
+    () => doAcceptActivePullsRow(index, row), () => { pl.confirming = false; });
+}
+
+async function doAcceptActivePullsRow(index, row) {
   const status = pullsRowEls()[index]?.querySelector('.pulls-status');
   const {ok, body} = await apiOrError(`/api/cards/${row.card_id}/accept`, {method: 'POST'});
   if (!ok) {
@@ -165,6 +172,9 @@ async function acceptActivePullsRow() {
 }
 
 function onPullsKey(evt) {
+  // while the accept confirm is up, its own Menu keydown handler owns every key - this must not
+  // also close the whole panel on the same Escape that is cancelling just the confirm
+  if (pl.confirming) return;
   if (evt.code === 'Escape') { closePullsPanel(); return; }
   if (evt.code === 'ArrowDown') { evt.preventDefault(); setActiveIndex(pl.activeIndex + 1); return; }
   if (evt.code === 'ArrowUp') { evt.preventDefault(); setActiveIndex(pl.activeIndex - 1); return; }
