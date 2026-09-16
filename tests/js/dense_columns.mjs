@@ -21,6 +21,7 @@ class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; 
 function SpyDrawer() { return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false}; }
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+  uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {sortColumnCards, computeColumnLayout, computeColumnFit, letterCounts, renderBucketColumn,
@@ -841,7 +842,10 @@ function cssRules(needle) {
   const {bucketRows} = buildColumn(2000, cards, 'attention');
   fullCards(bucketRows).forEach(s => {
     assert.ok(s.className.includes('card-attention'), 'still marked attention, for the frame colour');
-    assert.deepEqual(s.className.split(' ').filter(c => /glow|ring/.test(c)), [], 'no glow or ring class');
+    // focus-glow is the SHARED focus treatment every strip wears - what this guards is that
+    // attention does not add a glow of its own on top of it, the way it used to at rest
+    assert.deepEqual(s.className.split(' ').filter(c => /glow|ring/.test(c) && c !== 'focus-glow'),
+      [], 'no glow or ring class of attention\'s own');
     assert.ok(!s.style.boxShadow && !s.style.outline, 'no inline ring either');
   });
 }
@@ -900,6 +904,19 @@ function specificity(selector) {
   return ids * 10000 + classes * 100 + tags;
 }
 
+// ui_base ships the treatment as four separately tunable tokens, so the rule reads var(--focus-*)
+// rather than the numbers the operator tuned. resolve them off base.css's own :root and the
+// assertions below still check the numbers rather than the spelling
+const rootTokens = Object.fromEntries(
+  [...stripComments(uiBase('base.css')).matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g)].map(m => [m[1], m[2].trim()]));
+const resolveTokens = value => {
+  let out = value, guard = 0;
+  while (/var\(/.test(out) && guard++ < 10) {
+    out = out.replace(/var\((--[\w-]+)\)/g, (whole, name) => rootTokens[name] ?? whole);
+  }
+  return out;
+};
+
 // the winning value of each focus property for `strip`, with `focusedEl` holding focus
 const FOCUS_PROPS = ['transform', 'filter', 'box-shadow', 'outline'];
 function focusLook(strip, focusedEl = strip) {
@@ -953,9 +970,12 @@ function markerHiddenFor(strip) {
   assert.ok(!piles(plain).length && piles(stacked).length,
     'both column types are really under test: the plain column has no pile, the stacked one does');
   const reference = focusLook(cases['stacked, open card']);
-  assert.match(reference.transform, /^scale\(1\.03\)$/, 'a focused card lifts 3% toward the viewer');
-  assert.match(reference.filter, /saturate\(1\.7\) brightness\(1\.4\)/, 'and its own colours step up');
-  assert.match(reference['box-shadow'], /^inset 0 0 0 3px var\(--cream\), inset 0 0 8px 1\.5px /,
+  // the tuned numbers, read through ui_base's tokens - the four parts of one treatment
+  assert.match(resolveTokens(reference.transform), /^scale\(1\.03\)$/, 'a focused card lifts 3% toward the viewer');
+  assert.match(resolveTokens(reference.filter), /^saturate\(1\.7\) brightness\(1\.4\)$/,
+    'and the coloured light over its whole face steps its own colours up');
+  const ring = resolveTokens(reference['box-shadow']).replace(/\s+/g, ' ');
+  assert.match(ring, /^inset 0 0 0 3px \S+, inset 0 0 8px 1\.5px /,
     'its own ring: the inset frame, then the inner glow at half its old 16px blur and 3px spread');
   Object.entries(cases).forEach(([where, strip]) => {
     assert.deepEqual(focusLook(strip), reference, `${where}: the same focus look as a stacked card`);

@@ -45,7 +45,9 @@ function linkifyPrRefs(text) {
 function cardClasses(card) {
   // NOT ui_base's fan: cards never overlap here. columns.js sizes and spaces every row itself, in
   // every column type, and the fan's own -80% margin was the second layout system fighting it
-  const classes = ['row', 'card', 'card-strip'];
+  // focus-glow is ui_base's whole focus treatment - the lift, the card's own inset ring, the inner
+  // glow and the coloured light over the face - so a card focused in any column type wears it
+  const classes = ['row', 'card', 'card-strip', 'focus-glow'];
   // blocked wins over working: a card waiting on you is not a card making progress, and showing
   // both reads as progress. flagged counts too - a refused or stopped card has no reason code
   // but sits in the inbox, and without this the board drew it plain
