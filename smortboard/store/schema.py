@@ -347,6 +347,12 @@ _MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_landing_queue_repo_target
         ON landing_queue (repo_key, target, position);
     """,
+    # 16: a board's own daily spend cap, in usd - unset means no cap, same convention as
+    # max_parallel (14). checked against today's (UTC) summed run cost, see
+    # smortboard.telemetry.board_spend_today and scheduler._board_daily_budget
+    """
+    ALTER TABLE boards ADD COLUMN daily_budget_usd REAL;
+    """,
 ]
 
 
