@@ -35,6 +35,16 @@ jobs:
       - name: sync
         run: uv sync --dev --python ${{ matrix.python }}
 
+      # some js tests read ui_base from a sibling ../smortui checkout; point it at the pinned install
+      - name: link ui_base assets
+        run: |
+          assets=$(uv run python -c "import ui_base, pathlib; print(pathlib.Path(ui_base.__file__).parent / 'assets')")
+          mkdir -p ../smortui/ui_base
+          ln -sfn "$assets" ../smortui/ui_base/assets
+
+      - name: install the playwright browser
+        run: uv run playwright install --with-deps chromium
+
       - name: ruff check
         run: uv run ruff check .
 
