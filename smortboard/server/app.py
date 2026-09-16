@@ -431,14 +431,14 @@ def _make_handler(
                 self._send_status(204)
             elif "board_id" in params and method == "PATCH":
                 body = self._read_json()
-                # only this board's own parallel cap is writable here; "unset" arrives as an
-                # explicit null, same convention PATCH /api/settings uses for clearing a value
+                # only this board's own parallel cap and daily budget are writable here; "unset"
+                # arrives as an explicit null, same convention PATCH /api/settings uses for
+                # clearing a value
                 if "max_parallel" in body:
-                    self._send_json(
-                        200, store.set_board_max_parallel(params["board_id"], body["max_parallel"])
-                    )
-                else:
-                    self._send_json(200, store.get_board(params["board_id"]))
+                    store.set_board_max_parallel(params["board_id"], body["max_parallel"])
+                if "daily_budget_usd" in body:
+                    store.set_board_daily_budget(params["board_id"], body["daily_budget_usd"])
+                self._send_json(200, store.get_board(params["board_id"]))
             elif "task_id" in params and method == "PATCH":
                 self._handle_patch_task(params["task_id"])
             elif "board_id" in params and path.endswith("/run-all") and method == "POST":
