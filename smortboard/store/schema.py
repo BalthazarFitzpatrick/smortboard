@@ -347,11 +347,9 @@ _MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_landing_queue_repo_target
         ON landing_queue (repo_key, target, position);
     """,
-    # 16: the internal author key was the operator's real first name - renamed to "operator" so
-    # the repo does not carry it. the old key is spelled as a concatenation below so a history
-    # scrub that replaces the name can't turn this migration into a no-op. sqlite cannot ALTER a CHECK, so orchestrator_messages
-    # is recreated with the new one, same dance as migration 11/12; comments has no CHECK, so its
-    # rows are just updated in place
+    # 16: the author key was the operator's real first name, now "operator"; the old key is split
+    # so a history scrub can't turn this into a no-op. sqlite can't alter a CHECK, so
+    # orchestrator_messages is rebuilt as in 11/12, and comments (no CHECK) is updated in place
     """
     PRAGMA foreign_keys = OFF;
 
