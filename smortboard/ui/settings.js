@@ -413,18 +413,18 @@ function buildMallCamSection() {
   input.addEventListener('blur', save);
 
   row.append(input, status);
-  Object.assign(mc, {input, status});
+  Object.assign(mallCam, {input, status});
   return row;
 }
 
 async function loadMallCamSection() {
   try {
     const settings = await api('/api/settings');
-    mc.input.value = settings.mall_cam_interval_seconds == null ? '' : String(settings.mall_cam_interval_seconds);
-    mc.status.textContent = '';
+    mallCam.input.value = settings.mall_cam_interval_seconds == null ? '' : String(settings.mall_cam_interval_seconds);
+    mallCam.status.textContent = '';
   } catch (err) {
-    mc.status.textContent = `could not load: ${err.message}`;
-    mc.status.className = 'boards-status boards-error';
+    mallCam.status.textContent = `could not load: ${err.message}`;
+    mallCam.status.className = 'boards-status boards-error';
   }
 }
 

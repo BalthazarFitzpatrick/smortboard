@@ -102,9 +102,13 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, BINDINGS,
+;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, BINDINGS, mc, mallCam,
   buttonRef: () => document.querySelector('.settings-button'),
   addButtonRef: () => document.querySelector('.boards-create-row .toggle')};`)(SpyMenu, SpyDrawer);
+
+// settings.js once wrote its mall cam field into chat.js's `mc`, replacing mission control's own input
+assert.notEqual(mod.mc.input, mod.mallCam.input, "the mall cam field must not become mission control's input");
+assert.ok(mod.mallCam.input, 'the mall cam field is kept in its own state');
 
 async function flush() {
   await new Promise(r => setTimeout(r, 0));
