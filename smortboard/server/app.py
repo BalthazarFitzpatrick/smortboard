@@ -3,6 +3,7 @@
 import json
 import re
 import sqlite3
+import threading
 from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
@@ -70,6 +71,7 @@ _ROUTES = [
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "POST"),
     (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)/image/build$"), "POST"),
+    (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)/image/build$"), "GET"),
     (re.compile(r"^/api/cards$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "PATCH"),
@@ -154,8 +156,18 @@ _CSP = (
 _MEDIA_TYPE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
 
 
+# one thread serves every request, so a slow client or a huge body must not hold it
+_REQUEST_TIMEOUT_S = 30
+_MAX_JSON_BYTES = 1_000_000
+_MAX_UPLOAD_BYTES = 25_000_000
+
+
 class NotJsonError(ValueError):
     """a json route was sent a body that does not declare itself json"""
+
+
+class BodyTooLargeError(ValueError):
+    """a request body past its route's cap, refused before it is read"""
 
 
 def _version() -> str:
@@ -178,6 +190,9 @@ def _make_handler(
     """closes over the store instance; http.server wants a class, not an instance"""
 
     allowed_hosts = access.allowed_hostnames(bound_host)
+    # image builds run off the request thread; repo_id -> {"state", "log", ...}, newest per repo
+    image_builds: dict[str, dict] = {}
+    image_builds_lock = threading.Lock()
 
     # the message ids each board's mission control already accepted, newest last - a retried or
     # second-tab send of the same message is answered as done instead of starting another turn
@@ -186,6 +201,7 @@ def _make_handler(
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "smortboard/0.1"
+        timeout = _REQUEST_TIMEOUT_S
 
         def log_message(self, fmt: str, *args: object) -> None:  # noqa: A003
             pass  # keep test output quiet; nothing here is a diagnostic signal
@@ -230,6 +246,8 @@ def _make_handler(
                 self._send_json(400, {"error": str(exc)})
             except NotJsonError as exc:
                 self._send_json(415, {"error": str(exc)})
+            except BodyTooLargeError as exc:
+                self._send_json(413, {"error": str(exc)})
             except (KeyError, TypeError, ValueError) as exc:
                 # malformed json body or a request missing a required field
                 self._send_json(400, {"error": str(exc)})
@@ -293,6 +311,11 @@ def _make_handler(
                 self._handle_patch_repo(params["repo_id"])
             elif "repo_id" in params and path.endswith("/image/build") and method == "POST":
                 self._handle_build_repo_image(params["repo_id"])
+            elif "repo_id" in params and path.endswith("/image/build") and method == "GET":
+                store.get_repo(params["repo_id"])  # raises NotFoundError on a bad id
+                with image_builds_lock:
+                    build = image_builds.get(params["repo_id"], {"state": "none"})
+                self._send_json(200, build)
             elif "lease_id" in params and path.startswith("/api/landing/") and method == "DELETE":
                 self._send_json(200, store.release_landing(params["lease_id"]))
             elif "lease_id" in params and method == "DELETE":
@@ -717,18 +740,22 @@ def _make_handler(
             self._send_json(200, repo)
 
         def _handle_build_repo_image(self, repo_id: str) -> None:
-            """builds this repo's own test image and sets it as the repo's image on success.
-
-            404 for an unknown repo; 400 with the build's log tail on a failed or unrecognised
-            build - the operator reads the reason in the panel, not a terminal.
+            """starts building this repo's own test image in the background; GET on the same
+            route reports it. 404 for an unknown repo, 409 while a build for it is running, 202
+            once started. a finished build sets the repo's image, a failed one leaves its log tail.
             """
             repo = store.get_repo(repo_id)
-            result = build_repo_image(repo)
-            if not result.ok:
-                self._send_json(400, {"error": result.log, "stack": result.stack})
-                return
-            updated = store.set_repo_image(repo_id, result.tag)
-            self._send_json(200, {**updated, "build_log": result.log})
+            with image_builds_lock:
+                if image_builds.get(repo_id, {}).get("state") == "building":
+                    self._send_json(409, {"error": "an image build for this repo is running"})
+                    return
+                image_builds[repo_id] = {"state": "building"}
+            threading.Thread(
+                target=_build_image_in_background,
+                args=(store.path, repo, image_builds, image_builds_lock),
+                daemon=True,
+            ).start()
+            self._send_json(202, {"state": "building"})
 
         def _handle_patch_task(self, task_id: str) -> None:
             # only "done" is exposed here - add_task/remove_task stay store-only, for a human
@@ -941,7 +968,7 @@ def _make_handler(
             if "multipart/form-data" not in content_type:
                 self._send_json(400, {"error": "expected multipart/form-data"})
                 return
-            length = int(self.headers.get("Content-Length", 0))
+            length = self._body_length(_MAX_UPLOAD_BYTES)
             body = self.rfile.read(length)
             boundary = parse_boundary(content_type)
             uploaded = parse_first_file(body, boundary)
@@ -993,8 +1020,16 @@ def _make_handler(
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
 
-        def _read_json(self) -> dict:
+        def _body_length(self, cap: int) -> int:
             length = int(self.headers.get("Content-Length", 0))
+            if length < 0:
+                raise ValueError("Content-Length must not be negative")
+            if length > cap:
+                raise BodyTooLargeError(f"request body over {cap} bytes")
+            return length
+
+        def _read_json(self) -> dict:
+            length = self._body_length(_MAX_JSON_BYTES)
             if length == 0:
                 return {}
             # a cross-site form can only send text/plain or form bodies, never application/json
@@ -1017,6 +1052,25 @@ def _make_handler(
             self.end_headers()
 
     return Handler
+
+
+def _build_image_in_background(
+    db_path: Path, repo: dict, builds: dict[str, dict], lock: threading.Lock
+) -> None:
+    """runs one image build on its own thread with its own store connection"""
+    try:
+        result = build_repo_image(repo)
+    except (OSError, ValueError) as exc:
+        outcome = {"state": "failed", "log": str(exc)}
+    else:
+        if result.ok:
+            with Store(db_path) as build_store:
+                build_store.set_repo_image(repo["id"], result.tag)
+            outcome = {"state": "built", "image": result.tag, "log": result.log}
+        else:
+            outcome = {"state": "failed", "log": result.log, "stack": result.stack}
+    with lock:
+        builds[repo["id"]] = outcome
 
 
 def build_server(
