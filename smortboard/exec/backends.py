@@ -183,6 +183,11 @@ def read_card_token(token_path: str | Path | None = None) -> str:
     """
     resolved = Path(token_path or card_token_path())
     if resolved.is_file():
+        # group/world readable token files are refused everywhere, not just for named profiles
+        if os.name != "nt" and (resolved.stat().st_mode & 0o077) != 0:
+            raise CardTokenMissing(
+                f"{resolved} is not mode 600 - refusing to read it. chmod 600 {resolved}"
+            )
         token = resolved.read_text().strip()
         if token:
             return token
