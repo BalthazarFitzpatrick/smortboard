@@ -13,6 +13,7 @@ from pathlib import Path
 
 from platformdirs import user_data_dir
 
+from smortboard.demo import make_demo_db
 from smortboard.server.app import build_server
 from smortboard.store import Store
 
@@ -86,6 +87,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--no-browser", action="store_true", help="do not open a browser tab on start"
     )
     parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="serve a throwaway board of invented projects (ignores --db and SMORTBOARD_DB)",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=_version(),
@@ -97,14 +103,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     """cli entry point: parse args, open the store, and serve the board until interrupted."""
     args = parse_args(argv)
-    db_path = _resolve_db(args.db)
+    # --demo deliberately bypasses _resolve_db entirely: a demo must never be able to reach the
+    # operator's own board, not through --db, not through SMORTBOARD_DB, not through the data dir
+    db_path = make_demo_db() if args.demo else _resolve_db(args.db)
     port = _resolve_port(args.port)
 
     with Store(db_path) as store:
         server = build_server(store, port, host=_resolve_host(args.host))
         actual_port = server.server_address[1]
         url = f"http://127.0.0.1:{actual_port}/ui/index.html"
-        print(f"smortboard serving on {url} (db={db_path})")
+        label = "demo db, invented content" if args.demo else f"db={db_path}"
+        print(f"smortboard serving on {url} ({label})")
         if server.recovered:
             print(
                 f"{len(server.recovered)} card(s) were left mid-run by the last board - "
