@@ -80,7 +80,7 @@ function buildPullsRow(row) {
   head.append(title, board, state);
 
   const link = document.createElement('a');
-  link.href = row.url;
+  link.href = safeUrl(row.url);
   link.target = '_blank';
   link.rel = 'noreferrer';
   link.className = 'stat pulls-link';
@@ -139,7 +139,7 @@ async function loadPulls() {
 // same whether the row was built with a real <a> or (in tests) a dom stub that has none
 function openActivePullsRowPR() {
   const row = pl.rows[pl.activeIndex];
-  if (!row) return;
+  if (!row || !safeUrl(row.url)) return;
   window.open?.(row.url, '_blank', 'noopener');
 }
 

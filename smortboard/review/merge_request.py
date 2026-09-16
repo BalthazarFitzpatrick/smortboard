@@ -404,7 +404,7 @@ def pr_view(repo_path: str | Path, url: str) -> PullRequestState:
 def close_merge_request(repo_path: str | Path, url: str) -> str | None:
     """closes a rejected card's pull request, keeping its branch. returns a refusal, or None.
 
-    the branch stays on purpose (fabian, 2026-09-10): a closed pull request still reads as a record
+    the branch stays on purpose (the operator, 2026-09-10): a closed pull request still reads as a record
     of the attempt, and deleting the branch would leave its diff view with nothing behind it
     """
     if shutil.which("gh") is None:

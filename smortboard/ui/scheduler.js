@@ -104,7 +104,7 @@ async function toggleRunAll() {
 
 // ---- morning digest (d) -----------------------------------------------------------------------
 
-// "since" defaults to the last time fabian opened the digest, remembered per browser - a fresh
+// "since" defaults to the last time the operator opened the digest, remembered per browser - a fresh
 // tab with no history just shows everything, which is the honest default for "never opened before"
 const DIGEST_SINCE_KEY = 'smortboard-digest-since';
 
@@ -141,7 +141,7 @@ function digestPrRow(pr) {
   row.className = 'digest-section digest-pr';
   row.appendChild(dLine(pr.title, 'field-label'));
   const link = document.createElement('a');
-  link.href = pr.url;
+  link.href = safeUrl(pr.url);
   link.target = '_blank';
   link.rel = 'noreferrer';
   link.className = 'stat digest-pr-link';
@@ -177,8 +177,8 @@ function digestBody(data) {
   wrap.appendChild(digestDivider());
 
   wrap.appendChild(dLine('waiting on you', 'field-label'));
-  if (data.waiting_on_fabian.length) {
-    data.waiting_on_fabian.forEach(row => wrap.appendChild(digestWaitingRow(row)));
+  if (data.waiting_on_operator.length) {
+    data.waiting_on_operator.forEach(row => wrap.appendChild(digestWaitingRow(row)));
   } else {
     wrap.appendChild(dLine('nothing blocked', 'empty'));
   }

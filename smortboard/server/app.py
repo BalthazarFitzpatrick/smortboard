@@ -3,11 +3,12 @@
 import json
 import re
 import sqlite3
+import threading
 from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, quote, unquote
 
 from smortboard import profiles
 from smortboard.attention import (
@@ -21,7 +22,7 @@ from smortboard.consolidate import FoldRegistry
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.local_repos import detect_default_branch, list_folders
-from smortboard.operator import OPERATOR_NAME
+from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
     ORCHESTRATOR_PROMPT,
@@ -37,6 +38,7 @@ from smortboard.review.landing import resolve_repo_key
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
 from smortboard.scheduler import SchedulerRegistry, conflicting_run, relabel_stale_crashes
+from smortboard.server import access
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import (
@@ -69,6 +71,7 @@ _ROUTES = [
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "POST"),
     (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)/image/build$"), "POST"),
+    (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)/image/build$"), "GET"),
     (re.compile(r"^/api/cards$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)$"), "PATCH"),
@@ -145,6 +148,28 @@ _ROLE_DEFAULTS = {
 }
 
 
+# scripts and styles only from the board's own files: a markup sink an agent reaches stays inert
+_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
+    "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+)
+_MEDIA_TYPE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
+
+
+# one thread serves every request, so a slow client or a huge body must not hold it
+_REQUEST_TIMEOUT_S = 30
+_MAX_JSON_BYTES = 1_000_000
+_MAX_UPLOAD_BYTES = 25_000_000
+
+
+class NotJsonError(ValueError):
+    """a json route was sent a body that does not declare itself json"""
+
+
+class BodyTooLargeError(ValueError):
+    """a request body past its route's cap, refused before it is read"""
+
+
 def _version() -> str:
     try:
         return version("smortboard")
@@ -159,8 +184,15 @@ def _make_handler(
     orchestrator: OrchestratorRegistry,
     scheduler: SchedulerRegistry,
     token_path: str | None = None,
+    api_key: str | None = None,
+    bound_host: str = "127.0.0.1",
 ) -> type[BaseHTTPRequestHandler]:
     """closes over the store instance; http.server wants a class, not an instance"""
+
+    allowed_hosts = access.allowed_hostnames(bound_host)
+    # image builds run off the request thread; repo_id -> {"state", "log", ...}, newest per repo
+    image_builds: dict[str, dict] = {}
+    image_builds_lock = threading.Lock()
 
     # the message ids each board's mission control already accepted, newest last - a retried or
     # second-tab send of the same message is answered as done instead of starting another turn
@@ -169,6 +201,7 @@ def _make_handler(
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "smortboard/0.1"
+        timeout = _REQUEST_TIMEOUT_S
 
         def log_message(self, fmt: str, *args: object) -> None:  # noqa: A003
             pass  # keep test output quiet; nothing here is a diagnostic signal
@@ -187,6 +220,10 @@ def _make_handler(
 
         def _dispatch(self, method: str) -> None:
             path = self.path.split("?", 1)[0]
+            refusal = self._refusal(method, path)
+            if refusal:
+                self._send_json(*refusal)
+                return
             try:
                 for pattern, route_method in _ROUTES:
                     if route_method != method:
@@ -207,9 +244,48 @@ def _make_handler(
                 self._send_json(500, {"error": f"store error: {exc}"})
             except MultipartError as exc:
                 self._send_json(400, {"error": str(exc)})
+            except NotJsonError as exc:
+                self._send_json(415, {"error": str(exc)})
+            except BodyTooLargeError as exc:
+                self._send_json(413, {"error": str(exc)})
             except (KeyError, TypeError, ValueError) as exc:
                 # malformed json body or a request missing a required field
                 self._send_json(400, {"error": str(exc)})
+
+        def _refusal(self, method: str, path: str) -> tuple[int, dict] | None:
+            """the status and body to refuse this request with, or None to let it through"""
+            headers = self.headers
+            if not access.host_ok(headers.get("Host"), allowed_hosts):
+                return 403, {"error": "unexpected Host header"}
+            origin, fetch_site = headers.get("Origin"), headers.get("Sec-Fetch-Site")
+            if not access.origin_ok(method, origin, fetch_site, allowed_hosts):
+                return 403, {"error": "cross-origin request refused"}
+            if api_key is None or not path.startswith("/api/"):
+                return None
+            presented = headers.get(access.KEY_HEADER) or access.cookie_value(
+                headers.get("Cookie"), self._cookie_name()
+            )
+            if not access.key_ok(presented, api_key):
+                return 401, {"error": "missing api key - open the link smortboard printed on start"}
+            return None
+
+        def _cookie_name(self) -> str:
+            return access.cookie_name(self.server.server_address[1])
+
+        def _handle_key_exchange(self) -> bool:
+            """swaps ?key= on the board page for a cookie and a clean url, so the key leaves the
+            address bar and history; True when a redirect was sent"""
+            presented = self._query().get(access.KEY_QUERY, [None])[0]
+            if api_key is None or not access.key_ok(presented, api_key):
+                return False
+            self.send_response(303)
+            self.send_header(
+                "Set-Cookie", f"{self._cookie_name()}={api_key}; Path=/; HttpOnly; SameSite=Strict"
+            )
+            self.send_header("Location", "/ui/index.html")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return True
 
         def _handle(self, method: str, path: str, **params: str) -> None:
             if path == "/health":
@@ -235,6 +311,11 @@ def _make_handler(
                 self._handle_patch_repo(params["repo_id"])
             elif "repo_id" in params and path.endswith("/image/build") and method == "POST":
                 self._handle_build_repo_image(params["repo_id"])
+            elif "repo_id" in params and path.endswith("/image/build") and method == "GET":
+                store.get_repo(params["repo_id"])  # raises NotFoundError on a bad id
+                with image_builds_lock:
+                    build = image_builds.get(params["repo_id"], {"state": "none"})
+                self._send_json(200, build)
             elif "lease_id" in params and path.startswith("/api/landing/") and method == "DELETE":
                 self._send_json(200, store.release_landing(params["lease_id"]))
             elif "lease_id" in params and method == "DELETE":
@@ -373,6 +454,8 @@ def _make_handler(
                 since = float(self._query().get("since", ["0"])[0])
                 self._send_json(200, board_digest(store, params["board_id"], since))
             elif "name" in params:
+                if params["name"] == "index.html" and self._handle_key_exchange():
+                    return
                 self._handle_asset(params["name"])
             else:
                 self._send_json(404, {"error": f"no route for {method} {path}"})
@@ -428,7 +511,7 @@ def _make_handler(
             self._send_json(200, card)
 
         def _handle_answer(self, card_id: str) -> None:
-            """the attention inbox's reply: stores it as fabian's comment and resumes the card.
+            """the attention inbox's reply: stores it as the operator's comment and resumes the card.
 
             404 for an unknown card (get_card inside answer_card raises), 409 for a card already
             running or blocked on something an answer cannot fix - see attention.answer_card.
@@ -657,18 +740,22 @@ def _make_handler(
             self._send_json(200, repo)
 
         def _handle_build_repo_image(self, repo_id: str) -> None:
-            """builds this repo's own test image and sets it as the repo's image on success.
-
-            404 for an unknown repo; 400 with the build's log tail on a failed or unrecognised
-            build - the operator reads the reason in the panel, not a terminal.
+            """starts building this repo's own test image in the background; GET on the same
+            route reports it. 404 for an unknown repo, 409 while a build for it is running, 202
+            once started. a finished build sets the repo's image, a failed one leaves its log tail.
             """
             repo = store.get_repo(repo_id)
-            result = build_repo_image(repo)
-            if not result.ok:
-                self._send_json(400, {"error": result.log, "stack": result.stack})
-                return
-            updated = store.set_repo_image(repo_id, result.tag)
-            self._send_json(200, {**updated, "build_log": result.log})
+            with image_builds_lock:
+                if image_builds.get(repo_id, {}).get("state") == "building":
+                    self._send_json(409, {"error": "an image build for this repo is running"})
+                    return
+                image_builds[repo_id] = {"state": "building"}
+            threading.Thread(
+                target=_build_image_in_background,
+                args=(store.path, repo, image_builds, image_builds_lock),
+                daemon=True,
+            ).start()
+            self._send_json(202, {"state": "building"})
 
         def _handle_patch_task(self, task_id: str) -> None:
             # only "done" is exposed here - add_task/remove_task stay store-only, for a human
@@ -713,7 +800,7 @@ def _make_handler(
                 return
             # stored here, synchronously, so the 202 body already carries it - the thread that
             # runs the turn is told not to store it again
-            store.add_orchestrator_message(board_id, "fabian", message)
+            store.add_orchestrator_message(board_id, AUTHOR_KEY, message)
             if client_id:
                 accepted_messages[board_id].append(client_id)
             orchestrator.start(board_id, message, message_already_stored=True, mode=mode)
@@ -788,7 +875,7 @@ def _make_handler(
                     )
 
             for comment in store.list_comments(card_id):
-                author = "fabian" if comment["author"] == "fabian" else "board"
+                author = AUTHOR_KEY if comment["author"] == AUTHOR_KEY else "board"
                 timeline.append(
                     (comment["created_at"], {"author": author, "body": comment["body"]})
                 )
@@ -819,14 +906,14 @@ def _make_handler(
             if not message:
                 self._send_json(400, {"error": "message must not be empty"})
                 return
-            comment = store.add_comment(card_id, author="fabian", body=message)
+            comment = store.add_comment(card_id, author=AUTHOR_KEY, body=message)
             # queue AFTER the comment is durable: a live delivery that then crashed before the
             # comment was ever saved would leave nothing for the card's next run to fall back on
             delivered_live = runs.queue_note(card_id, comment)
             self._send_json(
                 201,
                 {
-                    "author": "fabian",
+                    "author": AUTHOR_KEY,
                     "body": comment["body"],
                     "created_at": comment["created_at"],
                     "delivery": "live" if delivered_live else "next_run",
@@ -881,7 +968,7 @@ def _make_handler(
             if "multipart/form-data" not in content_type:
                 self._send_json(400, {"error": "expected multipart/form-data"})
                 return
-            length = int(self.headers.get("Content-Length", 0))
+            length = self._body_length(_MAX_UPLOAD_BYTES)
             body = self.rfile.read(length)
             boundary = parse_boundary(content_type)
             uploaded = parse_first_file(body, boundary)
@@ -899,10 +986,18 @@ def _make_handler(
                 self._send_json(404, {"error": f"no attachment {attachment_id} on card {card_id}"})
                 return
             blob = store.get_attachment_blob(attachment_id)
+            media_type = meta["media_type"]
+            if not _MEDIA_TYPE.match(media_type or ""):
+                media_type = "application/octet-stream"
             self.send_response(200)
-            self.send_header("Content-Type", meta["media_type"])
+            self.send_header("Content-Type", media_type)
             self.send_header("Content-Length", str(len(blob)))
             self.send_header("Cache-Control", "no-store")
+            # an uploaded html file must download, never render same-origin with the api behind it
+            filename = quote(meta["filename"] or "attachment", safe="")
+            self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{filename}")
+            self.send_header("Content-Security-Policy", "sandbox")
+            self._send_hardening_headers()
             self.end_headers()
             self.wfile.write(blob)
 
@@ -916,13 +1011,30 @@ def _make_handler(
             self.send_header("Content-Type", content_type_for(name))
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", _CSP)
+            self._send_hardening_headers()
             self.end_headers()
             self.wfile.write(data)
 
-        def _read_json(self) -> dict:
+        def _send_hardening_headers(self) -> None:
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+
+        def _body_length(self, cap: int) -> int:
             length = int(self.headers.get("Content-Length", 0))
+            if length < 0:
+                raise ValueError("Content-Length must not be negative")
+            if length > cap:
+                raise BodyTooLargeError(f"request body over {cap} bytes")
+            return length
+
+        def _read_json(self) -> dict:
+            length = self._body_length(_MAX_JSON_BYTES)
             if length == 0:
                 return {}
+            # a cross-site form can only send text/plain or form bodies, never application/json
+            if self.headers.get_content_type() != "application/json":
+                raise NotJsonError("expected Content-Type: application/json")
             return json.loads(self.rfile.read(length))
 
         def _send_json(self, status: int, payload: object) -> None:
@@ -930,6 +1042,7 @@ def _make_handler(
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self._send_hardening_headers()
             self.end_headers()
             self.wfile.write(body)
 
@@ -941,12 +1054,33 @@ def _make_handler(
     return Handler
 
 
+def _build_image_in_background(
+    db_path: Path, repo: dict, builds: dict[str, dict], lock: threading.Lock
+) -> None:
+    """runs one image build on its own thread with its own store connection"""
+    try:
+        result = build_repo_image(repo)
+    except (OSError, ValueError) as exc:
+        outcome = {"state": "failed", "log": str(exc)}
+    else:
+        if result.ok:
+            with Store(db_path) as build_store:
+                build_store.set_repo_image(repo["id"], result.tag)
+            outcome = {"state": "built", "image": result.tag, "log": result.log}
+        else:
+            outcome = {"state": "failed", "log": result.log, "stack": result.stack}
+    with lock:
+        builds[repo["id"]] = outcome
+
+
 def build_server(
     store: Store,
     port: int,
     host: str = "127.0.0.1",
     token_path: str | None = None,
+    api_key: str | None = None,
 ) -> HTTPServer:
+    """api_key None skips the key check (tests); the cli always passes one"""
     # a new board has no runs, so any card still mid-run lost the last board process under it
     recovered = recover_orphaned_runs(store)
     # one-time: a CRASH card blocked before the classifier learned session-limit/api-unreachable
@@ -959,7 +1093,14 @@ def build_server(
     orchestrator = OrchestratorRegistry(store.path, token_path=token_path)
     scheduler = SchedulerRegistry(store.path, runs)
     handler_cls = _make_handler(
-        store, runs, Readiness(token_path), orchestrator, scheduler, token_path=token_path
+        store,
+        runs,
+        Readiness(token_path),
+        orchestrator,
+        scheduler,
+        token_path=token_path,
+        api_key=api_key,
+        bound_host=host,
     )
     server = HTTPServer((host, port), handler_cls)
     server.runs = runs  # the cli and the tests reach the registry through the server
