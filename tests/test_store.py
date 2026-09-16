@@ -702,3 +702,18 @@ def test_card_model_that_could_read_as_a_claude_flag_is_refused(store, model):
     _, card = _make_board_and_card(store, model="claude-opus-5[1m]")
     with pytest.raises(ValueError):
         store.update_card(card["id"], model=model)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["worker_budget_usd", "reviewer_budget_usd", "orchestrator_budget_usd", "fold_budget_usd"],
+)
+def test_a_spend_cap_is_a_positive_dollar_amount_or_unset(store, key):
+    assert store.spend_cap(key, 4.0) == 4.0
+    store.set_setting(key, "2.5")
+    assert store.spend_cap(key, 4.0) == 2.5
+    for bad in (0, -1, "free", True):
+        with pytest.raises(ValueError):
+            store.set_setting(key, bad)
+    store.set_setting(key, None)
+    assert store.spend_cap(key, 4.0) == 4.0

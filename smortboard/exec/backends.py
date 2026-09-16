@@ -24,6 +24,7 @@ from typing import Any, Protocol
 
 from smortboard.exec.leases import write_lease_settings
 from smortboard.exec.runner import (
+    DEFAULT_CARD_BUDGET_USD,
     HEADLESS_RULES,
     SYSTEM_PROMPT,
     ProcessHandle,
@@ -429,6 +430,11 @@ class ContainerBackend:
             inner_settings,
             model=model,
             allowed_tools=allowed_tools_for_repo(repo),
+            budget_usd=(
+                store.spend_cap("worker_budget_usd", DEFAULT_CARD_BUDGET_USD)
+                if store is not None
+                else DEFAULT_CARD_BUDGET_USD
+            ),
             system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT)
             + HEADLESS_RULES
             + note_marker_paragraph(note_marker or new_note_marker()),

@@ -312,8 +312,10 @@ A lease is the list of files a card may change, as gitignore-style globs relativ
 
 ### Spend
 
-- Each worker run is capped at $5 (`--max-budget-usd`), and reviewer findings go back to the worker
-  at most twice.
+- Every run has a dollar cap (`--max-budget-usd`), set per role in settings (`o`): a card run
+  $5.00, a review $1.50, a mission control turn $1.00 and a fold $2.00 unless you change them.
+  Reviewer findings go back to the worker at most twice. A mission control turn that runs out says
+  so, rather than reporting a crash.
 - A board can carry a **daily budget** in dollars (settings, `o`). Once today's spend reaches it, no
   new run starts on that board; running cards finish.
 - On a usage limit the board **waits for the reset**. Switching to another credential profile only
@@ -423,8 +425,10 @@ memory limit (Settings → Resources) and lower `max_parallel` if it is tight.
 
 Board-wide settings (`PATCH /api/settings`, most also in the settings panel `o`): `findings_route`,
 `orchestrator_model`, `worker_model`, `reviewer_model`, `max_parallel`, `resume_briefing`,
-`gate_timeout_seconds`, `auto_switch_profiles`, `mall_cam_interval_seconds`, and
-`mission_control_read_paths` (absolute paths mission control may also read). Per board
+`gate_timeout_seconds`, `auto_switch_profiles`, `mall_cam_interval_seconds`, the per-run caps
+`worker_budget_usd`, `reviewer_budget_usd`, `orchestrator_budget_usd` and `fold_budget_usd`, and
+`mission_control_read_paths` (absolute paths mission control may also read; `browse` in the
+settings panel picks them from a folder list). Per board
 (`PATCH /api/boards/<id>`): its own parallel cap and `daily_budget_usd`.
 
 ### Keep main for people

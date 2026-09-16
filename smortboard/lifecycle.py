@@ -57,7 +57,12 @@ from smortboard.review.merge_request import (
     open_merge_request,
 )
 from smortboard.review.mergeable import sync_with_base
-from smortboard.review.reviewer import ReviewResult, ReviewUnavailable, run_review
+from smortboard.review.reviewer import (
+    DEFAULT_REVIEW_BUDGET_USD,
+    ReviewResult,
+    ReviewUnavailable,
+    run_review,
+)
 from smortboard.review.screenshot import diff_touches_ui, take_screenshot
 from smortboard.store.api import Store
 
@@ -642,6 +647,7 @@ def run_card_lifecycle(
                 repo=repo,
                 token_path=token_path,
                 model=reviewer_model,
+                budget_usd=store.spend_cap("reviewer_budget_usd", DEFAULT_REVIEW_BUDGET_USD),
                 on_process=on_process,
             )
         except ReviewUnavailable as exc:

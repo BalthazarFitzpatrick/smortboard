@@ -54,6 +54,18 @@ _SETTING_KEYS = (
     "gate_timeout_seconds",
     "auto_switch_profiles",
     "mall_cam_interval_seconds",
+    "worker_budget_usd",
+    "reviewer_budget_usd",
+    "orchestrator_budget_usd",
+    "fold_budget_usd",
+)
+
+# per-run dollar caps an operator may set; unset falls back to each role's own default
+SPEND_CAP_KEYS = (
+    "worker_budget_usd",
+    "reviewer_budget_usd",
+    "orchestrator_budget_usd",
+    "fold_budget_usd",
 )
 
 # writable settings that are not plain strings. mission_control_read_paths is a json list of
@@ -626,6 +638,11 @@ class Store:
         settings["mission_control_read_paths"] = self.mission_control_read_paths()
         return settings
 
+    def spend_cap(self, key: str, default: float) -> float:
+        """a per-run dollar cap from settings, or the role's default when unset"""
+        raw = self.get_settings().get(key)
+        return float(raw) if raw is not None else default
+
     def set_setting(self, key: str, value: Any) -> dict[str, Any]:
         """sets a board-wide value, or clears it with None (or an empty list, for the read paths)"""
         if key not in _SETTING_KEYS and key not in _EXTRA_SETTING_KEYS:
@@ -636,6 +653,8 @@ class Store:
             _check_positive_int("max_parallel", value)
         if key == "mall_cam_interval_seconds":
             _check_positive_int("mall_cam_interval_seconds", value)
+        if key in SPEND_CAP_KEYS:
+            _check_positive_number(key, value)
         stored = value
         # a list is the panel's whole-list replace; a string arrives pre-serialized (e.g. from a
         # card agent) and is parsed back to a list first - either way it goes through
