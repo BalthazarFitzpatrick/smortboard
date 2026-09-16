@@ -581,3 +581,22 @@ def test_an_existing_database_migrates_to_merge_conflict(tmp_path):
 def test_create_card_refuses_a_glob_the_guard_could_never_match(store, glob):
     with pytest.raises(ValueError):
         _make_board_and_card(store, leases=[glob])
+
+
+@pytest.mark.parametrize("image", ["--privileged", "-v/:/host", "img name", "", 7])
+def test_repo_image_that_could_read_as_a_docker_flag_is_refused(store, image):
+    board = store.create_board("b")
+    with pytest.raises(ValueError):
+        store.create_repo(board["id"], "r", "/tmp/r", "main", image=image)
+    repo = store.create_repo(board["id"], "r", "/tmp/r", "main", image="ghcr.io/o/card:1.2")
+    with pytest.raises(ValueError):
+        store.set_repo_image(repo["id"], image)
+
+
+@pytest.mark.parametrize("model", ["--dangerously-skip-permissions", "x; y", "a b", ""])
+def test_card_model_that_could_read_as_a_claude_flag_is_refused(store, model):
+    with pytest.raises(ValueError):
+        _make_board_and_card(store, model=model)
+    _, card = _make_board_and_card(store, model="claude-opus-5[1m]")
+    with pytest.raises(ValueError):
+        store.update_card(card["id"], model=model)
