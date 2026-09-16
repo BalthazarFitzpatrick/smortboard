@@ -1,0 +1,55 @@
+# this is the linux runner - it tests the oldest python smortboard claims to
+# support (pyproject requires-python), not just whatever is on a dev machine
+
+name: ci
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # fail-fast off: an interesting break on one python version should not
+      # cancel a sibling job that is still running fine
+      fail-fast: false
+      matrix:
+        python: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: sync
+        run: uv sync --dev --python ${{ matrix.python }}
+
+      # some js tests read ui_base from a sibling ../smortui checkout; point it at the pinned install
+      - name: link ui_base assets
+        run: |
+          assets=$(uv run python -c "import ui_base, pathlib; print(pathlib.Path(ui_base.__file__).parent / 'assets')")
+          mkdir -p ../smortui/ui_base
+          ln -sfn "$assets" ../smortui/ui_base/assets
+
+      - name: install the playwright browser
+        run: uv run playwright install --with-deps chromium
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+      - name: pytest
+        run: uv run pytest -q
