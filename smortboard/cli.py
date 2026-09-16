@@ -19,6 +19,9 @@ from smortboard.store import Store
 
 _APP_NAME = "smortboard"
 _DEFAULT_PORT = 8000
+# the demo's own default, so `smortboard --demo` never collides with the board already serving on
+# 8000 - an explicit --port or SMORTBOARD_PORT still wins
+_DEMO_PORT = 8001
 # loopback only: the api has no auth and can start runs that spend the card token
 _DEFAULT_HOST = "127.0.0.1"
 
@@ -50,13 +53,15 @@ def _resolve_host(cli_value: str | None) -> str:
     return os.environ.get("SMORTBOARD_HOST") or _DEFAULT_HOST
 
 
-def _resolve_port(cli_value: int | None) -> int:
+def _resolve_port(cli_value: int | None, demo: bool = False) -> int:
     if cli_value is not None:
         return cli_value
     env_value = os.environ.get("SMORTBOARD_PORT")
     if env_value is not None:
         return int(env_value)
-    return _DEFAULT_PORT
+    # a demo beside the operator's own board, not on top of it: the real one owns the default port,
+    # so --demo steps one aside rather than failing to bind or, worse, looking like the real board
+    return _DEMO_PORT if demo else _DEFAULT_PORT
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -89,7 +94,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="serve a throwaway board of invented projects (ignores --db and SMORTBOARD_DB)",
+        help=f"serve a throwaway board of invented projects on port {_DEMO_PORT} "
+        "(ignores --db and SMORTBOARD_DB)",
     )
     parser.add_argument(
         "--version",
@@ -106,7 +112,7 @@ def main(argv: list[str] | None = None) -> None:
     # --demo deliberately bypasses _resolve_db entirely: a demo must never be able to reach the
     # operator's own board, not through --db, not through SMORTBOARD_DB, not through the data dir
     db_path = make_demo_db() if args.demo else _resolve_db(args.db)
-    port = _resolve_port(args.port)
+    port = _resolve_port(args.port, demo=args.demo)
 
     with Store(db_path) as store:
         server = build_server(store, port, host=_resolve_host(args.host))

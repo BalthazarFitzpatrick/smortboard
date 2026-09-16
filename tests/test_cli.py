@@ -63,3 +63,15 @@ def test_ui_assets_reachable_from_installed_package():
     assert (ui_dir / "index.html").is_file()
     assert (ui_dir / "board.js").is_file()
     assert (ui_dir / "layout.css").is_file()
+
+
+def test_the_demo_serves_beside_the_real_board_not_on_top_of_it(monkeypatch):
+    """OPERATOR, 2026-09-16: "demo should go to port 8001 to not collide". The real board owns
+    8000; an explicit port or the env var still wins over both defaults.
+    """
+    monkeypatch.delenv("SMORTBOARD_PORT", raising=False)
+    assert _resolve_port(None, demo=True) == 8001
+    assert _resolve_port(None) == 8000
+    assert _resolve_port(8123, demo=True) == 8123
+    monkeypatch.setenv("SMORTBOARD_PORT", "9999")
+    assert _resolve_port(None, demo=True) == 9999

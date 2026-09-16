@@ -80,9 +80,10 @@ One command, no Docker, no token, no repo - a throwaway board of three invented 
 uv run smortboard --demo
 ```
 
-It seeds a fresh database in a temporary directory and serves that. Your own board is never
-opened: `--demo` ignores `--db` and `SMORTBOARD_DB` alike, and nothing it writes outlives the
-directory it was written into. Runs, gates and pull requests in it are seeded history, not live -
+It seeds a fresh database in a temporary directory and serves it on port 8001, so it stands beside
+the board already on 8000 rather than colliding with it. Your own board is never opened: `--demo`
+ignores `--db` and `SMORTBOARD_DB` alike, and nothing it writes outlives the directory it was
+written into. Runs, gates and pull requests in it are seeded history, not live -
 pressing `r` on a demo card would need Docker and a repo that exists.
 
 ---
