@@ -7,7 +7,7 @@ from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, quote, unquote
 
 from smortboard import profiles
 from smortboard.attention import (
@@ -144,6 +144,14 @@ _ROLE_DEFAULTS = {
     "worker": SYSTEM_PROMPT,
     "reviewer": REVIEW_PROMPT_HEADER,
 }
+
+
+# scripts and styles only from the board's own files: a markup sink an agent reaches stays inert
+_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
+    "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+)
+_MEDIA_TYPE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
 
 
 class NotJsonError(ValueError):
@@ -951,10 +959,18 @@ def _make_handler(
                 self._send_json(404, {"error": f"no attachment {attachment_id} on card {card_id}"})
                 return
             blob = store.get_attachment_blob(attachment_id)
+            media_type = meta["media_type"]
+            if not _MEDIA_TYPE.match(media_type or ""):
+                media_type = "application/octet-stream"
             self.send_response(200)
-            self.send_header("Content-Type", meta["media_type"])
+            self.send_header("Content-Type", media_type)
             self.send_header("Content-Length", str(len(blob)))
             self.send_header("Cache-Control", "no-store")
+            # an uploaded html file must download, never render same-origin with the api behind it
+            filename = quote(meta["filename"] or "attachment", safe="")
+            self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{filename}")
+            self.send_header("Content-Security-Policy", "sandbox")
+            self._send_hardening_headers()
             self.end_headers()
             self.wfile.write(blob)
 
@@ -968,8 +984,14 @@ def _make_handler(
             self.send_header("Content-Type", content_type_for(name))
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", _CSP)
+            self._send_hardening_headers()
             self.end_headers()
             self.wfile.write(data)
+
+        def _send_hardening_headers(self) -> None:
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
 
         def _read_json(self) -> dict:
             length = int(self.headers.get("Content-Length", 0))
@@ -985,6 +1007,7 @@ def _make_handler(
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self._send_hardening_headers()
             self.end_headers()
             self.wfile.write(body)
 

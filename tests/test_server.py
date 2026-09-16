@@ -293,6 +293,44 @@ def test_attachment_upload_and_download(running_server):
         assert resp.status == 200
         assert resp.headers["Content-Type"] == "text/plain"
         assert resp.read() == b"hello world"
+        # an attachment always downloads, so stored html never renders beside the api
+        assert resp.headers["Content-Disposition"] == "attachment; filename*=UTF-8''note.txt"
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["Content-Security-Policy"] == "sandbox"
+
+
+def test_attachment_with_odd_media_type_is_served_as_bytes(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "x"},
+    )
+    body = (
+        b"--b\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="x.html"\r\n'
+        b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+        b"<b>x</b>\r\n"
+        b"--b--\r\n"
+    )
+    req = urllib.request.Request(
+        f"{running_server}/api/cards/{card['id']}/attachments",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "multipart/form-data; boundary=b"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        attachment = json.loads(resp.read())
+    url = f"{running_server}/api/cards/{card['id']}/attachments/{attachment['id']}"
+    with urllib.request.urlopen(url) as resp:
+        assert resp.headers["Content-Type"] == "application/octet-stream"
+
+
+def test_board_page_carries_a_strict_csp(running_server):
+    with urllib.request.urlopen(f"{running_server}/ui/index.html") as resp:
+        csp = resp.headers["Content-Security-Policy"]
+    assert "script-src 'self'" in csp
+    assert "unsafe-inline" not in csp
 
 
 def test_asset_traversal_is_404(running_server):
