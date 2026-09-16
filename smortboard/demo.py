@@ -31,7 +31,7 @@ from smortboard.store.api import Store
 
 # ---- the viewport the column regimes are stated at ---------------------------------------------
 #
-# the three regimes (ui/columns.js computeColumnFit) are a measured choice, so "this column
+# the three regimes (ui_base pile.js's computeColumnFit) are a measured choice, so "this column
 # demonstrates regime 3" is only true at a stated screen. these are the numbers measured in a real
 # 1600x1000 headless chromium against this very dataset - the width of one of the six board
 # columns, and the room availableColumnHeight leaves under its label. tests/test_demo_regimes.py
