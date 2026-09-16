@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" width="1200" height="600" font-family='"SF Mono", Menlo, monospace'>
+<rect x="0" y="0" width="1200" height="600" fill="#f3efe4"/>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a8470"/></marker>
+<marker id="arrow-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7d4038"/></marker>
+<marker id="arrow-fix" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a6a17"/></marker>
+<!-- reviewer findings on the fix route return to the worker, at most twice -->
+<g id="fix-loop">
+<path d="M 606.0 192 Q 434.0 90 262.0 192" fill="none" stroke="#8a6a17" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-fix)"/>
+<text x="434.0" y="80" font-size="13" font-weight="normal" fill="#8a6a17" text-anchor="middle" xml:space="preserve">findings on &quot;fix&quot; go back to the worker, at most twice</text>
+</g>
+<!-- the six phases a card moves through -->
+<g id="stages">
+<line x1="90" y1="240" x2="950" y2="240" stroke="#5c7a1f" stroke-width="3"/>
+<circle cx="90.0" cy="240" r="8" fill="#5c7a1f" />
+<text x="90.0" y="208" font-size="15" font-weight="bold" fill="#1c1a14" text-anchor="middle" xml:space="preserve">preparing</text>
+<text x="90.0" y="274" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="middle" xml:space="preserve">worktree, guards</text>
+<circle cx="262.0" cy="240" r="8" fill="#5c7a1f" />
+<text x="262.0" y="208" font-size="15" font-weight="bold" fill="#1c1a14" text-anchor="middle" xml:space="preserve">running</text>
+<text x="262.0" y="274" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="middle" xml:space="preserve">agent, own container</text>
+<circle cx="434.0" cy="240" r="8" fill="#5c7a1f" />
+<text x="434.0" y="208" font-size="15" font-weight="bold" fill="#1c1a14" text-anchor="middle" xml:space="preserve">testing</text>
+<text x="434.0" y="274" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="middle" xml:space="preserve">--network none</text>
+<circle cx="606.0" cy="240" r="8" fill="#5c7a1f" />
+<text x="606.0" y="208" font-size="15" font-weight="bold" fill="#1c1a14" text-anchor="middle" xml:space="preserve">reviewing</text>
+<text x="606.0" y="274" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="middle" xml:space="preserve">read-only verdict</text>
+<circle cx="778.0" cy="240" r="8" fill="#5c7a1f" />
+<text x="778.0" y="208" font-size="15" font-weight="bold" fill="#1c1a14" text-anchor="middle" xml:space="preserve">fixing</text>
+<text x="778.0" y="274" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="middle" xml:space="preserve">findings, at most 2x</text>
+<circle cx="950.0" cy="240" r="8" fill="#5c7a1f" />
+<text x="950.0" y="208" font-size="15" font-weight="bold" fill="#1c1a14" text-anchor="middle" xml:space="preserve">opening</text>
+<text x="950.0" y="274" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="middle" xml:space="preserve">push, gh pr create</text>
+</g>
+<!-- opening ends differently depending on the base branch -->
+<g id="branch">
+<line x1="950.0" y1="240" x2="950.0" y2="330" stroke="#8a8470" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="715.0" y="340" width="220" height="78" fill="#e9e4d5" stroke="#b7b0a0" stroke-width="2"/>
+<text x="729.0" y="366" font-size="14" font-weight="bold" fill="#1c1a14" text-anchor="start" xml:space="preserve">opened</text>
+<text x="729.0" y="386" font-size="12" font-weight="normal" fill="#6b6558" text-anchor="start" xml:space="preserve">base is protected (main):</text>
+<text x="729.0" y="404" font-size="12" font-weight="normal" fill="#6b6558" text-anchor="start" xml:space="preserve">PR stays open, you merge</text>
+<line x1="950.0" y1="330" x2="915.0" y2="340" stroke="#8a8470" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="965.0" y="340" width="220" height="78" fill="#e9e4d5" stroke="#b7b0a0" stroke-width="2"/>
+<text x="979.0" y="366" font-size="14" font-weight="bold" fill="#1c1a14" text-anchor="start" xml:space="preserve">landing</text>
+<text x="979.0" y="386" font-size="12" font-weight="normal" fill="#6b6558" text-anchor="start" xml:space="preserve">non-main base: board takes</text>
+<text x="979.0" y="404" font-size="12" font-weight="normal" fill="#6b6558" text-anchor="start" xml:space="preserve">the landing lock, merges itself</text>
+<line x1="950.0" y1="330" x2="985.0" y2="340" stroke="#8a8470" stroke-width="2" marker-end="url(#arrow)"/>
+</g>
+<!-- a card that never gets a run at all -->
+<g id="refused">
+<text x="90" y="340" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="start" xml:space="preserve">refused: no repo,</text>
+<text x="90" y="358" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="start" xml:space="preserve">runtime, or token</text>
+</g>
+<!-- blocks wait in the inbox, still in their column -->
+<g id="blocks">
+<rect x="60" y="460" width="1080" height="78" fill="none" stroke="#b7b0a0" stroke-width="2" stroke-dasharray="2 4"/>
+<text x="600" y="490" font-size="14" font-weight="bold" fill="#1c1a14" text-anchor="middle" xml:space="preserve">blocked: still in its column, reason code set, waiting in the inbox</text>
+<text x="600" y="514" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="middle" xml:space="preserve">answer it in the inbox and the card resumes in its existing worktree</text>
+<line x1="262.0" y1="254" x2="262.0" y2="452" stroke="#7d4038" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow-warn)"/>
+<text x="274.0" y="294" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">AGENT_QUESTION</text>
+<text x="274.0" y="310" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">USAGE_LIMIT</text>
+<text x="274.0" y="326" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">CRASH</text>
+<text x="274.0" y="342" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">LEASE_CONFLICT</text>
+<line x1="434.0" y1="254" x2="434.0" y2="452" stroke="#7d4038" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow-warn)"/>
+<text x="446.0" y="294" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">TESTS_FAILED</text>
+<line x1="606.0" y1="254" x2="606.0" y2="452" stroke="#7d4038" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow-warn)"/>
+<text x="618.0" y="294" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">REVIEW_REJECTED</text>
+</g>
+</svg>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 220" width="1200" height="220" font-family='"SF Mono", Menlo, monospace'>
+<rect x="0" y="0" width="1200" height="220" fill="#17171b"/>
+<!-- one result's spend, per model -->
+<g id="bars">
+<text x="50" y="53" font-size="15" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">claude-sonnet-5</text>
+<rect x="270" y="33" width="700.0" height="24" fill="#c7ed5f" stroke="none" stroke-width="2"/>
+<text x="986.0" y="53" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">$0.2476</text>
+<text x="1062.0" y="53" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">· 822 out</text>
+<text x="50" y="133" font-size="15" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">claude-haiku-4-5</text>
+<line x1="270" y1="113" x2="270" y2="137" stroke="#4a4a52" stroke-width="3"/>
+<text x="286" y="133" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">$0.0009</text>
+<text x="362.0" y="133" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">· 17 out</text>
+</g>
+</svg>
