@@ -332,8 +332,9 @@ function buildInboxPile(cards, side) {
   el.dataset.pile = 'true';
   el.dataset.side = side;
   const drawn = pileByRecency(cards, side);
+  const width = ib.listEl?.getBoundingClientRect?.().width || INBOX_PILE_TILT_WIDTH;
   for (let i = drawn.length - 1; i >= 0; i--) {
-    el.appendChild(buildInboxPileLayer(drawn[i], i === 0));
+    el.appendChild(buildInboxPileLayer(drawn[i], i === 0, width));
   }
   const count = document.createElement('div');
   count.className = 'card-pile-count';
@@ -345,12 +346,17 @@ function buildInboxPile(cards, side) {
   return el;
 }
 
-function buildInboxPileLayer(row, isTop) {
+// the jitter's angle is tuned for a board card about 230px wide; a landscape inbox card is several
+// times wider, so the same angle lifts its far corners several times higher - scale it down
+const INBOX_PILE_TILT_WIDTH = 230;
+
+function buildInboxPileLayer(row, isTop, width = INBOX_PILE_TILT_WIDTH) {
   const {dx, dy, rot} = pileLayerJitter(row.card_id);
+  const tilt = rot * Math.min(1, INBOX_PILE_TILT_WIDTH / Math.max(width, 1));
   const layer = document.createElement('div');
   layer.className = isTop ? 'card-pile-layer card-pile-top' : 'card-pile-layer';
   layer.dataset.pileCard = row.card_id;
-  layer.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) rotate(${rot.toFixed(2)}deg)`;
+  layer.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) rotate(${tilt.toFixed(2)}deg)`;
   layer.style.borderColor = 'var(--fill-attention)';
   if (!isTop) return layer;
   const title = document.createElement('div');
