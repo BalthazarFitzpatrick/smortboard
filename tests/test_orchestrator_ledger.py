@@ -96,3 +96,42 @@ def test_a_card_without_a_task_is_not_linked(board):
     run_orchestrator_turn(store, board_id, "free card", runner=_runner([_card(None, "free")]))
     run_orchestrator_turn(store, board_id, "another", runner=_runner([_card(None, "free two")]))
     assert len(store.list_cards(board_id)) == 2
+
+
+def test_an_untracked_ledger_symlink_into_a_private_repo_is_read_from_disk(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("x")
+    (repo / ".gitignore").write_text("TASKS.jsonl\n")
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "a@b.c")
+    _git(repo, "config", "user.name", "a")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "first")
+    private = tmp_path / "private-ledgers" / "repo"
+    private.mkdir(parents=True)
+    (private / "TASKS.jsonl").write_text("".join(json.dumps(t) + "\n" for t in TASKS))
+    (repo / "TASKS.jsonl").symlink_to("../private-ledgers/repo/TASKS.jsonl")
+
+    store = Store(tmp_path / "board.db")
+    board_id = store.create_board("dev")["id"]
+    store.create_repo(board_id, name="repo", path=str(repo), default_branch="main")
+    snapshot_repo = build_board_snapshot(store, board_id)["repos"][0]
+    store.close()
+    assert [t["id"] for t in snapshot_repo["open_tasks"]] == ["1", "slug"]
+
+
+def test_a_repo_with_no_ledger_has_no_open_tasks(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("x")
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "a@b.c")
+    _git(repo, "config", "user.name", "a")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "first")
+    store = Store(tmp_path / "board.db")
+    board_id = store.create_board("dev")["id"]
+    store.create_repo(board_id, name="repo", path=str(repo), default_branch="main")
+    assert build_board_snapshot(store, board_id)["repos"][0]["open_tasks"] == []
+    store.close()
