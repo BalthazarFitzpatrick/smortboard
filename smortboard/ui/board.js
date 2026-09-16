@@ -227,7 +227,10 @@ function reportNotReady(missing) {
 
 async function runFocusedCard(cardId = focusedCardId()) {
   if (!cardId) return;
+  openActionConfirm('run this card?', 'run it', 'cancel', () => doRunFocusedCard(cardId));
+}
 
+async function doRunFocusedCard(cardId) {
   const runtime = await api('/api/runtime');
   if (!runtime.ready) { reportNotReady(runtime.missing); return; }
 
@@ -391,9 +394,14 @@ function slideFrom(strip, from) {
   }));
 }
 
-async function acceptOrRejectCard(action) {
+function acceptOrRejectCard(action) {
   const cardId = actionableCardId();
   if (!cardId) return;
+  const verb = action === 'accept' ? 'accept' : 'reject';
+  openActionConfirm(`${verb} this card?`, verb, 'cancel', () => doAcceptOrRejectCard(action, cardId));
+}
+
+async function doAcceptOrRejectCard(action, cardId) {
   // CLOSE FIRST, THEN MOVE. deciding from inside an open card used to slide the strip into its new
   // column behind a panel still standing over it
   if (openCard) openCard.expander.close();

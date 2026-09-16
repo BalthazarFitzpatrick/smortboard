@@ -27,9 +27,11 @@ STATUS_ORDER.forEach(status => {
 document.body.appendChild(boardBar);
 document.body.appendChild(bucketRow);
 
+class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; } close() {} }
+
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
-const mod = new Function(`${src}
-;return {STATUSES, COLUMNS, columnFor, BINDINGS, renderBuckets, renderCardStrip, cardClasses, acceptOrRejectCard, slideFrom};`)();
+const mod = new Function('Menu', `${src}
+;return {STATUSES, COLUMNS, columnFor, BINDINGS, renderBuckets, renderCardStrip, cardClasses, doAcceptOrRejectCard, slideFrom};`)(SpyMenu);
 
 // ---- five status buckets, matching the contract's kanban columns exactly
 assert.deepEqual(mod.STATUSES, STATUS_ORDER, 'board.js should declare exactly the five kanban statuses');
@@ -90,7 +92,7 @@ assert.equal(backdrops().length, 0, 'space should close the open card, next to e
 press('Space');
 assert.equal(backdrops().length, 1, 'space on a closed card should still open it');
 strip.focus();
-mod.acceptOrRejectCard('accept'); // the fetch never resolves here - the close must not wait for it
+mod.doAcceptOrRejectCard('accept', 'c0'); // the fetch never resolves here - the close must not wait for it
 assert.equal(backdrops().length, 0, 'y should close the open card before it moves');
 
 // ---- the moved strip starts where the old one stood, then is released into its column
