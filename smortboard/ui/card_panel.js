@@ -4,6 +4,38 @@
 // back into board.js globals (openCard, currentBoardId, api, showRun, actionableCardId,
 // returnToBoardBar, onBoardEnter, escapeHtml) the same way every other split file does.
 
+// ---- one confirm shape for every "starts or lands work" action -------------------------------
+// same two-item menu openDeleteConfirm/openStopConfirm already use, generalised so every shortcut
+// that spends money or moves a card gets the same gate. y or enter confirms without touching the
+// mouse; escape (Menu's own handler) cancels - neither key ever reaches onConfirm on its own.
+function openActionConfirm(title, confirmLabel, cancelLabel, onConfirm, onDismiss) {
+  const menu = new Menu({
+    title,
+    sections: [{
+      kind: 'list',
+      items: [
+        {id: 'confirm', label: confirmLabel},
+        {id: 'cancel', label: cancelLabel},
+      ],
+      onPick: item => {
+        menu.close();
+        if (item.id === 'confirm') onConfirm();
+      },
+    }],
+    onDismiss,
+  });
+  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
+  menu.el?.addEventListener('keydown', evt => {
+    if (evt.key !== 'y' && evt.key !== 'Enter') return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    menu.close();
+    onConfirm();
+  });
+  return menu;
+}
+
 // ---- PR references as real links, wherever a card or a chat line shows one ------------------
 // display only: this never touches card state, it only decides how a pr_url (or, once a card
 // carries its own repo_url, a bare pr number) turns into an <a> instead of dead text. lives here
@@ -423,9 +455,20 @@ function modelLabel(model) {
 // steps back to the default, so the key always lands somewhere the next press can leave
 async function cycleCardModel(cardId = actionableCardId()) {
   if (!cardId) return;
+  let next;
   try {
     const card = await api(`/api/cards/${cardId}`);
-    const next = CARD_MODELS[(CARD_MODELS.indexOf(card.model ?? null) + 1) % CARD_MODELS.length];
+    next = CARD_MODELS[(CARD_MODELS.indexOf(card.model ?? null) + 1) % CARD_MODELS.length];
+  } catch (err) {
+    showRun(cardId, "can't change model", null, err.message);
+    return;
+  }
+  openActionConfirm(`switch to ${modelLabel(next)}?`, 'switch model', 'cancel',
+    () => doCycleCardModel(cardId, next));
+}
+
+async function doCycleCardModel(cardId, next) {
+  try {
     const updated = await api(`/api/cards/${cardId}`, {
       method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: next}),
     });

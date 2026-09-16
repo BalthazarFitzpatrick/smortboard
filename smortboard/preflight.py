@@ -14,11 +14,13 @@ from typing import Any, Protocol
 
 from smortboard import profiles
 from smortboard.exec.backends import (
+    CardTokenMissing,
     card_image,
     card_image_available,
     card_token_available,
     card_token_path,
     docker_available,
+    read_card_token,
 )
 from smortboard.store.api import Store
 
@@ -127,6 +129,12 @@ def _token_check(token_path: str | Path | None) -> dict[str, Any]:
             f"{path}) - see README.md 'Setup' (Linux: paste into `cat > {path}` and press Ctrl-D).",
         )
     if not card_token_available(token_path):
+        # surface the mode-600 refusal verbatim when that's the cause - it already names the fix
+        try:
+            read_card_token(token_path)
+        except CardTokenMissing as exc:
+            if "chmod 600" in str(exc):
+                return _check("card-token", "machine", "card token", "fail", str(exc), str(exc))
         return _check(
             "card-token",
             "machine",

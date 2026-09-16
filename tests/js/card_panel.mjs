@@ -46,7 +46,7 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'), uiBase('entrytext.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {cardPanelHtml, acceptOrRejectCard, showRun, runBadge, splitCommentHeadline,
+;return {cardPanelHtml, doAcceptOrRejectCard, showRun, runBadge, splitCommentHeadline,
   summarizeDescription, renderCardStrip, appendLine};`)(SpyMenu, SpyDrawer);
 
 // ---- a full outcome renders summary, the finding, the PR link, and not the "not run yet" text
@@ -163,7 +163,7 @@ strip.appendChild(badge);
 document.body.appendChild(strip);
 strip.focus();
 responses.set('/api/cards/c2/accept', stubJson(409, {error: 'card not in checking'}));
-await mod.acceptOrRejectCard('accept');
+await mod.doAcceptOrRejectCard('accept', 'c2');
 assert.equal(badge.hidden, false, 'the badge should show');
 assert.equal(badge.textContent, "can't accept",
   'a 409 should name the refused action - a bare "refused" read as the labels swapped');

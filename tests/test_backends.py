@@ -79,6 +79,7 @@ def test_the_runtime_is_the_container_when_docker_and_token_are_there(tmp_path, 
     monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: True)
     token = tmp_path / "card_token"
     token.write_text("t")
+    token.chmod(0o600)
     assert isinstance(require_card_runtime(token_path=token), ContainerBackend)
 
 
@@ -293,6 +294,7 @@ def test_container_run_card_cleans_up_clone_on_success(tmp_path, monkeypatch):
 
     token = tmp_path / "token"
     token.write_text("secret")
+    token.chmod(0o600)
 
     seen = {}
 
@@ -325,6 +327,7 @@ def test_container_run_card_cleans_up_clone_on_failure(tmp_path, monkeypatch):
 
     token = tmp_path / "token"
     token.write_text("secret")
+    token.chmod(0o600)
 
     created_clone_paths = []
     real_clone = ContainerBackend._clone
@@ -407,9 +410,20 @@ def test_the_default_token_path_is_honoured(tmp_path, monkeypatch):
     monkeypatch.setattr("smortboard.exec.backends._credential_store_token", lambda: None)
     token = tmp_path / "card_token"
     token.write_text("from-the-file\n")
+    token.chmod(0o600)
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(token))
     assert card_token_path() == token
     assert read_card_token() == "from-the-file"
+
+
+def test_a_group_readable_default_token_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr("smortboard.exec.backends._credential_store_token", lambda: None)
+    token = tmp_path / "card_token"
+    token.write_text("from-the-file\n")
+    token.chmod(0o644)
+    monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(token))
+    with pytest.raises(CardTokenMissing, match="chmod 600"):
+        read_card_token()
 
 
 def test_a_file_wins_and_the_credential_store_is_never_asked(tmp_path, monkeypatch):
@@ -421,6 +435,7 @@ def test_a_file_wins_and_the_credential_store_is_never_asked(tmp_path, monkeypat
     )
     token = tmp_path / "card_token"
     token.write_text("from-the-file\n")
+    token.chmod(0o600)
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(token))
     assert read_card_token() == "from-the-file"
     assert asked == []
