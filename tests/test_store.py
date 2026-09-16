@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import stat
 
@@ -172,6 +173,25 @@ def test_export_round_trips_to_an_identical_database(store, tmp_path):
         fresh.import_bundle(bundle_path)
 
     _assert_databases_identical(store, fresh_path)
+
+
+def test_import_bundle_refuses_a_bundle_row_with_a_non_column_key(store, tmp_path):
+    """a bundle key becomes a raw sql column name on import - a crafted key must be refused,
+    not interpolated, so the table it targets survives"""
+    board = store.create_board("Phase 1")
+    bundle_path = tmp_path / "bundle.json"
+    store.export(bundle_path)
+    bundle = json.loads(bundle_path.read_text())
+    bundle["boards"][0]["id) VALUES (1); DROP TABLE cards; --"] = "x"
+    bundle_path.write_text(json.dumps(bundle))
+
+    fresh_path = tmp_path / "fresh.sqlite3"
+    with Store(fresh_path) as fresh:
+        with pytest.raises(UnknownFieldError):
+            fresh.import_bundle(bundle_path)
+        # the table this key targeted must still exist and be usable
+        fresh.create_board("still works")
+    assert board["id"]
 
 
 def _assert_databases_identical(store, fresh_path):

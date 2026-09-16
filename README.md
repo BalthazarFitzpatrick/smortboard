@@ -250,8 +250,10 @@ orchestrator turns and scheduler ticks each open their own SQLite connection on 
   `~/.config/smortboard/api_key` (mode 600), as a cookie or an `X-Smortboard-Key` header. Requests
   with a foreign `Host`, a cross-site `Origin`, or a non-json body are refused. `--host` is an
   explicit opt-in; the key is not a substitute for network authentication.
-- **The token travels on stdin.** It is a model-only `claude setup-token`. It is never an env var or
-  a mounted file, and never visible to `docker inspect`. On the host it lives in a mode-600 file.
+- **The token travels on stdin.** It is a model-only `claude setup-token`. It is never passed on the
+  `docker` command line or mounted as a file, and never visible to `docker inspect`; inside the
+  container it is read from stdin and exported only to the `claude` process. On the host it lives in
+  a mode-600 file.
 - **Guards are read-only.** A lease hook covers Edit and Write. A bash guard allows only git plus the
   repo's test and lint commands. Both are mounted read-only outside the working tree, so the agent
   can neither edit nor commit them.

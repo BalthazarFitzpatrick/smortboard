@@ -35,6 +35,11 @@ class SpyMenu {
   // the real Menu swaps a section's rows in place - the overlay's page turns rely on this
   refresh(sections) { this.sections = sections; }
   close() {}
+  // drives a confirm menu's onPick the way a click (or y/enter) would
+  pick(itemId) {
+    const section = this.sections.find(s => (s.items || []).some(i => i.id === itemId));
+    section.onPick(section.items.find(i => i.id === itemId));
+  }
 }
 
 // the drawers are real ui_base components now, so the comma and period keys no longer open a menu
@@ -144,16 +149,30 @@ const overlay = openedMenus[openedMenus.length - 1];
   });
 }
 
-// ---- y and x reach acceptOrRejectCard and post the right route for whatever card is focused
+// ---- r opens a confirm before running; escape (simulated by close(), same as the real Menu's own
+// escape handler) cancels it - no api call either way until the confirm is answered
 const strip = element('div', 'row card card-strip');
 strip.dataset.cardId = 'c9';
 strip.tabIndex = -1;
 bucketRow.appendChild(strip);
 strip.focus();
+press('KeyR');
+assert.equal(openedMenus[openedMenus.length - 1].title, 'run this card?', 'r should confirm before running');
+assert.ok(!fetchCalls.includes('/api/runtime'), 'no runtime check before the confirm is answered');
+openedMenus[openedMenus.length - 1].menu.close(); // escape cancels - never picks confirm
+assert.ok(!fetchCalls.includes('/api/runtime'), 'cancelling should never reach the api');
+
+// ---- y and x open a confirm first, and only reach acceptOrRejectCard's route once it is answered
 press('KeyY');
+assert.equal(openedMenus[openedMenus.length - 1].title, 'accept this card?', 'y should confirm before posting');
+assert.ok(!fetchCalls.includes('/api/cards/c9/accept'), 'no request before the confirm is answered');
+openedMenus[openedMenus.length - 1].menu.pick('confirm');
+assert.ok(fetchCalls.includes('/api/cards/c9/accept'), 'confirming should post accept for the focused card');
+
 press('KeyX');
-assert.ok(fetchCalls.includes('/api/cards/c9/accept'), 'y should post accept for the focused card');
-assert.ok(fetchCalls.includes('/api/cards/c9/reject'), 'x should post reject for the focused card');
+assert.equal(openedMenus[openedMenus.length - 1].title, 'reject this card?', 'x should confirm before posting');
+openedMenus[openedMenus.length - 1].menu.pick('confirm');
+assert.ok(fetchCalls.includes('/api/cards/c9/reject'), 'confirming should post reject for the focused card');
 
 // ---- p opens the prompt editor (not a Menu, so it never shows up in openedMenus) and p again closes it
 press('KeyP');
