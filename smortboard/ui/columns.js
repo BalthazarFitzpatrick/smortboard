@@ -116,16 +116,15 @@ const MIN_PILED_CARDS = 5; // below this, a group between two piles has nothing 
 const PILE = 100; // a pile's fixed height - never shrinks or grows
 const PILE_GAP_ABOVE = readGapVar('--pile-gap-above', 5); // extra space above a pile, past the row gap
 const PILE_GAP_BELOW = readGapVar('--pile-gap-below', 5); // extra space below a pile, past the row gap
-const MIN_CARD = PILE + 16; // cards shrink no further than this before the column scrolls instead
 const PORTRAIT_BELOW = 230; // a column narrower than this keeps 230px of card height (portrait)
 
-// ---- ONE CARD BOX, EVERY COLUMN TYPE (operator, 2026-09-16). a plain column, an expanded one and
-// a stacked one all draw the same card at the same size, and NOTHING EVER COVERS ANYTHING: a card
-// already passed is a SHORTER card showing its title band, with the same gap under it as anywhere
-// else. these three numbers are the whole layout, and both drawing paths read them here ---------
+// ---- ONE CARD BOX, EVERY COLUMN TYPE, AND IT IS NEVER SHRUNK (operator, 2026-09-16). a plain
+// column, a fanned one and a piled one all draw the same card at the same height. what changes with
+// density is how the cards MEET: spread a gap apart, or overlapping so a covered card shows PEEK of
+// itself. these two numbers are the whole spacing model and every drawing path reads them here ---
 
-const CARD_GAP = readGapVar('--card-gap', 10); // between any two neighbouring rows, in every state
-const CARD_BAND = readGapVar('--stack-peek', 60); // a passed card's own height - its title band
+const CARD_GAP = readGapVar('--card-gap', 10); // between two rows that do not overlap
+const PEEK = readGapVar('--stack-peek', 60); // the band a covered card still shows of itself
 
 // a card is as tall as the column is wide - square - down to PORTRAIT_BELOW, where it keeps that
 // height and turns portrait instead of shrinking further
@@ -133,13 +132,16 @@ function squareCard(width) {
   return Math.max(width, PORTRAIT_BELOW);
 }
 
-// the height a drawn row actually gets: the band for a card already passed, the square otherwise
-function cardHeight(card, covered) {
-  return covered ? CARD_BAND : card;
+// pure: the room n cards need spread out - every card whole, one gap between each pair
+function stackHeight(count, card) {
+  return count ? count * card + (count - 1) * CARD_GAP : 0;
 }
 
-function stackHeight(count, rowHeight) {
-  return count ? count * rowHeight + (count - 1) * CARD_GAP : 0;
+// pure: the room a FAN of n cards needs at its tallest. every card is whole; a covered one shows
+// PEEK of itself, so the card over it starts PEEK below its top. the fan's last card is uncovered
+// and so is the focused card wherever it sits - that pair is the shape that needs the most room
+function fanHeight(n, card) {
+  return n <= 1 ? n * card : 2 * card + (n - 2) * PEEK;
 }
 
 // ---- card shadow: a pixel field, not a css box-shadow (box-shadow can't put more darkness at a
@@ -392,7 +394,8 @@ function updateExpandButton(bucketEl) {
   const expandBtn = bucketEl.querySelector('.bucket-expand');
   const state = bucketRowsEl?._pile;
   if (!expandBtn || !state) return;
-  const pileable = !state.fits && state.sorted.length >= MIN_PILED_CARDS;
+  // only a column dense enough to overlap has anything to expand - a spread one already shows all
+  const pileable = state.regime > 1;
   expandBtn.hidden = !pileable;
   expandBtn.textContent = state.expanded ? 'collapse' : 'expand';
 }
@@ -459,7 +462,7 @@ function buildPileLayer(card, isTop) {
   return layer;
 }
 
-// every card row, whichever column type draws it - fitPlainColumn/fitPiledColumn give it its height
+// every card row, whichever regime draws it - fitColumn gives it its height and its join
 function buildFullRow(card, idx) {
   const strip = renderCardStrip(card);
   strip.dataset.idx = String(idx);
@@ -467,17 +470,12 @@ function buildFullRow(card, idx) {
 }
 
 // ---- column motion, option C (derived/column_motion, operator-approved): a group of at most n
-// cards sits between a pile above and a pile below. inside the group, a passed card is drawn as its
-// own shorter band and the focused card is open - nothing is ever hidden behind anything. stepping past the group's end draws one card off the lower pile and
-// puts the group's oldest onto the upper pile, so the group never grows past n ------------------
+// cards sits between a pile above and a pile below. inside the group the cards OVERLAP exactly as
+// they do in a fanned column, and the focused card is open with nothing over it. stepping past the
+// group's end draws one card off the lower pile and puts the group's oldest onto the upper pile,
+// so the group never grows past n ---------------------------------------------------------------
 
 const EDGE_CARDS = 2; // the column's last (or first) cards shown past the far pile, cut at the edge
-
-// pure: the tallest a group of n cards gets - the focused card open at the group's start, the
-// group's last card still full below it, every card between a band, and a gap under each of them
-function groupHeight(n, card) {
-  return n <= 1 ? n * card : 2 * card + (n - 2) * CARD_BAND + (n - 1) * CARD_GAP;
-}
 
 // pure: one pile's share of the column - its own height, its above/below knobs (the same margins
 // .card-pile draws) and the one flex gap between it and the group
@@ -485,19 +483,30 @@ function pileSlot(gap) {
   return PILE + PILE_GAP_ABOVE + PILE_GAP_BELOW + gap;
 }
 
-// pure: the total card count and the room/row gap/width a column has -> {n, card, piles, scrolls}.
-// every card as one group when even its tallest shape fits (no piles at all), else the largest n
-// in {3, 2} whose tallest group plus both piles fits, else 1. only when even 1 card at square size
-// cannot fit do cards shrink (never below MIN_CARD), and past that floor the column scrolls
-function computeGroupFit(total, available, gap, width) {
-  const full = squareCard(width);
-  if (groupHeight(total, full) <= available) return {n: total, card: full, piles: false, scrolls: false};
-  const piles = 2 * pileSlot(gap);
-  for (const n of [3, 2, 1]) {
-    if (groupHeight(n, full) + piles <= available) return {n, card: full, piles: true, scrolls: false};
+// ---- THE THREE REGIMES (operator, 2026-09-16), one explicit measured choice per column. what a
+// column does when its cards stop fitting is OVERLAP THEM, never shrink them:
+//   1 spread - they all fit whole: cards exactly CARD_GAP apart, nothing covering anything
+//   2 fan    - they do not: the same whole cards overlap, each covered one showing PEEK of itself
+//   3 piled  - not even fanned: the very same fan, of the largest n that fits, with a pile above
+//              and a pile below taking the cards it cannot hold
+// pure: the card count and the room/row gap/width a column has -> the regime and the numbers that
+// draw it. `card` is the one card height throughout, whichever regime applies
+function computeColumnFit(total, available, gap, width) {
+  const card = squareCard(width);
+  if (stackHeight(total, card) <= available) return {regime: 1, n: total, card, piles: false, scrolls: false};
+  const fanned = fanHeight(total, card);
+  // too few cards to leave a pile anything worth holding: they fan, and scroll if even that is
+  // more than the column has
+  if (fanned <= available || total < MIN_PILED_CARDS) {
+    return {regime: 2, n: total, card, piles: false, scrolls: fanned > available};
   }
-  const card = Math.max(MIN_CARD, Math.floor(available - piles));
-  return {n: 1, card, piles: true, scrolls: card + piles > available};
+  const piles = 2 * pileSlot(gap);
+  for (let n = total - 1; n >= 1; n--) {
+    if (fanHeight(n, card) + piles <= available) return {regime: 3, n, card, piles: true, scrolls: false};
+  }
+  // not even one whole card between the two piles - the column scrolls at full card height, since
+  // a shrunk card is the one thing no regime is allowed to draw
+  return {regime: 3, n: 1, card, piles: true, scrolls: true};
 }
 
 // pure: moves the group only as far as focus left it - one card for one arrow press - and flips
@@ -516,27 +525,33 @@ function placeGroup(total, n, focusIndex, start, anchor) {
 }
 
 // pure: sorted cards, the focused index (or null at rest), the group's prior start and anchor, and
-// n -> {start, anchor, rows}. top anchor: pile above, group, pile below, then the column's last
-// cards, cut by the column's bottom edge. bottom anchor mirrors it: the first cards (cut by the top
-// edge), pile above, group, pile below. a card row is `covered` when it has already been passed -
-// drawn as its own shorter title band, never hidden under the card after it
-function computePileLayout(sorted, focusIndex, start, anchor, n) {
+// the fit -> {start, anchor, rows}. regime 1 is the whole column spread in order. otherwise, top
+// anchor: pile above, group, pile below, then the column's last cards, cut by the column's bottom
+// edge - bottom anchor mirrors it. a card row's `join` says how it meets the row before it: 'peek'
+// pulls it up over that card until only PEEK of it shows, 'flush' starts it on the open focused
+// card's own bottom edge, 'none' is plain gapped flow. `covered` is the other side of that - the
+// card underneath a 'peek', the one only showing its band
+function computeColumnLayout(sorted, focusIndex, start, anchor, fit) {
   const total = sorted.length;
+  if (fit.regime === 1) {
+    const rows = sorted.map((card, idx) => ({type: 'card', idx, card, part: 'group', join: 'none', covered: false}));
+    return {start: 0, anchor: 'top', rows};
+  }
+  const n = fit.n;
   const place = placeGroup(total, n, focusIndex, start, anchor);
   const end = place.start + n; // one past the group's last card
   const edge = Math.min(n, EDGE_CARDS);
-  // only a focused card is open. at rest every card but the run's last is already passed - focus
-  // landing on one redraws the column around it (wireColumnFocus), leaving passes it again
+  // only a focused card is open. at rest every card is covered by the next, the way the fan rests -
+  // focus landing on one redraws the column around it (wireColumnFocus), leaving covers it again
   const open = focusIndex;
   const rows = [];
   const pile = (from, to, side) => {
     if (to > from) rows.push({type: 'pile', side, cards: sorted.slice(from, to)});
   };
-  // every card in a run but its last is already passed, and so is the open one's predecessor - the
-  // open card itself never is, however far down the run it sits
   const run = (from, to, part) => {
     for (let i = from; i < to; i++) {
-      rows.push({type: 'card', idx: i, card: sorted[i], part, covered: i < to - 1 && i !== open});
+      const join = i === from ? 'none' : i - 1 === open ? 'flush' : 'peek';
+      rows.push({type: 'card', idx: i, card: sorted[i], join, part});
     }
   };
   if (place.anchor === 'top') {
@@ -552,41 +567,37 @@ function computePileLayout(sorted, focusIndex, start, anchor, n) {
     run(place.start, end, 'group');
     pile(end, total, 'below');
   }
+  // a card is covered exactly when the row after it slides over it - never the open one, never the
+  // last of a run, never one a pile follows
+  rows.forEach((row, i) => {
+    if (row.type === 'card') row.covered = rows[i + 1]?.join === 'peek';
+  });
   return {start: place.start, anchor: place.anchor, rows};
 }
 
-// applies computeGroupFit to the drawn rows: a passed card the band, every other card the fit's
-// square size, every pile PILE. no margin anywhere - bucket-rows' own flex gap is the ONE space
-// between two rows, so nothing can overlap. the column is exactly `available` tall and clips what
-// runs past it, no scrollbar
-function fitPiledColumn(bucketRowsEl, fit, anchor, available) {
-  bucketRowsEl.classList.toggle('bucket-rows-scrolls', fit.scrolls);
+// applies the fit to the drawn rows: EVERY card the fit's one height, every pile PILE, and each
+// card's join as a negative top margin. bucket-rows' own flex `gap` still applies UNDER a margin
+// (they add, never cancel), so each margin cancels the gap too, or every card would come out gap px
+// low. regime 1 states no margin at all and the flex gap is the whole spacing; regimes 2 and 3 pin
+// the column to exactly `available` and clip what runs past it, no scrollbar
+function fitColumn(bucketRowsEl, fit, anchor, available, gap) {
+  const spread = fit.regime === 1;
+  bucketRowsEl.classList.toggle('bucket-rows-expanded', !!fit.expanded);
+  bucketRowsEl.classList.toggle('bucket-rows-piled', !spread);
+  bucketRowsEl.classList.toggle('bucket-rows-scrolls', !spread && fit.scrolls);
   bucketRowsEl.classList.toggle('bucket-rows-bottom', fit.piles && !fit.scrolls && anchor === 'bottom');
-  bucketRowsEl.style.height = `${available}px`;
+  bucketRowsEl.style.maxHeight = fit.expanded && fit.scrolls ? `${available}px` : '';
+  bucketRowsEl.style.height = spread ? '' : `${available}px`;
   Array.from(bucketRowsEl.children).forEach(el => {
     if (el.classList.contains('card-pile')) {
       el.style.height = `${PILE}px`;
+      el.style.marginTop = '';
       return;
     }
-    const covered = el.dataset.covered === 'true';
-    el.classList.toggle('card-covered', covered);
-    el.style.height = `${cardHeight(fit.card, covered)}px`;
-  });
-}
-
-// the same card box in a plain or expanded column as in a stacked one, from the column's own width -
-// one size, stated here rather than left to a css ratio, so no column type draws a card any other
-// height. an expanded column is a scrolling list capped to the room it has; a plain one just flows
-function fitPlainColumn(bucketRowsEl, state) {
-  const scrolls = !!state.expanded && !state.fits;
-  bucketRowsEl.style.maxHeight = scrolls ? `${availableColumnHeight(bucketRowsEl)}px` : '';
-  bucketRowsEl.style.height = '';
-  bucketRowsEl.classList.toggle('bucket-rows-expanded', scrolls);
-  bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls', 'bucket-rows-bottom');
-  const card = squareCard(bucketRowsEl.getBoundingClientRect().width);
-  Array.from(bucketRowsEl.children).forEach(el => {
-    el.classList.remove('card-covered');
-    el.style.height = `${card}px`;
+    const join = el.dataset.join;
+    el.classList.toggle('card-covered', el.dataset.covered === 'true');
+    el.style.height = `${fit.card}px`;
+    el.style.marginTop = join === 'peek' ? `${-(fit.card - PEEK + gap)}px` : join === 'flush' ? `${-gap}px` : '';
   });
 }
 
@@ -675,20 +686,16 @@ function planPileMotion(priorRoles, nextRoles) {
 const px = v => `${Math.round(v * 100) / 100}px`;
 const clipInset = (top, bottom) => `inset(${px(top)} -${CLIP_REACH}px ${px(bottom)} -${CLIP_REACH}px)`;
 
-// a row's own resting bottom cut: a passed card is cut at its own bottom edge (layout.css), every
-// other row is not cut at all. a frame that states clipPath has to restate it or it uncovers the
-// content a band is meant to hide for as long as it runs
-const restingCut = el => (el.classList.contains('card-covered') ? 0 : -CLIP_REACH);
-
 // pure: how a card row is replayed from the box it was drawn in last time. NEVER A SCALE - a card
-// really does change height when it is passed or opened, and a scaled card stretches its own text.
-// it starts where it was, and the height it gained is uncovered by the clip instead, so its content
-// is cut rather than squashed, the same rule the fold follows
-function cardFlipFrames(from, to, cut) {
+// changes height when a resize repicks the card box, and a scaled card stretches its own text. it
+// starts where it was, and the height it gained is uncovered by the clip instead, so its content is
+// cut rather than squashed, the same rule the fold follows. a covered card is whole and merely
+// painted under its neighbour, so nothing is ever clipped at rest
+function cardFlipFrames(from, to) {
   const grew = Math.max(to.height - from.height, 0);
   return [
-    {translate: `${px(from.left - to.left)} ${px(from.top - to.top)}`, clipPath: clipInset(-CLIP_REACH, grew || cut)},
-    {translate: '0px 0px', clipPath: clipInset(-CLIP_REACH, cut)},
+    {translate: `${px(from.left - to.left)} ${px(from.top - to.top)}`, clipPath: clipInset(-CLIP_REACH, grew || -CLIP_REACH)},
+    {translate: '0px 0px', clipPath: clipInset(-CLIP_REACH, -CLIP_REACH)},
   ];
 }
 
@@ -699,12 +706,12 @@ function cardFlipFrames(from, to, cut) {
 // `above` is the side the pile sits on - a pile above holds the card's top edge and climbs its
 // bottom, a pile below holds the bottom and pushes the top down. run backwards, it is the same
 // motion growing out of that edge to full height in place
-function foldFrames(card, above, cut = -CLIP_REACH) {
+function foldFrames(card, above) {
   const r = CLIP_REACH;
   const shut = card.height + r; // past the card's own box, so its shadow is taken with it
   return {
-    open: {translate: '0px 0px', clipPath: clipInset(-r, cut)},
-    folded: {translate: '0px 0px', clipPath: above ? clipInset(-r, shut) : clipInset(shut, cut)},
+    open: {translate: '0px 0px', clipPath: clipInset(-r, -r)},
+    folded: {translate: '0px 0px', clipPath: above ? clipInset(-r, shut) : clipInset(shut, -r)},
   };
 }
 
@@ -752,7 +759,7 @@ function foldIntoPile(bucketEl, prior, pile, timing) {
   // the pile, which is the only thing allowed to take that room from it
   ghost.style.zIndex = '1';
   pile.el.style.zIndex = '2';
-  const {open, folded} = foldFrames(prior.rect, isAbovePile(pile.el), restingCut(ghost));
+  const {open, folded} = foldFrames(prior.rect, isAbovePile(pile.el));
   const anim = ghost.animate([open, folded], {...timing, fill: 'forwards'});
   anim.onfinish = anim.oncancel = () => { pile.el.style.zIndex = ''; ghost.remove(); };
 }
@@ -773,7 +780,7 @@ const isAbovePile = pileEl => pileEl?.dataset?.side === 'above';
 // pile and travels out. it takes the room the rows are sliding out of, so it stays over them, and
 // stays under the pile it came from for as long as that pile is still there
 function growOutOfPile(el, rect, from, timing, pileEl) {
-  const {open, folded} = foldFrames(rect, isAbovePile(from.el), restingCut(el));
+  const {open, folded} = foldFrames(rect, isAbovePile(from.el));
   el.style.zIndex = '1';
   if (pileEl) pileEl.style.zIndex = '2';
   const anim = el.animate([folded, open], timing);
@@ -831,7 +838,7 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
     if (prior && movesAtAll(flipDelta(prior.rect, rect))) {
       // a pile is always the same box, so its flip is a plain slide; a card's height really changes
       if (isPile) el.animate([flipFrame(flipDelta(prior.rect, rect)), REST_FRAME], timing);
-      else el.animate(cardFlipFrames(prior.rect, rect, restingCut(el)), timing);
+      else el.animate(cardFlipFrames(prior.rect, rect), timing);
     }
     if (isPile) {
       const pile = plan.piles.get(key);
@@ -858,10 +865,11 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
   });
 }
 
-// redraws bucketRowsEl from its own _pile state - expanded and "fits anyway" both mean every card
-// full in one plain list; otherwise the group between two piles above. every row is then replayed
-// from its prior box (animateRows); with no motion allowed, a row new in its current role (a card
-// appearing, or moving in/out of a pile) gets the plain .row-enter fade instead, as before
+// redraws bucketRowsEl from its own _pile state: ONE path for every column, the regime deciding
+// whether its cards spread, fan, or fan between two piles. expanded is the one override - the
+// operator asked for the whole column as a scrolling list, so it spreads however dense it is. every
+// row is then replayed from its prior box (animateRows); with no motion allowed, a row new in its
+// current role (a card appearing, or moving in/out of a pile) gets the plain .row-enter fade
 function drawColumn(bucketRowsEl) {
   const state = bucketRowsEl._pile;
   const priorRoles = bucketRowsEl._rowRoles || new Map();
@@ -877,34 +885,32 @@ function drawColumn(bucketRowsEl) {
   bucketRowsEl.innerHTML = '';
   if (!state) { bucketRowsEl._rowRoles = nextRoles; return; }
   const {sorted, status} = state;
-  if (state.expanded || state.fits || sorted.length < MIN_PILED_CARDS) {
-    sorted.forEach((c, idx) => place(buildFullRow(c, idx), 'card', [c]));
-    fitPlainColumn(bucketRowsEl, state);
-  } else {
-    bucketRowsEl.style.maxHeight = '';
-    bucketRowsEl.classList.remove('bucket-rows-expanded');
-    bucketRowsEl.classList.add('bucket-rows-piled');
-    const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || CARD_GAP;
-    const width = bucketRowsEl.getBoundingClientRect().width;
-    const available = availableColumnHeight(bucketRowsEl);
-    const fit = computeGroupFit(sorted.length, available, gap, width);
-    const layout = computePileLayout(sorted, state.focusIndex, state.start, state.anchor, fit.n);
-    state.start = layout.start;
-    state.anchor = layout.anchor;
-    layout.rows.forEach(entry => {
-      if (entry.type === 'pile') {
-        const el = buildPileRow(entry.cards, status, entry.side);
-        el.dataset.side = entry.side;
-        place(el, `pile-${entry.side}`, entry.cards);
-      } else {
-        const strip = buildFullRow(entry.card, entry.idx);
-        strip.dataset.part = entry.part;
-        strip.dataset.covered = String(entry.covered);
-        place(strip, 'card', [entry.card]);
-      }
-    });
-    fitPiledColumn(bucketRowsEl, fit, layout.anchor, available);
-  }
+  const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || CARD_GAP;
+  const width = bucketRowsEl.getBoundingClientRect().width;
+  const available = availableColumnHeight(bucketRowsEl);
+  const natural = computeColumnFit(sorted.length, available, gap, width);
+  state.regime = natural.regime;
+  // expanded draws the column spread whatever its regime says, scrolling if that overflows
+  const fit = state.expanded
+    ? {...natural, regime: 1, n: sorted.length, piles: false, scrolls: natural.regime > 1, expanded: true}
+    : natural;
+  const layout = computeColumnLayout(sorted, state.focusIndex, state.start, state.anchor, fit);
+  state.start = layout.start;
+  state.anchor = layout.anchor;
+  layout.rows.forEach(entry => {
+    if (entry.type === 'pile') {
+      const el = buildPileRow(entry.cards, status, entry.side);
+      el.dataset.side = entry.side;
+      place(el, `pile-${entry.side}`, entry.cards);
+    } else {
+      const strip = buildFullRow(entry.card, entry.idx);
+      strip.dataset.part = entry.part;
+      strip.dataset.join = entry.join;
+      strip.dataset.covered = String(entry.covered);
+      place(strip, 'card', [entry.card]);
+    }
+  });
+  fitColumn(bucketRowsEl, fit, layout.anchor, available, gap);
   applyCardShadows(bucketRowsEl);
   reseatGhosts(bucketRowsEl, ghosts);
   if (motion) animateRows(bucketRowsEl, before, planPileMotion(priorRoles, nextRoles), priorRoles, nextRoles, status);
@@ -929,9 +935,10 @@ function focusPileIndex(bucketRowsEl, idx) {
   indicateCardFocus(target);
 }
 
-// a column drawn as the group between two piles, rather than every card in one plain list
+// a column whose cards overlap - fanned or piled. the arrow keys drive it card by card, since the
+// focused card has to be redrawn open with nothing over it
 function isPiled(state) {
-  return !!state && !state.expanded && !state.fits && state.sorted.length >= MIN_PILED_CARDS;
+  return !!state && !state.expanded && state.regime > 1;
 }
 
 // ArrowDown/Up inside a piled column, intercepted ahead of buckets.js's own roving nav (see
@@ -1025,34 +1032,33 @@ function leaveColumn(bucketRowsEl) {
   if (isPiled(state)) drawColumn(bucketRowsEl);
 }
 
-// builds one status column - every card full if it fits (or expanded, or too few to pile), else
-// the group between two piles, top-anchored at rest - replacing bucketEl's header and rows.
-// card_panel.js's renderCardStrip renders every real card, full-size whether at rest or moving
+// builds one status column - spread, fanned, or fanned between two piles, whichever its own
+// measurement picks (computeColumnFit), top-anchored at rest - replacing bucketEl's header and
+// rows. card_panel.js's renderCardStrip renders every real card, full-size in every regime
 function renderBucketColumn(bucketEl, cards, status) {
   const bucketRowsEl = bucketEl.querySelector('.bucket-rows');
   const sorted = sortColumnCards(cards);
-  const width = bucketRowsEl.getBoundingClientRect().width;
-  const fits = stackHeight(sorted.length, squareCard(width)) <= availableColumnHeight(bucketRowsEl);
   bucketRowsEl._pile = {
-    sorted, status, fits, focusIndex: null, start: 0, anchor: 'top',
+    sorted, status, regime: 1, focusIndex: null, start: 0, anchor: 'top',
     expanded: bucketRowsEl._pile?.expanded || false,
   };
   renderColumnHeader(bucketEl, cards, status);
-  drawColumn(bucketRowsEl);
+  drawColumn(bucketRowsEl); // the regime is only known once the column has measured itself
+  updateExpandButton(bucketEl);
   wireColumnFocus(bucketRowsEl);
 }
 
 // ---- resize refit: card size and the group's n both come from the column's own measured
-// width/height (computeGroupFit), which only a real resize (not a poll) can change. refits every already-piled column from its own _pile state alone - no refetch,
+// width/height (computeColumnFit), which only a real resize (not a poll) can change. refits every
+// column from its own _pile state alone - no refetch,
 // no full renderBuckets - and recomputes `fits` too, since widening a column can drop its pile
 // entirely, same as renderBucketColumn does on first draw --------------------------------------
 
 function refitColumn(bucketRowsEl) {
-  const state = bucketRowsEl._pile;
-  if (!state) return;
-  const width = bucketRowsEl.getBoundingClientRect().width;
-  state.fits = stackHeight(state.sorted.length, squareCard(width)) <= availableColumnHeight(bucketRowsEl);
-  drawColumn(bucketRowsEl);
+  if (!bucketRowsEl._pile) return;
+  drawColumn(bucketRowsEl); // remeasures width and room, so the regime is picked again from scratch
+  const bucketEl = bucketRowsEl.closest?.('.bucket');
+  if (bucketEl) updateExpandButton(bucketEl);
 }
 
 const PILE_REFIT_DEBOUNCE_MS = 100;
