@@ -24,22 +24,24 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {sortColumnCards, computePileLayout, computeGroupFit, letterCounts, renderBucketColumn,
-  handlePileKey, MIN_PILED_CARDS, fitPiledColumn, squareCard, PILE, PEEK, MIN_CARD,
+  handlePileKey, MIN_PILED_CARDS, fitPiledColumn, squareCard, cardHeight, PILE, CARD_BAND, MIN_CARD,
   PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
   shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus, applyCardShadows,
-  PILE_GAP_ABOVE, PILE_GAP_BELOW, BUCKET_ROW_GAP, flipDelta, planPileMotion, PILE_MOTION_MS,
-  PILE_SETTLE_MS, PILE_EASING, ROW_MOTION_MS, ROW_EASING, CLIP_REACH, PILE_FACE_INSET, pileMouth,
-  mouthFrames, pileFace, foldFrames, PILE_HANDOVER_IN, PILE_HANDOVER_OUT,
+  PILE_GAP_ABOVE, PILE_GAP_BELOW, CARD_GAP, flipDelta, planPileMotion, PILE_MOTION_MS,
+  PILE_SETTLE_MS, PILE_EASING, ROW_MOTION_MS, ROW_EASING, CLIP_REACH,
+  foldFrames, cardFlipFrames, PILE_HANDOVER_IN, PILE_HANDOVER_OUT,
   GROW_FRAME, REST_FRAME};`)(SpyMenu, SpyDrawer);
 
 // fixture heights below are derived from the module's own tuning constants, not typed pixel
 // counts, so a future gap-tuning pass moves the fixtures with it instead of breaking them
-const GAP = mod.BUCKET_ROW_GAP; // buildColumn's stub leaves rowGap unset, so this fallback applies
+const GAP = mod.CARD_GAP; // buildColumn's stub leaves rowGap unset, so this fallback applies
 const WIDE = 300; // buildColumn's stub width - square cards, WIDE px tall
 
 // mirrors computeGroupFit: the tallest a group of n gets (the focused card open at its start, the
-// last card still full below it) and what both piles cost around it
-const groupMax = (n, cardPx) => (n <= 1 ? cardPx : 2 * cardPx + (n - 2) * mod.PEEK);
+// last card still full below it, a band for each card passed) plus a gap under every row but the
+// last, and what both piles cost around it
+const groupMax = (n, cardPx) =>
+  (n <= 1 ? n * cardPx : 2 * cardPx + (n - 2) * mod.CARD_BAND + (n - 1) * GAP);
 const pilesCost = gap => 2 * (mod.PILE + mod.PILE_GAP_ABOVE + mod.PILE_GAP_BELOW + gap);
 
 // a short screen: exactly the room n=2 needs, one PEEK short of n=3
@@ -124,35 +126,25 @@ function keyDriver(bucketRows) {
 }
 
 // card id -> 'above' / 'below' (in that pile), 'group' (the card run holding focus, or the group's
-// start at rest) or 'edge' (the column's first or last cards past the far pile)
+// start at rest) or 'edge' (the column's first or last cards past the far pile) - read straight off
+// what drawColumn wrote onto each row, not reconstructed from how the rows happen to meet
 function roles(bucketRows) {
-  const state = bucketRows._pile;
-  const anchorIdx = String(state.focusIndex ?? state.start);
-  const runs = [];
-  bucketRows.children.forEach(el => {
-    if (el.className.includes('card-pile')) { runs.push({pile: el}); return; }
-    const last = runs.at(-1);
-    if (last?.cards && el.dataset.join !== 'none') last.cards.push(el);
-    else runs.push({cards: [el]});
-  });
-  const groupAt = runs.findIndex(r => r.cards?.some(el => el.dataset.idx === anchorIdx));
   const out = new Map();
-  runs.forEach((r, i) => {
-    if (r.pile) r.pile._cards.forEach(c => out.set(c.id, i < groupAt ? 'above' : 'below'));
-    else r.cards.forEach(el => out.set(el.dataset.cardId, i === groupAt ? 'group' : 'edge'));
+  bucketRows.children.forEach(el => {
+    if (el.className.includes('card-pile')) el._cards.forEach(c => out.set(c.id, el.dataset.side));
+    else out.set(el.dataset.cardId, el.dataset.part);
   });
   return out;
 }
 
-// mirrors the css model: normal flex flow (each row's top is the previous row's bottom plus the gap
-// and the pile margins), a card's own margin-top on top of that - bucket-rows' flex gap sits UNDER
-// a negative margin, never cancelled by it - and flex-end pinning the last row to the column's
-// bottom edge when bottom-anchored
+// mirrors the css model: plain flex flow - each row's top is the previous row's bottom plus the one
+// shared gap, a pile's own two extra margins on top of that, and NO negative margin anywhere - and
+// flex-end pinning the last row to the column's bottom edge when bottom-anchored
 function replayRows(bucketRows, available, gap) {
   let bottom = 0, marginBelow = 0;
   const rows = drawnRows(bucketRows).map((el, i) => {
     const pile = el.className.includes('card-pile');
-    const marginTop = pile ? mod.PILE_GAP_ABOVE : parseFloat(el.style.marginTop || '0');
+    const marginTop = pile ? mod.PILE_GAP_ABOVE : 0;
     const top = (i ? bottom + marginBelow + gap : 0) + marginTop;
     bottom = top + parseFloat(el.style.height);
     marginBelow = pile ? mod.PILE_GAP_BELOW : 0;
@@ -368,6 +360,56 @@ globalThis.window.innerHeight = 800;
   assert.equal(mod.squareCard(180), mod.PORTRAIT_BELOW, 'narrower than 230 - keeps 230px of height, turns portrait');
 }
 
+// ---- ONE CARD LAYOUT, EVERY COLUMN TYPE (operator, 2026-09-16): the same card box in a plain, an
+// expanded and a stacked column; exactly one gap under every row; and no card box ever reaching
+// into another one. a card already passed is a SHORTER card, not a full one with its lower part
+// hidden behind the next - so nothing may carry a negative margin any more --------------------
+
+{
+  const isBand = s => s.className.includes('card-covered');
+  const heightsIn = bucketRows => {
+    const cards = fullCards(bucketRows);
+    const sizes = pick => [...new Set(cards.filter(pick).map(s => parseFloat(s.style.height)))];
+    return {full: sizes(s => !isBand(s)), band: sizes(isBand)};
+  };
+  const assertSpacing = (bucketRows, available, where) => {
+    drawnRows(bucketRows).forEach(el => assert.ok(!parseFloat(el.style.marginTop || '0'),
+      `${where}: no row pulls itself up over its neighbour`));
+    const rows = replayRows(bucketRows, available, GAP);
+    rows.slice(1).forEach((row, i) => {
+      const prev = rows[i];
+      // a pile keeps its own two knobs on top of the shared gap; two cards get the gap alone
+      const extra = (prev.pile ? mod.PILE_GAP_BELOW : 0) + (row.pile ? mod.PILE_GAP_ABOVE : 0);
+      assert.equal(+(row.top - prev.bottom).toFixed(3), GAP + extra, `${where}: row ${i + 1} sits one gap under row ${i}`);
+    });
+    rows.forEach((row, i) => rows.slice(i + 1).forEach(other =>
+      assert.ok(other.top >= row.bottom, `${where}: rows ${i} and after must never overlap`)));
+  };
+
+  const one = mod.squareCard(WIDE);
+  const plain = buildColumn(2000, Array.from({length: 3}, (_, i) => card(`1p${i}`, 'todo'))).bucketRows;
+  const stacked = buildColumn(SHORT_N2, Array.from({length: 14}, (_, i) => card(`1s${i}`, 'todo'))).bucketRows;
+  const wide = buildColumn(600, Array.from({length: 10}, (_, i) => card(`1e${i}`, 'todo')));
+  wide.bucketEl.querySelector('.bucket-expand')._listeners.click[0]();
+
+  assert.equal(mod.cardHeight(one, false), one, 'one place decides the card box');
+  assert.equal(mod.cardHeight(one, true), mod.CARD_BAND, 'and the band a passed card keeps');
+  assert.deepEqual(heightsIn(plain), {full: [one], band: []}, 'a plain column: one card size, nothing passed');
+  assert.deepEqual(heightsIn(wide.bucketRows), {full: [one], band: []}, 'an expanded column: that very size');
+  assert.deepEqual(heightsIn(stacked), {full: [one], band: [mod.CARD_BAND]},
+    'a stacked column draws the same card, and a passed one as its own shorter band');
+
+  assertSpacing(plain, 0, 'plain, at rest');
+  assertSpacing(wide.bucketRows, 0, 'expanded, at rest');
+  assertSpacing(stacked, SHORT_N2, 'stacked, at rest');
+  const stepping = keyDriver(stacked);
+  for (let i = 1; i < 8; i++) {
+    stepping('ArrowDown');
+    assertSpacing(stacked, SHORT_N2, `stacked, after step ${i}`);
+    assert.deepEqual(heightsIn(stacked).full, [one], `step ${i}: the card size never drifts`);
+  }
+}
+
 // ---- card shadow: a pixel field ported from derived/shadow_tuner/index.html - darkest at a ------
 // corner, generated once per size and cached, never per frame or per redraw
 
@@ -437,19 +479,16 @@ globalThis.window.innerHeight = 800;
   assert.ok(parseFloat(pile.style.height) >= mod.PILE, 'the pile keeps its floor');
   const full = fullCards(bucketRows);
   assert.ok(full.length, 'at least one card shows full');
-  full.forEach(s => assert.equal(parseFloat(s.style.height), mod.PORTRAIT_BELOW, 'a 180px-wide column keeps a portrait 230px card, not a squashed square'));
-  assert.ok(fullCards(bucketRows).every(s => !s.className.includes('fan-item')), 'piled full cards drop the fan overlap');
-  // the covered card in a stack shows only its title-strip peek, overlapped by the one after it
+  assert.ok(full.every(s => !s.className.includes('fan-item')), 'no card wears the fan overlap any more');
+  const open = full.filter(s => !s.className.includes('card-covered'));
+  open.forEach(s => assert.equal(parseFloat(s.style.height), mod.PORTRAIT_BELOW,
+    'a 180px-wide column keeps a portrait 230px card, not a squashed square'));
+  // a passed card is a SHORTER card with the same gap under it, never a full card half hidden
   const covered = full.filter(s => s.className.includes('card-covered'));
-  assert.ok(covered.length, 'a stack of more than one card covers its earlier member');
+  assert.ok(covered.length, 'a stack of more than one card passes its earlier member');
   covered.forEach(s => {
-    const cardHeight = parseFloat(s.style.height);
-    const next = bucketRows.children[bucketRows.children.indexOf(s) + 1];
-    assert.ok(next.className.includes('card-strip'), 'the covered card is always followed by the one covering it');
-    // the stub's computed rowGap is empty, so fitPiledColumn falls back to BUCKET_ROW_GAP (18) -
-    // the margin has to cancel that real flex gap too, or the peek band comes out gap px too tall
-    assert.equal(parseFloat(next.style.marginTop), -(cardHeight - mod.PEEK + 18),
-      'the later card slides up over the gap AND the peek, leaving exactly PEEK px of the earlier one showing');
+    assert.equal(parseFloat(s.style.height), mod.CARD_BAND, 'a passed card is exactly the band tall');
+    assert.ok(!s.style.marginTop, 'and carries no margin - the flex gap is the only spacing');
   });
   assert.ok(!bucketRows.className.includes('bucket-rows-scrolls'), 'room enough at the portrait floor - no scrollbar needed');
 }
@@ -518,17 +557,43 @@ globalThis.window.innerHeight = 800;
   assert.equal(mod.cardEdgeVar(card('t', 'todo')), 'var(--grey-border)');
 }
 
+// ---- the top of a pile IS the card that went on last: a real card, jittered like every layer
+// under it, with its own title - and the count rides over the lot, always level ------------------
+
 {
-  // up to MAX_PILE_LAYERS drawn, bottom first: the first (lowest-index) card ends up painted last
-  // (closest to the face), the way a real desk pile is built up one card at a time
   const cards = Array.from({length: 20}, (_, i) => card(`z${i}`, 'todo'));
   const {bucketRows} = buildColumn(SHORT_N2, cards);
-  const pile = piles(bucketRows)[0];
-  const layers = pile.children.filter(c => c.className.includes('card-pile-layer'));
-  assert.equal(layers.length, mod.MAX_PILE_LAYERS, 'never more than MAX_PILE_LAYERS drawn edges');
-  const expectedTop = mod.pileLayerJitter(pile._cards[0].id);
-  const topTransform = layers.at(-1).style.transform;
-  assert.ok(topTransform.includes(expectedTop.dx.toFixed(1)), 'the first (bottom) card is the last layer appended - painted on top, under the face');
+  const layersOf = pile => pile.children.filter(c => c.className.includes('card-pile-layer'));
+  const topOf = pile => layersOf(pile).at(-1); // painted back to front, so the last appended is on top
+  const sideOf = side => piles(bucketRows).find(p => p.dataset.side === side);
+  const lower = sideOf('below');
+  assert.equal(layersOf(lower).length, mod.MAX_PILE_LAYERS, 'never more than MAX_PILE_LAYERS drawn cards');
+  assert.equal(topOf(lower).dataset.pileCard, lower._cards[0].id,
+    'the lower pile takes the group\'s newest card, so its first card is the one on top');
+  const lowJitter = mod.pileLayerJitter(lower._cards[0].id);
+  assert.equal(topOf(lower).style.transform,
+    `translate(${lowJitter.dx.toFixed(1)}px, ${lowJitter.dy.toFixed(1)}px) rotate(${lowJitter.rot.toFixed(2)}deg)`,
+    'drawn with its own jitter, exactly like the layers under it - no flat, level face');
+  assert.ok(topOf(lower).className.includes('card-pile-top'), 'and marked as the pile\'s own top card');
+  assert.equal(topOf(lower).children.find(c => c.className.includes('card-title'))?.textContent,
+    lower._cards[0].title, 'carrying that card\'s real title');
+
+  // the upper pile grows the other way: it takes the group's OLDEST, so its last card is the newest
+  const press = keyDriver(bucketRows);
+  for (let i = 0; i < 4; i++) press('ArrowDown');
+  const upper = sideOf('above');
+  assert.ok(upper, 'stepping past the group\'s end forms the upper pile');
+  assert.equal(topOf(upper).dataset.pileCard, upper._cards.at(-1).id,
+    'the upper pile takes the group\'s oldest, so its last card is the one on top');
+  const upJitter = mod.pileLayerJitter(upper._cards.at(-1).id);
+  assert.ok(topOf(upper).style.transform.includes(`rotate(${upJitter.rot.toFixed(2)}deg)`), 'jittered too');
+
+  // the count is a sibling of the layers, never a child of one, so no card's rotation reaches it
+  [lower, upper].forEach(pile => {
+    const count = pile.querySelector('.card-pile-count');
+    assert.equal(count.parentNode, pile, 'the count sits over the whole pile, not on the top card');
+    assert.ok(!count.style.transform, 'and carries no rotation of its own - the number stays level');
+  });
 }
 
 // ---- resize refit: a window resize event redraws every piled column from its own state, picking
@@ -769,8 +834,8 @@ function markerHiddenFor(strip) {
     'stacked, bottom-anchored last card': fullCards(bottom).at(-1),
   };
   cases['stacked, bottom-anchored last card'].focus();
-  assert.ok(cases['plain, middle card'].className.includes('fan-item') && !cases['stacked, open card'].className.includes('fan-item'),
-    'both column types are really under test: the plain column fans, the stacked one does not');
+  assert.ok(!piles(plain).length && piles(stacked).length,
+    'both column types are really under test: the plain column has no pile, the stacked one does');
   const reference = focusLook(cases['stacked, open card']);
   assert.match(reference.transform, /^scale\(1\.03\)$/, 'a focused card lifts 3% toward the viewer');
   assert.match(reference.filter, /saturate\(1\.7\) brightness\(1\.4\)/, 'and its own colours step up');
@@ -817,69 +882,56 @@ const visible = (frame, box) => {
   return [y + Math.max(top, 0), y + box.height - Math.max(bottom, 0)];
 };
 
-// ---- the pile's mouth: a card goes in and out through the painted edge that faces it, cut at that
-// line the whole way - the cut never moves while the card slides, so the pile eats it from its edge
+// ---- the fold, the ONE motion a card goes onto or off a pile by: it shuts to nothing at the edge
+// facing the pile, holding that edge exactly where it was drawn. the slide-through-the-mouth it
+// replaces is gone, so nothing travels into the pile or out the far side ------------------------
 
 {
-  const r = mod.CLIP_REACH;
-  const pile = {left: 0, top: 0, width: WIDE, height: mod.PILE};
-  const line = mod.PILE - mod.PILE_FACE_INSET;
-  const below = {left: 0, top: line + r + 30, width: WIDE, height: WIDE};
-  const mouth = mod.pileMouth(pile, below);
-  assert.deepEqual(mouth, {above: true, left: 0, line}, 'a card below the pile meets its bottom face edge');
-
-  // the face is the count's box, PILE_FACE_INSET in from the row - but a jittered layer protrudes
-  // past it, and that outermost drawn edge is the one that eats the card, never the row/gap edge
-  const jut = 6;
-  const layers = [{top: mod.PILE_FACE_INSET - jut, bottom: mod.PILE - mod.PILE_FACE_INSET + jut}];
-  const painted = mod.pileFace(pile, layers);
-  assert.deepEqual([painted.top, painted.top + painted.height], [mod.PILE_FACE_INSET - jut, line + jut],
-    'the painted face reaches out to the layers that stick out past the count');
-  assert.equal(mod.pileMouth(pile, below, layers).line, line + jut, 'and the mouth sits on that edge');
-  assert.ok(line + jut < pile.top + pile.height, 'still inside the pile row, never out at the gap');
-  const aboveCard = {left: 0, top: -WIDE - 60, width: WIDE, height: WIDE};
-  assert.equal(mod.pileMouth(pile, aboveCard, layers).line, mod.PILE_FACE_INSET - jut,
-    'mirrored at the top edge for a card above the pile');
-  const {shown, inside} = mod.mouthFrames(below, mouth);
-  assert.equal(shown.translate, '0px 0px', 'shown: the card at its own box');
-  assert.ok(uncut(shown), 'and uncut there');
-  assert.equal(below.top + insets(shown)[0], line, 'the cut sits on the mouth line');
-  assert.equal(below.top + shiftY(inside) + insets(inside)[0], line, 'and is still on it once the card is all the way in');
-  assert.ok(fullyClipped(inside, WIDE) && insets(inside)[0] >= WIDE + r, 'all the way in: nothing of the card or its shadow is left');
-  assert.ok(insets(inside)[0] > insets(shown)[0], 'the cut grows from the pile\'s side');
-
-  const above = {left: 0, top: -WIDE - 60, width: WIDE, height: WIDE};
-  const low = mod.pileMouth(pile, above);
-  assert.deepEqual(low, {above: false, left: 0, line: mod.PILE_FACE_INSET}, 'a card above the pile meets its top face edge');
-  const lowFrames = mod.mouthFrames(above, low);
-  assert.equal(above.top + above.height - insets(lowFrames.shown)[2], low.line);
-  assert.equal(above.top + above.height + shiftY(lowFrames.inside) - insets(lowFrames.inside)[2], low.line);
-  assert.ok(fullyClipped(lowFrames.inside, WIDE) && insets(lowFrames.inside)[2] > insets(lowFrames.shown)[2],
-    'mirrored: the cut grows from the bottom, toward the pile below');
-
-  // the invariant is the line, not the clamp: a card whose own box already reaches past the mouth
-  // is cut on the same line from the first frame, which is what keeps the cut still while it slides
-  const reaching = {left: 0, top: 20, width: WIDE, height: WIDE};
-  const reach = mod.mouthFrames(reaching, mod.pileMouth(pile, reaching));
-  assert.equal(reaching.top + insets(reach.shown)[0], line, 'reaching in: the cut is on the line at once');
-  assert.equal(reaching.top + shiftY(reach.inside) + insets(reach.inside)[0], line, 'and stays there');
-
-  // the fold: a pile forming in the card's own place, the card collapsing onto its face. the edge
-  // on the pile's side holds, the other travels, and it lands exactly on the face
-  const face = mod.pileFace(pile);
   const folder = {left: 0, top: 40, width: WIDE, height: WIDE};
-  const up = mod.foldFrames(folder, face, true);
+  const up = mod.foldFrames(folder, true);
   assert.ok(uncut(up.open) && up.open.translate === '0px 0px', 'open: the card whole, where it is');
-  assert.deepEqual(visible(up.folded, folder), [face.top, face.top + face.height], 'folded: exactly the pile\'s face');
+  assert.equal(up.folded.translate, '0px 0px', 'folded: still in its own place - it never travels');
+  assert.ok(fullyClipped(up.folded, WIDE), 'and nothing of it, or of its shadow, is left');
   assert.ok(insets(up.folded)[2] > insets(up.open)[2] && insets(up.folded)[0] <= 0,
     'a pile above holds the card\'s top edge and climbs its bottom');
+  assert.ok(visible(up.folded, folder)[1] <= folder.top,
+    'nothing of it left, and shut at its own top edge - the edge facing the pile, never past it');
+  assert.equal(visible(up.folded, folder)[0], visible(up.open, folder)[0],
+    'that top edge is exactly where it was drawn: the card shrinks, it does not travel');
 
-  const belowFace = {left: 0, top: 400, width: WIDE, height: mod.PILE - 2 * mod.PILE_FACE_INSET};
-  const down = mod.foldFrames(folder, belowFace, false);
-  assert.deepEqual(visible(down.folded, folder), [belowFace.top, belowFace.top + belowFace.height],
-    'mirrored: it lands on the lower pile\'s face too');
+  const down = mod.foldFrames(folder, false);
+  assert.ok(fullyClipped(down.folded, WIDE) && down.folded.translate === '0px 0px', 'mirrored below');
   assert.ok(insets(down.folded)[0] > insets(down.open)[0] && insets(down.folded)[2] <= 0,
     'a pile below holds the card\'s bottom edge and pushes its top down');
+  assert.ok(visible(down.folded, folder)[0] >= folder.top + folder.height,
+    'shut at its own bottom edge, again the one facing the pile');
+  assert.equal(visible(down.folded, folder)[1], visible(down.open, folder)[1],
+    'and that bottom edge never moves either');
+
+  // a card of any height shuts the same way - the frames are the card's own box, nothing else
+  const band = mod.foldFrames({left: 0, top: 0, width: WIDE, height: mod.CARD_BAND}, true);
+  assert.ok(fullyClipped(band.folded, mod.CARD_BAND));
+  // a passed card keeps its own bottom cut throughout, or the fold uncovers what the band hides
+  const kept = mod.foldFrames(folder, false, 0);
+  assert.equal(insets(kept.open)[2], 0, 'the band\'s own cut is restated, not dropped, while it folds');
+}
+
+// ---- a step replays a card from its old box by TRANSLATING it, never by scaling: a card really
+// changes height when it is passed or opened, and a scaled card stretches its own text ----------
+
+{
+  const band = {left: 0, top: 0, width: WIDE, height: mod.CARD_BAND};
+  const full = {left: 0, top: 40, width: WIDE, height: WIDE};
+  const [from, to] = mod.cardFlipFrames(band, full, -mod.CLIP_REACH);
+  assert.ok(!('scale' in from) && !('scale' in to), 'no scale in either frame - content is cut, not squashed');
+  assert.equal(shiftY(from), band.top - full.top, 'it starts at the top edge it was drawn at');
+  assert.equal(to.translate, '0px 0px', 'and ends in its own place');
+  assert.equal(insets(from)[2], WIDE - mod.CARD_BAND, 'showing exactly the band it was, the rest cut away');
+  assert.ok(uncut(to), 'uncovering the height it gained as it goes');
+
+  const shrinking = mod.cardFlipFrames(full, band, 0);
+  assert.deepEqual(shrinking.map(f => insets(f)[2]), [0, 0],
+    'a card being passed keeps the band\'s own bottom cut at both ends - it lost height, it gained none');
 }
 
 // drives a stacked column with the stub's animation recorder on and timers held, never real time
@@ -946,13 +998,12 @@ withMotion(timers => {
   const ghostOf = id => stubMotion.log.find(a => a.el.className.includes('row-ghost') && a.el.dataset.cardId === id);
 
   // the step past the group's end FORMS the upper pile, in the very room card 1 is leaving: the
-  // card shrinks onto the pile's first layer rather than sliding in from outside it
+  // card shrinks into the edge facing it rather than sliding in from outside it
   stubMotion.log.length = 0;
   press('ArrowDown');
   const ghost = ghostOf(cards[0].id);
   assert.ok(ghost, 'the card folded onto the pile moves there as itself');
   const upper = pileOn(bucketRows, 'above');
-  const upperFace = mod.pileFace(upper.getBoundingClientRect(), [...upper.querySelectorAll('.card-pile-layer')].map(l => l.getBoundingClientRect()));
   assert.equal(ghost.el.parentNode, bucketRows, 'seated among the rows, in their paint order');
   assert.ok(paintsUnder(ghost.el, upper), 'under the pile the whole way, not hovering over it');
   assert.ok(paintsUnder(fullCards(bucketRows)[0], ghost.el),
@@ -963,8 +1014,9 @@ withMotion(timers => {
   const [open, folded] = ghost.keyframes;
   const ghostBox = {top: parseFloat(ghost.el.style.top), height: parseFloat(ghost.el.style.height)};
   assert.ok(uncut(open) && open.translate === '0px 0px', 'from where it was drawn, whole');
-  assert.deepEqual(visible(folded, ghostBox), [upperFace.top, upperFace.top + upperFace.height],
-    'ending exactly as the forming pile\'s top layer');
+  assert.equal(folded.translate, '0px 0px', 'shrinking where it stands - it never travels to the pile');
+  assert.ok(fullyClipped(folded, ghostBox.height), 'ending as nothing at all, fully eaten');
+  assert.ok(visible(folded, ghostBox)[0] <= ghostBox.top, 'shut at its top edge, the one facing the pile');
   assert.ok(insets(folded)[2] > insets(open)[2] && insets(folded)[0] <= 0,
     'the top pile holds the card\'s top edge and climbs its bottom, content cut not squashed');
   const formed = upper._animations[0];
@@ -975,20 +1027,20 @@ withMotion(timers => {
   assert.ok(landings()[0].ms >= ghost.options.duration, 'not before the card is fully eaten');
   landings()[0].fn();
   assert.equal(pileCount(upper), '1');
-  // the other end of the same step: one card slides out from under the lower pile, whose count
-  // drops at once
+  // the other end of the same step: one card is spat out of the lower pile's edge, growing in
+  // place to full height, and that pile's count drops at once
   const lowerPile = pileOn(bucketRows, 'below');
   const lifted = fullCards(bucketRows).find(s => s.dataset.cardId === cards[n].id);
   const lift = lifted._animations[0];
   assert.deepEqual([lift.options.duration, lift.options.easing], [mod.PILE_MOTION_MS, mod.PILE_EASING], 'at the pile timing');
   assert.ok(paintsUnder(lifted, lowerPile), 'the card drawn off the lower pile comes out from under it');
-  assert.ok(fullyClipped(lift.keyframes[0], parseFloat(lifted.style.height)), 'starting all the way in, nothing showing');
-  assert.ok(shiftY(lift.keyframes[0]) > 0, 'down inside the pile below it');
-  assert.ok(insets(lift.keyframes[1])[2] < insets(lift.keyframes[0])[2], 'the cut falls back toward the pile as it slides out');
-  assert.equal(lift.keyframes[1].translate, '0px 0px', 'and ends in its own place');
+  assert.ok(fullyClipped(lift.keyframes[0], parseFloat(lifted.style.height)), 'starting as nothing, not as a whole card');
+  assert.equal(lift.keyframes[0].translate, '0px 0px', 'in its own place from the first frame - it does not travel out');
+  assert.ok(insets(lift.keyframes[1])[0] < insets(lift.keyframes[0])[0], 'growing back up out of the pile below it');
+  assert.ok(uncut(lift.keyframes[1]) && lift.keyframes[1].translate === '0px 0px', 'and ending whole, in its own place');
   const liftBox = lifted.getBoundingClientRect();
   assert.equal(visible(lift.keyframes[0], liftBox)[1], visible(lift.keyframes[1], liftBox)[1],
-    'the cut sits on the same screen line at both ends, so it never moves while the card comes out');
+    'its bottom edge, the one facing the pile, never moves - the card grows out of that edge');
   assert.ok(lift.keyframes.every(k => !('opacity' in k)) && lifted._animations.length === 1, 'no fade on the way out either');
   lift.onfinish();
   assert.equal(lowerPile.style.zIndex, '', 'the pile drops back to its own paint order once the card is out');
@@ -1003,10 +1055,12 @@ withMotion(timers => {
   assert.ok(paintsUnder(second.el, again) && paintsUnder(ghost.el, again), 'both cards under the redrawn pile');
   assert.ok(paintsUnder(ghost.el, fullCards(bucketRows)[0]),
     'the folding card drops back under the rows once its pile is drawn for real');
-  const [slideShown, slideInside] = second.keyframes;
-  assert.ok(shiftY(slideInside) < 0 && insets(slideInside)[0] > insets(slideShown)[0],
-    'a pile that is already there is slid into through its mouth, not folded onto');
-  assert.ok(fullyClipped(slideInside, parseFloat(second.el.style.height)), 'until nothing of the card is left');
+  const [secondOpen, secondFolded] = second.keyframes;
+  assert.equal(secondFolded.translate, '0px 0px',
+    'a pile already there eats the card the same way - the fold, not a slide through it');
+  assert.ok(insets(secondFolded)[2] > insets(secondOpen)[2] && insets(secondFolded)[0] <= 0,
+    'still held at the top edge, since this pile is above it too');
+  assert.ok(fullyClipped(secondFolded, parseFloat(second.el.style.height)), 'until nothing of the card is left');
   assert.deepEqual(ghostsOf(bucketRows), [ghost.el, second.el], 'the first still in flight, re-seated, not dropped');
   assert.equal(pileCount(again), '1', 'the pile keeps its old count while the card is still sliding in');
   assert.equal(landings().length, 2, 'one more landing, scheduled PILE_MOTION_MS in - when the card is in');
@@ -1027,22 +1081,22 @@ withMotion(timers => {
   assert.ok(drawnOff && out, 'card 2 is drawn off the upper pile');
   assert.ok(bucketRows.children.indexOf(drawnOff) > bucketRows.children.indexOf(top), 'after the pile in the dom');
   assert.ok(paintsUnder(drawnOff, top), 'yet under it until it is out');
-  assert.ok(fullyClipped(out.keyframes[0], parseFloat(drawnOff.style.height)) && shiftY(out.keyframes[0]) < 0,
-    'starting all the way up inside the pile');
-  assert.ok(insets(out.keyframes[1])[0] < insets(out.keyframes[0])[0] && uncut(out.keyframes[1]), 'ending out of it, uncut');
+  assert.ok(fullyClipped(out.keyframes[0], parseFloat(drawnOff.style.height)) && out.keyframes[0].translate === '0px 0px',
+    'starting as nothing at the pile\'s own edge, in its own place - never whole inside the pile');
+  assert.ok(insets(out.keyframes[1])[2] < insets(out.keyframes[0])[2] && uncut(out.keyframes[1]),
+    'growing down out of that edge to full height, ending uncut');
   // and the same step folds the group's last card into the lower pile, from below the group
   const intoLower = stubMotion.log.find(a => a.el.className.includes('row-ghost'));
   assert.ok(paintsUnder(intoLower.el, pileOn(bucketRows, 'below')), 'under the lower pile');
-  assert.ok(shiftY(intoLower.keyframes[1]) > 0 && insets(intoLower.keyframes[1])[2] > insets(intoLower.keyframes[0])[2],
-    'down into it, cut from the bottom');
+  assert.ok(intoLower.keyframes[1].translate === '0px 0px' &&
+    insets(intoLower.keyframes[1])[0] > insets(intoLower.keyframes[0])[0],
+    'shut into it from its top edge, the bottom one - the one facing the pile - held');
   out.onfinish();
   intoLower.onfinish();
 
   // the last card off the upper pile EMPTIES it: the pile leaves the room rather than staying to be
   // slid out of, so the card grows back out of its face from the same edge and the pile hands over
   stubMotion.log.length = 0;
-  const emptyingFace = mod.pileFace(top.getBoundingClientRect(),
-    [...top.querySelectorAll('.card-pile-layer')].map(l => l.getBoundingClientRect()));
   press('ArrowUp');
   const first = fullCards(bucketRows).find(s => s.dataset.cardId === cards[0].id);
   const gone = stubMotion.log.find(a => a.el.className.includes('row-ghost') && a.el.className.includes('card-pile'));
@@ -1050,8 +1104,10 @@ withMotion(timers => {
   assert.ok(paintsUnder(gone.el, first), 'the card takes the pile\'s room over it, the pile does not shrink on top');
   const grow = first._animations[0];
   const firstBox = first.getBoundingClientRect();
-  assert.deepEqual(visible(grow.keyframes[0], firstBox), [emptyingFace.top, emptyingFace.top + emptyingFace.height],
-    'starting exactly as the face of the pile it is emptying');
+  assert.ok(fullyClipped(grow.keyframes[0], firstBox.height) && grow.keyframes[0].translate === '0px 0px',
+    'starting as nothing at the edge of the pile it is emptying');
+  assert.equal(visible(grow.keyframes[0], firstBox)[0], visible(grow.keyframes[1], firstBox)[0],
+    'its top edge, the one that faced the pile, never moves while it grows');
   assert.ok(uncut(grow.keyframes[1]) && grow.keyframes[1].translate === '0px 0px', 'and ending whole, in its own place');
   assert.ok(insets(grow.keyframes[0])[2] > insets(grow.keyframes[1])[2] && insets(grow.keyframes[0])[0] <= 0,
     'the top pile\'s card grows down from its top edge, mirroring the fold');

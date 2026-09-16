@@ -101,9 +101,10 @@ window.addEventListener('resize', () => {
 // full-size whether it sits at rest or in the moving group. presentation only - never touches card status
 // or any stored state, only which cards are drawn full vs folded into a pile right now
 
-// tuning-page constants: css custom properties on body (layout.css), read once here so the sizing
-// maths and the actual drawn gap always agree - a fallback matches today's value exactly, so a
-// missing var (an older stylesheet, or this test stub) changes nothing
+// tuning-page constants: css custom properties on :root (layout.css), read once here so the sizing
+// maths and the actual drawn gap always agree - the root element, which is why layout.css declares
+// them there and not on body. a fallback matches today's value exactly, so a missing var (an older
+// stylesheet, or this test stub) changes nothing
 function readGapVar(name, fallback) {
   const target = (typeof document !== 'undefined' && (document.documentElement || document.body)) || null;
   const css = target && globalThis.getComputedStyle?.(target);
@@ -111,23 +112,34 @@ function readGapVar(name, fallback) {
   return Number.isFinite(raw) ? raw : fallback;
 }
 
-const BUCKET_ROW_GAP = 18; // vertical gap between rows in a bucket - matches .bucket-rows in css
 const MIN_PILED_CARDS = 5; // below this, a group between two piles has nothing left to pile
 const PILE = 100; // a pile's fixed height - never shrinks or grows
-const PEEK = readGapVar('--stack-peek', 60); // the title-strip band an earlier card still shows
 const PILE_GAP_ABOVE = readGapVar('--pile-gap-above', 5); // extra space above a pile, past the row gap
 const PILE_GAP_BELOW = readGapVar('--pile-gap-below', 5); // extra space below a pile, past the row gap
 const MIN_CARD = PILE + 16; // cards shrink no further than this before the column scrolls instead
 const PORTRAIT_BELOW = 230; // a column narrower than this keeps 230px of card height (portrait)
 
-function stackHeight(count, rowHeight) {
-  return count ? count * rowHeight + (count - 1) * BUCKET_ROW_GAP : 0;
-}
+// ---- ONE CARD BOX, EVERY COLUMN TYPE (operator, 2026-09-16). a plain column, an expanded one and
+// a stacked one all draw the same card at the same size, and NOTHING EVER COVERS ANYTHING: a card
+// already passed is a SHORTER card showing its title band, with the same gap under it as anywhere
+// else. these three numbers are the whole layout, and both drawing paths read them here ---------
+
+const CARD_GAP = readGapVar('--card-gap', 10); // between any two neighbouring rows, in every state
+const CARD_BAND = readGapVar('--stack-peek', 60); // a passed card's own height - its title band
 
 // a card is as tall as the column is wide - square - down to PORTRAIT_BELOW, where it keeps that
 // height and turns portrait instead of shrinking further
 function squareCard(width) {
   return Math.max(width, PORTRAIT_BELOW);
+}
+
+// the height a drawn row actually gets: the band for a card already passed, the square otherwise
+function cardHeight(card, covered) {
+  return covered ? CARD_BAND : card;
+}
+
+function stackHeight(count, rowHeight) {
+  return count ? count * rowHeight + (count - 1) * CARD_GAP : 0;
 }
 
 // ---- card shadow: a pixel field, not a css box-shadow (box-shadow can't put more darkness at a
@@ -397,26 +409,29 @@ function availableColumnHeight(bucketRowsEl) {
 
 const MAX_PILE_LAYERS = 8; // more than this and the desk-pile look stops reading as individual cards
 
-// a desk pile of real card edges behind the top one, each nudged and turned a little from its own
-// card's id (pileLayerJitter) and wearing that card's own state edge - what protrudes tells you
-// what is inside. bottom first: the first drawn card sits furthest back, the last right under the
-// face. jitter stays inside the row gap (clamped to +-10px) so a layer never reaches a neighbour
-function buildPileRow(cards, status) {
+// the cards of one pile, most recently added first. a pile grows from the side facing the group:
+// the upper pile takes the group's oldest, so its newest card is its last, and the lower pile takes
+// the group's newest, so its newest is its first. the same card is the next one drawn back off it
+function pileByRecency(cards, side) {
+  return side === 'above' ? [...cards].reverse() : [...cards];
+}
+
+// a desk pile of real cards, each nudged and turned a little from its own card's id
+// (pileLayerJitter) and wearing that card's own state edge - what protrudes tells you what is
+// inside. painted back to front, so THE CARD THAT WENT ON LAST IS THE ONE ON TOP, jittered like
+// every other layer and carrying its own title - there is no flat card-sized face standing in for
+// it any more. jitter stays inside the row gap (clamped to +-10px) so a layer never reaches a
+// neighbour, and the count rides over the whole pile as its own level badge (layout.css)
+function buildPileRow(cards, status, side) {
   const el = document.createElement('div');
   // the pile wears the state edge a card would: attention if it holds one, else doing's own
   const state = cards.some(isAttentionCard) ? ' card-pile-attention' : status === 'doing' ? ' card-pile-doing' : '';
   el.className = `row card-pile${state}`;
   el.tabIndex = -1;
   el.dataset.pile = 'true';
-  const drawn = cards.slice(0, Math.min(MAX_PILE_LAYERS, cards.length));
+  const drawn = pileByRecency(cards, side).slice(0, Math.min(MAX_PILE_LAYERS, cards.length));
   for (let i = drawn.length - 1; i >= 0; i--) {
-    const source = drawn[i];
-    const {dx, dy, rot} = pileLayerJitter(source.id);
-    const layer = document.createElement('div');
-    layer.className = 'card-pile-layer';
-    layer.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) rotate(${rot.toFixed(2)}deg)`;
-    layer.style.borderColor = cardEdgeVar(source);
-    el.appendChild(layer);
+    el.appendChild(buildPileLayer(drawn[i], i === 0));
   }
   const count = document.createElement('div');
   count.className = 'card-pile-count';
@@ -427,26 +442,41 @@ function buildPileRow(cards, status) {
   return el;
 }
 
-// a piled column drops fan-item: its -80% margin pulled the card after a pile up over the pile,
-// and its focus slide pushed the bottom pair off screen - fitPiledColumn places these instead
-function buildFullRow(card, idx, fanned = true) {
+// one drawn card in a pile. the topmost one is a real card rather than an edge: it names the card
+// the fold just delivered, so what you see on the pile is what went onto it
+function buildPileLayer(card, isTop) {
+  const {dx, dy, rot} = pileLayerJitter(card.id);
+  const layer = document.createElement('div');
+  layer.className = isTop ? 'card-pile-layer card-pile-top' : 'card-pile-layer';
+  layer.dataset.pileCard = card.id; // NOT cardId - board.js's focusedCardId() reads that one off any ancestor
+  layer.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) rotate(${rot.toFixed(2)}deg)`;
+  layer.style.borderColor = cardEdgeVar(card);
+  if (!isTop) return layer;
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = card.title || '';
+  layer.appendChild(title);
+  return layer;
+}
+
+// every card row, whichever column type draws it - fitPlainColumn/fitPiledColumn give it its height
+function buildFullRow(card, idx) {
   const strip = renderCardStrip(card);
   strip.dataset.idx = String(idx);
-  if (!fanned) strip.classList.remove('fan-item');
   return strip;
 }
 
 // ---- column motion, option C (derived/column_motion, operator-approved): a group of at most n
-// cards sits between a pile above and a pile below. inside the group, passed cards are PEEK strips
-// and the focused card is open. stepping past the group's end draws one card off the lower pile and
+// cards sits between a pile above and a pile below. inside the group, a passed card is drawn as its
+// own shorter band and the focused card is open - nothing is ever hidden behind anything. stepping past the group's end draws one card off the lower pile and
 // puts the group's oldest onto the upper pile, so the group never grows past n ------------------
 
 const EDGE_CARDS = 2; // the column's last (or first) cards shown past the far pile, cut at the edge
 
 // pure: the tallest a group of n cards gets - the focused card open at the group's start, the
-// group's last card still full below it, every card between a PEEK strip
+// group's last card still full below it, every card between a band, and a gap under each of them
 function groupHeight(n, card) {
-  return n <= 1 ? card : 2 * card + (n - 2) * PEEK;
+  return n <= 1 ? n * card : 2 * card + (n - 2) * CARD_BAND + (n - 1) * CARD_GAP;
 }
 
 // pure: one pile's share of the column - its own height, its above/below knobs (the same margins
@@ -488,25 +518,25 @@ function placeGroup(total, n, focusIndex, start, anchor) {
 // pure: sorted cards, the focused index (or null at rest), the group's prior start and anchor, and
 // n -> {start, anchor, rows}. top anchor: pile above, group, pile below, then the column's last
 // cards, cut by the column's bottom edge. bottom anchor mirrors it: the first cards (cut by the top
-// edge), pile above, group, pile below. a card row's join says how it meets the row before it:
-// 'peek' slides over that card leaving a PEEK strip, 'flush' starts at the open focused card's
-// bottom edge, 'none' is plain flow
+// edge), pile above, group, pile below. a card row is `covered` when it has already been passed -
+// drawn as its own shorter title band, never hidden under the card after it
 function computePileLayout(sorted, focusIndex, start, anchor, n) {
   const total = sorted.length;
   const place = placeGroup(total, n, focusIndex, start, anchor);
   const end = place.start + n; // one past the group's last card
   const edge = Math.min(n, EDGE_CARDS);
-  // only a focused card is open. at rest every card is covered by the next, the way the fan rests -
-  // focus landing on one redraws the column around it (wireColumnFocus), leaving covers it again
+  // only a focused card is open. at rest every card but the run's last is already passed - focus
+  // landing on one redraws the column around it (wireColumnFocus), leaving passes it again
   const open = focusIndex;
   const rows = [];
   const pile = (from, to, side) => {
     if (to > from) rows.push({type: 'pile', side, cards: sorted.slice(from, to)});
   };
+  // every card in a run but its last is already passed, and so is the open one's predecessor - the
+  // open card itself never is, however far down the run it sits
   const run = (from, to, part) => {
     for (let i = from; i < to; i++) {
-      const join = i === from ? 'none' : i - 1 === open ? 'flush' : 'peek';
-      rows.push({type: 'card', idx: i, card: sorted[i], join, part});
+      rows.push({type: 'card', idx: i, card: sorted[i], part, covered: i < to - 1 && i !== open});
     }
   };
   if (place.anchor === 'top') {
@@ -522,31 +552,41 @@ function computePileLayout(sorted, focusIndex, start, anchor, n) {
     run(place.start, end, 'group');
     pile(end, total, 'below');
   }
-  rows.forEach((row, i) => {
-    if (row.type === 'card') row.covered = rows[i + 1]?.join === 'peek';
-  });
   return {start: place.start, anchor: place.anchor, rows};
 }
 
-// applies computeGroupFit to the drawn rows: every card the fit's square size, every pile PILE, and
-// each card's join as a margin. bucket-rows' own flex `gap` still applies UNDER a margin (they add,
-// never cancel), so a peek margin cancels the gap too, or every strip comes out gap px too tall.
-// the column is exactly `available` tall and clips what runs past it, no scrollbar
-function fitPiledColumn(bucketRowsEl, fit, anchor, available, gap) {
-  const rowEls = Array.from(bucketRowsEl.children);
+// applies computeGroupFit to the drawn rows: a passed card the band, every other card the fit's
+// square size, every pile PILE. no margin anywhere - bucket-rows' own flex gap is the ONE space
+// between two rows, so nothing can overlap. the column is exactly `available` tall and clips what
+// runs past it, no scrollbar
+function fitPiledColumn(bucketRowsEl, fit, anchor, available) {
   bucketRowsEl.classList.toggle('bucket-rows-scrolls', fit.scrolls);
   bucketRowsEl.classList.toggle('bucket-rows-bottom', fit.piles && !fit.scrolls && anchor === 'bottom');
   bucketRowsEl.style.height = `${available}px`;
-  rowEls.forEach((el, i) => {
+  Array.from(bucketRowsEl.children).forEach(el => {
     if (el.classList.contains('card-pile')) {
       el.style.height = `${PILE}px`;
-      el.style.marginTop = '';
       return;
     }
-    el.style.height = `${fit.card}px`;
-    const join = el.dataset.join;
-    el.classList.toggle('card-covered', rowEls[i + 1]?.dataset?.join === 'peek');
-    el.style.marginTop = join === 'peek' ? `${-(fit.card - PEEK + gap)}px` : join === 'flush' ? `${-gap}px` : '';
+    const covered = el.dataset.covered === 'true';
+    el.classList.toggle('card-covered', covered);
+    el.style.height = `${cardHeight(fit.card, covered)}px`;
+  });
+}
+
+// the same card box in a plain or expanded column as in a stacked one, from the column's own width -
+// one size, stated here rather than left to a css ratio, so no column type draws a card any other
+// height. an expanded column is a scrolling list capped to the room it has; a plain one just flows
+function fitPlainColumn(bucketRowsEl, state) {
+  const scrolls = !!state.expanded && !state.fits;
+  bucketRowsEl.style.maxHeight = scrolls ? `${availableColumnHeight(bucketRowsEl)}px` : '';
+  bucketRowsEl.style.height = '';
+  bucketRowsEl.classList.toggle('bucket-rows-expanded', scrolls);
+  bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls', 'bucket-rows-bottom');
+  const card = squareCard(bucketRowsEl.getBoundingClientRect().width);
+  Array.from(bucketRowsEl.children).forEach(el => {
+    el.classList.remove('card-covered');
+    el.style.height = `${card}px`;
   });
 }
 
@@ -560,16 +600,15 @@ function roleChanged(id, role, priorRoles) {
 // to where it is drawn now (flip) - a step reads as the column moving, never as a redraw. a plain
 // step runs at .row-enter's duration and ease-out, a step that touches a pile at the pile's slower
 // timing (planPileMotion); the css translate/scale/clip-path properties, never transform, so a
-// focus lift (transform) or the fan's own slide (transform) run underneath it untouched ----------
+// focus lift (transform) runs underneath it untouched --------------------------------------------
 
 const ROW_MOTION_MS = 140; // .row-enter's own duration (layout.css)
 const ROW_EASING = 'ease-out';
 // a step that moves a card onto or off a pile is slower and softer, so the eye can follow the card:
-// it slides in under the pile for PILE_MOTION_MS and is gone once it is all the way in
+// it shrinks into the pile over PILE_MOTION_MS and is gone once it is all the way in
 const PILE_MOTION_MS = 300;
 const PILE_SETTLE_MS = 120; // the count's pop, once the card is in, runs twice this
 const PILE_EASING = 'cubic-bezier(0.45, 0, 0.25, 1)';
-const PILE_FACE_INSET = 11; // .card-pile-count's own top/bottom inset (layout.css) - the face box
 const CLIP_REACH = 40; // a clip this far outside the card keeps its own shadow canvas uncut
 const REST_FRAME = {translate: '0px 0px', scale: '1 1', opacity: 1};
 const GROW_FRAME = {translate: '0px 0px', scale: '0.9 0.6', opacity: 0}; // a pile forming or emptying
@@ -584,12 +623,10 @@ function rowKey(el) {
   return el.classList.contains('card-pile') ? `pile-${el.dataset.side}` : `card-${el.dataset.cardId}`;
 }
 
-// the drawn rows only - a ghost still sliding into (or shrinking off) a pile is not one of them.
-// a pile's layer boxes are taken here too, at rest: by the time a card's own frames are built the
-// pile may already be animating, and a scaled layer would put its painted edge in the wrong place
+// the drawn rows only - a ghost still folding into (or growing out of) a pile is not one of them
 function measureRows(bucketRowsEl) {
   const rows = Array.from(bucketRowsEl.children).filter(el => !el.classList.contains('row-ghost'));
-  return new Map(rows.map(el => [rowKey(el), {el, rect: el.getBoundingClientRect(), layers: pileLayers(el)}]));
+  return new Map(rows.map(el => [rowKey(el), {el, rect: el.getBoundingClientRect()}]));
 }
 
 // pure: the translate and scale that put a box drawn at `to` back over `from`. css scales about
@@ -635,68 +672,40 @@ function planPileMotion(priorRoles, nextRoles) {
   return {piles, duration: piled ? PILE_MOTION_MS : ROW_MOTION_MS, easing: piled ? PILE_EASING : ROW_EASING};
 }
 
-// pure: a pile row's box -> the box it actually paints. the count's face sits PILE_FACE_INSET in
-// from the row box, but a jittered layer edge protrudes past that, and the outermost painted edge
-// is the one a card must reach before anything of it is cut - the row box itself is part gap
-function pileFace(rect, layers = []) {
-  const inset = Math.min(PILE_FACE_INSET, rect.height / 2);
-  const top = Math.min(rect.top + inset, ...layers.map(l => l.top));
-  const bottom = Math.max(rect.top + rect.height - inset, ...layers.map(l => l.bottom));
-  return {left: rect.left, top, width: rect.width, height: bottom - top};
-}
-
-// the drawn layer boxes of one pile row - what pileFace needs to know how far the pile paints
-function pileLayers(pileEl) {
-  const layers = pileEl?.querySelectorAll?.('.card-pile-layer');
-  return layers ? Array.from(layers, l => l.getBoundingClientRect()) : [];
-}
-
-// pure: the pile's mouth for a card at `card` - the painted edge that faces the card, its bottom
-// edge for a card below the pile and its top edge for a card above it. a card goes in and out there
-function pileMouth(pileRect, card, layers = []) {
-  const face = pileFace(pileRect, layers);
-  const above = face.top + face.height / 2 < card.top + card.height / 2;
-  return {above, left: face.left, line: above ? face.top + face.height : face.top};
-}
-
 const px = v => `${Math.round(v * 100) / 100}px`;
 const clipInset = (top, bottom) => `inset(${px(top)} -${CLIP_REACH}px ${px(bottom)} -${CLIP_REACH}px)`;
 
-// pure: a card box and a pile mouth -> `shown`, the card at its own box, and `inside`, the card slid
-// through the mouth until it and its shadow are all past it. the clip is stated in the card's own
-// moving frame on both sides, so the cut lands on the mouth line at every point between them: the
-// card crosses the gap whole and is eaten only at the pile's painted edge, never faded
-function mouthFrames(card, mouth) {
-  const r = CLIP_REACH;
-  const dx = mouth.left - card.left;
-  if (mouth.above) {
-    const dy = mouth.line - (card.top + card.height + r);
-    return {
-      shown: {translate: '0px 0px', clipPath: clipInset(mouth.line - card.top, -r)},
-      inside: {translate: `${px(dx)} ${px(dy)}`, clipPath: clipInset(card.height + r, -r)},
-    };
-  }
-  const dy = mouth.line + r - card.top;
-  return {
-    shown: {translate: '0px 0px', clipPath: clipInset(-r, card.top + card.height - mouth.line)},
-    inside: {translate: `${px(dx)} ${px(dy)}`, clipPath: clipInset(-r, card.height + r)},
-  };
+// a row's own resting bottom cut: a passed card is cut at its own bottom edge (layout.css), every
+// other row is not cut at all. a frame that states clipPath has to restate it or it uncovers the
+// content a band is meant to hide for as long as it runs
+const restingCut = el => (el.classList.contains('card-covered') ? 0 : -CLIP_REACH);
+
+// pure: how a card row is replayed from the box it was drawn in last time. NEVER A SCALE - a card
+// really does change height when it is passed or opened, and a scaled card stretches its own text.
+// it starts where it was, and the height it gained is uncovered by the clip instead, so its content
+// is cut rather than squashed, the same rule the fold follows
+function cardFlipFrames(from, to, cut) {
+  const grew = Math.max(to.height - from.height, 0);
+  return [
+    {translate: `${px(from.left - to.left)} ${px(from.top - to.top)}`, clipPath: clipInset(-CLIP_REACH, grew || cut)},
+    {translate: '0px 0px', clipPath: clipInset(-CLIP_REACH, cut)},
+  ];
 }
 
-// pure: a card box and the face of a pile forming in its own place -> `open`, the card whole, and
-// `folded`, the card collapsed onto that face. the edge on the pile's side holds and the other
-// travels to meet it, the card's own content cut rather than squashed, so it ends as the pile's
-// top layer exactly. `above` is the side the pile sits on: the column's top pile holds the card's
-// top edge and climbs its bottom, the bottom pile holds the bottom and pushes the top down
-function foldFrames(card, face, above) {
+// pure: a card box and the side its pile sits on -> `open`, the card whole where it is, and
+// `folded`, the card shut to nothing at the edge that faces the pile. THE CARD NEVER TRAVELS: the
+// near edge holds exactly where it was drawn and the far one climbs to meet it, the content cut
+// rather than squashed, so the card is eaten at the pile's own edge and never shows on the far side.
+// `above` is the side the pile sits on - a pile above holds the card's top edge and climbs its
+// bottom, a pile below holds the bottom and pushes the top down. run backwards, it is the same
+// motion growing out of that edge to full height in place
+function foldFrames(card, above, cut = -CLIP_REACH) {
   const r = CLIP_REACH;
-  const shrink = Math.max(card.height - face.height, 0);
-  const open = {translate: '0px 0px', clipPath: clipInset(-r, -r)};
-  if (above) {
-    return {open, folded: {translate: `0px ${px(face.top - card.top)}`, clipPath: clipInset(-r, shrink)}};
-  }
-  const dy = face.top + face.height - (card.top + card.height);
-  return {open, folded: {translate: `0px ${px(dy)}`, clipPath: clipInset(shrink, -r)}};
+  const shut = card.height + r; // past the card's own box, so its shadow is taken with it
+  return {
+    open: {translate: '0px 0px', clipPath: clipInset(-r, cut)},
+    folded: {translate: '0px 0px', clipPath: above ? clipInset(-r, shut) : clipInset(shut, cut)},
+  };
 }
 
 // lifts a node out of the drawn flow so it can be replayed once where it was: absolute against the
@@ -734,26 +743,16 @@ function ghostPile(bucketEl, prior, timing, over) {
   anim.onfinish = anim.oncancel = () => ghost.remove();
 }
 
-// a card folded onto a pile slides in under it: seated right before the pile in paint order (the
-// pile and every row after it paint over it) and cut at the pile's mouth as it passes, so the pile
-// stays on top and the card is gone once it is all the way in - when the pile's count ticks
-function slideIntoPile(bucketEl, prior, pile, timing) {
-  const ghost = seatGhostAtPile(bucketEl, prior, pile);
-  const {shown, inside} = mouthFrames(prior.rect, pileMouth(pile.rect, prior.rect, pile.layers));
-  const anim = ghost.animate([shown, inside], {...timing, fill: 'forwards'});
-  anim.onfinish = anim.oncancel = () => ghost.remove();
-}
-
-// a card whose pile is forming has nowhere to slide from - the pile is taking the very room the
-// card is leaving, and sliding in would read as the pile materialising on top of it. it folds down
-// onto the pile's face instead, from the edge on the pile's side, and the pile takes over at the end
+// EVERY card that goes onto a pile is eaten the same way, whether that pile was already there or is
+// forming in this very room: it shrinks into the edge facing the pile and is gone. it never slides
+// through the pile and out the far side, which is what the mouth-slide it replaces did
 function foldIntoPile(bucketEl, prior, pile, timing) {
   const ghost = seatGhostAtPile(bucketEl, prior, pile);
   // it still holds the room the rows below are sliding up into, so it stays over them - and under
   // the pile, which is the only thing allowed to take that room from it
   ghost.style.zIndex = '1';
   pile.el.style.zIndex = '2';
-  const {open, folded} = foldFrames(prior.rect, pileFace(pile.rect, pile.layers), isAbovePile(pile.el));
+  const {open, folded} = foldFrames(prior.rect, isAbovePile(pile.el), restingCut(ghost));
   const anim = ghost.animate([open, folded], {...timing, fill: 'forwards'});
   anim.onfinish = anim.oncancel = () => { pile.el.style.zIndex = ''; ghost.remove(); };
 }
@@ -769,28 +768,22 @@ function seatGhostAtPile(bucketEl, prior, pile) {
 
 const isAbovePile = pileEl => pileEl?.dataset?.side === 'above';
 
-// the reverse: a card drawn off a pile starts all the way in, under it, and slides out through its
-// mouth, uncut once it is clear. the pile is lifted over it until then - a card drawn off the upper
-// pile comes after it in the dom and would otherwise paint on top
-function slideOutOfPile(el, rect, mouth, timing, pileEl) {
-  const {shown, inside} = mouthFrames(rect, mouth);
-  if (pileEl) pileEl.style.zIndex = '1';
-  const anim = el.animate([inside, shown], timing);
-  anim.onfinish = anim.oncancel = () => { if (pileEl) pileEl.style.zIndex = ''; };
-}
-
-// the mirror of foldIntoPile: the last card off a pile that is emptying grows back out of the face
-// the pile occupied, from the same edge, since the pile leaves that room rather than staying to be
-// slid out of
-function growOutOfPile(el, rect, from, timing) {
-  const {open, folded} = foldFrames(rect, pileFace(from.rect, from.layers), isAbovePile(from.el));
-  // it takes the room the rows below are sliding down out of, so it stays over them while it grows
+// the exact mirror of foldIntoPile: a card drawn off a pile is spat out of the edge that faces it,
+// growing from nothing to full height in its own place - it never starts whole somewhere inside the
+// pile and travels out. it takes the room the rows are sliding out of, so it stays over them, and
+// stays under the pile it came from for as long as that pile is still there
+function growOutOfPile(el, rect, from, timing, pileEl) {
+  const {open, folded} = foldFrames(rect, isAbovePile(from.el), restingCut(el));
   el.style.zIndex = '1';
+  if (pileEl) pileEl.style.zIndex = '2';
   const anim = el.animate([folded, open], timing);
-  anim.onfinish = anim.oncancel = () => { el.style.zIndex = ''; };
+  anim.onfinish = anim.oncancel = () => {
+    el.style.zIndex = '';
+    if (pileEl) pileEl.style.zIndex = '';
+  };
 }
 
-// a redraw replaces every row, but a card still sliding into a pile (or a pile still shrinking over
+// a redraw replaces every row, but a card still folding into a pile (or a pile still shrinking over
 // the card drawn off it) keeps going: re-seated where it paints against the new rows, or dropped
 // once what it was seated against is gone
 function reseatGhosts(bucketRowsEl, ghosts) {
@@ -818,27 +811,29 @@ function setPileCount(pileEl, cards, status, pop) {
   if (pop) counts.animate?.([{scale: '1.35'}, {scale: '1'}], {duration: 2 * PILE_SETTLE_MS, easing: 'ease-out'});
 }
 
-// a pile a card is sliding into keeps the count it had until the card is all the way in
+// a pile eating a card keeps the count it had until the card is all the way in
 function tickOnLanding(pileEl, priorCards, status, countAt) {
   setPileCount(pileEl, priorCards, status, false);
   setTimeout(() => setPileCount(pileEl, pileEl._cards, status, true), countAt);
 }
 
 // every drawn row against the snapshot taken before the redraw: one still here slides from its old
-// box; a card just drawn off a pile slides out from under it; a pile just formed grows in; a row that
-// is new outright gets the plain .row-enter fade. then the rows that went away: a card now on a pile
-// slides in under that pile, an emptied pile shrinks away over the card drawn off it
+// box; a card just drawn off a pile grows out of it; a pile just formed grows in; a row that is new
+// outright gets the plain .row-enter fade. then the rows that went away: a card now on a pile is
+// eaten by it, an emptied pile shrinks away over the card drawn off it
 function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) {
   const now = measureRows(bucketRowsEl);
   const timing = {duration: plan.duration, easing: plan.easing};
   const drawnOff = new Map(); // a pile's key -> the last row drawn off it
   now.forEach(({el, rect}, key) => {
     const prior = before.get(key);
-    if (prior) {
-      const delta = flipDelta(prior.rect, rect);
-      if (movesAtAll(delta)) el.animate([flipFrame(delta), REST_FRAME], timing);
+    const isPile = el.classList.contains('card-pile');
+    if (prior && movesAtAll(flipDelta(prior.rect, rect))) {
+      // a pile is always the same box, so its flip is a plain slide; a card's height really changes
+      if (isPile) el.animate([flipFrame(flipDelta(prior.rect, rect)), REST_FRAME], timing);
+      else el.animate(cardFlipFrames(prior.rect, rect, restingCut(el)), timing);
     }
-    if (el.classList.contains('card-pile')) {
+    if (isPile) {
       const pile = plan.piles.get(key);
       // a pile forming under a card folding into it waits for that card; one forming on its own grows
       if (!prior) el.animate(pile?.landing.length ? PILE_HANDOVER_IN : [GROW_FRAME, REST_FRAME], timing);
@@ -849,9 +844,7 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
     const fromKey = priorRoles.get(el.dataset.cardId);
     const from = before.get(fromKey);
     if (!from) { el.classList.add('row-enter'); return; }
-    const stays = now.get(fromKey);
-    if (stays) slideOutOfPile(el, rect, pileMouth(from.rect, rect, from.layers), timing, stays.el);
-    else growOutOfPile(el, rect, from, timing);
+    growOutOfPile(el, rect, from, timing, now.get(fromKey)?.el);
     drawnOff.set(fromKey, el);
   });
   const bucketEl = bucketRowsEl.closest('.bucket');
@@ -861,10 +854,7 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
     if (key.startsWith('pile-')) { ghostPile(bucketEl, prior, timing, drawnOff.get(key)); return; }
     const pileKey = nextRoles.get(prior.el.dataset.cardId);
     const pile = now.get(pileKey);
-    if (!pile) return;
-    // a pile that was already there is slid into through its mouth; one forming here is folded into
-    if (before.has(pileKey)) slideIntoPile(bucketEl, prior, pile, timing);
-    else foldIntoPile(bucketEl, prior, pile, timing);
+    if (pile) foldIntoPile(bucketEl, prior, pile, timing);
   });
 }
 
@@ -889,15 +879,12 @@ function drawColumn(bucketRowsEl) {
   const {sorted, status} = state;
   if (state.expanded || state.fits || sorted.length < MIN_PILED_CARDS) {
     sorted.forEach((c, idx) => place(buildFullRow(c, idx), 'card', [c]));
-    bucketRowsEl.style.maxHeight = state.expanded && !state.fits ? `${availableColumnHeight(bucketRowsEl)}px` : '';
-    bucketRowsEl.style.height = '';
-    bucketRowsEl.classList.toggle('bucket-rows-expanded', !!state.expanded && !state.fits);
-    bucketRowsEl.classList.remove('bucket-rows-piled', 'bucket-rows-scrolls', 'bucket-rows-bottom');
+    fitPlainColumn(bucketRowsEl, state);
   } else {
     bucketRowsEl.style.maxHeight = '';
     bucketRowsEl.classList.remove('bucket-rows-expanded');
     bucketRowsEl.classList.add('bucket-rows-piled');
-    const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || BUCKET_ROW_GAP;
+    const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || CARD_GAP;
     const width = bucketRowsEl.getBoundingClientRect().width;
     const available = availableColumnHeight(bucketRowsEl);
     const fit = computeGroupFit(sorted.length, available, gap, width);
@@ -906,16 +893,17 @@ function drawColumn(bucketRowsEl) {
     state.anchor = layout.anchor;
     layout.rows.forEach(entry => {
       if (entry.type === 'pile') {
-        const el = buildPileRow(entry.cards, status);
+        const el = buildPileRow(entry.cards, status, entry.side);
         el.dataset.side = entry.side;
         place(el, `pile-${entry.side}`, entry.cards);
       } else {
-        const strip = buildFullRow(entry.card, entry.idx, false);
-        strip.dataset.join = entry.join;
+        const strip = buildFullRow(entry.card, entry.idx);
+        strip.dataset.part = entry.part;
+        strip.dataset.covered = String(entry.covered);
         place(strip, 'card', [entry.card]);
       }
     });
-    fitPiledColumn(bucketRowsEl, fit, layout.anchor, available, gap);
+    fitPiledColumn(bucketRowsEl, fit, layout.anchor, available);
   }
   applyCardShadows(bucketRowsEl);
   reseatGhosts(bucketRowsEl, ghosts);
@@ -923,7 +911,7 @@ function drawColumn(bucketRowsEl) {
   bucketRowsEl._rowRoles = nextRoles;
 }
 
-// every card, fanned or piled, draws its own focus ring (layout.css), which rides the card's own
+// every card, in any column type, draws its own focus ring (layout.css), which rides the card's own
 // lift and is covered by exactly what covers the card - layout.css hides indicate.js's shared marker
 // while any card has focus, so the two never draw together. the marker is still placed, so it glides
 // on from here when focus moves off the cards. every card-focusing call site goes through here
@@ -1020,7 +1008,7 @@ function wireColumnFocus(bucketRowsEl) {
     evt.stopPropagation();
   });
   // focus stepping out to another column or the board bar puts the column back at rest: the card
-  // that was open is covered by the next again, as the fan does. a panel or menu opened from a card
+  // that was open shows its band again. a panel or menu opened from a card
   // is not leaving - redrawing then would swap the strip out from under the panel's own animation
   bucketRowsEl.addEventListener('focusout', evt => {
     const to = evt.relatedTarget;
