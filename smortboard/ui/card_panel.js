@@ -43,8 +43,9 @@ function linkifyPrRefs(text) {
 // ---- buckets of card strips: per-card classes, CTA and the strip itself ---------------------
 
 function cardClasses(card) {
-  // every card fans: the stack is the layout now, not a preview keyed off a workstream
-  const classes = ['row', 'card', 'card-strip', 'fan-item'];
+  // NOT ui_base's fan: cards never overlap here. columns.js sizes and spaces every row itself, in
+  // every column type, and the fan's own -80% margin was the second layout system fighting it
+  const classes = ['row', 'card', 'card-strip'];
   // blocked wins over working: a card waiting on you is not a card making progress, and showing
   // both reads as progress. flagged counts too - a refused or stopped card has no reason code
   // but sits in the inbox, and without this the board drew it plain
