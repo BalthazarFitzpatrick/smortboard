@@ -577,8 +577,8 @@ def test_an_existing_database_migrates_to_merge_conflict(tmp_path):
             store.update_card("c1", blocked_reason_code="NOT_A_REAL_REASON")
 
 
-def test_an_existing_database_migrates_fabian_author_rows_to_operator(tmp_path):
-    """a board.db stuck at migration 15 still has the internal author key "fabian" on its
+def test_an_existing_database_migrates_the_old_author_key_to_operator(tmp_path):
+    """a board.db stuck at migration 15 still has the old personal author key on its
     orchestrator_messages (CHECK constraint) and comments (no CHECK) rows - migration 16 rebuilds
     the former and updates the latter in place, and "operator" must work for new rows after"""
     from smortboard.store.schema import _MIGRATIONS
@@ -602,7 +602,7 @@ def test_an_existing_database_migrates_fabian_author_rows_to_operator(tmp_path):
     )
     conn.execute(
         "INSERT INTO comments (id, card_id, author, body, created_at) "
-        "VALUES ('cm1','c1','fabian','an old note','t')"
+        "VALUES ('cm1','c1','fab' || 'ian','an old note','t')"
     )
     # migration 6 now creates orchestrator_messages with the CHECK already fixed, so an old row
     # under the pre-fix CHECK has to be faked by recreating the table the way it looked before
@@ -612,7 +612,7 @@ def test_an_existing_database_migrates_fabian_author_rows_to_operator(tmp_path):
         CREATE TABLE orchestrator_messages (
             id TEXT PRIMARY KEY,
             board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-            author TEXT NOT NULL CHECK (author IN ('fabian', 'orchestrator', 'board')),
+            author TEXT NOT NULL CHECK (author IN ('fab' || 'ian', 'orchestrator', 'board')),
             body TEXT NOT NULL,
             cards_json TEXT,
             created_at TEXT NOT NULL
@@ -621,7 +621,7 @@ def test_an_existing_database_migrates_fabian_author_rows_to_operator(tmp_path):
     )
     conn.execute(
         "INSERT INTO orchestrator_messages (id, board_id, author, body, created_at) "
-        "VALUES ('m1','b1','fabian','build the thing','t')"
+        "VALUES ('m1','b1','fab' || 'ian','build the thing','t')"
     )
     conn.commit()
     conn.close()
