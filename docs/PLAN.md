@@ -466,13 +466,18 @@ no virtualenv to manage, and `uv` is already the house toolchain.
 - a card-scoped credential from `claude setup-token`, handed to the container on stdin. Never
   passed on the `docker` command line or mounted as a file, and never visible to `docker
   inspect`; inside the container it is read from stdin and exported only to the `claude` process
+- on the host that credential sits in a mode-600 file (`~/.config/smortboard/card_token`), refused
+  if it is any looser. That is not a shortcut around a keyring: Claude Code stores its own login
+  the same way on Linux (`~/.claude/.credentials.json`, mode 600) and falls back to that file on
+  macOS when the Keychain is locked ([credential management](https://code.claude.com/docs/en/authentication.md))
 - **no GitHub credential at all.** The card commits locally; the board fetches, runs the gates,
   pushes and opens the pull request from the host where the operator's rules apply
 
 That last point is what actually protects `main`, and it is structural rather than a rule: the
 guard that refuses a push to main lives in the operator's user settings, and a card runs with
 `--setting-sources project` and never sees it. A card that cannot reach GitHub cannot write main
-whatever it decides to do.
+whatever it decides to do. The same split holds for sessions outside the board: agents merge into `development`, a person
+merges into `main`, enforced by a hook and a ruleset - see [protect-main.md](protect-main.md).
 
 ### Shared tools, isolated cards
 
