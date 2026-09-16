@@ -32,7 +32,7 @@ CARD_WRITABLE_FIELDS = {
 }
 
 # board-wide values, one settings row per key. unset means no row.
-# the three models are stored only when operator set them - callers apply the defaults (opus for the
+# the three models are stored only when the operator set them - callers apply the defaults (opus for the
 # orchestrator, sonnet for workers and the reviewer), so a changed default reaches unset boards.
 # max_parallel is the scheduler's cap on cards run-all starts at once - unset means 2, see
 # smortboard.scheduler.DEFAULT_MAX_PARALLEL
@@ -641,7 +641,7 @@ class Store:
     def findings_route(self, card_id: str) -> str:
         """where this card's reviewer findings go.
 
-        the global value FORCES every card when set - operator's reading of "global override",
+        the global value FORCES every card when set - the operator's reading of "global override",
         2026-09-10. unset, the card's own value decides, and a card with none gets the default
         """
         forced = self.get_settings()["findings_route"]

@@ -18,3 +18,6 @@ def _git_user_name() -> str | None:
 
 # the env var first, then the git identity, then a neutral word - read once, at import
 OPERATOR_NAME = os.environ.get("SMORTBOARD_OPERATOR_NAME") or _git_user_name() or "the operator"
+
+# the stored author key, stable regardless of OPERATOR_NAME - see schema.py migration 16
+AUTHOR_KEY = "operator"

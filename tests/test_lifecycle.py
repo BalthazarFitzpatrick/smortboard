@@ -286,11 +286,11 @@ def test_a_done_task_is_not_asked_for_again(board):
 def test_operator_notes_reach_the_prompt_since_a_running_agent_cannot_take_input(board):
     store, card_id = board
     store.add_comment(card_id, "operator", "use the other endpoint instead")
-    store.add_comment(card_id, "someone-else", "not from operator")
+    store.add_comment(card_id, "someone-else", "not from the operator")
     prompt = lifecycle.build_card_prompt(store.get_card(card_id))
     assert f"Notes from {OPERATOR_NAME}, oldest first:" in prompt
     assert "- use the other endpoint instead" in prompt
-    assert "not from operator" not in prompt
+    assert "not from the operator" not in prompt
 
 
 def test_the_lease_reaches_the_run_as_globs_not_as_rows(board):

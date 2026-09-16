@@ -39,7 +39,7 @@ def _pull_requests(store: Store, cards: list[dict[str, Any]], since: float) -> l
 
     A card's dependencies are also in this list far more often than not (mission control plans a
     workstream as one unit), so a straight topological sort over depends_on already gives the merge
-    order operator needs - a card's own PR never has to wait behind one that is not in the batch.
+    order the operator needs - a card's own PR never has to wait behind one that is not in the batch.
     """
     opened: dict[str, dict[str, Any]] = {}
     for card in cards:
@@ -90,7 +90,7 @@ def _pull_requests(store: Store, cards: list[dict[str, Any]], since: float) -> l
 
 
 def _one_question(store: Store, card: dict[str, Any]) -> str | None:
-    """the single thing this blocked card needs from operator.
+    """the single thing this blocked card needs from the operator.
 
     AGENT_QUESTION means the agent itself is asking - its own final text is the question, read off
     the outcome projection exactly as the card panel shows it. Every other reason code is the

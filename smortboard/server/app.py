@@ -22,7 +22,7 @@ from smortboard.consolidate import FoldRegistry
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.local_repos import detect_default_branch, list_folders
-from smortboard.operator import OPERATOR_NAME
+from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
     ORCHESTRATOR_PROMPT,
@@ -511,7 +511,7 @@ def _make_handler(
             self._send_json(200, card)
 
         def _handle_answer(self, card_id: str) -> None:
-            """the attention inbox's reply: stores it as operator's comment and resumes the card.
+            """the attention inbox's reply: stores it as the operator's comment and resumes the card.
 
             404 for an unknown card (get_card inside answer_card raises), 409 for a card already
             running or blocked on something an answer cannot fix - see attention.answer_card.
@@ -800,7 +800,7 @@ def _make_handler(
                 return
             # stored here, synchronously, so the 202 body already carries it - the thread that
             # runs the turn is told not to store it again
-            store.add_orchestrator_message(board_id, "operator", message)
+            store.add_orchestrator_message(board_id, AUTHOR_KEY, message)
             if client_id:
                 accepted_messages[board_id].append(client_id)
             orchestrator.start(board_id, message, message_already_stored=True, mode=mode)
@@ -875,7 +875,7 @@ def _make_handler(
                     )
 
             for comment in store.list_comments(card_id):
-                author = "operator" if comment["author"] == "operator" else "board"
+                author = AUTHOR_KEY if comment["author"] == AUTHOR_KEY else "board"
                 timeline.append(
                     (comment["created_at"], {"author": author, "body": comment["body"]})
                 )
@@ -906,14 +906,14 @@ def _make_handler(
             if not message:
                 self._send_json(400, {"error": "message must not be empty"})
                 return
-            comment = store.add_comment(card_id, author="operator", body=message)
+            comment = store.add_comment(card_id, author=AUTHOR_KEY, body=message)
             # queue AFTER the comment is durable: a live delivery that then crashed before the
             # comment was ever saved would leave nothing for the card's next run to fall back on
             delivered_live = runs.queue_note(card_id, comment)
             self._send_json(
                 201,
                 {
-                    "author": "operator",
+                    "author": AUTHOR_KEY,
                     "body": comment["body"],
                     "created_at": comment["created_at"],
                     "delivery": "live" if delivered_live else "next_run",
