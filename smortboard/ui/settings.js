@@ -13,17 +13,17 @@
 
 const st = {backdrop: null, panel: null, listEl: null};
 
-// auto_switch_profiles: unset/"on" rotates credentials on USAGE_LIMIT (smortboard/profiles.py);
-// "off" parks the board until the reset instead, the pre-profiles behaviour. the toggle reads its
-// state from GET /api/settings on open (buildAutoSwitchToggle -> loadAutoSwitchToggle), same as
-// every board setting - there is no client-side default, an unset key just renders as checked.
+// auto_switch_profiles is opt-in: "on" rotates credentials on USAGE_LIMIT (smortboard/profiles.py);
+// unset (the default) or anything else parks the board until the reset instead, spending nothing
+// on another account without being asked. the toggle reads its state from GET /api/settings on
+// open (buildAutoSwitchToggle -> loadAutoSwitchToggle) - unset renders as unchecked.
 function buildAutoSwitchToggle() {
   const wrap = document.createElement('label');
   wrap.className = 'settings-toggle-row';
   const box = document.createElement('input');
   box.type = 'checkbox';
   box.className = 'settings-auto-switch-checkbox';
-  box.checked = true;
+  box.checked = false;
   const text = document.createElement('span');
   text.textContent = 'switch credential profiles automatically on a usage limit';
   wrap.append(box, text);
@@ -33,7 +33,7 @@ function buildAutoSwitchToggle() {
     const {ok} = await apiOrError('/api/settings', {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({auto_switch_profiles: box.checked ? null : 'off'}),
+      body: JSON.stringify({auto_switch_profiles: box.checked ? 'on' : null}),
     });
     box.disabled = false;
     if (!ok) box.checked = !box.checked; // revert on a failed save
@@ -46,9 +46,9 @@ function buildAutoSwitchToggle() {
 async function loadAutoSwitchToggle(box) {
   try {
     const settings = await api('/api/settings');
-    box.checked = settings.auto_switch_profiles !== 'off';
+    box.checked = settings.auto_switch_profiles === 'on';
   } catch {
-    // leave the default (checked) - a failed load is not worth blocking the panel on
+    // leave the default (unchecked) - a failed load is not worth blocking the panel on
   }
 }
 
@@ -239,6 +239,15 @@ function buildGlobalParallelRow() {
   return row;
 }
 
+// daily_budget_usd: a board's own spend cap, in usd, checked against today's (UTC) run cost -
+// blank means no cap, same empty-is-unset convention as the parallel cap beside it
+function budgetParseInput(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value > 0 ? value : undefined; // undefined marks it invalid
+}
+
 function renderBoardParallelRow(board) {
   const row = document.createElement('div');
   row.className = 'board-row';
@@ -278,7 +287,40 @@ function renderBoardParallelRow(board) {
   });
   input.addEventListener('blur', save);
 
-  row.append(label, input, status);
+  const budgetInput = document.createElement('input');
+  budgetInput.type = 'text';
+  budgetInput.inputMode = 'decimal';
+  budgetInput.className = 'board-name-input text-field settings-budget-input';
+  budgetInput.placeholder = 'no budget';
+  budgetInput.value = board.daily_budget_usd == null ? '' : String(board.daily_budget_usd);
+  const budgetStatus = document.createElement('span');
+  budgetStatus.className = 'boards-status';
+
+  async function saveBudget() {
+    const value = budgetParseInput(budgetInput.value);
+    if (value === undefined) {
+      budgetStatus.textContent = 'must be a positive amount, or empty for no cap';
+      budgetStatus.className = 'boards-status boards-error';
+      return;
+    }
+    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({daily_budget_usd: value}),
+    });
+    budgetStatus.textContent = ok ? '' : (body && body.error) || 'could not save';
+    budgetStatus.className = ok ? 'boards-status' : 'boards-status boards-error';
+  }
+
+  budgetInput.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    saveBudget();
+  });
+  budgetInput.addEventListener('blur', saveBudget);
+
+  row.append(label, input, status, budgetInput, budgetStatus);
   return row;
 }
 
@@ -308,7 +350,7 @@ function buildParallelSection() {
   globalLabel.textContent = 'global (shared across every board)';
   const boardsLabel = document.createElement('div');
   boardsLabel.className = 'field-label';
-  boardsLabel.textContent = 'per board (blank = no board-specific limit)';
+  boardsLabel.textContent = 'per board (blank = no board-specific limit or daily budget)';
   const boardsList = document.createElement('div');
   boardsList.className = 'boards-list';
   Object.assign(pl, {boardsList});

@@ -14,6 +14,7 @@ from pathlib import Path
 from platformdirs import user_data_dir
 
 from smortboard.demo import make_demo_db
+from smortboard.server.access import KEY_QUERY, load_or_create_api_key
 from smortboard.server.app import build_server
 from smortboard.store import Store
 
@@ -22,7 +23,7 @@ _DEFAULT_PORT = 8000
 # the demo's own default, so `smortboard --demo` never collides with the board already serving on
 # 8000 - an explicit --port or SMORTBOARD_PORT still wins
 _DEMO_PORT = 8001
-# loopback only: the api has no auth and can start runs that spend the card token
+# loopback only: the api key guards against browsers, not against other machines on the network
 _DEFAULT_HOST = "127.0.0.1"
 
 
@@ -35,6 +36,9 @@ def _default_db_path() -> Path:
     # user data dir, not cwd — `uvx smortboard` run from anywhere should not scatter .db files
     data_dir = Path(user_data_dir(_APP_NAME))
     data_dir.mkdir(parents=True, exist_ok=True)
+    # 0700: the board db holds the card token's blast radius (repo paths, prompts, event logs) -
+    # chmod rather than rely on the mkdir mode, since exist_ok skips mode on an existing dir
+    os.chmod(data_dir, 0o700)
     return data_dir / "smortboard.db"
 
 
@@ -115,9 +119,11 @@ def main(argv: list[str] | None = None) -> None:
     port = _resolve_port(args.port, demo=args.demo)
 
     with Store(db_path) as store:
-        server = build_server(store, port, host=_resolve_host(args.host))
+        api_key = load_or_create_api_key()
+        server = build_server(store, port, host=_resolve_host(args.host), api_key=api_key)
         actual_port = server.server_address[1]
-        url = f"http://127.0.0.1:{actual_port}/ui/index.html"
+        # the key rides the first page load only; the board swaps it for a cookie and drops it
+        url = f"http://127.0.0.1:{actual_port}/ui/index.html?{KEY_QUERY}={api_key}"
         label = "demo db, invented content" if args.demo else f"db={db_path}"
         print(f"smortboard serving on {url} ({label})")
         if server.recovered:

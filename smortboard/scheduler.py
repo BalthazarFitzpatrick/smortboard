@@ -7,10 +7,12 @@ the same entry point a manual run uses. Three rules gate a start, each documente
 DEPENDENCIES - a card starts only once every card it depends on has a pull request MERGED on
   GitHub, not merely `accepted` on the board.
 LEASES - two cards in the same repo whose lease globs could touch the same file never run together.
-USAGE_LIMIT - a run that blocks on it marks the active credential profile limited and switches to
-  the next one that is not, resuming the very card that hit it. Only once every configured profile
-  is limited does this pause new starts until the earliest window resets, as it always did before
-  profiles existed; already-running cards are left alone either way. See smortboard/profiles.py.
+USAGE_LIMIT - a run that blocks on it marks the active credential profile limited. Rotation to the
+  next configured profile is opt-in (auto_switch_profiles == "on"); by default the board just
+  parks new starts until the earliest reset, same as before profiles existed. Already-running
+  cards are left alone either way. See smortboard/profiles.py.
+BUDGET - a board with a daily_budget_usd set and today's (UTC) spend at or past it starts no new
+  cards; already-running cards finish. See _board_daily_budget and telemetry.board_spend_today.
 
 TESTABLE WITHOUT THREADS. `_tick` is a plain method: given a store and a fake `runs` object (one
 whose `.start` calls the runner synchronously and fires `on_finish` inline, as RunRegistry itself
@@ -28,7 +30,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from smortboard import profiles
+from smortboard import profiles, telemetry
 from smortboard.actions import with_next
 from smortboard.exec.runner import _api_unreachable_signal, _session_limit_text_signal
 from smortboard.exec.worktrees import (
@@ -46,7 +48,7 @@ from smortboard.store.errors import NotFoundError
 # the same author every other board-written comment carries - see lifecycle.BOARD_AUTHOR
 _BOARD_AUTHOR = "smortboard"
 
-# unset means this - operator's own value in settings always wins, see store.api._SETTING_KEYS
+# unset means this - the operator's own value in settings always wins, see store.api._SETTING_KEYS
 DEFAULT_MAX_PARALLEL = 2
 
 # statuses a blocked card can never be requeued from - the schema has no "blocked" status of its
@@ -259,11 +261,35 @@ def _board_max_parallel(store: Store, board_id: str) -> int | None:
     return value if value > 0 else None
 
 
+def _board_daily_budget(store: Store, board_id: str) -> float | None:
+    """this board's own daily usd spend cap, or None for no cap at all"""
+    try:
+        raw = store.get_board(board_id).get("daily_budget_usd")
+    except NotFoundError:
+        return None
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _budget_exhausted(store: Store, board_id: str) -> bool:
+    """True once today's (UTC) spend on this board is at or past its own daily budget - unset
+    budget means never exhausted, so a board with no cap never pays for this check's own cost"""
+    budget = _board_daily_budget(store, board_id)
+    if budget is None:
+        return False
+    return telemetry.board_spend_today(store, board_id) >= budget
+
+
 def _dependency_wait(store: Store, card: dict[str, Any], repo_path: str | Path) -> str | None:
     """None once every dependency's pull request is actually MERGED on GitHub.
 
     `accepted` alone used to be enough - it no longer is. THE BOARD NEVER MERGES, so `accepted`
-    only means operator signed off and a PR is open; a dependent's worktree is cut fresh from the
+    only means the operator signed off and a PR is open; a dependent's worktree is cut fresh from the
     repo's base branch, so it sees the dependency's code only once that PR landed there. `repo_path`
     is any local checkout with `gh` available - `gh pr view <url>` resolves from the url itself, so
     it does not need to be the dependency's own repo.
@@ -359,6 +385,11 @@ class BoardScheduler:
                 self._paused_until = None
         if expired or due:
             self._tick()
+        store = Store(self._db_path)
+        try:
+            budget_paused = _budget_exhausted(store, self.board_id)
+        finally:
+            store.close()
         with self._lock:
             return {
                 "running": sorted(self._running),
@@ -366,6 +397,7 @@ class BoardScheduler:
                 "waiting": dict(self._waiting),
                 "paused_until": self._paused_until,
                 "card_retry_at": dict(self._card_retry_at),
+                "budget_paused": budget_paused,
             }
 
     # -- writes --------------------------------------------------------------------
@@ -430,6 +462,10 @@ class BoardScheduler:
             board_cap = _board_max_parallel(store, self.board_id)
             if board_cap is not None:
                 slots = min(slots, board_cap - len(running_ids))
+            if _budget_exhausted(store, self.board_id):
+                # today's spend on this board already hit its cap - no new starts, but a card
+                # already running keeps its slot and finishes
+                slots = 0
             # a card started by hand holds its lease too, but not one of this board's slots
             for state in active_states or []:
                 if state.card_id not in running_ids:
@@ -565,26 +601,31 @@ class BoardScheduler:
 
     def _handle_usage_limit(self, card_id: str) -> None:
         """the credential in use just got refused. Marks it limited and, if another configured
-        profile is not, switches to it and resumes `card_id` itself - USAGE_LIMIT blocks a manual
-        run for a human, but here there is another credential to try before giving up like that.
+                profile is not, switches to it and resumes `card_id` itself - USAGE_LIMIT blocks a manual
+                run for a human, but here there is another credential to try before giving up like that.
 
-        profiles.handle_usage_limit does the mark-and-rotate as one load-mutate-save transaction
-        (see its docstring) rather than this method making several separate profiles calls that
-        each hit disk - with only the implicit "default" profile configured it stays a pure read,
-        so a single-credential board never grows a profiles.json.
+                profiles.handle_usage_limit does the mark-and-rotate as one load-mutate-save transaction
+                (see its docstring) rather than this method making several separate profiles calls that
+                each hit disk - with only the implicit "default" profile configured it stays a pure read,
+                so a single-credential board never grows a profiles.json.
 
-        auto_switch_profiles=off skips the rotation half: the profile is still marked limited (so
-        it is skipped once switching resumes), but the board parks until the reset exactly as it
-        did before profiles existed, instead of rotating credentials on the operator's behalf.
+        rotation is opt-in: auto_switch_profiles must be "on". Anything else (unset, or a stored "off"
+                from before this flipped) skips the rotation half - the profile is still marked limited
+                (so it is skipped once switching is turned on later), but the board parks until the reset
+                exactly as it did before profiles existed, instead of rotating credentials on the
+                operator's behalf without being asked.
         """
         store = Store(self._db_path)
         try:
             resets_at = _latest_reset(store)
-            auto_switch = store.get_settings().get("auto_switch_profiles") != "off"
+            auto_switch = store.get_settings().get("auto_switch_profiles") == "on"
             if auto_switch:
                 result = profiles.handle_usage_limit(resets_at)
             else:
-                profiles.mark_limited(profiles.active_profile(), resets_at)
+                # a single-profile board must never write a state file just because a run hit
+                # its limit alone - same invariant handle_usage_limit itself keeps
+                if profiles.has_multiple_profiles():
+                    profiles.mark_limited(profiles.active_profile(), resets_at)
                 result = {"rotated": False, "next_profile": None, "earliest_reset": None}
         finally:
             store.close()

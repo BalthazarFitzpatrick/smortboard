@@ -112,7 +112,9 @@ def test_a_pull_request_gh_reports_merged_drops_off_the_list(store, monkeypatch)
 
 def test_accepted_cards_stay_listed_until_merged(store, monkeypatch):
     board_id, repo_id = _board_and_repo(store)
-    card = store.create_card(board_id, repo_id, "waiting on operator to merge", status="accepted")
+    card = store.create_card(
+        board_id, repo_id, "waiting on the operator to merge", status="accepted"
+    )
     _merge_request(store, card["id"], "https://example/pr/1")
 
     calls = []

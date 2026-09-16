@@ -213,7 +213,7 @@ body {
 }
 
 /* ---- the open card ------------------------------------------------------------------------
-   TWO-UP, A STATE EDGE, THE RUN AS A TIMELINE - operator's pick on 2026-09-10 from fifteen previews.
+   TWO-UP, A STATE EDGE, THE RUN AS A TIMELINE - the operator's pick on 2026-09-10 from fifteen previews.
    MASONRY, NOT A GRID ROW: a css grid (or flex) row ties every cell in it to the tallest cell's
    box, which is exactly the blank gap a shorter neighbour used to sit in. board.js's
    layoutCardSections measures every section and places it right under its own column's last

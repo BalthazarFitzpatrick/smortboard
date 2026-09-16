@@ -121,6 +121,16 @@ def test_the_token_is_never_on_the_command_line_or_a_mount(tmp_path):
     assert "-i" in cmd  # stdin has to stay open long enough to hand it over
 
 
+def test_the_container_is_hardened(tmp_path):
+    """cap-drop, no-new-privileges, and resource limits on the card container (audit F1)"""
+    backend = ContainerBackend(image="img")
+    cmd = backend._docker_command(tmp_path / "clone", "prompt", tmp_path / "s.json", "sonnet", None)
+    assert "--cap-drop=ALL" in cmd
+    assert "--security-opt=no-new-privileges" in cmd
+    assert "--pids-limit=512" in cmd
+    assert "--memory=4g" in cmd
+
+
 def test_the_credential_reaches_the_container_only_through_stdin(tmp_path, monkeypatch):
     seen = {}
 
