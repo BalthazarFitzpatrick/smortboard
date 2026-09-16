@@ -23,8 +23,8 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {sortColumnCards, computePileLayout, computeGroupFit, letterCounts, renderBucketColumn,
-  handlePileKey, MIN_PILED_CARDS, fitPiledColumn, squareCard, cardHeight, PILE, CARD_BAND, MIN_CARD,
+;return {sortColumnCards, computeColumnLayout, computeColumnFit, letterCounts, renderBucketColumn,
+  handlePileKey, MIN_PILED_CARDS, fitColumn, squareCard, stackHeight, fanHeight, PILE, PEEK,
   PORTRAIT_BELOW, pileLayerJitter, cardEdgeVar, MAX_PILE_LAYERS, shadowAlpha, shadowImage,
   shadowImageCache, refitColumn, PILE_REFIT_DEBOUNCE_MS, indicateCardFocus, applyCardShadows,
   PILE_GAP_ABOVE, PILE_GAP_BELOW, CARD_GAP, flipDelta, planPileMotion, PILE_MOTION_MS,
@@ -37,19 +37,21 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 const GAP = mod.CARD_GAP; // buildColumn's stub leaves rowGap unset, so this fallback applies
 const WIDE = 300; // buildColumn's stub width - square cards, WIDE px tall
 
-// mirrors computeGroupFit: the tallest a group of n gets (the focused card open at its start, the
-// last card still full below it, a band for each card passed) plus a gap under every row but the
-// last, and what both piles cost around it
-const groupMax = (n, cardPx) =>
-  (n <= 1 ? n * cardPx : 2 * cardPx + (n - 2) * mod.CARD_BAND + (n - 1) * GAP);
+// THE THREE REGIMES, restated here from the module's own constants rather than typed as pixels, so
+// a future tuning pass moves the fixtures with it instead of breaking them:
+//   spreadMax - n cards whole, one gap between each pair, nothing overlapping
+//   fanMax    - the tallest that same fan gets: the focused card open, the last card whole, and a
+//               PEEK band for every card covered in between
+const spreadMax = (n, cardPx) => (n ? n * cardPx + (n - 1) * GAP : 0);
+const fanMax = (n, cardPx) => (n <= 1 ? n * cardPx : 2 * cardPx + (n - 2) * mod.PEEK);
 const pilesCost = gap => 2 * (mod.PILE + mod.PILE_GAP_ABOVE + mod.PILE_GAP_BELOW + gap);
 
-// a short screen: exactly the room n=2 needs, one PEEK short of n=3
-const SHORT_N2 = groupMax(2, WIDE) + pilesCost(GAP);
-// a tall screen: exactly the room n=3 needs
-const TALL_N3 = groupMax(3, WIDE) + pilesCost(GAP);
-// room for 12 cards as one group, the open card included - no pile at all
-const ALL_12_HEIGHT = groupMax(12, WIDE);
+// a short screen: exactly the room a piled group of 2 needs, one PEEK short of 3
+const SHORT_N2 = fanMax(2, WIDE) + pilesCost(GAP);
+// a tall screen: exactly the room a piled group of 3 needs
+const TALL_N3 = fanMax(3, WIDE) + pilesCost(GAP);
+// room for 12 cards as one fan, the open card included - no pile at all
+const ALL_12_HEIGHT = fanMax(12, WIDE);
 
 function card(id, status, extra = {}) {
   return {id, title: `card ${id}`, status, workstream: '', ...extra};
@@ -137,14 +139,15 @@ function roles(bucketRows) {
   return out;
 }
 
-// mirrors the css model: plain flex flow - each row's top is the previous row's bottom plus the one
-// shared gap, a pile's own two extra margins on top of that, and NO negative margin anywhere - and
-// flex-end pinning the last row to the column's bottom edge when bottom-anchored
+// mirrors the css model: flex flow - each row's top is the previous row's bottom plus the one
+// shared gap, plus that row's own inline margin-top (a pile's two knobs, or the negative margin a
+// fanned card is pulled up over its neighbour by) - and flex-end pinning the last row to the
+// column's bottom edge when bottom-anchored
 function replayRows(bucketRows, available, gap) {
   let bottom = 0, marginBelow = 0;
   const rows = drawnRows(bucketRows).map((el, i) => {
     const pile = el.className.includes('card-pile');
-    const marginTop = pile ? mod.PILE_GAP_ABOVE : 0;
+    const marginTop = pile ? mod.PILE_GAP_ABOVE : parseFloat(el.style.marginTop || '0');
     const top = (i ? bottom + marginBelow + gap : 0) + marginTop;
     bottom = top + parseFloat(el.style.height);
     marginBelow = pile ? mod.PILE_GAP_BELOW : 0;
@@ -181,22 +184,51 @@ for (const [room, n] of [[SHORT_N2, 2], [TALL_N3, 3]]) {
   assert.ok(!bucketRows.className.includes('bucket-rows-bottom'), 'anchored to the top at rest');
 }
 
-// ---- n by column height: the largest n in {3, 2} whose tallest group plus both piles fits -------
+// ---- THE REGIME CHOICE, either side of every threshold: one explicit measured function of the
+// column's own height, the card box, the band, the gap and what a pile costs. NO REGIME EVER
+// SHRINKS A CARD - the whole point of the fan (operator, 2026-09-16) -----------------------------
 
 {
-  const fit = (total, room) => mod.computeGroupFit(total, room, GAP, WIDE);
-  assert.equal(fit(20, TALL_N3).n, 3, 'a tall column holds a group of 3 between the piles');
+  const fit = (total, room) => mod.computeColumnFit(total, room, GAP, WIDE);
+
+  // 1 -> 2: they all fit spread, until one card more does not, and then they overlap instead
+  const spread6 = spreadMax(6, WIDE);
+  assert.deepEqual(fit(6, spread6), {regime: 1, n: 6, card: WIDE, piles: false, scrolls: false},
+    'six cards in exactly the room six spread cards need: regime 1, whole cards a gap apart');
+  assert.equal(fit(6, spread6 - 1).regime, 2, 'one px short and the same six cards overlap instead');
+  assert.equal(fit(7, spread6).regime, 2, 'one card more in the same room overlaps too');
+  assert.equal(fit(7, spread6).card, WIDE, 'and is still exactly as tall - nothing shrank to make it fit');
+  assert.equal(fit(7, spreadMax(7, WIDE)).regime, 1, 'give it the room seven spread cards need and it spreads');
+
+  // 2 -> 3: they fan until the fan itself does not fit, and only then do the piles appear
+  const fan12 = fanMax(12, WIDE);
+  assert.deepEqual(fit(12, fan12), {regime: 2, n: 12, card: WIDE, piles: false, scrolls: false},
+    'twelve cards in exactly the room their fan needs: regime 2, a fan of all twelve, no piles');
+  assert.equal(fit(13, fan12).regime, 3, 'one card more than the fan holds and the piles enter the picture');
+  assert.equal(fit(12, fan12 - 1).regime, 3, 'one px less room does it too');
+
+  // inside regime 3 the group is the largest fan that fits beside both piles - the same fan, only
+  // shorter, with the piles taking what it cannot hold
+  assert.deepEqual(fit(20, TALL_N3), {regime: 3, n: 3, card: WIDE, piles: true, scrolls: false},
+    'room for a fan of 3 between the piles');
   assert.equal(fit(20, TALL_N3 - 1).n, 2, 'one px short of that and the group drops to 2');
   assert.equal(fit(20, SHORT_N2).n, 2);
-  assert.equal(fit(20, SHORT_N2 - 1).n, 1, 'only when even 2 cannot fit does it fall back to fewer');
-  assert.equal(fit(100, 3 * TALL_N3).n, 3, 'n never grows past 3, however tall the column');
-  const one = groupMax(1, WIDE) + pilesCost(GAP);
-  assert.deepEqual(fit(20, one), {n: 1, card: WIDE, piles: true, scrolls: false}, 'n=1 keeps square cards');
-  const shrunk = fit(20, one - 1);
-  assert.ok(shrunk.card < WIDE && shrunk.card >= mod.MIN_CARD && !shrunk.scrolls,
-    'past n=1, cards shrink toward MIN_CARD before anything scrolls');
-  assert.equal(fit(20, 200).card, mod.MIN_CARD);
-  assert.equal(fit(20, 200).scrolls, true, 'too short even at the card floor - the only case that scrolls');
+  assert.equal(fit(20, SHORT_N2 - 1).n, 1, 'and to 1 below that');
+  assert.equal(fit(20, fanMax(9, WIDE) + pilesCost(GAP)).n, 9,
+    'the group is as large as the room allows - it is the same fan, not a hardcoded three');
+
+  // the floors, and the one case that scrolls: still at full card height, never a shrunk card
+  const one = fanMax(1, WIDE) + pilesCost(GAP);
+  assert.deepEqual(fit(20, one), {regime: 3, n: 1, card: WIDE, piles: true, scrolls: false}, 'n=1 keeps the whole card');
+  const tiny = fit(20, one - 1);
+  assert.deepEqual([tiny.regime, tiny.n, tiny.card, tiny.scrolls], [3, 1, WIDE, true],
+    'not even one whole card between the piles: the column scrolls, the card keeps its height');
+  assert.equal(fit(20, 200).card, WIDE, 'however short the column gets');
+
+  // too few cards to leave a pile anything: they fan and scroll rather than piling
+  const few = fit(mod.MIN_PILED_CARDS - 1, 100);
+  assert.deepEqual([few.regime, few.piles, few.scrolls, few.card], [2, false, true, WIDE],
+    'below MIN_PILED_CARDS a column fans and scrolls - a pile would have nothing worth holding');
 }
 
 // ---- one card per step, both directions: the step past the group's end draws ONE card off the
@@ -207,7 +239,7 @@ for (const room of [SHORT_N2, TALL_N3]) {
   const total = 14;
   const cards = Array.from({length: total}, (_, i) => card(`s${room}-${i}`, 'todo'));
   const {bucketRows} = buildColumn(room, cards);
-  const n = mod.computeGroupFit(total, room, GAP, WIDE).n;
+  const n = mod.computeColumnFit(total, room, GAP, WIDE).n;
   const press = keyDriver(bucketRows);
   let before = roles(bucketRows);
   const step = (key, expectIdx) => {
@@ -255,7 +287,7 @@ for (const room of [SHORT_N2, TALL_N3]) {
   const rows = replayRows(bucketRows, SHORT_N2, GAP);
   assert.equal(rows.at(-1).bottom, SHORT_N2, 'the group sits on the bottom edge');
   rows.filter(r => r.top < 0).forEach(r => assert.ok(!r.pile, 'only the column\'s first cards run off the top, never a pile'));
-  const n = mod.computeGroupFit(total, SHORT_N2, GAP, WIDE).n;
+  const n = mod.computeColumnFit(total, SHORT_N2, GAP, WIDE).n;
   for (let i = total - 2; i > 3; i--) {
     press('ArrowUp');
     assert.ok(bottomAnchored(), `focus ${i}: stays bottom-anchored on the way back up`);
@@ -360,53 +392,137 @@ globalThis.window.innerHeight = 800;
   assert.equal(mod.squareCard(180), mod.PORTRAIT_BELOW, 'narrower than 230 - keeps 230px of height, turns portrait');
 }
 
-// ---- ONE CARD LAYOUT, EVERY COLUMN TYPE (operator, 2026-09-16): the same card box in a plain, an
-// expanded and a stacked column; exactly one gap under every row; and no card box ever reaching
-// into another one. a card already passed is a SHORTER card, not a full one with its lower part
-// hidden behind the next - so nothing may carry a negative margin any more --------------------
+// ---- THE THREE REGIMES AS DRAWN (operator, 2026-09-16): one card height everywhere, and what
+// density changes is how the cards MEET. regime 1 spreads them a gap apart; regime 2 overlaps the
+// very same whole cards, each covered one showing exactly PEEK; regime 3 is that identical fan with
+// two piles taking what it cannot hold. every number below comes from the module's own constants --
 
 {
-  const isBand = s => s.className.includes('card-covered');
-  const heightsIn = bucketRows => {
-    const cards = fullCards(bucketRows);
-    const sizes = pick => [...new Set(cards.filter(pick).map(s => parseFloat(s.style.height)))];
-    return {full: sizes(s => !isBand(s)), band: sizes(isBand)};
+  const CARD = mod.squareCard(WIDE);
+  const isCovered = s => s.className.includes('card-covered');
+
+  // every drawn card is the one card height - a band-tall or squashed card is the regression
+  const assertOneCardBox = (bucketRows, where) => {
+    const sizes = [...new Set(fullCards(bucketRows).map(s => parseFloat(s.style.height)))];
+    assert.deepEqual(sizes, [CARD], `${where}: every card is the one card height, covered or not`);
   };
-  const assertSpacing = (bucketRows, available, where) => {
-    drawnRows(bucketRows).forEach(el => assert.ok(!parseFloat(el.style.marginTop || '0'),
-      `${where}: no row pulls itself up over its neighbour`));
+
+  // how each row meets the one before it, checked against the join the layout actually asked for:
+  // 'peek' sits PEEK below the top of the card it covers, 'flush' on the open card's own bottom
+  // edge, 'none' one shared gap down plus a pile's own two knobs
+  const assertMeetings = (bucketRows, available, where, {overlap}) => {
     const rows = replayRows(bucketRows, available, GAP);
+    let overlaps = 0;
     rows.slice(1).forEach((row, i) => {
       const prev = rows[i];
-      // a pile keeps its own two knobs on top of the shared gap; two cards get the gap alone
+      const join = row.pile ? 'none' : row.el.dataset.join;
+      if (join === 'peek') {
+        assert.ok(!prev.pile && isCovered(prev.el), `${where}: row ${i} is covered by the card over it`);
+        assert.equal(+(row.top - prev.top).toFixed(3), mod.PEEK,
+          `${where}: row ${i + 1} sits exactly PEEK below the top of the card it covers`);
+        overlaps++;
+        return;
+      }
       const extra = (prev.pile ? mod.PILE_GAP_BELOW : 0) + (row.pile ? mod.PILE_GAP_ABOVE : 0);
-      assert.equal(+(row.top - prev.bottom).toFixed(3), GAP + extra, `${where}: row ${i + 1} sits one gap under row ${i}`);
+      assert.equal(+(row.top - prev.bottom).toFixed(3), join === 'flush' ? 0 : GAP + extra,
+        `${where}: row ${i + 1} meets row ${i} ${join === 'flush' ? 'flush under the open card' : 'one gap down'}`);
     });
-    rows.forEach((row, i) => rows.slice(i + 1).forEach(other =>
-      assert.ok(other.top >= row.bottom, `${where}: rows ${i} and after must never overlap`)));
+    // and no card claims to be covered without one drawn over it
+    rows.forEach((row, i) => {
+      if (row.pile || !isCovered(row.el)) return;
+      assert.equal(rows[i + 1]?.el?.dataset?.join, 'peek', `${where}: row ${i} is covered by a real card`);
+    });
+    assert.equal(overlaps > 0, overlap, `${where}: cards ${overlap ? 'overlap' : 'never overlap'}`);
+    return rows;
   };
 
-  const one = mod.squareCard(WIDE);
-  const plain = buildColumn(2000, Array.from({length: 3}, (_, i) => card(`1p${i}`, 'todo'))).bucketRows;
-  const stacked = buildColumn(SHORT_N2, Array.from({length: 14}, (_, i) => card(`1s${i}`, 'todo'))).bucketRows;
-  const wide = buildColumn(600, Array.from({length: 10}, (_, i) => card(`1e${i}`, 'todo')));
-  wide.bucketEl.querySelector('.bucket-expand')._listeners.click[0]();
+  // whatever the regime, the focused card is whole and nothing is drawn over it
+  const assertFocusOpen = (bucketRows, available, where) => {
+    const rows = replayRows(bucketRows, available, GAP);
+    const at = rows.findIndex(r => r.el.focused);
+    if (at < 0) return;
+    assert.ok(!isCovered(rows[at].el), `${where}: the focused card is never a covered one`);
+    assert.equal(parseFloat(rows[at].el.style.height), CARD, `${where}: and is open at full height`);
+    rows.slice(at + 1).forEach(r => assert.ok(r.top >= rows[at].bottom - 0.001,
+      `${where}: nothing is drawn over the focused card`));
+  };
 
-  assert.equal(mod.cardHeight(one, false), one, 'one place decides the card box');
-  assert.equal(mod.cardHeight(one, true), mod.CARD_BAND, 'and the band a passed card keeps');
-  assert.deepEqual(heightsIn(plain), {full: [one], band: []}, 'a plain column: one card size, nothing passed');
-  assert.deepEqual(heightsIn(wide.bucketRows), {full: [one], band: []}, 'an expanded column: that very size');
-  assert.deepEqual(heightsIn(stacked), {full: [one], band: [mod.CARD_BAND]},
-    'a stacked column draws the same card, and a passed one as its own shorter band');
+  // ---- regime 1: three cards with room to spread ------------------------------------------------
+  {
+    const room = spreadMax(3, WIDE);
+    const {bucketRows} = buildColumn(room, Array.from({length: 3}, (_, i) => card(`g1-${i}`, 'todo')));
+    assert.equal(bucketRows._pile.regime, 1);
+    assert.equal(piles(bucketRows).length, 0, 'regime 1: no piles');
+    assert.equal(fullCards(bucketRows).length, 3);
+    assert.equal(fullCards(bucketRows).filter(isCovered).length, 0, 'regime 1: nothing is covered');
+    assertOneCardBox(bucketRows, 'regime 1');
+    const rows = assertMeetings(bucketRows, room, 'regime 1', {overlap: false});
+    assert.deepEqual(rows.map(r => +(r.bottom - r.top).toFixed(3)), [CARD, CARD, CARD]);
+    assert.equal(+(rows.at(-1).bottom - rows[0].top).toFixed(3), room, 'and the three fill the room exactly');
+    drawnRows(bucketRows).forEach(el => assert.ok(!parseFloat(el.style.marginTop || '0'),
+      'regime 1: no row pulls itself up over another'));
+    focusFromOutside(bucketRows, fullCards(bucketRows)[1]);
+    assertFocusOpen(bucketRows, room, 'regime 1, focused');
+  }
 
-  assertSpacing(plain, 0, 'plain, at rest');
-  assertSpacing(wide.bucketRows, 0, 'expanded, at rest');
-  assertSpacing(stacked, SHORT_N2, 'stacked, at rest');
-  const stepping = keyDriver(stacked);
-  for (let i = 1; i < 8; i++) {
-    stepping('ArrowDown');
-    assertSpacing(stacked, SHORT_N2, `stacked, after step ${i}`);
-    assert.deepEqual(heightsIn(stacked).full, [one], `step ${i}: the card size never drifts`);
+  // ---- regime 2: eight cards, too many to spread, few enough to fan ------------------------------
+  {
+    const total = 8;
+    const room = fanMax(total, WIDE);
+    const {bucketRows} = buildColumn(room, Array.from({length: total}, (_, i) => card(`g2-${i}`, 'todo')));
+    assert.equal(bucketRows._pile.regime, 2);
+    assert.equal(piles(bucketRows).length, 0, 'regime 2: still no piles');
+    assert.equal(fullCards(bucketRows).length, total, 'every card is drawn, none folded away');
+    assertOneCardBox(bucketRows, 'regime 2');
+    const rows = assertMeetings(bucketRows, room, 'regime 2, at rest', {overlap: true});
+    assert.equal(fullCards(bucketRows).filter(isCovered).length, total - 1,
+      'at rest every card but the last is covered by the next');
+    assert.equal(+(rows.at(-1).bottom - rows[0].top).toFixed(3), (total - 1) * mod.PEEK + CARD,
+      'the resting fan is PEEK per covered card plus the whole last one');
+    const press = keyDriver(bucketRows);
+    for (let i = 1; i < total; i++) {
+      press('ArrowDown');
+      assertOneCardBox(bucketRows, `regime 2, step ${i}`);
+      assertMeetings(bucketRows, room, `regime 2, step ${i}`, {overlap: true});
+      assertFocusOpen(bucketRows, room, `regime 2, step ${i}`);
+      assert.equal(piles(bucketRows).length, 0, `regime 2, step ${i}: no pile ever appears`);
+    }
+  }
+
+  // ---- regime 3: twenty-six cards - the same fan, of the largest group that fits, plus piles ------
+  {
+    const total = 26;
+    const n = 5;
+    const room = fanMax(n, WIDE) + pilesCost(GAP);
+    assert.equal(mod.computeColumnFit(total, room, GAP, WIDE).n, n, 'the fixture really does pick a group of 5');
+    const {bucketRows} = buildColumn(room, Array.from({length: total}, (_, i) => card(`g3-${i}`, 'todo')));
+    assert.equal(bucketRows._pile.regime, 3);
+    assert.ok(piles(bucketRows).length >= 1, 'regime 3: the piles enter the picture');
+    assertOneCardBox(bucketRows, 'regime 3');
+    assertMeetings(bucketRows, room, 'regime 3, at rest', {overlap: true});
+    const grouped = () => drawnRows(bucketRows).filter(el => el.dataset.part === 'group').length;
+    assert.equal(grouped(), n, 'the group holds exactly n cards');
+    const press = keyDriver(bucketRows);
+    for (let i = 1; i < total; i++) {
+      press('ArrowDown');
+      assertOneCardBox(bucketRows, `regime 3, step ${i}`);
+      assertMeetings(bucketRows, room, `regime 3, step ${i}`, {overlap: true});
+      assertFocusOpen(bucketRows, room, `regime 3, step ${i}`);
+      assert.ok(grouped() <= n, `regime 3, step ${i}: the group never grows past n`);
+      assertPilesInside(bucketRows, room, GAP, `regime 3, step ${i}`);
+    }
+  }
+
+  // ---- an expanded column is the one override: spread whatever its regime says, and scrolling ----
+  {
+    const wide = buildColumn(600, Array.from({length: 10}, (_, i) => card(`g4-${i}`, 'todo')));
+    assert.equal(wide.bucketRows._pile.regime, 3, 'it would pile on its own');
+    wide.bucketEl.querySelector('.bucket-expand')._listeners.click[0]();
+    assert.equal(piles(wide.bucketRows).length, 0, 'expanded: no piles');
+    assert.equal(fullCards(wide.bucketRows).filter(isCovered).length, 0, 'expanded: nothing covered');
+    assertOneCardBox(wide.bucketRows, 'expanded');
+    assertMeetings(wide.bucketRows, 600, 'expanded', {overlap: false});
+    assert.ok(wide.bucketRows.className.includes('bucket-rows-expanded'), 'and it scrolls');
   }
 }
 
@@ -446,9 +562,9 @@ globalThis.window.innerHeight = 800;
 // ---- no pile when it isn't needed: every card as one group, the open card included ------------
 
 {
-  const fit = mod.computeGroupFit(12, ALL_12_HEIGHT, GAP, WIDE);
+  const fit = mod.computeColumnFit(12, ALL_12_HEIGHT, GAP, WIDE);
   assert.deepEqual([fit.n, fit.piles], [12, false], 'every card fits as one group - no piles at all');
-  assert.equal(mod.computeGroupFit(13, ALL_12_HEIGHT, GAP, WIDE).piles, true, 'one card more and a pile has to appear');
+  assert.equal(mod.computeColumnFit(13, ALL_12_HEIGHT, GAP, WIDE).piles, true, 'one card more and a pile has to appear');
   const cards = Array.from({length: 12}, (_, i) => card(`n${i}`, 'todo'));
   const {bucketRows} = buildColumn(ALL_12_HEIGHT, cards);
   assert.equal(piles(bucketRows).length, 0, 'no pile row at all');
@@ -465,7 +581,7 @@ globalThis.window.innerHeight = 800;
   // enough cards, and enough room to need a pile (not so much room the no-pile rule kicks in), but
   // a 180px-wide column - the card stays portrait (230px tall) rather than shrinking to fit the
   // column's own narrow width. room for n=2 at that portrait height, so the group has a covered card
-  const room = groupMax(2, mod.PORTRAIT_BELOW) + pilesCost(GAP);
+  const room = fanMax(2, mod.PORTRAIT_BELOW) + pilesCost(GAP);
   const cards = Array.from({length: 12}, (_, i) => card(`f${i}`, 'todo'));
   const bucketEl = element('div', 'bucket');
   bucketEl.dataset.status = 'todo';
@@ -479,17 +595,15 @@ globalThis.window.innerHeight = 800;
   assert.ok(parseFloat(pile.style.height) >= mod.PILE, 'the pile keeps its floor');
   const full = fullCards(bucketRows);
   assert.ok(full.length, 'at least one card shows full');
-  assert.ok(full.every(s => !s.className.includes('fan-item')), 'no card wears the fan overlap any more');
-  const open = full.filter(s => !s.className.includes('card-covered'));
-  open.forEach(s => assert.equal(parseFloat(s.style.height), mod.PORTRAIT_BELOW,
-    'a 180px-wide column keeps a portrait 230px card, not a squashed square'));
-  // a passed card is a SHORTER card with the same gap under it, never a full card half hidden
+  // EVERY card is the portrait box, the covered ones included - they are whole cards with the next
+  // one drawn over them, which is the only thing that leaves PEEK of them showing
+  full.forEach(s => assert.equal(parseFloat(s.style.height), mod.PORTRAIT_BELOW,
+    'a 180px-wide column keeps a portrait 230px card, not a squashed square and not a band'));
   const covered = full.filter(s => s.className.includes('card-covered'));
-  assert.ok(covered.length, 'a stack of more than one card passes its earlier member');
-  covered.forEach(s => {
-    assert.equal(parseFloat(s.style.height), mod.CARD_BAND, 'a passed card is exactly the band tall');
-    assert.ok(!s.style.marginTop, 'and carries no margin - the flex gap is the only spacing');
-  });
+  assert.ok(covered.length, 'a stack of more than one card covers its earlier member');
+  covered.forEach(s => assert.equal(parseFloat(s.nextElementSibling.style.marginTop),
+    -(mod.PORTRAIT_BELOW - mod.PEEK + GAP),
+    'the card over it is pulled up by exactly what leaves PEEK of it showing, gap included'));
   assert.ok(!bucketRows.className.includes('bucket-rows-scrolls'), 'room enough at the portrait floor - no scrollbar needed');
 }
 
@@ -504,7 +618,9 @@ globalThis.window.innerHeight = 800;
   bucketEl.appendChild(label);
   bucketEl.appendChild(bucketRows);
   mod.renderBucketColumn(bucketEl, cards, 'todo');
-  assert.ok(bucketRows.className.includes('bucket-rows-scrolls'), 'too short even at the card floor - the column scrolls');
+  assert.ok(bucketRows.className.includes('bucket-rows-scrolls'), 'no room even for one whole card - the column scrolls');
+  fullCards(bucketRows).forEach(s => assert.equal(parseFloat(s.style.height), mod.squareCard(300),
+    'and still at full card height - a scrollbar is what gives, never the card'));
   const pile = piles(bucketRows)[0];
   assert.equal(parseFloat(pile.style.height), mod.PILE, 'a scrolling pile still keeps its plain floor, no more');
 }
@@ -909,29 +1025,31 @@ const visible = (frame, box) => {
     'and that bottom edge never moves either');
 
   // a card of any height shuts the same way - the frames are the card's own box, nothing else
-  const band = mod.foldFrames({left: 0, top: 0, width: WIDE, height: mod.CARD_BAND}, true);
-  assert.ok(fullyClipped(band.folded, mod.CARD_BAND));
-  // a passed card keeps its own bottom cut throughout, or the fold uncovers what the band hides
-  const kept = mod.foldFrames(folder, false, 0);
-  assert.equal(insets(kept.open)[2], 0, 'the band\'s own cut is restated, not dropped, while it folds');
+  const small = mod.foldFrames({left: 0, top: 0, width: WIDE, height: mod.PORTRAIT_BELOW}, true);
+  assert.ok(fullyClipped(small.folded, mod.PORTRAIT_BELOW));
+  assert.ok(uncut(small.open), 'and a card at rest is never cut - it is whole, merely painted under its neighbour');
 }
 
 // ---- a step replays a card from its old box by TRANSLATING it, never by scaling: a card really
 // changes height when it is passed or opened, and a scaled card stretches its own text ----------
 
 {
-  const band = {left: 0, top: 0, width: WIDE, height: mod.CARD_BAND};
+  // the heights only ever differ when a resize repicks the card box - a covered card is the same
+  // height as an open one, so a plain step is a pure translate
+  const small = {left: 0, top: 0, width: WIDE, height: mod.PORTRAIT_BELOW};
   const full = {left: 0, top: 40, width: WIDE, height: WIDE};
-  const [from, to] = mod.cardFlipFrames(band, full, -mod.CLIP_REACH);
+  const [from, to] = mod.cardFlipFrames(small, full);
   assert.ok(!('scale' in from) && !('scale' in to), 'no scale in either frame - content is cut, not squashed');
-  assert.equal(shiftY(from), band.top - full.top, 'it starts at the top edge it was drawn at');
+  assert.equal(shiftY(from), small.top - full.top, 'it starts at the top edge it was drawn at');
   assert.equal(to.translate, '0px 0px', 'and ends in its own place');
-  assert.equal(insets(from)[2], WIDE - mod.CARD_BAND, 'showing exactly the band it was, the rest cut away');
+  assert.equal(insets(from)[2], WIDE - mod.PORTRAIT_BELOW, 'showing exactly the box it was, the rest cut away');
   assert.ok(uncut(to), 'uncovering the height it gained as it goes');
 
-  const shrinking = mod.cardFlipFrames(full, band, 0);
-  assert.deepEqual(shrinking.map(f => insets(f)[2]), [0, 0],
-    'a card being passed keeps the band\'s own bottom cut at both ends - it lost height, it gained none');
+  const shrinking = mod.cardFlipFrames(full, small);
+  assert.ok(shrinking.every(uncut), 'a card that lost height is never cut - it gained none to uncover');
+
+  const stepping = mod.cardFlipFrames({...full, top: 0}, full);
+  assert.ok(stepping.every(uncut), 'and a plain step between two same-size boxes is a translate, nothing more');
 }
 
 // drives a stacked column with the stub's animation recorder on and timers held, never real time
@@ -988,7 +1106,7 @@ withMotion(timers => {
   const cards = Array.from({length: total}, (_, i) => card(`mo${i}`, 'todo'));
   const {bucketEl, bucketRows} = buildColumn(SHORT_N2, cards);
   stubLayout.rect = rowGeometry(bucketRows, SHORT_N2);
-  const n = mod.computeGroupFit(total, SHORT_N2, GAP, WIDE).n;
+  const n = mod.computeColumnFit(total, SHORT_N2, GAP, WIDE).n;
   const press = keyDriver(bucketRows);
   focusFromOutside(bucketRows, fullCards(bucketRows)[0]);
   for (let i = 1; i < n; i++) press('ArrowDown');
@@ -1118,7 +1236,7 @@ withMotion(timers => {
 withMotion(timers => {
   const cards = Array.from({length: 14}, (_, i) => card(`rm${i}`, 'todo'));
   const {bucketRows} = buildColumn(SHORT_N2, cards);
-  const n = mod.computeGroupFit(14, SHORT_N2, GAP, WIDE).n;
+  const n = mod.computeColumnFit(14, SHORT_N2, GAP, WIDE).n;
   const press = keyDriver(bucketRows);
   for (let i = 0; i <= n; i++) press('ArrowDown');
   assert.equal(stubMotion.log.length, 0, 'reduced motion: nothing animates');
@@ -1145,8 +1263,8 @@ withMotion(timers => {
   // what the rest rule draws for the group where it now stands
   const restDrawing = bucketRows => {
     const state = bucketRows._pile;
-    const n = mod.computeGroupFit(state.sorted.length, SHORT_N2, GAP, WIDE).n;
-    return mod.computePileLayout(state.sorted, null, state.start, state.anchor, n).rows
+    const fit = mod.computeColumnFit(state.sorted.length, SHORT_N2, GAP, WIDE);
+    return mod.computeColumnLayout(state.sorted, null, state.start, state.anchor, fit).rows
       .map(r => (r.type === 'pile' ? 'P' : `${r.idx + 1}${r.covered ? 's' : 'o'}`));
   };
   const cards = Array.from({length: 14}, (_, i) => card(`lv${i}`, 'todo'));

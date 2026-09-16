@@ -6,9 +6,9 @@
    would have moved the drawn layout without moving the maths that sizes it.
    the first two are a pile's extra space past the shared row gap (15px above and below it in
    total, tuned against derived/gap_tuner/index.html).
-   ONE CARD LAYOUT FOR EVERY COLUMN TYPE, plain or stacked: --card-gap is the space between any two
-   neighbouring rows, and --stack-peek the height a card already passed keeps - its own shorter
-   band, never a full card with its lower part hidden behind the next one */
+   ONE CARD HEIGHT FOR EVERY COLUMN TYPE, AND IT IS NEVER SHRUNK: --card-gap is the space between
+   two rows that do not overlap, --stack-peek the band a covered card still shows of itself once
+   the card after it is drawn over it. columns.js measures which of the two a column gets */
 :root {
   --pile-gap-above: 5px;
   --pile-gap-below: 5px;
@@ -128,15 +128,17 @@ body {
   flex-direction: column;
   gap: var(--card-gap);
 }
-/* every card row is sized inline by columns.js (fitPlainColumn/fitPiledColumn) - a flex column
-   would otherwise squeeze them to fit its own box instead of cutting at the edge */
+/* every card row is sized inline by columns.js (fitColumn), and a fanned one is pulled up over its
+   neighbour by an inline negative margin - a flex column would otherwise squeeze them to fit its
+   own box instead of cutting at the edge */
 .bucket-rows > .card-strip { flex-shrink: 0; }
 /* an expanded column becomes a normal scrolling list, capped to the room the column actually has -
    collapsing it (same button) drops both and it rejoins the page's own scroll */
 .bucket-rows.bucket-rows-expanded { overflow-y: auto; padding-right: 4px; }
-/* a piled column is exactly the room the window leaves (fitPiledColumn), and what runs past that is
-   cut at the edge with no scrollbar - vertically only, so a pile's jittered layers still poke out
-   sideways. the gap is the shared --card-gap, same as every other column type */
+/* an overlapping column (fanned or piled) is exactly the room the window leaves (fitColumn), and
+   what runs past that is cut at the edge with no scrollbar - vertically only, so a pile's jittered
+   layers still poke out sideways. the gap is the shared --card-gap; the fan's own overlap rides on
+   top of it as a negative margin, which adds to the gap rather than replacing it */
 .bucket-rows.bucket-rows-piled { overflow-x: visible; overflow-y: clip; }
 /* bottom-anchored (focus reached the last card): the rows pin to the bottom edge, so the column's
    first cards are the ones cut, at the top - never the piles */
@@ -161,7 +163,8 @@ body {
 /* bottom-anchored, the last card sits on the column's cut edge: its lift grows up and sideways
    from that edge, so the clip never takes the bottom of its frame */
 .bucket-rows.bucket-rows-piled.bucket-rows-bottom > .card-strip:last-child { transform-origin: 50% 100%; }
-/* only a piled column that truly can't shrink its cards any further scrolls (computeGroupFit) */
+/* the one column that scrolls: no room even for a single whole card between its two piles
+   (computeColumnFit). the cards keep their height, the scrollbar is what gives */
 .bucket-rows.bucket-rows-piled.bucket-rows-scrolls { overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
 
 /* collapsed card: a wide flat strip - makeExpander reads its own rect as the animation's starting
@@ -186,10 +189,9 @@ body {
    how tall a card is - which is exactly what a css ratio on one path and a measurement on the other
    produced (three different heights on one board, operator 2026-09-16) */
 .card-strip { border-radius: 0; }
-/* a card already passed is a SHORTER card, not a hidden one: its box ends under the title band and
-   what will not fit is cut there. clip-path rather than overflow because the shadow canvas lives
-   inside the card and reaches out past it - the three negative sides keep it, the bottom cuts */
-.card-strip.card-covered { clip-path: inset(-40px -40px 0 -40px); }
+/* A COVERED CARD IS A WHOLE CARD WITH THE NEXT ONE OVER IT (operator, 2026-09-16) - not a short
+   box, and never clipped down to its band. it keeps its full height and paints under its
+   neighbour, which is what leaves exactly --stack-peek of it showing */
 .card-strip.card-working { border-color: var(--fill-good); }
 .card-strip.card-rejected { border-color: var(--fill-warn); }
 /* vanilla is the palest edge, so attention is also the only one that glows: rings stepping down to
@@ -228,8 +230,10 @@ body {
    unscaled box on top of the card's own ring and drew over the neighbours, so it stays hidden
    while any card has focus and shows again for whatever takes focus next */
 body:has(.card-strip:focus) .focus-marker { opacity: 0; }
-/* no z-index on focus in any column type: no card covers another one now, and applyCardShadows
-   already keeps the later card on top of the earlier one's shadow */
+/* a focused card is lifted above the cards fanned over its neighbours, in every column type: it is
+   drawn open with nothing covering it, and its 1.03 scale would otherwise grow under the card
+   after it. applyCardShadows still keeps each later card on top of the earlier one's shadow */
+.card-strip:focus { z-index: 2; }
 
 /* ---- insert/draw animation: only a genuinely new row (a card or pile that was not there in that
    role last render) gets this - drawColumn tags it via the .row-enter class, so a plain refit or
@@ -247,7 +251,7 @@ body:has(.card-strip:focus) .focus-marker { opacity: 0; }
 /* ---- dense column presentation: a pile standing in for every card the column folded away -------
    real card edges, not a placeholder box: a few layers stacked straight behind a top face, each
    3px lower than the one above, so only their bottom edges show - the board's square 2px edge */
-/* height lands inline from columns.js's fitPiledColumn - fixed at 100px (PILE); 100px here is only
+/* height lands inline from columns.js's fitColumn - fixed at 100px (PILE); 100px here is only
    the fallback before that runs */
 .card-pile {
   position: relative;
