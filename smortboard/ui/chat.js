@@ -189,7 +189,7 @@ function growComposer(input, maxLinesFn) {
 
 // ---- mission control (.) - the orchestrator's chat for the current board ------------------------
 
-const mc = {header: null, cycle: null, log: null, jump: null, input: null, poll: null, queues: new Map(), mode: 'planning'};
+const mc = {header: null, cycle: null, log: null, jump: null, input: null, poll: null, queues: new Map(), mode: 'planning', lastSignature: null};
 
 // shift+tab toggles mission control between planning (talk only, no card written) and managing
 // (acts on what it proposes) - remembered per board, since a plan mid-thought on one board should
@@ -313,6 +313,7 @@ function closeMissionControl() {
 
 async function loadMissionControl() {
   clearTimeout(mc.poll);
+  mc.lastSignature = null; // an open, a board switch or an error always draws the log fresh
   if (!currentBoardId) {
     mc.header.textContent = 'mission control';
     mc.log.innerHTML = '';
@@ -333,9 +334,29 @@ async function loadMissionControl() {
 }
 
 // justFinished marks a poll result, the only moment a newly-created card should pull the board
+// true while the operator has text selected inside the log - a redraw would drop that selection
+function selectingIn(log) {
+  const sel = typeof window.getSelection === 'function' ? window.getSelection() : null;
+  return !!sel && !sel.isCollapsed && !!sel.anchorNode && log.contains(sel.anchorNode);
+}
+
+function missionControlSignature(data) {
+  const messages = (data.messages || []).map(m => [m.id, m.author, m.body, (m.cards || []).length]);
+  return JSON.stringify([messages, data.error || null, !!data.thinking]);
+}
+
 function renderMissionControl(data, {justFinished = false} = {}) {
   mc.lastModel = data.model;
   renderMissionControlHeader();
+  // a poll that brings nothing new, or lands mid-selection, leaves the log exactly as it is -
+  // a full redraw every 1.5s while the orchestrator thinks made its text impossible to select
+  const signature = missionControlSignature(data);
+  const unchanged = signature === mc.lastSignature;
+  if (unchanged || selectingIn(mc.log)) {
+    if (data.thinking || !unchanged) mc.poll = setTimeout(pollMissionControl, 1500);
+    return;
+  }
+  mc.lastSignature = signature;
   redrawLog(mc.log, () => {
     (data.messages || []).forEach(m => {
       appendLine(mc.log, m.author, m.body);
@@ -365,6 +386,7 @@ async function pollMissionControl() {
     const data = await api(`/api/boards/${currentBoardId}/orchestrator`);
     renderMissionControl(data, {justFinished: true});
   } catch (err) {
+    mc.lastSignature = null;
     appendLine(mc.log, 'board', `lost contact with the orchestrator: ${err.message}`, 'error');
     settleAfterAppend(mc.log);
   }
