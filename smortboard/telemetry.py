@@ -8,6 +8,7 @@ usage: rate-limit windows and model spend, summed straight off the event log.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from smortboard import profiles
@@ -375,6 +376,20 @@ def board_costs(store: Store, board_id: str) -> list[dict[str, Any]]:
         )
     rows.sort(key=lambda r: r["cost_usd"], reverse=True)
     return rows
+
+
+def board_spend_today(store: Store, board_id: str, *, today: str | None = None) -> float:
+    """this board's spend so far today (UTC), summed straight from each card's own `result`
+    events - what scheduler._board_daily_budget compares the board's daily_budget_usd against
+    before starting anything new. `today` is a YYYY-MM-DD override, for tests only."""
+    day = today or datetime.now(UTC).date().isoformat()
+    total = 0.0
+    for card in store.list_cards(board_id):
+        for event in store.list_events(card["id"]):
+            if event["kind"] != "result" or not str(event["created_at"]).startswith(day):
+                continue
+            total += float(event["payload"].get("total_cost_usd") or 0)
+    return round(total, 6)
 
 
 def _board_overview_row(store: Store, board: dict[str, Any]) -> dict[str, Any]:

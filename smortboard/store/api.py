@@ -37,8 +37,9 @@ CARD_WRITABLE_FIELDS = {
 # smortboard.scheduler.DEFAULT_MAX_PARALLEL
 # resume_briefing gates lifecycle.py's resume briefing - "off" disables it, unset means on
 # gate_timeout_seconds caps the test gate - unset means review.gates.GATE_TIMEOUT_SECONDS (600)
-# auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - "off" parks the board until
-# the reset instead (the pre-profiles behaviour), unset means on
+# auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - opt-in, "on" rotates
+# credentials; unset (or any other value, including a stored "off" from before this flipped)
+# parks the board until the reset instead, the pre-profiles behaviour
 # mall_cam_interval_seconds is the workforce drawer's auto-cycle period (cf90bacc) - unset means
 # chat.js's own default (10)
 _SETTING_KEYS = (
@@ -81,6 +82,23 @@ def _check_positive_int(name: str, value: Any) -> None:
         raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
     if value <= 0:
         raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
+
+
+def _check_positive_number(name: str, value: Any) -> None:
+    """same contract as _check_positive_int, but for a dollar amount that need not be whole"""
+    if value is None:
+        return
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive number or null, not {value!r}")
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            raise ValueError(f"{name} must be a positive number or null, not {value!r}") from None
+    elif not isinstance(value, int | float):
+        raise ValueError(f"{name} must be a positive number or null, not {value!r}")
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive number or null, not {value!r}")
 
 
 def _check_read_paths(value: Any) -> list[str]:
@@ -180,6 +198,15 @@ class Store:
         self.get_board(board_id)  # 404 for an unknown board rather than a silent no-op update
         _check_positive_int("max_parallel", value)
         self._conn.execute("UPDATE boards SET max_parallel = ? WHERE id = ?", (value, board_id))
+        self._conn.commit()
+        return self.get_board(board_id)
+
+    def set_board_daily_budget(self, board_id: str, value: float | None) -> dict[str, Any]:
+        """this board's own daily usd spend cap - None means no cap, so the scheduler never
+        checks spend at all. see scheduler._board_daily_budget and telemetry.board_spend_today"""
+        self.get_board(board_id)  # 404 for an unknown board rather than a silent no-op update
+        _check_positive_number("daily_budget_usd", value)
+        self._conn.execute("UPDATE boards SET daily_budget_usd = ? WHERE id = ?", (value, board_id))
         self._conn.commit()
         return self.get_board(board_id)
 
