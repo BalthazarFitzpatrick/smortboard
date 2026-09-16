@@ -103,13 +103,15 @@ def test_token_file_absent_points_at_setup_token(monkeypatch, store, tmp_path):
     assert str(missing) in row["detail"]
 
 
-def test_token_file_wrong_mode_warns_and_never_prints_the_token(monkeypatch, store, tmp_path):
+def test_token_file_wrong_mode_fails_and_never_prints_the_token(monkeypatch, store, tmp_path):
+    # read_card_token now refuses a non-600 file outright, so preflight reports it as
+    # unusable (fail) rather than a mere warning - the run would refuse it too
     token_file = tmp_path / "card_token"
     token_file.write_text("x" * 108)
     token_file.chmod(0o644)
     checks = run_preflight(store, token_path=token_file, runner=_all_ok_runner)
     row = _by_id(checks, "card-token")
-    assert row["status"] == "warn"
+    assert row["status"] == "fail"
     assert "600" in row["fix"]
     assert "x" * 108 not in str(row)
 

@@ -26,6 +26,7 @@ from typing import Any
 
 from smortboard import profiles
 from smortboard.lifecycle import BOARD_AUTHOR
+from smortboard.operator import AUTHOR_KEY
 from smortboard.scheduler import API_UNREACHABLE_MAX_RETRIES
 from smortboard.store.api import Store
 
@@ -706,7 +707,7 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
 
     board_id = entry["board"]["id"]
     store.set_plan(board_id, _PLANS[index])
-    store.add_orchestrator_message(board_id, "fabian", _CHATS[index][0])
+    store.add_orchestrator_message(board_id, AUTHOR_KEY, _CHATS[index][0])
     store.add_orchestrator_message(board_id, "orchestrator", _CHATS[index][1])
 
 

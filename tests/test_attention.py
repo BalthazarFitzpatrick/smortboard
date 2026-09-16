@@ -100,7 +100,7 @@ def test_other_reasons_pull_the_latest_board_comment(store, repo):
     _, card = _board_and_card(store, repo)
     store.update_card(card["id"], blocked_reason_code="TESTS_FAILED", review_flag=True)
     store.add_comment(card["id"], author="smortboard", body="`pytest` exited 1.\n\n```\nboom\n```")
-    store.add_comment(card["id"], author="fabian", body="a note that is not the block reason")
+    store.add_comment(card["id"], author="operator", body="a note that is not the block reason")
 
     rows = attention_rows(store)
     assert rows[0]["question"] == "`pytest` exited 1.\n\n```\nboom\n```"
@@ -211,8 +211,8 @@ def test_answer_resumes_a_resumable_reason(store, repo, reason):
     updated = store.get_card(card["id"])
     assert updated["blocked_reason_code"] is None
     assert updated["review_flag"] == 0
-    fabian_comments = [c for c in updated["comments"] if c["author"] == "fabian"]
-    assert fabian_comments[-1]["body"] == "go ahead, widen the lease"
+    operator_comments = [c for c in updated["comments"] if c["author"] == "operator"]
+    assert operator_comments[-1]["body"] == "go ahead, widen the lease"
 
 
 @pytest.mark.parametrize("reason", ["USAGE_LIMIT", "DEPENDENCY_REJECTED"])

@@ -1,4 +1,4 @@
-"""the attention inbox: every card across every board that needs fabian, in one list.
+"""the attention inbox: every card across every board that needs the operator, in one list.
 
 A card needs him when it carries a blocked_reason_code, or when review_flag is set (a checking
 card waiting to be accepted/rejected also raises review_flag, but that path already has its own
@@ -16,6 +16,7 @@ from typing import Any
 
 from smortboard.actions import next_action, short_action
 from smortboard.lifecycle import BOARD_AUTHOR
+from smortboard.operator import AUTHOR_KEY
 from smortboard.scheduler import API_UNREACHABLE_MAX_RETRIES, _latest_reset, conflicting_run
 from smortboard.store.api import Store
 from smortboard.telemetry import card_telemetry
@@ -90,7 +91,7 @@ def _trim(text: str | None, limit: int = 4000) -> str:
 
 
 def _question_for(store: Store, card: dict[str, Any]) -> str:
-    """the most useful text to show fabian for this blocked card.
+    """the most useful text to show the operator for this blocked card.
 
     AGENT_QUESTION: the agent's own final result text, from the card's latest `result` stream
     event - that is what it actually said when it stopped to ask. every other reason: the latest
@@ -140,7 +141,7 @@ class AnswerRefused(Exception):
 
 
 def answer_card(store: Store, runs: Any, card_id: str, message: str) -> dict[str, Any]:
-    """records fabian's answer as a comment and resumes the card, or refuses and says why.
+    """records the operator's answer as a comment and resumes the card, or refuses and says why.
 
     Resumable reasons are the ones an answer can actually unstick: AGENT_QUESTION (he answers the
     question), TESTS_FAILED / REVIEW_REJECTED / CRASH (a note the next run reads before trying
@@ -169,7 +170,7 @@ def answer_card(store: Store, runs: Any, card_id: str, message: str) -> dict[str
     if conflict:
         raise AnswerRefused(f"not resumed: {conflict} - answer again once it finishes")
 
-    store.add_comment(card_id, author="fabian", body=message)
+    store.add_comment(card_id, author=AUTHOR_KEY, body=message)
     store.update_card(card_id, blocked_reason_code=None, review_flag=False)
     return runs.start(card_id).as_dict()
 
@@ -227,7 +228,7 @@ def approve_lease(store: Store, runs: Any, card_id: str, paths: list[str]) -> di
 
 
 def attention_rows(store: Store) -> list[dict[str, Any]]:
-    """one row per card across every board that is waiting on fabian, oldest first"""
+    """one row per card across every board that is waiting on the operator, oldest first"""
     rows = []
     for board in store.list_boards():
         for card in store.list_cards(board["id"]):

@@ -8,7 +8,7 @@ requires-python = ">=3.11"
 dependencies = [
     "keyring>=25.7.0",
     # pinned to a sha, not a tag: ui_base and smortboard are co-developed in lockstep
-    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@1ecfdb14db4e1a6132fc1f88e1666ddc6f3bcd80",
+    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@313ff9e23cd90f60dccea628479c9623efa9f055",
     # os-correct data dir for the default db location — not the cwd, not a hand-rolled path
     "platformdirs>=4.0",
     # mission control's one screenshot per ask - host-side only, chromium headless. the browser
@@ -37,6 +37,23 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["smortboard"]
 artifacts = ["smortboard/ui/**"]
+
+# hatchling's sdist default is "every git-tracked file" - none of this is needed to pip install
+# or run the package; docker/ is for users who clone and build the card image themselves
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "tests/",
+    "docs/images/",
+    "ui_shots/",
+    "dev_ledger/",
+    "TASKS.jsonl",
+    "WORKLOG.md",
+    "docker/",
+    "tools/",
+    "CLAUDE.md",
+    ".claude/",
+    ".github/",
+]
 
 # ui_base is pinned to a git sha, not a pypi release, while the two repos are co-developed
 [tool.hatch.metadata]

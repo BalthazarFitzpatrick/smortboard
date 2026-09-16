@@ -1,6 +1,6 @@
 """cuts, tracks and destroys a git worktree + branch per card
 
-follows the convention wowtomate already runs by hand: worktrees live under the repo's
+follows the convention the operator's other repos already run by hand: worktrees live under the repo's
 `.claude/worktrees/<name>`. S1/S2 showed a card left on main either names its own branch or
 deadlocks asking permission to make one, so the worktree handed back is already checked out
 on the card's branch — never on `base`.

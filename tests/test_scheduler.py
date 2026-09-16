@@ -12,6 +12,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -454,6 +455,79 @@ def test_a_lowered_board_limit_never_stops_an_already_running_card(store, board_
     assert set(runs.started) == set(ids), "a lowered cap only holds back the NEXT card, not these"
 
 
+# -- daily budget: a board-level spend ceiling ---------------------------------------
+
+
+def test_a_budget_already_spent_today_blocks_new_starts(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    store.set_setting("max_parallel", "5")
+    store.set_board_daily_budget(board_id, 1.0)
+    a = store.create_card(board_id, repo_id, "a")
+    b = store.create_card(board_id, repo_id, "b")
+    store.append_event(a["id"], "result", {"total_cost_usd": 0.7})
+    store.append_event(a["id"], "result", {"total_cost_usd": 0.5})  # today's spend: 1.2, over 1.0
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert runs.started == [], "the board is at its daily budget, so nothing new starts"
+    assert b["id"] not in runs.started
+    assert scheduler.schedule_view()["budget_paused"] is True
+
+
+def test_an_unset_budget_never_blocks_a_start(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    a = store.create_card(board_id, repo_id, "a")
+    store.append_event(a["id"], "result", {"total_cost_usd": 500.0})  # huge spend, no cap set
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert runs.started == [a["id"]]
+    assert scheduler.schedule_view()["budget_paused"] is False
+
+
+def test_yesterdays_spend_does_not_count_against_todays_budget(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    store.set_board_daily_budget(board_id, 1.0)
+    a = store.create_card(board_id, repo_id, "a")
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    store.append_event(a["id"], "result", {"total_cost_usd": 5.0})
+    with store._conn:
+        store._conn.execute(
+            "UPDATE events SET created_at = ? WHERE card_id = ? AND kind = 'result'",
+            (yesterday, a["id"]),
+        )
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert runs.started == [a["id"]], "yesterday's spend does not count against today's budget"
+    assert scheduler.schedule_view()["budget_paused"] is False
+
+
+def test_a_running_card_finishes_once_the_boards_budget_is_hit_mid_run(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    store.set_setting("max_parallel", "5")
+    store.set_board_daily_budget(board_id, 1.0)
+    a = store.create_card(board_id, repo_id, "a")
+    b = store.create_card(board_id, repo_id, "b")
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    assert set(runs.started) == {a["id"], b["id"]}, "budget not spent yet - both start"
+
+    store.append_event(a["id"], "result", {"total_cost_usd": 1.5})  # a's own run pushes past cap
+    runs.finish(a["id"])  # a finishes; b is left running untouched, no new card starts
+
+    assert runs.started == [a["id"], b["id"]]
+    assert scheduler.schedule_view()["budget_paused"] is True
+
+
 # -- blocked cards rejoin the queue --------------------------------------------------
 
 
@@ -880,6 +954,7 @@ def test_schedule_endpoint_reports_an_empty_board_cleanly(server):
         "waiting": {},
         "paused_until": None,
         "card_retry_at": {},
+        "budget_paused": False,
     }
 
 

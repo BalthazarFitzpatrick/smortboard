@@ -21,8 +21,47 @@ means running the card in a container.
 """
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
+
+# git subcommands that talk to a remote - -u/--upload-pack etc on these run an arbitrary program
+# on the other end of the "clone"
+_GIT_REMOTE_SUBCOMMANDS = {"fetch", "pull", "clone", "ls-remote", "push", "archive"}
+_GIT_REMOTE_PROGRAM_FLAGS = ("--upload-pack", "--receive-pack", "--exec")
+
+
+def _refused_git_invocation(segment):
+    """None if `segment` is not a git call the allowlist should refuse, else a reason string.
+
+    `Bash(git *)` admits every git invocation, and a global option before the subcommand
+    (`-c core.sshCommand=...`, `-C`, `--git-dir`, `--exec-path`, ...) turns git into a way to run
+    an arbitrary program. So any dash-led token between `git` and its subcommand is refused
+    outright, and the remote-talking subcommands additionally refuse a program flag anywhere.
+    """
+    try:
+        tokens = shlex.split(segment)
+    except ValueError:
+        return None  # unbalanced quotes etc - not our job, the shell will reject it itself
+    i = 0
+    while i < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i]):
+        i += 1  # skip leading env assignments like FOO=bar git ...
+    if i >= len(tokens) or tokens[i] != "git":
+        return None
+    rest = tokens[i + 1 :]
+    j = 0
+    while j < len(rest) and rest[j].startswith("-"):
+        return f"a global option ({rest[j]}) before the git subcommand is refused"
+    if j >= len(rest):
+        return None
+    subcommand = rest[j]
+    remainder = rest[j + 1 :]
+    if subcommand in _GIT_REMOTE_SUBCOMMANDS:
+        for flag in remainder:
+            if flag == "-u" or flag.startswith(_GIT_REMOTE_PROGRAM_FLAGS):
+                return f"{flag} on git {subcommand} is refused"
+    return None
+
 
 payload = json.load(sys.stdin)
 tool_input = payload.get("tool_input", {})
@@ -33,6 +72,15 @@ if tool_input.get("run_in_background"):
 command = tool_input.get("command")
 if not command:
     sys.exit(0)
+
+for segment in re.split(r"[;&|\\n]+", command):
+    segment = segment.strip()
+    if not segment:
+        continue
+    reason = _refused_git_invocation(segment)
+    if reason is not None:
+        print(f"{prefix} {reason}", file=sys.stderr)
+        sys.exit(2)
 
 lease_file = Path(__file__).with_name("lease.json")
 lease = json.loads(lease_file.read_text()) if lease_file.exists() else {}

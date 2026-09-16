@@ -45,7 +45,7 @@ from smortboard.exec.worktrees import (
     has_remote,
     worktree_path,
 )
-from smortboard.operator import OPERATOR_NAME
+from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.review.decide import accept_card
 from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.integrate import integrate, integration_lock, open_release_request
@@ -75,7 +75,7 @@ PHASES = (
     "stopped",
 )
 
-# how often a card on the fix route gets its findings back before it goes to a human. fabian chose
+# how often a card on the fix route gets its findings back before it goes to a human. the operator chose
 # two on 2026-09-10 - each round is roughly one more card run, so this also caps the cost
 MAX_FIX_ROUNDS = 2
 
@@ -166,7 +166,7 @@ def build_card_prompt(card: dict[str, Any], briefing: str | None = None) -> str:
         lines.append("")
 
     # every note so far, even ones already delivered live: a fresh session remembers none of them
-    notes = [c["body"] for c in card.get("comments") or [] if c.get("author") == "fabian"]
+    notes = [c["body"] for c in card.get("comments") or [] if c.get("author") == AUTHOR_KEY]
     if notes:
         lines.append(f"Notes from {OPERATOR_NAME}, oldest first:")
         lines += [f"- {text}" for text in notes]
@@ -328,11 +328,11 @@ def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
 
 
 def _stopped(store: Store, state: LifecycleResult) -> LifecycleResult:
-    """fabian pulled the run. the card keeps its worktree and commits for a later run to resume -
+    """the operator pulled the run. the card keeps its worktree and commits for a later run to resume -
     this only records that it stopped short, deliberately, of gates/reviewer/pull request.
 
     NOT a blocked_reason_code: the schema's CHECK constraint enumerates those, and "stopped" is not
-    a claim about the work - it is Fabian's own decision, not something that went wrong.
+    a claim about the work - it is the operator's own decision, not something that went wrong.
     """
     store.update_card(state.card_id, review_flag=True)
     _note(store, state.card_id, with_next(f"Stopped by {OPERATOR_NAME}.", "stopped"))
@@ -462,7 +462,7 @@ def run_card_lifecycle(
     runtime, which refuses rather than falling back.
 
     `pending_notes` is live steering: passed straight through to every worker run (the initial run
-    and any fix rounds) so a note Fabian leaves mid-run reaches the agent at its next step, rather
+    and any fix rounds) so a note the operator leaves mid-run reaches the agent at its next step, rather
     than waiting for the card's next run. None outside RunRegistry (e.g. in
     tests) means notes fall back to arriving next run only, same as before.
 

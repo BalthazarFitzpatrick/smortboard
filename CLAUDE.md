@@ -44,19 +44,10 @@ See `docs/PLAN.md` for the full flowchart.
 
 ## Active Context
 
-Plan approved 2026-09-08. **All three spikes are done and confirmed** - see `docs/spikes/`. The
-plan is no longer provisional; phase 2 can be built.
-
-Phases 2 and 6 shrank: session lifecycle, worktree creation, commit detection, telemetry and quota
-all come from the CLI and its event stream rather than from code we write. Two requirements were
-added instead. The board must hand each agent a worktree **already on its branch** - a card left on
-main either names its own branch or deadlocks asking permission to make one. And phase 2 must decide
-explicitly what a card run inherits from the operator's global config, because `--settings` adds to
-it rather than replacing it.
-
-Next action is phase 0 - the ui_base components. No application code written yet.
-
-Branches: `feature/setup` here, `chore/smortboard-ledger` in dev_ledgers.
+Pre-beta. The board, mission control, the landing lock and the demo board are built. As of
+2026-09-16 the work is the pre-beta security audit's remediation: api request gate, csp,
+container and db hardening, spend guards, ci, and scrubbing private names from the public repo.
+The task ledger holds the current queue.
 
 ## Tech Stack
 
@@ -78,8 +69,9 @@ consumer, so there is no need to pay for it up front.
 this project spans repos. `ui_base` (`../ui_base`) is the shared interface package - read its
 `CLAUDE.md` before writing any interface code. all final results live here in smortboard.
 
-ledgers: `TASKS.jsonl` and `WORKLOG.md` live in `dev_ledger/` and are tracked in this repo; the
-root files are relative symlinks into that directory.
+ledgers: `TASKS.jsonl` and `WORKLOG.md` live in a private ledger repo checked out beside this
+one. The root files are untracked, gitignored symlinks into it; nothing about them is ever
+committed here.
 
 ## Constraints and Gotchas
 

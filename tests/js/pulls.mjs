@@ -45,7 +45,18 @@ document.body.appendChild(bucketRow);
 function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
-class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; } refresh() {} close() {} }
+let menus = [];
+class SpyMenu {
+  constructor(opts) { this.opts = opts; menus.push(this); }
+  openAt() { return this; }
+  refresh() {}
+  // the real Menu always calls onDismiss on close, however it was dismissed - escape included
+  close() { this.opts.onDismiss?.(); }
+  pick(itemId) {
+    const section = this.opts.sections.find(s => (s.items || []).some(i => i.id === itemId));
+    section.onPick(section.items.find(i => i.id === itemId));
+  }
+}
 
 const ROWS = [
   {
@@ -65,7 +76,7 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('pulls.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {togglePullsPanel, openPullsPanel, closePullsPanel, pl, BINDINGS};`)(SpyMenu, SpyDrawer);
+;return {togglePullsPanel, openPullsPanel, closePullsPanel, pl, BINDINGS, safeUrl};`)(SpyMenu, SpyDrawer);
 
 const flush = () => new Promise(r => setTimeout(r, 0));
 function press(code) {
@@ -106,14 +117,31 @@ press('Enter');
 assert.equal(opened.length, 1, 'enter opens exactly one tab');
 assert.equal(opened[0][0], 'https://example/pr/2', 'enter opens the active row, not the first one');
 
-// ---- y accepts the active row's card and reloads the list without closing the panel ----------------
+// ---- y opens a confirm before accepting; no call happens until it is answered -----------------
 responses.set('/api/cards/c2/accept', stubJson(200, {id: 'c2', status: 'accepted'}));
 const REFRESHED = [ROWS[0]];
 responses.set('/api/pulls', stubJson(200, REFRESHED));
+menus = [];
 press('KeyY');
+assert.equal(menus.length, 1, 'y should open exactly one confirm menu');
+assert.equal(menus[0].opts.title, 'accept this pull request?');
+assert.equal(calls.filter(c => c.path === '/api/cards/c2/accept').length, 0,
+  'no accept call before the confirm is answered');
+assert.ok(mod.pl.confirming, 'the panel tracks that a confirm is open');
+
+// ---- escape cancels the confirm - no call, and it does not also close the whole panel ---------
+menus[0].close(); // stands in for the real Menu's own escape handler, which always calls close()
+assert.equal(calls.filter(c => c.path === '/api/cards/c2/accept').length, 0, 'cancelling makes no api call');
+assert.equal(mod.pl.confirming, false, 'the confirm flag clears once it is dismissed');
+assert.ok(mod.pl.backdrop.parentNode, 'the pulls panel itself stays open - only the confirm was cancelled');
+
+// ---- confirming actually accepts and reloads the list, without closing the panel ---------------
+menus = [];
+press('KeyY');
+menus[0].pick('confirm');
 await flush(); await flush();
 const acceptCall = calls.find(c => c.path === '/api/cards/c2/accept');
-assert.ok(acceptCall, 'y should post accept for the active row');
+assert.ok(acceptCall, 'confirming should post accept for the active row');
 assert.equal(acceptCall.opts.method, 'POST');
 assert.ok(mod.pl.backdrop.parentNode, 'the panel stays open once a row is accepted');
 const rowsAfterAccept = mod.pl.panel.querySelectorAll('.pulls-row');
@@ -121,7 +149,9 @@ assert.equal(rowsAfterAccept.length, 1, 'the list reloaded and now reflects the 
 
 // ---- a refusal shows inline and leaves the row on the list ------------------------------------------
 responses.set('/api/cards/c1/accept', stubJson(409, {error: 'this card is still running'}));
+menus = [];
 press('KeyY');
+menus[0].pick('confirm');
 await flush(); await flush();
 const status0 = mod.pl.panel.querySelector('.pulls-row .pulls-status');
 assert.equal(status0.textContent, 'this card is still running');
@@ -142,5 +172,11 @@ responses.set('/api/pulls', stubJson(200, []));
 press('KeyV');
 await flush(); await flush();
 assert.ok(mod.pl.panel.querySelector('.hazard-placeholder'), 'nothing open renders the empty placeholder');
+
+// ---- a link target from data is only ever a web url --------------------------------------------------
+assert.equal(mod.safeUrl('https://github.com/o/r/pull/1'), 'https://github.com/o/r/pull/1');
+assert.equal(mod.safeUrl('javascript:alert(1)'), '', 'javascript: must never become a link');
+assert.equal(mod.safeUrl('data:text/html,x'), '');
+assert.equal(mod.safeUrl('not a url'), '');
 
 console.log('ok');

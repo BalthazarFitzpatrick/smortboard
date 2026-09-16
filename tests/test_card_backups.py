@@ -40,7 +40,7 @@ def test_restore_card_brings_back_id_fields_status_model_tasks_criteria_leases_d
         leases=["smortboard/store/*"],
     )
     store.add_dependency(card["id"], other["id"])
-    store.add_comment(card["id"], "fabian", "a note")
+    store.add_comment(card["id"], "operator", "a note")
     before = store.get_card(card["id"])
 
     store.delete_card(card["id"])

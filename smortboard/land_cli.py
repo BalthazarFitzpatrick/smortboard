@@ -6,7 +6,7 @@ integrate path (smortboard/lifecycle.py, smortboard/review/integrate.py), for an
 card. Always releases the lock, including on ctrl-c.
 
     uv run smortboard-land --repo . -- pytest -q
-    uv run smortboard-land --repo ~/work/wowtomate --target development -- uv run pytest -q
+    uv run smortboard-land --repo ~/work/my-app --target development -- uv run pytest -q
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ import urllib.request
 from pathlib import Path
 from types import FrameType
 
+from smortboard.server import access
+
 _DEFAULT_URL = "http://127.0.0.1:8000"
 _DEFAULT_TTL_S = 600
 _HEARTBEAT_INTERVAL_S = 30
@@ -36,11 +38,18 @@ class LandingError(Exception):
     """a reason to exit non-zero, already printed to stderr by the caller"""
 
 
+def _key_header() -> dict[str, str]:
+    # the board's api key, from the owner-only file the board wrote on start
+    try:
+        return {access.KEY_HEADER: access.api_key_path().read_text().strip()}
+    except OSError:
+        return {}
+
+
 def _post(url: str, path: str, body: dict) -> dict:
     payload = json.dumps(body).encode()
-    request = urllib.request.Request(
-        f"{url}{path}", data=payload, headers={"Content-Type": "application/json"}, method="POST"
-    )
+    headers = {"Content-Type": "application/json", **_key_header()}
+    request = urllib.request.Request(f"{url}{path}", data=payload, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.loads(response.read())
@@ -51,7 +60,7 @@ def _post(url: str, path: str, body: dict) -> dict:
 
 
 def _delete(url: str, path: str) -> None:
-    request = urllib.request.Request(f"{url}{path}", method="DELETE")
+    request = urllib.request.Request(f"{url}{path}", headers=_key_header(), method="DELETE")
     try:
         with urllib.request.urlopen(request, timeout=30):
             pass
