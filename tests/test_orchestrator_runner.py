@@ -60,6 +60,7 @@ def test_the_command_mounts_clones_and_extra_paths_read_only(tmp_path, monkeypat
     shots = tmp_path / "screens"
     shots.mkdir()
     missing = tmp_path / "gone"
+    missing.mkdir()  # exists while set, then removed - a folder can vanish after it is approved
     calls = []
     _wire(monkeypatch, calls)
 
@@ -67,6 +68,7 @@ def test_the_command_mounts_clones_and_extra_paths_read_only(tmp_path, monkeypat
         board = store.create_board("dev")
         store.create_repo(board["id"], "src", str(repo), "main", test_command="uv run pytest")
         store.set_setting("mission_control_read_paths", json.dumps([str(shots), str(missing)]))
+        missing.rmdir()
         result = run_orchestrator_turn(store, board["id"], "plan it")
 
     assert result.error is None
@@ -99,12 +101,14 @@ def test_the_command_mounts_clones_and_extra_paths_read_only(tmp_path, monkeypat
 
 def test_a_missing_read_path_becomes_a_board_message_and_the_turn_still_runs(tmp_path, monkeypatch):
     missing = tmp_path / "nope"
+    missing.mkdir()  # exists while set, then removed - a folder can vanish after it is approved
     calls = []
     _wire(monkeypatch, calls)
 
     with Store(tmp_path / "b.db") as store:
         board = store.create_board("dev")
         store.set_setting("mission_control_read_paths", json.dumps([str(missing)]))
+        missing.rmdir()
         result = run_orchestrator_turn(store, board["id"], "plan it")
         notes = [
             m["body"]
@@ -196,9 +200,21 @@ def test_no_docker_fails_the_turn_without_crashing(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("raw", ["not json", json.dumps({"a": 1}), ""])
-def test_a_malformed_read_paths_setting_is_no_paths_not_a_crash(tmp_path, raw):
-    with Store(tmp_path / "b.db") as store:
+def test_a_malformed_read_paths_setting_is_refused_at_set_time(tmp_path, raw):
+    with Store(tmp_path / "b.db") as store, pytest.raises(ValueError):
         store.set_setting("mission_control_read_paths", raw)
+
+
+@pytest.mark.parametrize("raw", ["not json", json.dumps({"a": 1}), ""])
+def test_a_malformed_read_paths_row_is_no_paths_not_a_crash(tmp_path, raw):
+    # a row this malformed can no longer be written through set_setting, but the reader still
+    # has to tolerate one already on disk (e.g. from before this validation existed)
+    with Store(tmp_path / "b.db") as store:
+        store._conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            ("mission_control_read_paths", raw),
+        )
+        store._conn.commit()
         assert store.mission_control_read_paths() == []
 
 
