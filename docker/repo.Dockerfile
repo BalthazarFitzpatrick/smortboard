@@ -7,6 +7,10 @@
 #   docker build -f docker/repo.Dockerfile -t smortboard-repo:latest .
 FROM smortboard-card:latest
 
+# root for the build steps below (/opt is root-owned) - card.Dockerfile already dropped to the
+# non-root `agent` user, and this stage switches back to it at the end
+USER root
+
 # venv and interpreter outside /workspace, which is where the card's clone gets mounted over
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_PYTHON_INSTALL_DIR=/opt/python \
@@ -16,6 +20,9 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
 # metadata (its version, the smortboard script) exists without the gate needing network - a
 # dependencies-only venv let a correct --version pass in the agent's container and fail the gate
 WORKDIR /workspace
-COPY pyproject.toml uv.lock ./
-COPY smortboard ./smortboard
-RUN uv sync --frozen && rm -rf /workspace/*
+COPY --chown=agent:agent pyproject.toml uv.lock ./
+COPY --chown=agent:agent smortboard ./smortboard
+RUN uv sync --frozen && rm -rf /workspace/* \
+    && chown -R agent:agent /opt/venv /opt/python
+
+USER agent

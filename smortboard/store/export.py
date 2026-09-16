@@ -9,6 +9,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from smortboard.store.errors import UnknownFieldError
+
 _TABLES = (
     "boards",
     "repos",
@@ -76,7 +78,13 @@ def import_bundle(conn: sqlite3.Connection, path: str | Path) -> None:
 def _insert_all(conn: sqlite3.Connection, table: str, records: list[dict[str, Any]]) -> None:
     if not records:
         return
+    # bundle keys become column names in raw sql, so refuse anything not a real column of
+    # this table rather than interpolating it - a crafted key could otherwise inject sql
+    real_columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     columns = list(records[0].keys())
+    unknown = [c for c in columns if c not in real_columns]
+    if unknown:
+        raise UnknownFieldError(f"{table}: not a real column: {sorted(unknown)}")
     placeholders = ", ".join("?" for _ in columns)
     column_list = ", ".join(columns)
     conn.executemany(

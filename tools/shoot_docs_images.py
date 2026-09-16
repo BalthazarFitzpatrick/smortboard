@@ -7,7 +7,7 @@ to 8000 - pointing it at the operator's own board is then a deliberate act, not 
 run it in two terminals, or background the first:
 
     uv run smortboard --demo --port 8721 --no-browser
-    uv run python tools/shoot_docs_images.py docs/images --port 8721
+    uv run python tools/shoot_docs_images.py docs/images --port 8721 --key <key from the printed link>
 
 each image keeps the name and the pixel size the readme already references - the viewport per shot
 is what fixes the size, so do not change one without the other.
@@ -156,8 +156,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("out", type=Path, help="directory to write the images into")
     parser.add_argument("--port", type=int, required=True, help="the demo server's port")
+    parser.add_argument("--key", required=True, help="the api key from the demo's printed link")
     args = parser.parse_args()
-    url = f"http://127.0.0.1:{args.port}/ui/index.html"
+    # each page is its own browser context, so each one swaps the key for its own cookie
+    url = f"http://127.0.0.1:{args.port}/ui/index.html?key={args.key}"
     args.out.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as playwright:

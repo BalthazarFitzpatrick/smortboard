@@ -1,4 +1,4 @@
-"""live steering: a note operator sends while a card is running reaches the agent at its next step,
+"""live steering: a note the operator sends while a card is running reaches the agent at its next step,
 not only on the card's next run.
 
 Proven mechanic (two spikes, claude 2.1.197 in the card image, haiku): with
@@ -128,7 +128,7 @@ def test_a_note_between_two_result_events_is_delivered_and_stdin_stays_open(tmp_
     with Store(tmp_path / "b.db") as store:
         board_row = store.create_board("b")
         card = store.create_card(board_row["id"], None, "a card")
-        marker = "Note from operator, via the board [c0ffee12]: "
+        marker = "Note from the operator, via the board [c0ffee12]: "
         result = run_process(
             store,
             card["id"],
@@ -194,7 +194,7 @@ def test_a_note_queued_mid_turn_is_written_before_the_turn_ends(tmp_path, monkey
     fake.stdout = stdout()
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: fake)
 
-    marker = "Note from operator, via the board [c0ffee12]: "
+    marker = "Note from the operator, via the board [c0ffee12]: "
     with Store(tmp_path / "b.db") as store:
         board_row = store.create_board("b")
         card = store.create_card(board_row["id"], None, "a card")
@@ -241,7 +241,7 @@ def test_docker_command_drops_dev_null_and_streams_json():
 def test_docker_command_s_system_prompt_names_the_marker_it_was_given():
     """F4: the same marker run_card hands to run_process must be the one the worker's own system
     prompt names, or the agent has nothing to check a live note against"""
-    marker = "Note from operator, via the board [c0ffee12]: "
+    marker = "Note from the operator, via the board [c0ffee12]: "
     cmd = ContainerBackend(image="img")._docker_command(
         "/clone", "the brief", "/s.json", "sonnet", None, None, marker
     )
@@ -371,7 +371,7 @@ def test_a_delivered_note_carries_the_run_s_own_marker(tmp_path, monkeypatch):
         calls["n"] += 1
         return [{"id": "c1", "body": "ship it"}] if calls["n"] == 1 else []
 
-    marker = "Note from operator, via the board [deadbeef]: "
+    marker = "Note from the operator, via the board [deadbeef]: "
     run_process(
         None,
         "c",
