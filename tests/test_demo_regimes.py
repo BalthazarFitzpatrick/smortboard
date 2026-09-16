@@ -1,6 +1,6 @@
 """the demo keeps demonstrating all three column regimes.
 
-the regimes are decided by ui/columns.js's computeColumnFit, so this asks THAT function rather than
+the regimes are decided by ui_base's pile.js computeColumnFit, so this asks THAT function rather than
 restating its arithmetic in python - a node helper loads the real module and answers with a regime
 per column. the counts come from smortboard/demo.py itself, so there is one source of truth: change
 a board's card counts, or tune the fit maths, and this fails instead of the demo quietly flattening
@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 HELPER = REPO_ROOT / "tests" / "js_tools" / "demo_regimes.mjs"
 NODE = shutil.which("node")
 
-# the row gap the board's own stylesheet sets between two cards (layout.css --card-gap)
+# the row gap the board's own stylesheet sets between two cards (--card-gap)
 COLUMN_GAP_PX = 10
 
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
