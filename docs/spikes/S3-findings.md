@@ -68,7 +68,7 @@ Three consequences:
   for something no one is there to grant. The board must hand over a worktree already on the right
   branch.
 - **`--settings` adds to the operator's configuration, it does not replace it.** The stream showed
-  `PreToolUse:Bash` hooks firing that were not in our settings file — operator's global
+  `PreToolUse:Bash` hooks firing that were not in our settings file — the operator's global
   block-main-commit hook. Card runs inherit global hooks, global CLAUDE.md and global permissions.
 
 **Recommendation for Phase 2:** card runs should not inherit the personal playbook wholesale. It is

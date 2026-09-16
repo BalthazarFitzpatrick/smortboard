@@ -48,7 +48,7 @@ from smortboard.store.errors import NotFoundError
 # the same author every other board-written comment carries - see lifecycle.BOARD_AUTHOR
 _BOARD_AUTHOR = "smortboard"
 
-# unset means this - operator's own value in settings always wins, see store.api._SETTING_KEYS
+# unset means this - the operator's own value in settings always wins, see store.api._SETTING_KEYS
 DEFAULT_MAX_PARALLEL = 2
 
 # statuses a blocked card can never be requeued from - the schema has no "blocked" status of its
@@ -289,7 +289,7 @@ def _dependency_wait(store: Store, card: dict[str, Any], repo_path: str | Path) 
     """None once every dependency's pull request is actually MERGED on GitHub.
 
     `accepted` alone used to be enough - it no longer is. THE BOARD NEVER MERGES, so `accepted`
-    only means operator signed off and a PR is open; a dependent's worktree is cut fresh from the
+    only means the operator signed off and a PR is open; a dependent's worktree is cut fresh from the
     repo's base branch, so it sees the dependency's code only once that PR landed there. `repo_path`
     is any local checkout with `gh` available - `gh pr view <url>` resolves from the url itself, so
     it does not need to be the dependency's own repo.
