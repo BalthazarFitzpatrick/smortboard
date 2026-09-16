@@ -3,27 +3,51 @@
 **A keyboard-first kanban board whose cards are worked by coding agents.**
 
 You write a card and press a key. An agent picks it up in a sealed container and commits its work.
-The board then re-runs the tests itself, has a second agent read the diff, and opens a pull request.
-It never merges into main. Anything that needs you waits in one inbox.
+The board re-runs the tests itself, has a second agent read the diff, and opens a pull request. It
+never merges into main. Anything that needs you waits in one inbox.
 
-## Start in a minute
+![A payments service mid-sprint: cards in every state across the columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
 
-**1. Install**, once:
+<sub>Every screenshot on this page is the built-in demo board: invented projects, invented cards.</sub>
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/), and keep it running
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Claude Code: `npm install -g @anthropic-ai/claude-code`
-- [GitHub CLI](https://cli.github.com/), then `gh auth login`. The board opens its pull requests
-  through it.
+**Contents** ·
+[Install](#install) ·
+[Quick start](#quick-start) ·
+[Concepts](#concepts) ·
+[Features](#features) ·
+[Security](#security) ·
+[Implementation](#implementation) ·
+[Troubleshooting](#troubleshooting) ·
+[Development](#development)
 
-**2. Get the board** and build the image cards run in:
+---
+
+## Install
+
+### Requirements
+
+| Tool | Why | Get it |
+|---|---|---|
+| Python 3.11+ and **uv** | runs the board | [uv install](https://docs.astral.sh/uv/getting-started/installation/) |
+| **Docker** (Desktop or Engine), running | every card runs in its own container | [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
+| **Claude Code** | the agent inside the container, and `claude setup-token` | `npm install -g @anthropic-ai/claude-code` |
+| **GitHub CLI**, logged in | the board opens pull requests with it | [cli.github.com](https://cli.github.com/), then `gh auth login` |
+| git | worktrees, branches, pushes | usually already there |
+
+Only Python and uv are needed to open the board; the rest is needed before a card can run. The
+pre-flight checklist (`h`) tells you exactly what is missing.
+
+### Steps
+
+**1. Clone and build the card image** (git, uv and the `claude` CLI, no credentials, no code):
 
 ```bash
 git clone https://github.com/BalthazarFitzpatrick/smortboard && cd smortboard
+uv sync
 docker build -f docker/card.Dockerfile -t smortboard-card:latest .
 ```
 
-**3. Give it the key.** Cards use their own model-only token, never your Claude login:
+**2. Give cards their own token.** Cards use a model-only token, never your Claude login:
 
 ```bash
 claude setup-token
@@ -34,118 +58,110 @@ It prints the token once. Copy it, then on macOS:
 ```bash
 mkdir -p ~/.config/smortboard
 (umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
+wc -c < ~/.config/smortboard/card_token      # 108
 ```
 
-Linux and Windows: see [Setup](#setup).
+The file must be mode 600; the board refuses a token file others can read. Linux, Windows and other
+ways to store it: [Card token](#card-token).
 
-**4. Start it:**
+**3. Start the board:**
 
 ```bash
 uv run smortboard
 ```
 
-It opens http://127.0.0.1:8000/ui/index.html with a one-time `?key=` the board swaps for a
-cookie. A tab opened by hand has no key; use the printed link. Keep that terminal open. Closing it stops the board
-and any card that is running.
+It prints and opens `http://127.0.0.1:8000/ui/index.html?key=...`. The key is swapped for a cookie on
+the first load and dropped from the address bar; a tab opened by hand has no key, so use the printed
+link. Keep the terminal open: closing it stops the board and any running card.
 
-**5. Board 1 and its repo:**
+No checkout at all: `uvx --from git+https://github.com/BalthazarFitzpatrick/smortboard smortboard`
+runs the board, though you still need the clone once to build the image.
 
-1. Press `b`, then **from local repo**. Browse to a clone of a GitHub repo and pick **create board
-   from this repo**. The board is named after it, and the repo is registered with its default branch.
-   (**new board** makes an empty one by name instead, and you register the repo by hand.)
-2. On the repo's row, fill in the command that runs its tests, e.g. `uv run pytest -q`, and save. The
-   board runs that command itself before it opens a pull request, so a repo without one can't finish a
-   card. If the tests need more than git, uv and Python, give the repo its own image (see
-   [Setup](#setup)).
-3. Press `1` to open board 1.
-4. Press `h`. The checklist shows anything still missing, and how to fix it.
-5. Press `.` and tell the orchestrator what you want built. It answers with a plan and cards.
-6. Pick a card and press `r`, or press `w` to run the whole board.
+## Quick start
 
-Anything that needs you lands in the inbox, `n`. The board never merges into main. You do.
-
-![A payments service mid-sprint: cards in every state across five columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
-
-![A card opened over the board: its criteria, tasks, dependencies and the run as a timeline - tests passed, reviewer approved, pull request open](docs/images/hero-card.jpg)
-
-![Both side panels open: a working agent's transcript with a live note on the left, the orchestrator planning cards on the right](docs/images/hero-agents.jpg)
-
-<sub>The board, an open card, and the two agent panels. Every screenshot on this page is the demo
-board below - invented projects, invented cards.</sub>
-
-## Look before you install
-
-One command, no Docker, no token, no repo - a throwaway board of three invented projects:
+### Look before you install anything else
 
 ```bash
 uv run smortboard --demo
 ```
 
-It seeds a fresh database in a temporary directory and serves it on port 8001, so it stands beside
-the board already on 8000 rather than colliding with it. Your own board is never opened: `--demo`
-ignores `--db` and `SMORTBOARD_DB` alike, and nothing it writes outlives the directory it was
-written into. Runs, gates and pull requests in it are seeded history, not live -
-pressing `r` on a demo card would need Docker and a repo that exists.
+A throwaway board of three invented projects on port 8001, next to your real board rather than on
+top of it. It never opens your own database or config (`--demo` ignores `--db` and
+`SMORTBOARD_DB`) and nothing it writes outlives its temporary directory. Its runs and pull requests
+are seeded history; pressing `r` there would need Docker and a real repo.
+
+### Your first board
+
+1. Press `b`, then **from local repo**. Browse to a clone of a GitHub repo and pick **create board
+   from this repo**. The board is named after it, and the repo is registered with its default
+   branch.
+2. On the repo's row, set the command that runs its tests, e.g. `uv run pytest -q`, and save. The
+   board runs it before opening a pull request, so a repo without one can't finish a card.
+3. Press `1` to open the board, then `h`. Fix whatever the checklist lists; each row says how.
+4. Press `.` and tell the orchestrator what you want built. It answers with a plan and cards.
+5. Focus a card and press `r` (it asks once), or `w` to run the whole board.
+
+Anything that needs you lands in the inbox, `n`. The board never merges into main. You do.
+
+![A card opened over the board: criteria, tasks, dependencies and the run as a timeline - tests passed, reviewer approved, pull request open](docs/images/hero-card.jpg)
 
 ---
 
-## Three rules
+## Concepts
+
+### Three rules
 
 1. **The agent never decides it is finished.** Its claim that the tests pass counts for nothing. The
-   board re-runs them offline. A separate read-only reviewer then reads the code itself for
+   board re-runs them offline, and a separate read-only reviewer reads the code for
    vulnerabilities, leaked credentials, bad practice and waste.
-2. **The board never merges into main.** On a repo whose base branch is main, every card ends at an
-   open pull request or a stated reason it stopped, and a person merges it. On a repo whose base is
-   a development branch, the board merges each finished card into development itself, so the next
-   card starts on top of it. It keeps one open pull request from development into main, and merging
-   that is always done by a person.
-3. **Every card runs sealed.** It gets its own throwaway container, a clone of its repo, a write
-   lease and a command allowlist. If Docker isn't available, the card refuses to run rather than
-   running outside a container.
+2. **The board never merges into main.** On a repo whose base is main, every card ends at an open
+   pull request or a stated reason it stopped. On a repo whose base is a development branch, the
+   board lands each finished card on development itself and keeps one open pull request from
+   development into main, which a person merges.
+3. **Every card runs sealed.** Its own throwaway container, a clone of its repo, a write lease and a
+   command allowlist. Without Docker, a card refuses to run rather than running outside a container.
 
-## How a card runs
+### How a card runs
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-lifecycle-light.png">
-  <img src="docs/images/art-lifecycle-dark.png" alt="The card lifecycle: preparing, running, testing, reviewing, opening, opened. Reviewer findings on the fix route go back to the worker at most twice; a question, a limit, a crash or a lease conflict, failed tests, or a rejected review block the card in its column, waiting in the inbox." width="100%">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-lifecycle-light.svg">
+  <img src="docs/images/art-lifecycle-dark.svg" alt="The card lifecycle: preparing, running, testing, reviewing, fixing, opening, then opened or landing. Reviewer findings on the fix route go back to the worker at most twice; a question, a limit, a crash, a lease conflict, failed tests or a rejected review block the card and wait in the inbox." width="100%">
 </picture>
 
 | Phase | What happens |
 |---|---|
-| **preparing** | A worktree and branch per card. A resumed card reuses its worktree and commits. A card with dependencies is cut from a fresh fetch of the base branch. |
+| **preparing** | A worktree and branch per card. A resumed card reuses its worktree and commits; a card with dependencies is cut from a fresh fetch of the base. |
 | **running** | `claude -p` streams JSON both ways in a named container. The token is the first stdin line, the brief follows, and stdin stays open for live notes. Every line becomes an event. |
 | **testing** | The repo's own test command runs in the repo's image with no network. |
-| **reviewing** | A second agent with Read, Grep and Glob only reviews the diff in its surrounding code and answers four questions: vulnerabilities (injection, path traversal, unchecked input), leaked credentials, best practices (the project's conventions and the language's), and efficiency. It never sees the test results and doesn't judge the criteria; the test gate does that. A leaked credential at any severity, any high or critical finding, or no usable verdict blocks the card. |
-| **opening** | The board pushes the branch and runs `gh pr create`. A re-run of a card whose pull request is already open pushes to that one instead, never forced. Its `gh` wrapper allows four subcommands - `pr create`, `list`, `view` and `close` - and merge isn't one of them. |
-| **landing** | Only when the base is not main, master or trunk. The board merges the base into the branch once more (rerunning the tests if that brought anything in), pushes one two-parent merge commit to the base, and accepts the card. If the base moved in between, it syncs and tries again, up to three times; a card that still can't land keeps its pull request for you. |
+| **reviewing** | A second agent with Read, Grep and Glob only reviews the diff in its surrounding code for vulnerabilities, leaked credentials, best practice and efficiency. The diff is framed as untrusted data: text inside it that asks for approval is itself a finding. A leaked credential, any high or critical finding, or no usable verdict blocks the card. |
+| **fixing** | Only on the `fix` findings route: reviewer findings go back to the worker, at most twice, then the gates run again. |
+| **opening** | The board pushes the branch and runs `gh pr create`. Its `gh` wrapper allows `pr create`, `list`, `view` and `close`; merge is not one of them. |
+| **opened** | On a main base the card ends here: the pull request stays open for a person. On any other base the board **lands** it: under the landing lock it merges the base in once more (re-running tests if that brought anything), pushes one merge commit to the base, and accepts the card. |
 
-![An open card: sections headed like board columns, the run as a timeline](docs/images/card.jpg)
-
-## Concepts
+### Vocabulary
 
 | | |
 |---|---|
 | **Board** | A named set of cards and repos. `1`-`9` jump between boards. |
-| **Card** | One unit of work: a title, a description, acceptance criteria, tasks, dependencies, a lease, and optionally a model. |
-| **Repo** | Where cards work: a path, a default branch, a test command, an optional lint command and an optional image. Set the default branch to `development` (it must exist on the remote) and the board lands cards there itself. |
-| **Lease** | The path globs a card may Edit or Write, set with `PATCH /api/cards/<id>` and `{"leases": [...]}`. An empty lease allows no writes at all, so the board refuses to run a card without one. |
-| **Worktree** | One git worktree and branch per card. The container works on a clone, and its commits are fetched back. |
-| **Attempt** | One run of a card, from its `lifecycle_started` event to where it stopped. Cost, replay and the resume briefing all work per attempt. |
-| **Status** | Five columns: todo, doing, checking, accepted, rejected. There is no "blocked" column. |
-| **Reason code** | Why a card waits on you, recorded alongside its status: `AGENT_QUESTION`, `TESTS_FAILED`, `REVIEW_REJECTED`, `LEASE_CONFLICT`, `USAGE_LIMIT`, `CRASH`, `DEPENDENCY_REJECTED`. |
+| **Card** | One unit of work: title, description, acceptance criteria, tasks, dependencies, a lease, and optionally a model. |
+| **Repo** | Where cards work: a path, a default branch, a test command, an optional lint command and image. |
+| **Lease** | The path globs a card may Edit or Write. An empty lease allows nothing, so a card without one is refused. See [Leases](#leases). |
+| **Worktree** | One git worktree and branch per card. The container works on a clone; its commits are fetched back. |
+| **Attempt** | One run of a card. Cost, replay and the resume briefing all work per attempt. |
+| **Status** | Five stored states: todo, doing, checking, accepted, rejected. An **attention** column shows cards waiting on you. |
+| **Reason code** | Why a card waits: `AGENT_QUESTION`, `TESTS_FAILED`, `REVIEW_REJECTED`, `LEASE_CONFLICT`, `USAGE_LIMIT`, `CRASH`, `DEPENDENCY_REJECTED`. |
 | **Findings route** | Where reviewer findings go: back to the worker (`fix`), or to you (`attention`, the default). |
-| **Decision** | `y` accepts a card and keeps its branch for the pull request. `x` rejects it and deletes the branch. Both can be reversed. |
-| **Roles** | The **orchestrator** plans cards and reads the files it plans against with Read, Grep and Glob over read-only clones - it never writes. The **worker** works a card. The **reviewer** checks the worker's code for vulnerabilities, leaked credentials, bad practice and waste. Each role has its own prompt and model. |
-| **Note** | A message to a running agent, delivered at its next step with a fixed marker it is taught to trust. Any other text claiming authority is treated as a prompt injection. |
-| **Resume briefing** | When a card runs again, its brief summarises the last attempt: how it ended, gate verdicts, findings, files touched, and commands run or refused. |
-| **Event log** | Every stream line, gate, decision and note, append-only. Cost, replay, the roster and the briefing are all projections of it. |
+| **Roles** | The **orchestrator** plans cards over read-only clones and never writes. The **worker** works a card. The **reviewer** checks the worker's code. Each has its own prompt and model. |
+| **Note** | A message to a running agent, delivered at its next step behind a marker minted fresh for each run. |
+| **Event log** | Every stream line, gate, decision and note, append-only. Cost, replay, the roster and the resume briefing are projections of it. |
 
 <img src="docs/images/card-states.jpg" alt="Card edges by state: blue working, vanilla attention with a stepped glow, lichen accepted, red rejected" width="100%">
 
-A card's state shows as its edge, not a fill: **blue** means an agent is working it, **vanilla**
-with a stepped glow means it needs you, **lichen** means accepted and **red** means rejected. The
-working blue is cold on purpose, and lichen and red stay distinguishable, so no pair collapses
-under red-green colour blindness.
+A card's state is its edge, not a fill: **blue** an agent is working it, **vanilla** with a stepped
+glow it needs you, **lichen** accepted, **red** rejected. The working blue is cold on purpose, so no
+pair collapses under red-green colour blindness.
+
+---
 
 ## Features
 
@@ -154,16 +170,14 @@ under red-green colour blindness.
 <td width="50%" valign="top">
 <img src="docs/images/mission-control.jpg" alt="Mission control drawer" width="100%"><br>
 <b>Mission control</b> <code>.</code><br>
-Chat with the board's orchestrator. It answers with a plan and cards, each with a proposed model, and
-it sees what each model has cost and passed on this board. Both drawers open without taking focus,
-so the key that opened one closes it: <code>/</code> types into it, <code>Esc</code> hands focus back.
+Chat with the board's orchestrator. It answers with a plan and cards, each with a proposed model,
+and sees what each model has cost and passed on this board.
 </td>
 <td width="50%" valign="top">
 <img src="docs/images/workforce.jpg" alt="Workforce drawer pinned to one card" width="100%"><br>
 <b>Workforce</b> <code>,</code><br>
-A terminal with a card's agent: its narration and the board's gate lines. It is <b>pinned</b> to the
-card you're on; with none focused it is a <b>mall cam</b>, rotating through every working card. A
-note sent here reaches a running agent at its next step.
+A terminal with a card's agent. Pinned to the card you're on; with none focused it rotates through
+every working card. A note sent here reaches a running agent at its next step.
 </td>
 </tr>
 <tr>
@@ -171,453 +185,310 @@ note sent here reaches a running agent at its next step.
 <img src="docs/images/inbox.jpg" alt="Attention inbox" width="100%"><br>
 <b>Attention inbox</b> <code>n</code><br>
 Every card waiting on you, across every board, oldest first. An answer resumes the card in its own
-worktree. Rows an answer can't help say where to act instead.
+worktree; a lease conflict can be approved in one action.
 </td>
 <td width="50%" valign="top">
 <img src="docs/images/digest.jpg" alt="Morning digest" width="100%"><br>
 <b>Run the board</b> <code>w</code> · <b>digest</b> <code>d</code><br>
-Bounded parallel runs, two at a time by default. A card starts only once its dependencies' pull
-requests are merged, and two cards whose leases may overlap never run at once. The board redraws as
-runs start and finish, whoever started them.
+Bounded parallel runs, two at a time by default. A card starts once its dependencies are merged,
+and two cards whose leases may overlap never run at once.
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 <img src="docs/images/costs.jpg" alt="Cost overview across boards" width="100%"><br>
 <b>Cost per board</b> <code>c</code><br>
-One row per board: its share of all spend, runs, accepted cards, pull requests, cost per pull
-request, and money spent on runs that hit a refusal. Worker vs reviewer and spend by model sit in
-the totals.
+Each board's share of spend, runs, accepted cards, pull requests and cost per pull request.
 </td>
 <td width="50%" valign="top">
 <img src="docs/images/telemetry.jpg" alt="Card telemetry" width="100%"><br>
 <b>Card cost</b> <code>i</code><br>
-Every attempt: cost, turns, fix rounds, refusals, and the model that did the work for each role.
+Every attempt: cost, turns, fix rounds, refusals, and the model behind each role.
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 <img src="docs/images/usage.jpg" alt="Usage panel" width="100%"><br>
 <b>Usage</b> <code>u</code><br>
-Rate-limit windows and spend per model. Where the stream reports only a reset time, a window shows
-how far through it you are - as time, never as usage. A usage limit pauses new runs until its window
-resets.
+Rate-limit windows and spend per model. A usage limit pauses new runs until its window resets.
 </td>
 <td width="50%" valign="top">
 <img src="docs/images/replay.jpg" alt="Run replay" width="100%"><br>
 <b>Replay</b> <code>t</code><br>
-Step through a run: reads, edits as diffs, commands, refused calls, gates, verdicts. Any attempt.
+Step through any attempt: reads, edits as diffs, commands, refused calls, gates and verdicts.
 </td>
 </tr>
 </table>
 
-**Live steering.** A note sent to a running agent is written to its stdin with a fixed marker and
-reaches it between two tool calls, in the same run. The worker is told to trust only that marker and
-to treat any other text claiming authority as a prompt injection. A real run:
+![Both drawers open: a working agent's transcript on the left, the orchestrator planning cards on the right](docs/images/hero-agents.jpg)
+
+**Live steering.** A note to a running agent is written to its stdin and reaches it between two tool
+calls. The marker it carries is minted fresh for every run, so text in the repo can't pose as you:
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-steering-light.png">
-  <img src="docs/images/art-steering-dark.png" alt="A real steered run: the brief, git log, reading one.txt, a note queued at 9.2 seconds asking to skip three.txt and end with PINEAPPLE, reading two.txt, and the summary ending in PINEAPPLE at 12.8 seconds for $0.055." width="100%">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-steering-light.svg">
+  <img src="docs/images/art-steering-dark.svg" alt="A real steered run: the brief, reading files, a note queued at 9.2 seconds asking to skip a file and end with PINEAPPLE, and the summary ending in PINEAPPLE at 12.8 seconds for $0.055." width="100%">
 </picture>
 
-**Stop** `k` asks once, then removes a running card's container. The card keeps its worktree and
-commits, and nothing after the worker runs. **Prompts** `p` edits the three role prompts; every save
-is a new version. **Model** `m` cycles a card through board default, haiku, sonnet and opus.
+**Pre-flight checklist** `h` shows what must be true before a card can run - Docker, the card image,
+the token, `gh`, `git`, and for every registered repo its path, branches, remote, test command and
+image - with the command that fixes each missing piece.
 
-**Pre-flight checklist** `h` — what has to be true before a card can run, and the exact fix for
-whatever isn't: docker, the card image, the card token file, `gh`, `git`, and, for every repo
-registered on any board, its path, branches, `origin` remote, whether `gh` can see it on GitHub,
-its test command, and its image. Each row that isn't ready shows the command to fix it, in the
-board's monospace so it can be copied straight into a terminal - including telling you when the
-matching GitHub repo hasn't been created yet. A summary line at the top says how many of the checks
-are ready; re-check without leaving the panel.
-
-## Architecture
-
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-architecture-light.png">
-  <img src="docs/images/art-architecture-dark.png" alt="Architecture: one native smortboard process on 127.0.0.1 with the http server, sqlite store, run registry, scheduler and orchestrator, and the card token file; per card a card container, a test gate container with no network, and a read-only reviewer container; commits fetched back to the repo on disk, then pushed to GitHub where you merge." width="100%">
-</picture>
-
-The board is a plain Python process: a stdlib HTTP server, SQLite and plain JavaScript on
-[smortui](https://github.com/BalthazarFitzpatrick/smortui). Only the agents are contained, because
-a containerised board would need the Docker socket, which amounts to root on the host. Card runs,
-orchestrator turns and scheduler ticks each open their own SQLite connection on their own thread.
-
-## Security
-
-- **Local only, keyed.** The board binds `127.0.0.1`. Every `/api/` call needs the key in
-  `~/.config/smortboard/api_key` (mode 600), as a cookie or an `X-Smortboard-Key` header. Requests
-  with a foreign `Host`, a cross-site `Origin`, or a non-json body are refused. `--host` is an
-  explicit opt-in; the key is not a substitute for network authentication.
-- **The token travels on stdin.** It is a model-only `claude setup-token`. It is never passed on the
-  `docker` command line or mounted as a file, and never visible to `docker inspect`; inside the
-  container it is read from stdin and exported only to the `claude` process. On the host it lives in
-  a mode-600 file.
-- **Guards are read-only.** A lease hook covers Edit and Write. A bash guard allows only git plus the
-  repo's test and lint commands. Both are mounted read-only outside the working tree, so the agent
-  can neither edit nor commit them.
-- **Proof comes from outside the agent.** The tests re-run offline, and the reviewer can only read.
-  Only a note carrying the fixed marker counts as the operator.
-- **Mission control reads, it never writes.** So it can plan against real code, each turn mounts a
-  fresh read-only clone of every board repo at `/repos/<name>` and any operator-set paths at
-  `/extra/<name>`, and hands it Read, Grep and Glob only - no Edit, Write or Bash. The live checkout
-  is never mounted (it holds card worktrees and lease files), the clones are removed when the turn
-  ends, and a repo can carry text nobody wrote for the board, so mission control's output still
-  reaches the board only through its JSON schema - the board creates the cards, not the model. Extra
-  paths are set with `PATCH /api/settings` as `mission_control_read_paths`, a JSON list of absolute
-  paths; one that does not exist is skipped with a board message rather than failing the turn.
-- **An expired or revoked token** (HTTP 401) refuses the card with the steps to renew it.
-- **No merge path exists** in the code.
-
-## Card security: leases
-
-A lease is the list of files a card may change. It is part of the card, set when the card is
-created: mission control gives every card it proposes a `leases` list of path globs, relative to
-the repo root.
-
-**What enforces it.** Each run is wired with a `PreToolUse` hook on the agent's Edit and Write
-tools. Before a write lands, the hook resolves the file's path relative to the repo root and checks
-it against the card's globs. A path no glob matches is refused (exit 2, `LEASE_CONFLICT: <path> is
-outside this card's lease`), the write never happens, and the card stops as `LEASE_CONFLICT` for
-you to decide. The agent is also told its lease up front, so it knows where the work is before it
-starts.
-
-**How a glob matches.** Gitignore-style, against the path relative to the repo root. `*` and `?`
-stay inside one folder: `smortboard/ui/*` matches `smortboard/ui/board.js` but not a file in a folder
-below it. `**/` is any number of folders, none included: `smortboard/**/*.py` matches
-`smortboard/scheduler.py` and `smortboard/server/app.py`. A trailing `**` is everything below:
-`tests/js/**`. `[abc]` is one of a set, `[!abc]` anything else. The board and the guard inside the
-container share one definition (`lease_allows` in `smortboard/exec/leases.py`). A glob that is
-absolute or climbs with `..` is refused when it is saved, since it could never match a path inside
-the repo.
-
-**What it guarantees:**
-
-- An empty lease allows nothing, so a card without one is refused before its agent starts.
-- Two cards on the same repo whose leases may overlap never run at the same time; the second waits
-  with `lease conflict with card <id>`. Narrow leases are what let cards run side by side.
-- Only you can widen a lease. The guard reads the card's lease as stored, never a note or an
-  answer, and the hook and its `lease.json` are mounted read-only outside the working tree, so the
-  agent cannot edit them.
-
-**What it does not cover:**
-
-- Reading. The lease limits writes; the agent can read the whole repo, which it needs to understand
-  the code it changes.
-- Shell commands. Bash goes through a separate guard that allows only git and the repo's test and
-  lint commands. That guard catches accidents - its own source says it is not a security boundary.
-  The boundary is the card's container.
-
-A card stopped on `LEASE_CONFLICT` is not a failure: its agent asked for a file outside the lease.
-Widen the lease if the work needs that file, or answer to keep the file out of it - see
-[Troubleshooting](#troubleshooting).
-
-## Cost
-
-- Workers and the reviewer default to sonnet, and the orchestrator to opus. A card's model overrides
-  the board setting, which overrides the default. The reviewer has its own setting, so a cheap worker
-  never means a cheap review.
-- Each worker run is capped at $5 (`--max-budget-usd`). Findings go back to the worker at most twice,
-  and by default they go to you instead.
-- A card's pull request states what the tests and the reviewer said, and what the branch cost: every
-  run on the card summed - worker, reviewer, fix rounds and earlier attempts.
-- Costs come from each run's own stream (`total_cost_usd`, `modelUsage`), per turn, summed per
-  session. The model credited is the one with the highest spend, not the small helper Claude Code
-  bills alongside it:
-
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-cost-credit-light.png">
-  <img src="docs/images/art-cost-credit-dark.png" alt="One real result's spend by model: claude-sonnet-5 $0.2476 for 822 output tokens, the claude-haiku helper $0.0009 for 17." width="75%">
-</picture>
-
-## Keys
+### Keys
 
 Bindings follow the physical key, so a non-US layout doesn't move them. `s` shows them in the app.
+Keys that start or land work (`r`, `y`, `x`, `w`, `m`) ask once before they act.
 
 | Cards | | Panels | |
 |---|---|---|---|
 | arrows | move | `n` | attention inbox |
 | `Space` `Enter` | open / close | `d` | morning digest |
-| `Esc` | one level back | `c` | cost per board |
-| `r` | run | `i` | card cost |
-| `k` | stop | `u` | usage |
-| `y` `x` | accept / reject | `a` | agent roster |
-| `m` | model | `p` | prompts |
-| `t` | replay | `.` | mission control |
+| `Esc` | one level back | `v` | open pull requests, in merge order |
+| `r` | run | `c` | cost per board |
+| `k` | stop | `i` | card cost |
+| `y` `x` | accept / reject | `u` | usage |
+| `m` | model | `a` | agent roster |
+| `t` | replay | `p` | role prompts |
+| `j` | move to another status | shift+`p` | credential profiles |
+| `Del` | delete | `.` | mission control |
 | `w` | run the board | `,` | workforce |
-| `g` | kanban / workstreams | `s` | shortcuts |
-| `/` | type: the open card's comment, or the open chat | `b` | boards and repos |
-| | | `h` | pre-flight checklist |
-| | | `q` | landing lock: who holds the push lock on each repo, and the queue behind them |
-| | | shift+`p` | credential profiles |
+| `g` | kanban / workstreams | `b` | boards and repos |
+| `/` | type into the open card or chat | `h` | pre-flight checklist |
+| | | `o` | settings |
+| | | `q` | landing lock |
 | | | `1`-`9` | jump to a board |
 
-## Landing lock
+---
 
-Every card lands its finished branch on the repo's development branch itself (see "How a card
-runs"), and so can an agent outside the board - a direct Claude session, or one of its subagents.
-Two of them racing the same push is a rejected ref, and the loser has to merge and retest again.
-The landing lock is the queue that stops that: one holder per (repo, target branch), FIFO behind
-it, held by the board across a restart (`store/schema.py` migration 15).
+## Security
 
-An outside agent uses `smortboard-land`, installed with the package:
+The board starts agents that can spend money and push code, so it is built to keep both the browser
+and the agents in their lane.
+
+### The board itself
+
+- **Loopback and keyed.** It binds `127.0.0.1`. Every `/api/` call needs the key from
+  `~/.config/smortboard/api_key` (mode 600), as the cookie the printed link sets or an
+  `X-Smortboard-Key` header. A foreign `Host` (DNS rebinding), a cross-site `Origin` and a non-json
+  body are refused before any route runs. `--host` is an explicit opt-in; the key is not network
+  authentication.
+- **A strict Content-Security-Policy.** Scripts and styles load only from the board's own files, so
+  text an agent writes can never run as code in your tab. Agent-written labels are rendered as text,
+  attachments always download, and only `http(s)` links become links.
+- **Bounded requests.** JSON bodies are capped at 1 MB and uploads at 25 MB, sockets time out after
+  30 s, and image builds run off the request thread.
+- **Private data stays private.** The database, which holds full agent transcripts, is created mode
+  600 in a mode-700 directory.
+
+### The agents
+
+- **Sealed containers.** Non-root, `--cap-drop=ALL`, `no-new-privileges`, and memory and process
+  limits. No Docker socket, no home directory, no `~/.ssh` or `~/.claude`. The test gate has no
+  network; the reviewer and orchestrator mounts are read-only.
+- **The token travels on stdin.** It is never on the `docker` command line, never mounted, never in
+  `docker inspect`; inside the container it is exported only to the `claude` process.
+- **Guards the agent can't touch.** The lease hook covers Edit and Write. A bash guard allows only git
+  and the repo's test and lint commands, and refuses git's option tricks (`-c`, `--upload-pack` and
+  friends). Both are mounted read-only outside the working tree.
+- **Proof comes from outside the agent.** Tests re-run offline, the reviewer can only read, and only a
+  note with the run's own marker counts as you.
+- **Mission control reads, never writes.** Each turn gets fresh read-only clones and Read, Grep and
+  Glob only. Its output reaches the board through a JSON schema; the board creates the cards, and
+  drops any lease glob that would cover the whole repo or climb out of it.
+- **No merge path exists** in the code.
+
+### Leases
+
+A lease is the list of files a card may change, as gitignore-style globs relative to the repo root:
+`*` stays in one folder, `**/` is any depth, a trailing `**` is everything below.
+
+- A `PreToolUse` hook checks every Edit and Write against the lease. A path outside it is refused
+  and the card stops as `LEASE_CONFLICT`, for you to decide.
+- Two cards whose leases may overlap never run at the same time, so narrow leases are what let cards
+  run side by side.
+- Only you can widen a lease. The guard reads the stored lease, never a note.
+- Leases limit writes, not reads, and shell commands go through the separate bash guard. The real
+  boundary is the container.
+
+### Spend
+
+- Each worker run is capped at $5 (`--max-budget-usd`), and reviewer findings go back to the worker
+  at most twice.
+- A board can carry a **daily budget** in dollars (settings, `o`). Once today's spend reaches it, no
+  new run starts on that board; running cards finish.
+- On a usage limit the board **waits for the reset**. Switching to another credential profile only
+  happens if you turn on *switch credential profiles automatically* in settings.
+- A card's pull request states what its branch cost, across every run. Costs come from each run's
+  own stream, credited to the model that spent the most:
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-cost-credit-light.svg">
+  <img src="docs/images/art-cost-credit-dark.svg" alt="One real result's spend by model: the main model $0.2476 for 822 output tokens, the small helper model $0.0009 for 17." width="75%">
+</picture>
+
+---
+
+## Implementation
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/art-architecture-light.svg">
+  <img src="docs/images/art-architecture-dark.svg" alt="Architecture: one native smortboard process on 127.0.0.1 - request gate, http server, sqlite store, run registry, scheduler and orchestrator - plus the card token file; per card a hardened card container, a test gate with no network and a read-only reviewer; commits fetched back to the repo, then pushed to GitHub, where a person merges into main." width="100%">
+</picture>
+
+The board is one plain Python process: a stdlib HTTP server, SQLite, and plain JavaScript built on
+[smortui](https://github.com/BalthazarFitzpatrick/smortui) (pinned by commit, no build step). Only the
+agents are contained, because a containerised board would need the Docker socket, which amounts to
+root on the host. Card runs, orchestrator turns and scheduler ticks each use their own SQLite
+connection on their own thread.
+
+| Path | What lives there |
+|---|---|
+| `smortboard/server/` | HTTP routes, the request gate (`access.py`), asset serving |
+| `smortboard/store/` | SQLite schema, numbered migrations, export |
+| `smortboard/exec/` | worktrees, leases, guards, the container backend, the claude runner |
+| `smortboard/review/` | test gate, reviewer, pull requests, landing |
+| `smortboard/orchestrator.py`, `scheduler.py`, `lifecycle.py` | mission control, the queue, one card's run |
+| `smortboard/ui/` | wiring of smortui components; no visual primitives of its own |
+| `docker/` | the card image and the per-repo image template |
+
+### Card token
+
+The card token is a model-only `claude setup-token`, separate from your own login.
+
+| OS | Token file |
+|---|---|
+| macOS, Linux | `~/.config/smortboard/card_token` (`$XDG_CONFIG_HOME/smortboard/card_token` if set) |
+| Windows | `%APPDATA%\smortboard\card_token` |
+
+- **Linux:** the macOS command above with `wl-paste` (Wayland) or `xclip -selection clipboard -o`
+  (X11) in place of `pbpaste`.
+- **Windows (PowerShell):**
+
+  ```powershell
+  New-Item -ItemType Directory -Force "$env:APPDATA\smortboard" | Out-Null
+  (Get-Clipboard -Raw) -replace '\s', '' |
+    Set-Content -NoNewline -Encoding ascii "$env:APPDATA\smortboard\card_token"
+  ```
+
+- **By hand:** create the file, `chmod 600` it, then paste the token in with any editor.
+- **Elsewhere:** `SMORTBOARD_CARD_TOKEN_PATH` points at any file. With no file, the board falls back
+  to the OS credential store (service `smortboard-card-token`, account `smortboard`).
+- **Several subscriptions:** press shift+`p` and paste each token under its own profile name; it
+  lands at `~/.config/smortboard/tokens/<name>` (mode 600).
+
+The board never reads Claude Code's own login, and a card never sees it.
+
+### Repos and their test command
+
+A repo must already exist on GitHub with its default branch pushed; the board registers it, it
+doesn't create it. Set the default branch to `development` (pushed to the remote) and the board lands
+cards there itself.
+
+The test command is the gate, so give it everything your CI checks. The gate mounts the worktree
+read-only, so tools must not write caches into it:
+
+```bash
+uv run --no-sync ruff format --check --no-cache --extend-exclude .claude . && uv run --no-sync pytest -q -p no:cacheprovider
+```
+
+A repo whose tests need more than git, uv and Python gets its own image, with its toolchain already
+installed (the gate is offline); `docker/repo.Dockerfile` is the template. Give Docker Desktop a
+memory limit (Settings → Resources) and lower `max_parallel` if it is tight.
+
+### Configuration
+
+| Flag | Env | Default |
+|---|---|---|
+| `--port` | `SMORTBOARD_PORT` | `8000` (`8001` with `--demo`) |
+| `--host` | `SMORTBOARD_HOST` | `127.0.0.1` |
+| `--db` | `SMORTBOARD_DB` | user data dir |
+| `--no-browser` | | opens a tab |
+| `--demo` | | off |
+| | `SMORTBOARD_CARD_IMAGE` | `smortboard-card:latest` |
+| | `SMORTBOARD_CARD_TOKEN_PATH` | `~/.config/smortboard/card_token` |
+| | `SMORTBOARD_OPERATOR_NAME` | your `git config user.name` |
+
+Board-wide settings (`PATCH /api/settings`, most also in the settings panel `o`): `findings_route`,
+`orchestrator_model`, `worker_model`, `reviewer_model`, `max_parallel`, `resume_briefing`,
+`gate_timeout_seconds`, `auto_switch_profiles`, `mall_cam_interval_seconds`, and
+`mission_control_read_paths` (absolute paths mission control may also read). Per board
+(`PATCH /api/boards/<id>`): its own parallel cap and `daily_budget_usd`.
+
+### Landing lock
+
+Cards land on a development branch themselves, and so can an agent outside the board. The landing
+lock queues them so two pushes never race: one holder per repo and target branch, first in first out,
+kept across a restart.
 
 ```bash
 uv run smortboard-land --repo . --target development -- uv run pytest -q
 ```
 
-It queues for the lock (heartbeating every 30s while it waits and while it holds it), then fetches,
-merges `origin/<target>` into `HEAD`, runs the given test command, and pushes `HEAD:refs/heads/<target>`
-- refusing `main`/`master`/`trunk` outright, the same refusal `integrate()` gives a card. It exits
-non-zero on a merge conflict, a failed test command, or a rejected push, and says which; the lock is
-always released, including on ctrl-c. `--url` points it at a board other than the default
-`http://127.0.0.1:8000`.
+It waits for the lock (with a heartbeat), fetches, merges the target in, runs the tests, and pushes -
+refusing `main`, `master` and `trunk`. It reads the board's api key from its file, always releases the
+lock, and exits non-zero with the reason on a conflict, a failed test or a rejected push. `q` shows
+every holder and queue.
 
-`q` in the browser shows every repo's holder, how long they have held it, their heartbeat age, and
-the queue in order - `GET /api/landing`, live while the panel is open.
-
-## Setup
-
-```bash
-git clone https://github.com/BalthazarFitzpatrick/smortboard && cd smortboard
-uv sync
-uv run smortboard            # http://127.0.0.1:8000/ui/index.html
-```
-
-Or run the board without a checkout: `uvx --from git+https://github.com/BalthazarFitzpatrick/smortboard smortboard`.
-You still need the clone once, to build the Docker images below.
-
-### Before a card can run
-
-The board runs with nothing else installed. Running cards needs three more things.
-
-**1. Docker, running.** Docker Desktop on macOS and Windows, Docker Engine on Linux.
-
-**2. The card image, built once from the clone.** It holds the `claude` CLI, git and uv - no
-credentials, no code.
-
-```bash
-docker build -f docker/card.Dockerfile -t smortboard-card:latest .
-```
-
-**3. A card token.** A model-only token, separate from your own login, kept in a file only you can
-read. Generate it:
-
-```bash
-claude setup-token
-```
-
-It opens the browser, and once you approve, it prints the token in the terminal. That is the only
-copy: nothing saves it, and nothing puts it on the clipboard for you. **Select it and copy it
-yourself**, then store it with option A or option B below. The file goes here:
-
-| OS | Token file |
-|---|---|
-| macOS, Linux | `~/.config/smortboard/card_token` (`$XDG_CONFIG_HOME/smortboard/card_token` if that is set) |
-| Windows | `%APPDATA%\smortboard\card_token` |
-
-A full token is 108 bytes. The board strips surrounding whitespace, so a trailing newline is fine.
-
-**Option A - straight from the clipboard.**
-
-macOS:
-
-```bash
-mkdir -p ~/.config/smortboard
-# umask 077 creates the file as mode 600; tr strips the newline and any line-wrap breaks
-(umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
-wc -c < ~/.config/smortboard/card_token      # 108
-```
-
-Linux: the same, with `wl-paste` (Wayland) or `xclip -selection clipboard -o` (X11) in place of
-`pbpaste`.
-
-Windows (PowerShell):
-
-```powershell
-New-Item -ItemType Directory -Force "$env:APPDATA\smortboard" | Out-Null
-(Get-Clipboard -Raw) -replace '\s', '' |
-  Set-Content -NoNewline -Encoding ascii "$env:APPDATA\smortboard\card_token"
-(Get-Item "$env:APPDATA\smortboard\card_token").Length      # 108
-```
-
-**Option B - create the file first, then paste into it.**
-
-macOS, Linux:
-
-```bash
-mkdir -p ~/.config/smortboard
-touch ~/.config/smortboard/card_token
-chmod 600 ~/.config/smortboard/card_token    # lock it before the token goes in
-nano ~/.config/smortboard/card_token         # paste, save, quit - any editor works
-wc -c < ~/.config/smortboard/card_token      # 108, or 109 with the editor's newline
-```
-
-Windows (PowerShell):
-
-```powershell
-New-Item -ItemType Directory -Force "$env:APPDATA\smortboard" | Out-Null
-New-Item -ItemType File "$env:APPDATA\smortboard\card_token" | Out-Null
-notepad "$env:APPDATA\smortboard\card_token"                # paste, save
-```
-
-Windows has no `chmod 600`: a file under your user profile is already restricted to your account.
-
-**Other places the board looks.** `SMORTBOARD_CARD_TOKEN_PATH` points it at a file anywhere else.
-With no file, it falls back to the OS credential store - Keychain on macOS, Credential Manager on
-Windows, Secret Service on Linux - under service `smortboard-card-token`, account `smortboard`. The
-file comes first because macOS prompts on every Keychain read.
-
-**This is not where Claude keeps its own login.** `claude setup-token` stores nothing, so the card
-token lives only where you put it. Your own `/login` credential is separate, and Claude Code keeps
-it here:
-
-| OS | Claude Code's own login |
-|---|---|
-| macOS | the macOS Keychain (`~/.claude/.credentials.json`, mode 600, if the Keychain refuses the write) |
-| Linux | `~/.claude/.credentials.json`, mode 600 |
-| Windows | `%USERPROFILE%\.claude\.credentials.json`, restricted by your user profile |
-
-The board never reads that login and a card never sees it. Do not copy a token out of it - the
-card token is the narrower, model-only one.
-
-**Several subscriptions.** Run `claude setup-token` once per account, then press shift+`p` and
-paste each one under its own profile name. It lands at
-`~/.config/smortboard/tokens/<name>` (mode 600) - the "default" profile stays the plain
-`card_token` file above, nothing already set up moves. When the active profile hits its rate
-limit, the board rotates to the next one instead of parking until the window resets.
-
-### A board and its repo
-
-Press `b` to create a board and register a repo on it: its path, default branch and test command.
-The repo itself has to exist on GitHub and have its default branch pushed already - smortboard only
-registers it, it doesn't create it. Its image must already contain its toolchain, because the test
-gate is offline. smortboard's own image is `docker/repo.Dockerfile`.
-
-The test command is the gate, so give it everything your CI checks - for a Python repo, something
-like `uv run --no-sync ruff format --check --no-cache --extend-exclude .claude . && uv run --no-sync pytest -q -p no:cacheprovider`.
-The gate mounts the worktree read-only, so ruff and pytest must not write their caches into it -
-without `--no-cache` and `-p no:cacheprovider` the gate fails on `Read-only file system` before a
-single test runs.
-A gate that runs less than CI lets a card open a pull request that fails CI. `--extend-exclude
-.claude` skips the board's own hooks inside the card's worktree.
-
-Docker Desktop keeps the memory its containers have used until it restarts, so give it a limit in
-Settings → Resources. A repo image with a large toolchain (torch, say) grows it quickly; lower
-`max_parallel` if a small limit is tight.
-
-| Flag | Env | Default |
-|---|---|---|
-| `--port` | `SMORTBOARD_PORT` | `8000` |
-| `--host` | `SMORTBOARD_HOST` | `127.0.0.1` |
-| `--db` | `SMORTBOARD_DB` | user data dir |
-| `--no-browser` | | opens a tab |
-| | `SMORTBOARD_CARD_IMAGE` | `smortboard-card:latest` |
-| | `SMORTBOARD_CARD_TOKEN_PATH` | `~/.config/smortboard/card_token` |
-| | `SMORTBOARD_OPERATOR_NAME` | your `git config user.name` |
-
-The operator name is who the board shows on your own notes and chat lines, and who the agents are
-told to trust: a live note starts `Note from <name>, via the board:`.
-
-Board-wide settings are set with `PATCH /api/settings`: `findings_route`, `orchestrator_model`,
-`worker_model`, `reviewer_model`, `max_parallel`, `resume_briefing` (`"off"` disables it), and
-`mission_control_read_paths` (a JSON list of absolute paths mission control may read, on top of the
-board's repos).
-
-## Testing the alpha
-
-Everyone runs their own board on their own machine; nothing is shared.
-
-1. **Install and start** the board as above, then open it in the browser.
-2. **Press `h`** for the pre-flight checklist: Docker, the card image, the token, `gh`, and every
-   repo you register. Fix what it lists; each line says how.
-3. **Create the GitHub repo** you want cards to work on, clone it, and push its default branch. The
-   board opens pull requests there, so it has to exist on GitHub first.
-4. **Press `b`** to create a board and register that repo: its path, default branch, test command
-   and image. Press `h` again until everything is green.
-5. **Press `.`** and describe some work. Mission control proposes cards; focus one and press `r`.
-6. **Something wrong?** [Open a bug report](https://github.com/BalthazarFitzpatrick/smortboard/issues/new?template=bug.yml).
-   Paste what `h` shows and, if a card misbehaved, a screenshot of its replay (`t`). Never paste
-   your token.
+---
 
 ## Troubleshooting
 
 ### A card stopped on `LEASE_CONFLICT`
 
-A card may only write the files its lease allows. The lease is a list of globs, relative to the repo
-root, set when the card is created. When the agent writes outside it, the guard refuses the write
-and the card stops with `LEASE_CONFLICT`; its note names the files it needed. The usual cause is a
-lease written for a layout the repo does not have, such as `src/**/*.tsx` in a repo with no `src/`.
+Its agent tried to write outside its lease; its note names the files. The usual cause is a lease
+written for a layout the repo doesn't have. In the inbox (`n`), **approve** adds exactly the refused
+paths to the lease and resumes the card. Or answer instead, to tell the agent to leave those files
+alone. An answer alone never widens a lease.
 
-The inbox row (`n`) for a `LEASE_CONFLICT` card lists exactly the paths it was refused writing to
-("wants: ..."), read off its most recent attempt's denials. Pressing **approve** on that row adds
-those paths to the card's existing lease and resumes it - one action, no id to look up and no glob
-to retype. The row keeps its plain answer field too, for when the better call is to tell the agent
-to leave the file alone instead of widening the lease for it.
+Through the API, with the key loaded once:
 
-If the board is unreachable or the widened set needs editing first, the same thing works through
-the API:
+```bash
+K="X-Smortboard-Key: $(cat ~/.config/smortboard/api_key)"
+curl -s -H "$K" 127.0.0.1:8000/api/boards                        # board ids
+curl -s -H "$K" 127.0.0.1:8000/api/boards/<board-id>/cards       # card ids
+curl -s -X PATCH -H "$K" -H 'content-type: application/json' 127.0.0.1:8000/api/cards/<card-id> \
+  -d '{"leases": ["src/app/**", "tests/**"]}'                    # replaces the whole list
+curl -s -X POST -H "$K" -H 'content-type: application/json' 127.0.0.1:8000/api/cards/<card-id>/answer \
+  -d '{"message": "lease widened to src/app/** - go ahead"}'
+```
 
-1. Read the card's note in the inbox (`n`) for the files it asked for.
-2. Load the key: `K="X-Smortboard-Key: $(cat ~/.config/smortboard/api_key)"`, and pass `-H "$K"`
-   to every call below.
-   Find the card's id: `curl -s -H "$K" 127.0.0.1:8000/api/boards` lists the boards, and
-   `curl -s -H "$K" 127.0.0.1:8000/api/boards/<board-id>/cards` lists their cards with ids and titles.
-3. Replace the lease. This sets the whole list, so repeat any glob it should keep:
+### Other common stops
 
-   ```bash
-   curl -s -X PATCH -H "$K" 127.0.0.1:8000/api/cards/<card-id> \
-     -H 'content-type: application/json' \
-     -d '{"leases": ["smortboard/ui/board.js", "smortboard/ui/layout.css", "tests/js/**"]}'
-   ```
-
-4. Resume the card with an answer. The next run reads it:
-
-   ```bash
-   curl -s -X POST -H "$K" 127.0.0.1:8000/api/cards/<card-id>/answer \
-     -H 'content-type: application/json' \
-     -d '{"message": "lease widened to smortboard/ui/board.js, smortboard/ui/layout.css, tests/js/** - go ahead"}'
-   ```
-
-Answering in the inbox does step 4, but an answer alone never widens a lease: the guard reads the
-card's lease, not its notes. How globs match, and why two cards may wait on each other, is under
-[Card security: leases](#card-security-leases).
-
-Common leases for this repo:
-
-| Change | Lease |
+| Symptom | Fix |
 |---|---|
-| the board: columns, cards, drawers, keys | `smortboard/ui/board.js`, `smortboard/ui/layout.css`, `smortboard/ui/index.html`, `tests/js/**` |
-| one panel (inbox, boards, preflight, replay, scheduler, telemetry, costs) | `smortboard/ui/<panel>.*`, `tests/js/<panel>.mjs` |
-| an API route | `smortboard/server/**`, `tests/test_server.py` |
-| the store and its schema | `smortboard/store/**`, `tests/test_store.py` |
-| card runs and the lease guard | `smortboard/exec/**`, `smortboard/lifecycle.py`, `tests/test_exec.py`, `tests/test_lifecycle.py` |
-| the scheduler | `smortboard/scheduler.py`, `tests/test_scheduler*.py` |
-| the review gate | `smortboard/review/**`, `tests/test_reviewer.py`, `tests/test_gates.py` |
-| docs | `README.md`, `docs/**` |
+| `this tab has no api key` at the top of the page | Open the link the board printed on start. |
+| `.../card_token is not mode 600 - refusing to read it` | `chmod 600 ~/.config/smortboard/card_token` |
+| An expired or revoked token (HTTP 401) | The card says how to renew it: `claude setup-token` again. |
+| The gate fails on `Read-only file system` | Add `--no-cache` and `-p no:cacheprovider` to the test command. |
+| A card waits with `lease conflict with card <id>` | Two leases overlap; it starts when the other card finishes. |
+| No new runs start | Check the usage window (`u`) and the board's daily budget (`o`). |
 
-## Limits
+Something else? [Open a bug report](https://github.com/BalthazarFitzpatrick/smortboard/issues/new?template=bug.yml)
+with what `h` shows and, for a misbehaving card, a screenshot of its replay (`t`). Never paste a token.
+
+### Limits
 
 - A stop that lands while the test gate is running waits for the gate to finish.
-- Mission-control turns carry no cost in the log, so they're not counted.
-- The HTTP server handles one request at a time. That's fine for one person on one machine.
-- A card's pull request lists its tasks as checkboxes, and nothing ticks them during a run.
-- The `b` panel edits a repo's test command and image; its lint command and default branch are set
-  when it's registered.
+- Mission-control turns carry no cost in the log, so they aren't counted.
+- The HTTP server handles one request at a time; fine for one person on one machine.
+- Task checkboxes in a pull request aren't ticked during a run.
 - Windows code paths exist but have never been run.
+
+---
 
 ## Development
 
 ```bash
-uv run pytest
-for f in tests/js/*.mjs; do node "$f"; done
+uv sync
 uv run ruff check . && uv run ruff format --check .
+uv run pytest -q          # includes the js suite (tests/js/*.mjs) when node is installed
 ```
 
-Neither suite calls a model or Docker. `docs/PLAN.md` has the plan and the containment reasoning,
-`docs/PHASE1-CONTRACTS.md` the schema and API, `docs/PROMPTS.md` the prompt layering, and
-`docs/spikes/` what was proven before it was built on.
+Neither suite calls a model. CI runs the same on every pull request and must pass before anything
+reaches main. `tools/shoot_docs_images.py` retakes this page's screenshots against the demo board.
+`docs/PLAN.md` holds the plan and the containment reasoning, `docs/PHASE1-CONTRACTS.md` the schema
+and API, `docs/PROMPTS.md` the prompt layering, and `docs/spikes/` what was proven before it was
+built on.
 
 ## License
 

@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 660" width="1200" height="660" font-family='"SF Mono", Menlo, monospace'>
+<rect x="0" y="0" width="1200" height="660" fill="#17171b"/>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b8b90"/></marker>
+<!-- the native smortboard process, 127.0.0.1 only -->
+<g id="process">
+<rect x="40" y="40" width="330" height="580" fill="none" stroke="#e8ddc3" stroke-width="2"/>
+<text x="56" y="72" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">smortboard, native</text>
+<text x="56" y="92" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">one python process, 127.0.0.1 only</text>
+<rect x="56" y="114" width="298" height="86" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="72" y="136" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">request gate</text>
+<text x="72" y="162" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">host + origin checks</text>
+<text x="72" y="182" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">X-Smortboard-Key header</text>
+<rect x="56" y="214" width="298" height="66" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="72" y="236" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">http server + ui</text>
+<text x="72" y="262" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">json api, keyboard-first board</text>
+<rect x="56" y="294" width="298" height="66" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="72" y="316" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">sqlite store, mode 600</text>
+<text x="72" y="342" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">append-only event log</text>
+<rect x="56" y="374" width="298" height="66" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="72" y="396" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">run registry</text>
+<text x="72" y="422" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">one thread per card, note queue</text>
+<rect x="56" y="454" width="298" height="66" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="72" y="476" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">scheduler + orchestrator</text>
+<text x="72" y="502" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">daily budget, parallel runs</text>
+<rect x="56" y="534" width="298" height="86" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="72" y="556" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">card token file, mode 600</text>
+<text x="72" y="582" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">~/.config/smortboard/card_token</text>
+<text x="72" y="602" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">sent on stdin, never mounted</text>
+</g>
+<!-- per card: three isolated docker containers -->
+<g id="containers">
+<rect x="430" y="40" width="340" height="166" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="446" y="62" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">card container</text>
+<text x="446" y="88" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">/workspace: clone of the worktree</text>
+<text x="446" y="108" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">/smortboard: guards, read-only</text>
+<text x="446" y="128" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">stdin: token, brief, notes</text>
+<text x="446" y="148" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">non-root uid, cap-drop ALL</text>
+<text x="446" y="168" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">no-new-privileges, pids 512</text>
+<text x="446" y="188" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">memory 4g, $5 budget per run</text>
+<rect x="430" y="232" width="340" height="106" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="446" y="254" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">test gate container</text>
+<text x="446" y="280" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">repo image, --network none</text>
+<text x="446" y="300" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">cap-drop ALL, no-new-privileges</text>
+<text x="446" y="320" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">runs the repo&#x27;s own test command</text>
+<rect x="430" y="364" width="340" height="126" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="446" y="386" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">reviewer container</text>
+<text x="446" y="412" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">Read, Grep, Glob only</text>
+<text x="446" y="432" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">read-only mount, cap-drop ALL</text>
+<text x="446" y="452" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">diff in, json verdict out</text>
+<text x="446" y="472" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">its own model setting</text>
+</g>
+<!-- commits fetched back, then pushed for a human to merge -->
+<g id="repo-github">
+<rect x="850" y="40" width="300" height="106" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="866" y="62" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">repo on disk</text>
+<text x="866" y="88" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">worktree per card</text>
+<text x="866" y="108" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">branch card/&lt;id&gt;</text>
+<text x="866" y="128" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">commits fetched back</text>
+<rect x="850" y="366" width="300" height="106" fill="#1e1e23" stroke="#4a4a52" stroke-width="2"/>
+<text x="866" y="388" font-size="15" font-weight="bold" fill="#e8ddc3" text-anchor="start" xml:space="preserve">GitHub</text>
+<text x="866" y="414" font-size="13" font-weight="normal" fill="#cfc9bd" text-anchor="start" xml:space="preserve">branch pushed, PR opened</text>
+<text x="866" y="434" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">gh: 4 commands, no merge</text>
+<text x="866" y="454" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">you merge</text>
+</g>
+<!-- how work moves between the boxes -->
+<g id="arrows">
+<path d="M 370 111.0 L 430 111.0" fill="none" stroke="#8b8b90" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 430 135.0 L 370 135.0" fill="none" stroke="#8b8b90" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 370 285.0 L 430 285.0" fill="none" stroke="#8b8b90" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 370 427.0 L 430 427.0" fill="none" stroke="#8b8b90" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 770 123.0 L 850 93.0" fill="none" stroke="#8b8b90" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="810.0" y="97.0" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="middle" xml:space="preserve">fetch</text>
+<line x1="1000.0" y1="146" x2="1000.0" y2="366" stroke="#8b8b90" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1014.0" y="256.0" font-size="13" font-weight="normal" fill="#8b8b90" text-anchor="start" xml:space="preserve">push</text>
+</g>
+</svg>
