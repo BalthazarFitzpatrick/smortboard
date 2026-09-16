@@ -698,3 +698,63 @@ def test_patch_card_depends_on_cycle_is_400_and_changes_nothing(running_server):
     assert "error" in body
     status, fetched = _request(f"{running_server}/api/cards/{a['id']}")
     assert fetched["depends_on"] == []
+
+
+def test_an_oversized_json_body_is_refused_before_it_is_read(running_server):
+    req = urllib.request.Request(
+        f"{running_server}/api/boards",
+        data=b"{}",
+        method="POST",
+        headers={"Content-Type": "application/json", "Content-Length": "5000000"},
+    )
+    try:
+        urllib.request.urlopen(req)
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 413
+    else:
+        pytest.fail("an oversized body was accepted")
+
+
+def test_a_bad_repo_image_is_a_400(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    spec = {"name": "r", "path": str(repo_path), "default_branch": "main", "image": "--privileged"}
+    status, body = _request(f"{running_server}/api/boards/{board['id']}/repos", "POST", spec)
+    assert status == 400
+    assert "image" in body["error"]
+
+
+def test_an_image_build_runs_off_the_request_thread(running_server, tmp_path, monkeypatch):
+    from smortboard.repo_image import BuildResult
+
+    release = threading.Event()
+
+    def slow_build(repo):
+        release.wait(5)
+        return BuildResult(ok=True, tag=f"{repo['name']}-repo:latest", log="built")
+
+    monkeypatch.setattr("smortboard.server.app.build_repo_image", slow_build)
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, repo = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "widgets", "path": str(repo_path), "default_branch": "main"},
+    )
+    build_url = f"{running_server}/api/repos/{repo['id']}/image/build"
+    assert _request(build_url, "POST") == (202, {"state": "building"})
+    # the board still answers while the build is running, and refuses a second build
+    assert _request(f"{running_server}/api/boards")[0] == 200
+    assert _request(build_url, "POST")[0] == 409
+    assert _request(build_url)[1] == {"state": "building"}
+    release.set()
+    for _ in range(50):
+        status, build = _request(build_url)
+        if build["state"] != "building":
+            break
+        threading.Event().wait(0.1)
+    assert build == {"state": "built", "image": "widgets-repo:latest", "log": "built"}
+    _, repos = _request(f"{running_server}/api/boards/{board['id']}/repos")
+    assert repos[0]["image"] == "widgets-repo:latest"
