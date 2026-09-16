@@ -52,7 +52,7 @@ function SpyDrawer(opts) {
   };
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('telemetry.js'), smort('costs.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}

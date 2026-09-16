@@ -64,7 +64,7 @@ function SpyDrawer(opts) {
 // exact count passed rather than guess at indicate.js's own rendering markup
 const badgeSpySrc = 'const __badgeCalls = []; const __rawIndicateBadge = indicateBadge; ' +
   'indicateBadge = (host, n) => { __badgeCalls.push(n); return __rawIndicateBadge(host, n); };';
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), badgeSpySrc, uiBase('shell.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), badgeSpySrc, uiBase('shell.js'), uiBase('pile.js'),
   smort('messageQueue.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'),
   smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
