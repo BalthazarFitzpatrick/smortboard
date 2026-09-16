@@ -59,7 +59,7 @@
 <rect x="850" y="366" width="300" height="106" fill="#e9e4d5" stroke="#b7b0a0" stroke-width="2"/>
 <text x="866" y="388" font-size="15" font-weight="bold" fill="#1c1a14" text-anchor="start" xml:space="preserve">GitHub</text>
 <text x="866" y="414" font-size="13" font-weight="normal" fill="#33301f" text-anchor="start" xml:space="preserve">branch pushed, PR opened</text>
-<text x="866" y="434" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="start" xml:space="preserve">gh: 3 commands, no merge</text>
+<text x="866" y="434" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="start" xml:space="preserve">gh: 4 commands, no merge</text>
 <text x="866" y="454" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="start" xml:space="preserve">you merge</text>
 </g>
 <!-- how work moves between the boxes -->

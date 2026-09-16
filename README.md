@@ -125,7 +125,7 @@ Anything that needs you lands in the inbox, `n`. The board never merges into mai
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/art-lifecycle-light.svg">
-  <img src="docs/images/art-lifecycle-dark.svg" alt="The card lifecycle: preparing, running, testing, reviewing, opening, landing. Reviewer findings on the fix route go back to the worker at most twice; a question, a limit, a crash, a lease conflict, failed tests or a rejected review block the card and wait in the inbox." width="100%">
+  <img src="docs/images/art-lifecycle-dark.svg" alt="The card lifecycle: preparing, running, testing, reviewing, fixing, opening, then opened or landing. Reviewer findings on the fix route go back to the worker at most twice; a question, a limit, a crash, a lease conflict, failed tests or a rejected review block the card and wait in the inbox." width="100%">
 </picture>
 
 | Phase | What happens |
@@ -134,8 +134,9 @@ Anything that needs you lands in the inbox, `n`. The board never merges into mai
 | **running** | `claude -p` streams JSON both ways in a named container. The token is the first stdin line, the brief follows, and stdin stays open for live notes. Every line becomes an event. |
 | **testing** | The repo's own test command runs in the repo's image with no network. |
 | **reviewing** | A second agent with Read, Grep and Glob only reviews the diff in its surrounding code for vulnerabilities, leaked credentials, best practice and efficiency. The diff is framed as untrusted data: text inside it that asks for approval is itself a finding. A leaked credential, any high or critical finding, or no usable verdict blocks the card. |
+| **fixing** | Only on the `fix` findings route: reviewer findings go back to the worker, at most twice, then the gates run again. |
 | **opening** | The board pushes the branch and runs `gh pr create`. Its `gh` wrapper allows `pr create`, `list`, `view` and `close`; merge is not one of them. |
-| **landing** | Only when the base is not main, master or trunk: the board merges the base in once more (re-running tests if that brought anything), pushes one merge commit to the base, and accepts the card. |
+| **opened** | On a main base the card ends here: the pull request stays open for a person. On any other base the board **lands** it: under the landing lock it merges the base in once more (re-running tests if that brought anything), pushes one merge commit to the base, and accepts the card. |
 
 ### Vocabulary
 

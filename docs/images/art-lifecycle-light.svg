@@ -32,7 +32,7 @@
 </g>
 <!-- opening ends differently depending on the base branch -->
 <g id="branch">
-<line x1="950.0" y1="240" x2="950.0" y2="330" stroke="#8a8470" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="950.0" y1="284" x2="950.0" y2="330" stroke="#8a8470" stroke-width="2" marker-end="url(#arrow)"/>
 <rect x="715.0" y="340" width="220" height="78" fill="#e9e4d5" stroke="#b7b0a0" stroke-width="2"/>
 <text x="729.0" y="366" font-size="14" font-weight="bold" fill="#1c1a14" text-anchor="start" xml:space="preserve">opened</text>
 <text x="729.0" y="386" font-size="12" font-weight="normal" fill="#6b6558" text-anchor="start" xml:space="preserve">base is protected (main):</text>
@@ -54,14 +54,14 @@
 <rect x="60" y="460" width="1080" height="78" fill="none" stroke="#b7b0a0" stroke-width="2" stroke-dasharray="2 4"/>
 <text x="600" y="490" font-size="14" font-weight="bold" fill="#1c1a14" text-anchor="middle" xml:space="preserve">blocked: still in its column, reason code set, waiting in the inbox</text>
 <text x="600" y="514" font-size="13" font-weight="normal" fill="#6b6558" text-anchor="middle" xml:space="preserve">answer it in the inbox and the card resumes in its existing worktree</text>
-<line x1="262.0" y1="254" x2="262.0" y2="452" stroke="#7d4038" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow-warn)"/>
+<line x1="262.0" y1="280" x2="262.0" y2="452" stroke="#7d4038" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow-warn)"/>
 <text x="274.0" y="294" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">AGENT_QUESTION</text>
 <text x="274.0" y="310" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">USAGE_LIMIT</text>
 <text x="274.0" y="326" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">CRASH</text>
 <text x="274.0" y="342" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">LEASE_CONFLICT</text>
-<line x1="434.0" y1="254" x2="434.0" y2="452" stroke="#7d4038" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow-warn)"/>
+<line x1="434.0" y1="280" x2="434.0" y2="452" stroke="#7d4038" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow-warn)"/>
 <text x="446.0" y="294" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">TESTS_FAILED</text>
-<line x1="606.0" y1="254" x2="606.0" y2="452" stroke="#7d4038" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow-warn)"/>
+<line x1="606.0" y1="280" x2="606.0" y2="452" stroke="#7d4038" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow-warn)"/>
 <text x="618.0" y="294" font-size="12" font-weight="normal" fill="#7d4038" text-anchor="start" xml:space="preserve">REVIEW_REJECTED</text>
 </g>
 </svg>
