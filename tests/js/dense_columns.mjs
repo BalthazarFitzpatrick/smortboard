@@ -31,7 +31,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
   PILE_GAP_ABOVE, PILE_GAP_BELOW, CARD_GAP, flipDelta, planPileMotion, PILE_MOTION_MS,
   PILE_SETTLE_MS, PILE_EASING, ROW_MOTION_MS, ROW_EASING, CLIP_REACH,
   foldFrames, cardFlipFrames, PILE_HANDOVER_IN, PILE_HANDOVER_OUT,
-  GROW_FRAME, REST_FRAME};`)(SpyMenu, SpyDrawer);
+  GROW_FRAME, REST_FRAME, leaveColumn};`)(SpyMenu, SpyDrawer);
 
 // fixture heights below are derived from the module's own tuning constants, not typed pixel
 // counts, so a future gap-tuning pass moves the fixtures with it instead of breaking them
@@ -361,19 +361,41 @@ globalThis.window.innerHeight = 800;
   assert.ok(counts.querySelector('.count-a'), 'attention count present');
 }
 
-// ---- expand: the button and a pile click both open the whole column, same button collapses it ---
+// ---- expand: the header button belongs to a FAN, a pile is its own affordance -------------------
+// operator, 2026-09-16: "remove the expand dialoge in the column when the stack / pile layout is
+// activated" - no other shortcut here carries a button, and a pile is already clickable
+
+{
+  // a fan: too many to spread, not enough for piles - the one regime with nothing to click
+  const cards = Array.from({length: 4}, (_, i) => card(`c${i}`, 'todo'));
+  const {bucketEl, bucketRows} = buildColumn(600, cards);
+  assert.equal(piles(bucketRows).length, 0, 'a fan has no piles');
+  const expandBtn = bucketEl.querySelector('.bucket-expand');
+  assert.equal(expandBtn.hidden, false, 'a fanned column keeps its expand button');
+  expandBtn._listeners.click[0]();
+  assert.equal(fullCards(bucketRows).length, 4, 'every card renders full');
+  assert.equal(expandBtn.textContent, 'collapse');
+  expandBtn._listeners.click[0]();
+  assert.equal(expandBtn.textContent, 'expand', 'the same button collapses back');
+}
 
 {
   const cards = Array.from({length: 10}, (_, i) => card(`c${i}`, 'todo'));
   const {bucketEl, bucketRows} = buildColumn(600, cards);
   assert.equal(piles(bucketRows).length, 1, 'starts piled');
-  const expandBtn = bucketEl.querySelector('.bucket-expand');
-  expandBtn._listeners.click[0]();
-  assert.equal(piles(bucketRows).length, 0, 'expand button opens the column');
-  assert.equal(fullCards(bucketRows).length, 10, 'every card renders full');
-  assert.equal(expandBtn.textContent, 'collapse');
-  expandBtn._listeners.click[0]();
-  assert.equal(piles(bucketRows).length, 1, 'the same button collapses back');
+  assert.equal(bucketEl.querySelector('.bucket-expand').hidden, true,
+    'a piled column carries no expand button - the pile itself opens it');
+}
+
+{
+  // and leaving the column is what closes it again, since there is no button to press
+  const cards = Array.from({length: 10}, (_, i) => card(`c${i}`, 'todo'));
+  const {bucketRows} = buildColumn(600, cards);
+  piles(bucketRows)[0]._listeners.click[0]();
+  assert.equal(piles(bucketRows).length, 0, 'the pile click expanded it');
+  bucketRows._pile.focusIndex = 0;
+  mod.leaveColumn(bucketRows);
+  assert.equal(piles(bucketRows).length, 1, 'focus leaving puts the piles back');
 }
 
 {
