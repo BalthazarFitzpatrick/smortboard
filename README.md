@@ -69,7 +69,21 @@ Anything that needs you lands in the inbox, `n`. The board never merges into mai
 
 ![Both side panels open: a working agent's transcript with a live note on the left, the orchestrator planning cards on the right](docs/images/hero-agents.jpg)
 
-<sub>The board, an open card, and the two agent panels. Example content, from a demo database.</sub>
+<sub>The board, an open card, and the two agent panels. Every screenshot on this page is the demo
+board below - invented projects, invented cards.</sub>
+
+## Look before you install
+
+One command, no Docker, no token, no repo - a throwaway board of three invented projects:
+
+```bash
+uv run smortboard --demo
+```
+
+It seeds a fresh database in a temporary directory and serves that. Your own board is never
+opened: `--demo` ignores `--db` and `SMORTBOARD_DB` alike, and nothing it writes outlives the
+directory it was written into. Runs, gates and pull requests in it are seeded history, not live -
+pressing `r` on a demo card would need Docker and a repo that exists.
 
 ---
 
@@ -328,7 +342,7 @@ Bindings follow the physical key, so a non-US layout doesn't move them. `s` show
 | `w` | run the board | `,` | workforce |
 | `g` | kanban / workstreams | `s` | shortcuts |
 | `/` | type: the open card's comment, or the open chat | `b` | boards and repos |
-| `f` | fold: merge the todo cards one agent should do as one (asks first, costs a model run) | `h` | pre-flight checklist |
+| | | `h` | pre-flight checklist |
 | | | `q` | landing lock: who holds the push lock on each repo, and the queue behind them |
 | | | shift+`p` | credential profiles |
 | | | `1`-`9` | jump to a board |
