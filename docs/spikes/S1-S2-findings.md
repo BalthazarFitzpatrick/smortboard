@@ -87,7 +87,7 @@ panel is a projection of these events exactly as telemetry is a projection of `r
 ## `--worktree` — usable, but the board should not rely on it
 
 `claude --worktree <name>` creates `.claude/worktrees/<name>` on branch `worktree-<name>`, git-locked
-— the same convention wowtomate already runs by hand. `claude rm <id>` deletes a background session
+— the same convention another of the operator's repos already runs by hand. `claude rm <id>` deletes a background session
 and its worktree "when that is safe".
 
 Recommendation: **the board cuts worktrees itself.** The naming is fixed, the branch name is derived
