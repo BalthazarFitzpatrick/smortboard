@@ -54,6 +54,24 @@ async function apiOrError(path, opts) {
 
 // ---- board bar ------------------------------------------------------------------
 
+// the bar's right-hand group - queue status, settings, attention count - in one fixed flex row, so
+// they never draw over each other. outside #board-bar because renderBoardBar() wipes its children;
+// the bar reserves the group's width (--bar-corner-width) so board tabs never run under it
+function barCorner() {
+  let el = document.getElementById('bar-corner');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'bar-corner';
+  el.className = 'bar-corner';
+  document.body.appendChild(el);
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => {
+      document.documentElement.style.setProperty('--bar-corner-width', `${el.offsetWidth}px`);
+    }).observe(el);
+  }
+  return el;
+}
+
 function renderBoardBar() {
   const bar = document.getElementById('board-bar');
   bar.innerHTML = '';
@@ -134,7 +152,7 @@ function renderBuckets(cards) {
 }
 
 // rebinds the 2D grid nav to whatever is currently in the buckets - a full renderBuckets always
-// needs this, and so does a targeted redrawCardStrip that moved a strip to a new bucket
+// needs this, and so does redrawColumns after a poll moved a card to a new bucket
 function refreshBucketNav() {
   const row = document.getElementById('bucket-row');
   bucketsApi = makeBuckets(row, {onExitTop: returnToBoardBar});
@@ -276,23 +294,42 @@ function pollRun(cardId) {
 // A CARD CAN CHANGE COLUMN MID-RUN, NOT ONLY WHEN THE RUN ENDS. todo -> doing and doing -> checking
 // happen inside lifecycle.py while the run is still going, and whatever wrote the change (this
 // page's own run, another run, a key, mission control) already committed it before we asked. so
-// the board polls every card's status and updated_at and redraws only the strips that moved -
-// leaving every other strip, and the DOM in general, untouched
+// the board polls every card's status and updated_at and redraws only the columns a changed card
+// left or joined, through the same column layout as a full render - every other column is untouched
 const FOLLOW_RUNS_MS = 4000;
 let followedCardStates = null; // Map<card id, `${status}|${updated_at}`> as of the last poll
 
-// swaps one card's strip for a freshly rendered one in its (possibly new) bucket, and refocuses it
-// if it held focus - the open card's own strip is never passed in here, see followRunsOnce
-function redrawCardStrip(card) {
-  const old = document.querySelector(`.card-strip[data-card-id="${card.id}"]`);
-  const bucket = document.querySelector(`.bucket[data-status="${columnFor(card)}"] .bucket-rows`);
-  if (!old || !bucket) return;
-  const hadFocus = old.contains(document.activeElement);
-  const strip = renderCardStrip(card);
-  bucket.appendChild(strip);
-  old.remove();
-  if (hadFocus) { strip.focus(); indicateCardFocus(strip); }
-  applyCardShadows(bucket);
+function bucketHolding(cardId) {
+  return document.querySelector(`.card-strip[data-card-id="${cardId}"]`)?.closest('.bucket') || null;
+}
+
+// swaps a card into its (possibly new) column's list and redraws each touched column whole, so a
+// moved card gets the column's card size and pile layout rather than its unfitted natural height.
+// focus stays on whichever card had it, by id, since a redraw rebuilds every row in the column
+function redrawColumns(changed) {
+  const activeCardId = document.activeElement?.dataset?.cardId ?? null;
+  const touched = new Set();
+  changed.forEach(card => {
+    const from = bucketHolding(card.id);
+    const to = document.querySelector(`.bucket[data-status="${columnFor(card)}"]`);
+    [from, to].forEach(bucket => {
+      const pile = bucket?.querySelector('.bucket-rows')?._pile;
+      if (!pile) return;
+      pile.sorted = pile.sorted.filter(c => c.id !== card.id);
+      if (bucket === to) pile.sorted.push(card);
+      touched.add(bucket);
+    });
+  });
+  touched.forEach(bucket => {
+    const rows = bucket.querySelector('.bucket-rows');
+    renderBucketColumn(bucket, rows._pile.sorted, bucket.dataset.status);
+  });
+  if (!activeCardId) return;
+  const strip = document.querySelector(`.card-strip[data-card-id="${activeCardId}"]`);
+  if (!strip) return;
+  strip.tabIndex = 0;
+  strip.focus();
+  indicateCardFocus(strip);
 }
 
 async function followRunsOnce() {
@@ -305,18 +342,21 @@ async function followRunsOnce() {
 
   const next = new Map(before);
   const toRedraw = [];
+  // a column holding the open card is never rebuilt under its panel, so a change that touches it
+  // waits too - its entry is left stale, and the next poll after the card closes redraws it
+  const openBucket = openCard ? bucketHolding(openCard.cardId) : null;
   cards.forEach(card => {
     const state = states.get(card.id);
     if (before.get(card.id) === state) return;
-    // the open card keeps its panel - its entry is left stale here so the next poll sees it as
-    // changed again, and it gets its redraw once the card closes
     if (openCard && openCard.cardId === card.id) return;
+    const to = document.querySelector(`.bucket[data-status="${columnFor(card)}"]`);
+    if (openBucket && (bucketHolding(card.id) === openBucket || to === openBucket)) return;
     toRedraw.push(card);
     next.set(card.id, state);
   });
   followedCardStates = next;
   if (!toRedraw.length) return false;
-  toRedraw.forEach(redrawCardStrip);
+  redrawColumns(toRedraw);
   refreshBucketNav();
   return true;
 }

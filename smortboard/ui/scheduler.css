@@ -4,8 +4,7 @@
    own look. */
 
 .schedule-status {
-  margin-left: auto;
-  align-self: center;
+  order: 1;
   font-size: var(--font-size, 13px);
   color: var(--text-dim);
   white-space: nowrap;

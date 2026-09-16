@@ -3,10 +3,7 @@
    stripes - comes from base.css; this file only positions and sizes them for the inbox. */
 
 .attention-indicator {
-  position: fixed;
-  z-index: 5;
-  top: 6px;
-  right: var(--inset-x, 15px);
+  order: 3;
   min-width: 20px;
   height: calc(var(--row-height, 31px) * 0.56 + 5px);
   padding: 0 8px;
