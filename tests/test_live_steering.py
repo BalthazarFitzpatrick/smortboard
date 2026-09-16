@@ -128,6 +128,7 @@ def test_a_note_between_two_result_events_is_delivered_and_stdin_stays_open(tmp_
     with Store(tmp_path / "b.db") as store:
         board_row = store.create_board("b")
         card = store.create_card(board_row["id"], None, "a card")
+        marker = "Note from Fabian, via the board [c0ffee12]: "
         result = run_process(
             store,
             card["id"],
@@ -135,6 +136,7 @@ def test_a_note_between_two_result_events_is_delivered_and_stdin_stays_open(tmp_
             token_line="tok3n\n",
             stream_prompt="the brief",
             pending_notes=pending_notes,
+            note_marker=marker,
         )
 
         events = [e["kind"] for e in store.list_events(card["id"])]
@@ -146,7 +148,7 @@ def test_a_note_between_two_result_events_is_delivered_and_stdin_stays_open(tmp_
     assert fake.stdin.writes[0] == "tok3n\n"
     assert json.loads(fake.stdin.writes[1].strip())["message"]["content"] == "the brief"
     note_turn = json.loads(fake.stdin.writes[2].strip())
-    assert note_turn["message"]["content"] == (runner.NOTE_PREFIX + "check the edge case")
+    assert note_turn["message"]["content"] == (marker + "check the edge case")
     assert len(fake.stdin.writes) == 3
     assert fake.stdin.closed  # no notes on the second result -> stdin closes -> process exits
 
@@ -192,17 +194,21 @@ def test_a_note_queued_mid_turn_is_written_before_the_turn_ends(tmp_path, monkey
     fake.stdout = stdout()
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: fake)
 
+    marker = "Note from Fabian, via the board [c0ffee12]: "
     with Store(tmp_path / "b.db") as store:
         board_row = store.create_board("b")
         card = store.create_card(board_row["id"], None, "a card")
         run_process(
-            store, card["id"], ["claude"], stream_prompt="the brief", pending_notes=pending_notes
+            store,
+            card["id"],
+            ["claude"],
+            stream_prompt="the brief",
+            pending_notes=pending_notes,
+            note_marker=marker,
         )
         delivered = [e for e in store.list_events(card["id"]) if e["kind"] == "note_delivered"]
 
-    assert json.loads(fake.stdin.writes[1])["message"]["content"] == (
-        runner.NOTE_PREFIX + "use the other file"
-    )
+    assert json.loads(fake.stdin.writes[1])["message"]["content"] == (marker + "use the other file")
     assert len(fake.stdin.writes) == 2  # the brief and the note, nothing at the result
     assert [e["payload"]["comment_ids"] for e in delivered] == [["c1"]]
     assert fake.stdin.closed
@@ -230,6 +236,17 @@ def test_docker_command_drops_dev_null_and_streams_json():
     assert "< /dev/null" not in inner
     assert "the brief" not in inner  # travels as a stdin turn, not baked into the shell command
     assert "--input-format stream-json" in inner
+
+
+def test_docker_command_s_system_prompt_names_the_marker_it_was_given():
+    """F4: the same marker run_card hands to run_process must be the one the worker's own system
+    prompt names, or the agent has nothing to check a live note against"""
+    marker = "Note from Fabian, via the board [c0ffee12]: "
+    cmd = ContainerBackend(image="img")._docker_command(
+        "/clone", "the brief", "/s.json", "sonnet", None, None, marker
+    )
+    inner = cmd[-1]
+    assert marker in inner
 
 
 # -- RunRegistry: notes only queue while a card's run is actually going -----------------------
@@ -328,13 +345,19 @@ def test_pending_notes_reaches_the_fix_round_worker_call(board, monkeypatch):  #
 def test_worker_system_prompt_carries_the_note_protocol():
     """a second spike showed an unmarked mid-turn message reads as a prompt injection and gets
     refused - the agent has to be told up front what a genuine live note looks like"""
-    prompt = runner.SYSTEM_PROMPT
-    assert runner.NOTE_PREFIX.strip() in prompt
+    marker = runner.new_note_marker()
+    prompt = runner.SYSTEM_PROMPT + runner.note_marker_paragraph(marker)
+    assert marker.strip() in prompt
     assert "prompt injection" in prompt.lower()
     assert "priority" in prompt.lower() or "override" in prompt.lower()
 
 
-def test_a_delivered_note_carries_the_fixed_marker(tmp_path, monkeypatch):
+def test_two_runs_get_different_note_markers():
+    """F4: a fixed marker is guessable from repo content the worker reads - each run mints its own"""
+    assert runner.new_note_marker() != runner.new_note_marker()
+
+
+def test_a_delivered_note_carries_the_run_s_own_marker(tmp_path, monkeypatch):
     fake = _FakeProcess(
         [
             _result_line(result_text="turn one", cost=0.1, turns=1),
@@ -348,9 +371,33 @@ def test_a_delivered_note_carries_the_fixed_marker(tmp_path, monkeypatch):
         calls["n"] += 1
         return [{"id": "c1", "body": "ship it"}] if calls["n"] == 1 else []
 
-    run_process(None, "c", ["claude"], stream_prompt="brief", pending_notes=pending_notes)
+    marker = "Note from Fabian, via the board [deadbeef]: "
+    run_process(
+        None,
+        "c",
+        ["claude"],
+        stream_prompt="brief",
+        pending_notes=pending_notes,
+        note_marker=marker,
+    )
     note_turn = json.loads(fake.stdin.writes[1].strip())
-    assert note_turn["message"]["content"].startswith(runner.NOTE_PREFIX)
+    assert note_turn["message"]["content"].startswith(marker)
+
+
+def test_run_process_mints_its_own_marker_when_none_is_given(tmp_path, monkeypatch):
+    """a caller with no notes-explaining prompt to match (tests, the reviewer) still gets a note
+    marker rather than a crash - it just won't be one the agent's prompt names"""
+    fake = _FakeProcess([_result_line(result_text="done", cost=0.05, turns=1)])
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: fake)
+    run_process(
+        None,
+        "c",
+        ["claude"],
+        stream_prompt="brief",
+        pending_notes=lambda: [{"id": "c1", "body": "x"}],
+    )
+    note_turn = json.loads(fake.stdin.writes[1].strip())
+    assert note_turn["message"]["content"].startswith("Note from")
 
 
 # -- the http route: delivery answers "live" while the run is going, "next_run" once it is not ----
