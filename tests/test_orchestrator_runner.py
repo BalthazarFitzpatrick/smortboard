@@ -370,3 +370,62 @@ def test_an_old_style_runner_with_no_screenshot_path_argument_still_works(store,
 
     result = run_orchestrator_turn(store, board["id"], "hi", runner=run)
     assert result.error is None
+
+
+def _wire_result(monkeypatch, result):
+    monkeypatch.setattr("smortboard.orchestrator.docker_available", lambda: True)
+    monkeypatch.setattr("smortboard.orchestrator.read_card_token", lambda p=None: "t0k3n")
+    monkeypatch.setattr("smortboard.orchestrator.run_process", lambda *a, **k: result)
+
+
+def _failed(**fields):
+    base = {
+        "subtype": None,
+        "is_error": True,
+        "blocked_reason_code": "CRASH",
+        "session_id": None,
+        "total_cost_usd": None,
+        "num_turns": None,
+        "result_text": None,
+    }
+    return RunResult(**{**base, **fields})
+
+
+def _board_notes(store, board_id):
+    return [m["body"] for m in store.list_orchestrator_messages(board_id) if m["author"] == "board"]
+
+
+def test_a_budget_stop_says_so_instead_of_crash(tmp_path, monkeypatch):
+    _wire_result(
+        monkeypatch, _failed(subtype="error_max_budget_usd", num_turns=14, total_cost_usd=1.02)
+    )
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("dev")
+        result = run_orchestrator_turn(store, board["id"], "four things at once")
+        assert result.error is not None
+        note = _board_notes(store, board["id"])[-1]
+    assert "turn budget after 14 turns" in note
+    assert "split the request" in note
+
+
+def test_a_container_that_died_shows_its_own_error_output(tmp_path, monkeypatch):
+    _wire_result(monkeypatch, _failed(result_text="docker: Error response from daemon: boom\n"))
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("dev")
+        run_orchestrator_turn(store, board["id"], "plan it")
+        note = _board_notes(store, board["id"])[-1]
+    assert "CRASH" in note and "container said: docker: Error response from daemon: boom" in note
+
+
+def test_an_answer_given_before_the_budget_stop_is_still_used(tmp_path, monkeypatch):
+    answer = {"reply": "done before the cap", "plan": "p", "cards": []}
+    _wire_result(
+        monkeypatch,
+        _failed(subtype="error_max_budget_usd", num_turns=9, structured_output=answer),
+    )
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("dev")
+        result = run_orchestrator_turn(store, board["id"], "plan it")
+        assert result.error is None
+        replies = [m["body"] for m in store.list_orchestrator_messages(board["id"])]
+    assert "done before the cap" in replies
