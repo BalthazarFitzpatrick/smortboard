@@ -16,6 +16,7 @@ Nothing here is real: every repo path, project, card and comment is invented.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -23,6 +24,7 @@ from itertools import cycle
 from pathlib import Path
 from typing import Any
 
+from smortboard import profiles
 from smortboard.lifecycle import BOARD_AUTHOR
 from smortboard.scheduler import API_UNREACHABLE_MAX_RETRIES
 from smortboard.store.api import Store
@@ -218,6 +220,22 @@ _TITLES = {
     ],
 }
 
+# a card's own paragraph. one per card rather than one sentence repeated down a column - a board
+# where every description reads the same is the tell that gives a seeded demo away
+_DESCRIPTIONS = [
+    "{title}. Today the caller has no way to tell the two cases apart, and the logs do not record "
+    "which one happened, so this starts by making the distinction visible.",
+    "{title}. Raised after the third support ticket in a week about the same symptom; the cause "
+    "is the shared path below, not any one caller.",
+    "{title}. The current shape works for the common case and quietly loses the edge case. Make "
+    "the edge case explicit rather than widening the happy path.",
+    "{title}. Scoped small on purpose: one behaviour change, one migration, no rename.",
+    "{title}. Blocked on nothing external - the interface already exposes everything this needs, "
+    "so it is a change of rules, not of plumbing.",
+    "{title}. The tests around this are thin, so the first task is the failing test that pins "
+    "today's behaviour before anything moves.",
+]
+
 _CRITERIA = [
     "the new path has a test that fails without it",
     "no existing behaviour changes for the default configuration",
@@ -352,7 +370,9 @@ _WALKTHROUGH = [
 ]
 
 
-def _clean_attempt(store: Store, card_id: str, model: str, cost: float, pr_number: int) -> None:
+def _clean_attempt(
+    store: Store, card_id: str, model: str, cost: float, pr_number: int, repo: str, slug: str
+) -> None:
     """worker, test gate, reviewer, pull request - the shape of an attempt that got there"""
     store.append_event(card_id, "lifecycle_started", {})
     _narration(store, card_id, _WALKTHROUGH)
@@ -368,7 +388,13 @@ def _clean_attempt(store: Store, card_id: str, model: str, cost: float, pr_numbe
     store.append_event(card_id, "result", _result_payload(cost / 4, 3, "claude-sonnet-5"))
     store.append_event(card_id, "review_gate", {"approved": True, "findings": []})
     store.append_event(
-        card_id, "merge_request", {"url": f"https://github.com/demo/orchard-pay/pull/{pr_number}"}
+        card_id,
+        "merge_request",
+        {
+            "opened": True,
+            "url": f"https://github.com/demo/{repo}/pull/{pr_number}",
+            "branch": f"card/{pr_number}-{slug}",
+        },
     )
 
 
@@ -450,14 +476,18 @@ def _in_flight(store: Store, card_id: str) -> None:
     store.append_event(card_id, "run_ended", {})
 
 
-def _rate_limit_events(store: Store, card_id: str) -> None:
-    """what the usage panel draws: one window per type, latest wins"""
-    for window_type, resets_in_hours in (("five_hour", 2), ("seven_day", 71)):
+def _rate_limit_events(store: Store, card_id: str, profile: str) -> None:
+    """what the usage panel draws: one window per type and profile, latest wins"""
+    skew = DEMO_PROFILES.index(profile)
+    for window_type, resets_in_hours in (
+        ("five_hour", 2 + skew * 2),
+        ("seven_day", 71 - skew * 30),
+    ):
         store.append_event(
             card_id,
             "rate_limit_event",
             {
-                "profile": "default",
+                "profile": profile,
                 "rate_limit_info": {
                     "status": "allowed",
                     "rateLimitType": window_type,
@@ -515,10 +545,7 @@ def _seed_board(store: Store, spec: dict[str, Any], attention: Iterator) -> dict
                 title,
                 status=status,
                 blocked_reason_code=reason,
-                description=(
-                    f"{title}. The behaviour today is the one this card replaces; the acceptance "
-                    "criteria below are what the board checks before it opens a pull request."
-                ),
+                description=_DESCRIPTIONS[position % len(_DESCRIPTIONS)].format(title=title),
                 position=position,
                 review_flag=flag,
                 tasks=_TASKS,
@@ -561,12 +588,25 @@ def _spend_automatic_retries(store: Store, card_id: str, reason: str) -> None:
         store.append_event(card_id, "merge_conflict_auto_resume", {})
 
 
-def _attention_card(store: Store, card: dict[str, Any], position: int) -> None:
+def _slug(title: str) -> str:
+    """a branch-shaped short name from a card title, the way a real card's branch reads"""
+    words = "".join(c if c.isalnum() or c == " " else "" for c in title.lower()).split()
+    return "-".join(words[:4])
+
+
+def _attention_card(store: Store, card: dict[str, Any], position: int, repo: str) -> None:
     """the run behind one attention card - the story its panel and the inbox both read"""
     card_id = card["id"]
     reason = card["blocked_reason_code"]
     if reason is None:  # the checking card waiting on your y or x
-        _clean_attempt(store, card_id, "claude-sonnet-5", 1.44, 170 + position)
+        _clean_attempt(
+            store, card_id, "claude-sonnet-5", 1.44, 170 + position, repo, _slug(card["title"])
+        )
+        store.add_comment(
+            card_id,
+            BOARD_AUTHOR,
+            "Tests passed and the reviewer approved. The pull request is open and waiting on you.",
+        )
         return
     if reason == "AGENT_QUESTION":
         store.append_event(card_id, "lifecycle_started", {})
@@ -574,6 +614,7 @@ def _attention_card(store: Store, card: dict[str, Any], position: int) -> None:
         result = _result_payload(0.37, 5, "claude-sonnet-5")
         result["result"] = _AGENT_QUESTION
         store.append_event(card_id, "result", result)
+        store.append_event(card_id, "worker_summary", {"text": _AGENT_QUESTION})
         return
     if reason == "TESTS_FAILED":
         _failed_tests_attempt(store, card_id, "claude-opus-5")
@@ -596,6 +637,7 @@ def _by_column(cards: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
 
 
 def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
+    repo = entry["repo"]["name"]
     grouped = _by_column(entry["cards"])
     todo = grouped.get("todo", [])
     doing = grouped.get("doing", [])
@@ -612,7 +654,8 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
         if card["blocked_reason_code"]:
             store.add_comment(card["id"], BOARD_AUTHOR, _BLOCK_NOTES[card["blocked_reason_code"]])
     if doing:
-        _rate_limit_events(store, doing[0]["id"])
+        for profile in DEMO_PROFILES:
+            _rate_limit_events(store, doing[0]["id"], profile)
         store.add_comment(
             doing[-1]["id"],
             "demo",
@@ -620,16 +663,40 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
         )
 
     for position, card in enumerate(grouped.get("attention", [])):
-        _attention_card(store, card, position)
+        _attention_card(store, card, position, repo)
 
     for i, card in enumerate(accepted):
-        _clean_attempt(store, card["id"], _MODELS[i % len(_MODELS)], 0.94 + i * 0.31, 140 + i)
+        # the first accepted card is the board's fully dressed one: two attempts that did not get
+        # there before the one that did, so telemetry and replay both have a history to show
+        if i == 0:
+            _failed_tests_attempt(store, card["id"], "claude-sonnet-5")
+            _refused_attempt(store, card["id"], "claude-sonnet-5")
+        _clean_attempt(
+            store,
+            card["id"],
+            _MODELS[i % len(_MODELS)],
+            0.94 + i * 0.31,
+            140 + i,
+            repo,
+            _slug(card["title"]),
+        )
     for i, card in enumerate(checking):
-        _clean_attempt(store, card["id"], "claude-sonnet-5", 1.22 + i * 0.4, 160 + i)
+        _clean_attempt(
+            store,
+            card["id"],
+            "claude-sonnet-5",
+            1.22 + i * 0.4,
+            160 + i,
+            repo,
+            _slug(card["title"]),
+        )
     for card in rejected:
         _rejected_review_attempt(store, card["id"], "claude-opus-5")
 
-    # one fully dressed card per board: the comments, the attachment and the accepted decision
+    # one fully dressed card per board: a dependency, both comments and the attachment, so there
+    # is always a card whose panel shows every section filled in
+    if len(accepted) > 1:
+        store.set_dependencies(accepted[0]["id"], [accepted[1]["id"]])
     if accepted:
         store.add_comment(accepted[0]["id"], "demo", "Merged. The replay case is the one I wanted.")
         store.add_comment(
@@ -685,9 +752,41 @@ def build_demo_db(path: str | Path) -> Path:
     return path
 
 
+# the demo's own credential profiles. the usage and profiles panels read these off DISK, not out
+# of the database, so a demo that only swapped the db would still put the operator's real profile
+# names on screen - which is exactly what a demo is for not doing
+DEMO_PROFILES = ["weekday", "weekend"]
+
+
+def isolate_demo_config(root: Path) -> None:
+    """points every config lookup at `root` and seeds it with the demo's profiles.
+
+    process-wide on purpose: profiles.py and exec/backends.py read the environment at call time
+    rather than taking a path, so this is the seam that exists. only --demo calls it, and it is
+    the whole process's mode for its lifetime.
+    """
+    tokens = root / "smortboard" / "tokens"
+    tokens.mkdir(parents=True, exist_ok=True)
+    for name in DEMO_PROFILES:
+        token = tokens / name
+        token.write_text("demo-token-not-a-real-credential\n")
+        token.chmod(0o600)
+    state = root / "smortboard" / "profiles.json"
+    state.write_text(
+        json.dumps({"active": DEMO_PROFILES[0], "profiles": DEMO_PROFILES, "limits": {}})
+    )
+    # XDG_CONFIG_HOME on unix, APPDATA on windows - config_base reads one or the other
+    os.environ["XDG_CONFIG_HOME"] = str(root)
+    os.environ["APPDATA"] = str(root)
+    os.environ[profiles.STATE_PATH_ENV] = str(state)
+
+
 def make_demo_db() -> Path:
-    """a fresh demo db in its own throwaway directory - never the operator's own db"""
-    return build_demo_db(Path(tempfile.mkdtemp(prefix="smortboard-demo-")) / "demo.db")
+    """a fresh demo db in its own throwaway directory, with the config to match - the operator's
+    own database and credential profiles are both left untouched"""
+    root = Path(tempfile.mkdtemp(prefix="smortboard-demo-"))
+    isolate_demo_config(root / "config")
+    return build_demo_db(root / "demo.db")
 
 
 if __name__ == "__main__":  # pragma: no cover - a hand check of the counts
