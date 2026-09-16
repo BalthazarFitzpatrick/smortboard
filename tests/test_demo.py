@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from collections import Counter
 
 import pytest
 
-from smortboard import cli, demo
+from smortboard import cli, demo, profiles
 from smortboard.attention import with_actions
 from smortboard.server.runs import recover_orphaned_runs
 from smortboard.store.api import Store
@@ -115,8 +116,25 @@ def test_the_demo_flag_never_opens_the_configured_db(monkeypatch, tmp_path):
     assert not real_db.exists()
 
 
-def test_make_demo_db_writes_only_inside_its_own_throwaway_directory():
+@pytest.fixture
+def env_restored(monkeypatch):
+    """isolate_demo_config writes os.environ directly; setenv here records the real values first,
+    so monkeypatch puts them back however the code overwrote them"""
+    for name in ("XDG_CONFIG_HOME", "APPDATA", profiles.STATE_PATH_ENV):
+        monkeypatch.setenv(name, os.environ.get(name, ""))
+
+
+def test_make_demo_db_writes_only_inside_its_own_throwaway_directory(env_restored):
     path = demo.make_demo_db()
     assert path.exists()
     assert path.parent.name.startswith("smortboard-demo-")
-    assert [p.name for p in path.parent.iterdir()] == ["demo.db"]
+    assert sorted(p.name for p in path.parent.iterdir()) == ["config", "demo.db"]
+
+
+def test_the_demo_uses_its_own_credential_profiles_not_the_operators(env_restored, tmp_path):
+    """the usage and profiles panels read profile names off disk, so a demo that only swapped the
+    database would still put the operator's real profile names on a published screenshot"""
+    demo.isolate_demo_config(tmp_path / "config")
+    assert [p["name"] for p in profiles.list_profiles()] == demo.DEMO_PROFILES
+    assert all(p["present"] and p["mode_ok"] for p in profiles.list_profiles())
+    assert profiles.profiles_dir().is_relative_to(tmp_path)
