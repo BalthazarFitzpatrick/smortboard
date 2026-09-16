@@ -199,3 +199,18 @@ def test_one_fold_at_a_time_per_board_over_http(running_server, monkeypatch):
         time.sleep(0.05)
     assert http._request(url)[1]["running"] is False
     assert http._request(f"{base_url}/api/boards/nope/fold", "POST")[0] == 404
+
+
+def test_the_fold_budget_setting_caps_the_fold_run(store, board):
+    board_id, repo_id, _ = board
+    _card(store, board_id, repo_id, "a", leases=["x.py"])
+    _card(store, board_id, repo_id, "b", leases=["x.py"])
+    budgets = []
+
+    def run(prompt, model, budget_usd):
+        budgets.append(budget_usd)
+        return "not json"
+
+    store.set_setting("fold_budget_usd", 0.4)
+    run_fold_turn(store, board_id, runner=run)
+    assert budgets == [0.4]

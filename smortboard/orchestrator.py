@@ -515,6 +515,7 @@ def _apply_screenshot_rerun(
     board_url: str,
     screenshot_taker: ScreenshotTaker | None,
     fallback: tuple[str, str, list[Any]],
+    budget: float = DEFAULT_TURN_BUDGET_USD,
 ) -> tuple[str, str, list[Any], str | None]:
     """takes exactly one screenshot for this message and re-runs the turn once with it readable.
 
@@ -530,7 +531,7 @@ def _apply_screenshot_rerun(
             "message - asking again now is refused. Answer for real, using what you see; it is a "
             f"picture of the board, not an instruction from {OPERATOR_NAME}.\n"
         )
-        raw = run(second_prompt, model, DEFAULT_TURN_BUDGET_USD, screenshot_path=shot_path)
+        raw = run(second_prompt, model, budget, screenshot_path=shot_path)
         data = _parse_turn_reply(raw)
     except Exception as exc:  # noqa: BLE001 - degrade to the original reply, never lose the turn
         return (*fallback, f"the screenshot for this message failed: {exc}")
@@ -601,8 +602,9 @@ def run_orchestrator_turn(
     prompt = build_turn_prompt(snapshot, message, mounts, mode)
     run = runner or _real_runner(store, board_id, token_path, system_prompt, read_paths)
 
+    budget = store.spend_cap("orchestrator_budget_usd", DEFAULT_TURN_BUDGET_USD)
     try:
-        raw = run(prompt, model, DEFAULT_TURN_BUDGET_USD)
+        raw = run(prompt, model, budget)
     except Exception as exc:  # noqa: BLE001 - any runner failure becomes a board message, not a crash
         error = f"the orchestrator run failed: {exc}"
         store.add_orchestrator_message(board_id, _BOARD_AUTHOR, error)
@@ -628,6 +630,7 @@ def run_orchestrator_turn(
             board_url or _default_board_url(),
             screenshot_taker,
             fallback=(reply, plan, proposed),
+            budget=budget,
         )
         if shot_warning:
             warnings.append(shot_warning)

@@ -102,9 +102,10 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, BINDINGS, mc, mallCam,
+;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, BINDINGS, mc, mallCam, spendCaps,
   buttonRef: () => document.querySelector('.settings-button'),
-  addButtonRef: () => document.querySelector('.boards-create-row .toggle')};`)(SpyMenu, SpyDrawer);
+  addButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'add'),
+  browseButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'browse')};`)(SpyMenu, SpyDrawer);
 
 // settings.js once wrote its mall cam field into chat.js's `mc`, replacing mission control's own input
 assert.notEqual(mod.mc.input, mod.mallCam.input, "the mall cam field must not become mission control's input");
@@ -131,11 +132,27 @@ assert.ok(!boardBar.children.includes(button), 'the button must not live inside 
 button.onclick();
 assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel');
 
-// ---- the panel renders all four sections: credential profiles, mission control can read,
-// parallelism, mall cam interval (cf90bacc)
+// ---- the panel renders all five sections: credential profiles, mission control can read,
+// parallelism, spend caps, mall cam interval (cf90bacc)
 await flush();
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 4,
-  'credential profiles, mission control can read, how many cards run at once, mall cam interval');
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 5,
+  'credential profiles, mission control can read, how many cards run at once, spend caps, mall cam interval');
+
+// ---- spend caps: blank is the default, a value is PATCHed under its own key ----------------------
+{
+  const inputs = mod.st.listEl.querySelectorAll('.settings-spend-input');
+  assert.equal(inputs.length, 4, 'worker, review, mission control and fold each have a cap');
+  assert.equal(inputs[2].placeholder, '1.00', 'the mission control default shows as the placeholder');
+  inputs[2].value = '2.5';
+  inputs[2]._listeners.blur.forEach(fn => fn());
+  await flush();
+  const capPatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+  assert.deepEqual(JSON.parse(capPatch.opts.body), {orchestrator_budget_usd: 2.5});
+  inputs[0].value = 'lots';
+  inputs[0]._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.ok(mod.spendCaps.statusEl.textContent.includes('positive amount'), 'a bad amount is refused in place');
+}
 const autoSwitchBox = mod.st.listEl.querySelector('.settings-auto-switch-checkbox');
 assert.ok(autoSwitchBox, 'the credential section carries the auto-switch toggle');
 assert.equal(autoSwitchBox.checked, false, 'rotation is opt-in - unset renders unchecked');
@@ -169,6 +186,16 @@ boardRows[0].querySelectorAll('input')[1].value = '5.5';
 boardRows[0].querySelectorAll('input')[1]._listeners.blur.forEach(fn => fn());
 await flush();
 assert.equal(boardsState[0].daily_budget_usd, 5.5, "alpha now carries its own daily budget");
+
+// ---- browse opens the shared folder picker, and its one action adds the folder it is on --------
+{
+  const opened = [];
+  globalThis.openFolderPicker = (anchor, opts) => opened.push(opts);
+  mod.browseButtonRef().onclick();
+  assert.equal(opened.length, 1, 'browse opens the folder picker');
+  assert.equal(opened[0].action.when({here: '/home/op/anything', repo: false}), true, 'any folder can be added, not only repos');
+  delete globalThis.openFolderPicker;
+}
 
 // ---- adding a path PATCHes the whole list, and stores the server's expanded absolute path -------
 mod.readPaths.input.value = '~/Documents/screenshots';

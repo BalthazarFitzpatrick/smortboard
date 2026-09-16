@@ -294,7 +294,7 @@ def run_fold_turn(
         store, board_id, token_path, FOLD_PROMPT, read_paths, schema=FOLD_JSON_SCHEMA, role="fold"
     )
     try:
-        raw = run(prompt, model, FOLD_BUDGET_USD)
+        raw = run(prompt, model, store.spend_cap("fold_budget_usd", FOLD_BUDGET_USD))
     except Exception as exc:  # noqa: BLE001 - any runner failure becomes a board message, not a crash
         error = f"fold: the run failed, nothing changed: {exc}"
         _say(store, board_id, error)
