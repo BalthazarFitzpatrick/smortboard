@@ -489,6 +489,51 @@ def test_bash_guard_allows_a_plain_command_with_no_paths(tmp_path):
     assert result.returncode == 0
 
 
+# -- bash guard: refuses a git invocation that carries a global option / remote program flag ---
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c core.sshCommand='sh -c id' fetch origin",
+        "git -c core.pager='sh -c id' log",
+        "git --config-env=core.sshCommand=EVIL fetch",
+        "git -c alias.x='!id' x",
+        "git --exec-path=/tmp/evil status",
+        "git -C /tmp status",
+        "git --git-dir=/tmp/other/.git status",
+        "git fetch --upload-pack='sh -c id' origin",
+        "git clone --upload-pack='sh -c id' url dest",
+        "git push --receive-pack='sh -c id' origin",
+        "git ls-remote --upload-pack='sh -c id' origin",
+        "git fetch -u origin",
+    ],
+)
+def test_bash_guard_refuses_git_invocations_that_can_run_an_arbitrary_program(tmp_path, command):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    result = _run_bash_guard(worktree, command)
+    assert result.returncode == 2
+    assert BASH_ESCAPE_PREFIX in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git status",
+        "git add -A",
+        "git commit -m 'x'",
+        "git diff",
+        "git log --oneline",
+    ],
+)
+def test_bash_guard_permits_ordinary_git_commands(tmp_path, command):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    result = _run_bash_guard(worktree, command)
+    assert result.returncode == 0
+
+
 def test_a_card_run_carries_a_budget_ceiling():
     """a card that loops burns real money quietly. measured, one 13-turn card re-read 209k cached
     tokens, so a thrashing card multiplies that - the budget refuses at the limit instead."""
