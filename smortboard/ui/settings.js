@@ -74,7 +74,7 @@ function clearChildren(el) {
 // mounting them is a separate card (out of scope here) - this only maintains the path list, via
 // the same whole-list-replace PATCH /api/settings the other board-wide values already use.
 
-const rp = {input: null, listEl: null, statusEl: null};
+const readPaths = {input: null, listEl: null, statusEl: null};
 
 function renderReadPathRow(path) {
   const row = document.createElement('div');
@@ -100,16 +100,16 @@ async function loadReadPaths() {
   try {
     paths = await currentReadPaths();
   } catch (err) {
-    clearChildren(rp.listEl);
-    rp.listEl.appendChild(settingsHazardPlaceholder(`could not load: ${err.message}`));
+    clearChildren(readPaths.listEl);
+    readPaths.listEl.appendChild(settingsHazardPlaceholder(`could not load: ${err.message}`));
     return;
   }
-  clearChildren(rp.listEl);
+  clearChildren(readPaths.listEl);
   if (!paths.length) {
-    rp.listEl.appendChild(settingsHazardPlaceholder('no folders yet'));
+    readPaths.listEl.appendChild(settingsHazardPlaceholder('no folders yet'));
     return;
   }
-  paths.forEach(path => rp.listEl.appendChild(renderReadPathRow(path)));
+  paths.forEach(path => readPaths.listEl.appendChild(renderReadPathRow(path)));
 }
 
 async function patchReadPaths(paths) {
@@ -121,19 +121,19 @@ async function patchReadPaths(paths) {
 }
 
 async function addReadPath() {
-  const raw = rp.input.value.trim();
+  const raw = readPaths.input.value.trim();
   if (!raw) return;
-  rp.statusEl.textContent = 'adding...';
-  rp.statusEl.className = 'boards-status';
+  readPaths.statusEl.textContent = 'adding...';
+  readPaths.statusEl.className = 'boards-status';
   const existing = await currentReadPaths();
   const {ok, body} = await patchReadPaths([...existing, raw]);
   if (!ok) {
-    rp.statusEl.textContent = (body && body.error) || `could not add ${raw}`;
-    rp.statusEl.className = 'boards-status boards-error';
+    readPaths.statusEl.textContent = (body && body.error) || `could not add ${raw}`;
+    readPaths.statusEl.className = 'boards-status boards-error';
     return;
   }
-  rp.input.value = '';
-  rp.statusEl.textContent = '';
+  readPaths.input.value = '';
+  readPaths.statusEl.textContent = '';
   await loadReadPaths();
 }
 
@@ -141,8 +141,8 @@ async function removeReadPath(path) {
   const existing = await currentReadPaths();
   const {ok, body} = await patchReadPaths(existing.filter(p => p !== path));
   if (!ok) {
-    rp.statusEl.textContent = (body && body.error) || `could not remove ${path}`;
-    rp.statusEl.className = 'boards-status boards-error';
+    readPaths.statusEl.textContent = (body && body.error) || `could not remove ${path}`;
+    readPaths.statusEl.className = 'boards-status boards-error';
     return;
   }
   await loadReadPaths();
@@ -175,7 +175,7 @@ function buildReadPathsSection() {
   addRow.append(input, add, status);
 
   box.append(list, addRow);
-  Object.assign(rp, {input, listEl: list, statusEl: status});
+  Object.assign(readPaths, {input, listEl: list, statusEl: status});
   return box;
 }
 
@@ -190,7 +190,7 @@ SETTINGS_SECTIONS.push({
 // a board's own number only ever holds it back further, never past the global cap - an unset board
 // row behaves exactly like today, no board-specific limit at all.
 
-const pl = {globalInput: null, globalStatus: null, boardsList: null};
+const parallelCaps = {globalInput: null, globalStatus: null, boardsList: null};
 
 function parallelParseInput(raw) {
   const trimmed = raw.trim();
@@ -235,7 +235,7 @@ function buildGlobalParallelRow() {
   input.addEventListener('blur', save);
 
   row.append(input, status);
-  Object.assign(pl, {globalInput: input, globalStatus: status});
+  Object.assign(parallelCaps, {globalInput: input, globalStatus: status});
   return row;
 }
 
@@ -327,19 +327,19 @@ function renderBoardParallelRow(board) {
 async function loadParallelSection() {
   try {
     const settings = await api('/api/settings');
-    pl.globalInput.value = settings.max_parallel == null ? '' : String(settings.max_parallel);
-    pl.globalStatus.textContent = '';
+    parallelCaps.globalInput.value = settings.max_parallel == null ? '' : String(settings.max_parallel);
+    parallelCaps.globalStatus.textContent = '';
   } catch (err) {
-    pl.globalStatus.textContent = `could not load: ${err.message}`;
-    pl.globalStatus.className = 'boards-status boards-error';
+    parallelCaps.globalStatus.textContent = `could not load: ${err.message}`;
+    parallelCaps.globalStatus.className = 'boards-status boards-error';
   }
   try {
     const boards = await api('/api/boards');
-    clearChildren(pl.boardsList);
-    boards.forEach(b => pl.boardsList.appendChild(renderBoardParallelRow(b)));
+    clearChildren(parallelCaps.boardsList);
+    boards.forEach(b => parallelCaps.boardsList.appendChild(renderBoardParallelRow(b)));
   } catch (err) {
-    clearChildren(pl.boardsList);
-    pl.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
+    clearChildren(parallelCaps.boardsList);
+    parallelCaps.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
   }
 }
 
@@ -353,7 +353,7 @@ function buildParallelSection() {
   boardsLabel.textContent = 'per board (blank = no board-specific limit or daily budget)';
   const boardsList = document.createElement('div');
   boardsList.className = 'boards-list';
-  Object.assign(pl, {boardsList});
+  Object.assign(parallelCaps, {boardsList});
   box.append(globalLabel, buildGlobalParallelRow(), boardsLabel, boardsList);
   return box;
 }
@@ -503,9 +503,7 @@ function toggleSettingsPanel() {
 }
 
 // ---- top-right button, fixed to the viewport --------------------------------------------------
-// NOT appended inside #board-bar: board.js's renderBoardBar() does `bar.innerHTML = ''` on every
-// board list load, which would wipe out a child living there - the same gotcha the attention
-// indicator (inbox.js) already ran into. fixed to the viewport instead, at the board bar's corner.
+// lives in board.js's bar corner, between the queue status and the attention count
 
 function buildSettingsButton() {
   const btn = document.createElement('div');
@@ -513,7 +511,7 @@ function buildSettingsButton() {
   btn.textContent = 'settings';
   btn.title = 'settings (o)';
   btn.onclick = () => toggleSettingsPanel();
-  document.body.appendChild(btn);
+  barCorner().appendChild(btn);
   return btn;
 }
 

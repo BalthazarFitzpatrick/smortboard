@@ -24,14 +24,12 @@ function sinceLabel(iso, now = Date.now()) {
 // ---- top-right indicator, polled independently of the panel being open ------------------------
 
 function buildIndicator() {
-  // NOT appended inside #board-bar: board.js's renderBoardBar() does `bar.innerHTML = ''` on
-  // every board list load, which would wipe out a child living there. Fixed to the viewport
-  // instead, at the board bar's top-right corner, so it survives every re-render untouched.
+  // lives in board.js's bar corner, beside the queue status and settings, never inside #board-bar
   const el = document.createElement('div');
   el.className = 'attention-indicator dim';
   el.title = 'attention inbox (n)';
   el.onclick = () => openInboxPanel();
-  document.body.appendChild(el);
+  barCorner().appendChild(el);
   return el;
 }
 

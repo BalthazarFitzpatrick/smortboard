@@ -73,6 +73,9 @@ assert.equal(cardFetches(), fetched + 1, 'the poll still asked the server once')
 stub('/api/boards/b1/cards', [card('c1', 'doing'), card('c2', 'todo')]);
 assert.equal(await mod.followRunsOnce(), true, 'todo -> doing redraws on the very next poll');
 assert.ok(inColumn('doing', 'c1') && !inColumn('todo', 'c1'), 'c1 is drawn in doing now');
+// the moved card is laid out by its new column like every other card, not left at its natural height
+assert.match(String(strip('c1').style.height || ''), /^\d+(\.\d+)?px$/, 'a moved card gets the column card height');
+assert.equal(strip('c1').style.height, strip('c2').style.height, 'the same height as the card that stayed');
 
 stub('/api/boards/b1/cards', [card('c1', 'checking'), card('c2', 'todo')]);
 assert.equal(await mod.followRunsOnce(), true, 'doing -> checking redraws on the very next poll too');
