@@ -180,6 +180,15 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
 }
 
+// a link target from data is only ever a web url, never javascript: or data:
+function safeUrl(url) {
+  try {
+    return ['https:', 'http:'].includes(new URL(url).protocol) ? url : '';
+  } catch (err) {
+    return '';
+  }
+}
+
 
 // ---- running a card (r) -------------------------------------------------------------
 
@@ -212,7 +221,7 @@ function showRun(cardId, text, href, detail) {
   badge.textContent = '';
   // the foot is one line and must stay one line - the long version is the comment the run left
   badge.title = detail || '';
-  if (href) {
+  if (safeUrl(href)) {
     const link = document.createElement('a');
     link.className = 'pr-link';
     link.href = href;
