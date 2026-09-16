@@ -237,7 +237,7 @@ def test_comments(running_server):
     status, comment = _request(
         f"{running_server}/api/cards/{card['id']}/comments",
         "POST",
-        {"author": "fabian", "body": "looks good"},
+        {"author": "operator", "body": "looks good"},
     )
     assert status == 201
     assert comment["body"] == "looks good"

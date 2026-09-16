@@ -67,7 +67,7 @@ def test_a_turn_creates_cards_resolves_repo_and_deps_and_flags_the_unknown_repo(
     assert store.get_dependencies(by_title["b"]["id"]) == [by_title["a"]["id"]]
 
     messages = store.list_orchestrator_messages(board["id"])
-    assert [m["author"] for m in messages] == ["fabian", "board", "orchestrator"]
+    assert [m["author"] for m in messages] == ["operator", "board", "orchestrator"]
     assert "nope" in messages[1]["body"]
     assert messages[1]["author"] == "board"
     reply = messages[2]
@@ -87,7 +87,7 @@ def test_planning_mode_creates_no_card_and_says_so_on_the_board(store, board):
         m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
     ]
     assert any("2 proposed card" in note for note in board_notes)
-    # fabian's reply still lands - planning mode is a conversation, not a refusal
+    # the operator's reply still lands - planning mode is a conversation, not a refusal
     reply = [
         m for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "orchestrator"
     ]
@@ -155,7 +155,7 @@ def test_a_failing_runner_stores_a_board_error_and_leaves_no_plan(store, board):
     assert result.error is not None
 
     messages = store.list_orchestrator_messages(board["id"])
-    assert [m["author"] for m in messages] == ["fabian", "board"]
+    assert [m["author"] for m in messages] == ["operator", "board"]
     assert "no docker" in messages[1]["body"]
     assert store.get_plan(board["id"]) is None
 

@@ -39,7 +39,7 @@ def _pull_requests(store: Store, cards: list[dict[str, Any]], since: float) -> l
 
     A card's dependencies are also in this list far more often than not (mission control plans a
     workstream as one unit), so a straight topological sort over depends_on already gives the merge
-    order Fabian needs - a card's own PR never has to wait behind one that is not in the batch.
+    order the operator needs - a card's own PR never has to wait behind one that is not in the batch.
     """
     opened: dict[str, dict[str, Any]] = {}
     for card in cards:
@@ -90,7 +90,7 @@ def _pull_requests(store: Store, cards: list[dict[str, Any]], since: float) -> l
 
 
 def _one_question(store: Store, card: dict[str, Any]) -> str | None:
-    """the single thing this blocked card needs from Fabian.
+    """the single thing this blocked card needs from the operator.
 
     AGENT_QUESTION means the agent itself is asking - its own final text is the question, read off
     the outcome projection exactly as the card panel shows it. Every other reason code is the
@@ -105,7 +105,7 @@ def _one_question(store: Store, card: dict[str, Any]) -> str | None:
     return comments[-1]["body"] if comments else None
 
 
-def _waiting_on_fabian(store: Store, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _waiting_on_operator(store: Store, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = []
     for card in cards:
         if not card.get("blocked_reason_code"):
@@ -140,6 +140,6 @@ def board_digest(store: Store, board_id: str, since: float) -> dict[str, Any]:
         "board_id": board_id,
         "since": since,
         "pull_requests": _pull_requests(store, cards, since),
-        "waiting_on_fabian": _waiting_on_fabian(store, cards),
+        "waiting_on_operator": _waiting_on_operator(store, cards),
         "runs_and_spend": _runs_and_spend(store, cards, since),
     }

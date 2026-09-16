@@ -115,7 +115,7 @@ def test_an_answer_does_not_resume_a_card_beside_an_overlapping_run(store, board
     assert runs.started == []
     after = store.get_card(card["id"])
     assert after["blocked_reason_code"] == "LEASE_CONFLICT"
-    assert [c for c in after["comments"] if c["author"] == "fabian"] == []
+    assert [c for c in after["comments"] if c["author"] == "operator"] == []
 
 
 def test_a_manual_run_beside_an_overlapping_one_is_a_409(tmp_path, monkeypatch):

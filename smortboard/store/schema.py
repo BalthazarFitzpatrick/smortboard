@@ -159,7 +159,7 @@ _MIGRATIONS: list[str] = [
     CREATE TABLE orchestrator_messages (
         id TEXT PRIMARY KEY,
         board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-        author TEXT NOT NULL CHECK (author IN ('fabian', 'orchestrator', 'board')),
+        author TEXT NOT NULL CHECK (author IN ('operator', 'orchestrator', 'board')),
         body TEXT NOT NULL,
         cards_json TEXT,
         created_at TEXT NOT NULL
@@ -172,7 +172,7 @@ _MIGRATIONS: list[str] = [
     );
     """,
     # 7: the model a card's worker runs on. null means the board's worker_model setting, then sonnet;
-    # the orchestrator proposes one when it plans a card, and fabian can override it on the card
+    # the orchestrator proposes one when it plans a card, and the operator can override it on the card
     """
     ALTER TABLE cards ADD COLUMN model TEXT;
     """,
@@ -346,6 +346,37 @@ _MIGRATIONS: list[str] = [
 
     CREATE INDEX IF NOT EXISTS idx_landing_queue_repo_target
         ON landing_queue (repo_key, target, position);
+    """,
+    # 16: the internal author key was "fabian" (the operator's actual name) - renamed to "operator"
+    # so the repo does not carry a real name. sqlite cannot ALTER a CHECK, so orchestrator_messages
+    # is recreated with the new one, same dance as migration 11/12; comments has no CHECK, so its
+    # rows are just updated in place
+    """
+    PRAGMA foreign_keys = OFF;
+
+    CREATE TABLE orchestrator_messages_new (
+        id TEXT PRIMARY KEY,
+        board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+        author TEXT NOT NULL CHECK (author IN ('operator', 'orchestrator', 'board')),
+        body TEXT NOT NULL,
+        cards_json TEXT,
+        created_at TEXT NOT NULL
+    );
+
+    INSERT INTO orchestrator_messages_new SELECT
+        id, board_id, CASE author WHEN 'fabian' THEN 'operator' ELSE author END,
+        body, cards_json, created_at
+    FROM orchestrator_messages;
+
+    DROP TABLE orchestrator_messages;
+    ALTER TABLE orchestrator_messages_new RENAME TO orchestrator_messages;
+
+    CREATE INDEX IF NOT EXISTS idx_orchestrator_messages_board
+        ON orchestrator_messages (board_id, created_at);
+
+    UPDATE comments SET author = 'operator' WHERE author = 'fabian';
+
+    PRAGMA foreign_keys = ON;
     """,
 ]
 

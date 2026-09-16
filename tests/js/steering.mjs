@@ -83,7 +83,7 @@ assert.ok(
 
 // ---- sending a note while the run is live updates the subheader from the POST's own delivery ----
 responses.set('/api/cards/c1/conversation', stubJson(201, {
-  author: 'fabian', body: 'check the edge case', created_at: '2026-01-01T00:00:02Z', delivery: 'live',
+  author: 'operator', body: 'check the edge case', created_at: '2026-01-01T00:00:02Z', delivery: 'live',
 }));
 await mod.sendWorkforce('check the edge case');
 assert.equal(mod.wf.subheader.textContent, "delivered at the agent's next step");
@@ -91,7 +91,7 @@ assert.equal(mod.wf.subheader.textContent, "delivered at the agent's next step")
 // ---- sending a note to an idle card reports next_run instead --------------------------------
 mod.wf.cardId = 'c2';
 responses.set('/api/cards/c2/conversation', stubJson(201, {
-  author: 'fabian', body: 'later then', created_at: '2026-01-01T00:00:03Z', delivery: 'next_run',
+  author: 'operator', body: 'later then', created_at: '2026-01-01T00:00:03Z', delivery: 'next_run',
 }));
 await mod.sendWorkforce('later then');
 assert.equal(mod.wf.subheader.textContent, 'reaches the agent on its next run');

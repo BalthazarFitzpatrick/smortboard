@@ -33,7 +33,7 @@ def test_list_cards_matches_get_card_for_every_card(store):
     store.add_dependency(first["id"], empty["id"])
     store.add_dependency(elsewhere["id"], first["id"])  # a dependent on a different board
     for body in ("one", "two", "three"):
-        store.add_comment(first["id"], author="fabian", body=body)
+        store.add_comment(first["id"], author="operator", body=body)
     store.add_comment(second["id"], author="smortboard", body="a note")
     store.add_attachment(first["id"], "a.txt", "text/plain", b"a")
     store.add_attachment(first["id"], "b.txt", "text/plain", b"b")
