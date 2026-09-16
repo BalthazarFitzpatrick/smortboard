@@ -204,7 +204,7 @@ _MIGRATIONS: list[str] = [
 
     CREATE INDEX IF NOT EXISTS idx_card_backups_deleted_at ON card_backups (deleted_at);
     """,
-    # 10: a card may stand for one task of its repo's dev_ledger/TASKS.jsonl, and a task is carded
+    # 10: a card may stand for one task of its repo's TASKS.jsonl ledger, and a task is carded
     # at most once per repo - the unique index is what makes mission control's import idempotent
     """
     ALTER TABLE cards ADD COLUMN ledger_task TEXT;
