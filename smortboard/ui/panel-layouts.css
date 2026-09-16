@@ -1,4 +1,4 @@
-/* DESIGN ARCHIVE - the fifteen open-card layouts Fabian chose from on 2026-09-10, kept so the
+/* DESIGN ARCHIVE - the fifteen open-card layouts the operator chose from on 2026-09-10, kept so the
    decision can be looked back on. board.js adds .panel-layout-N when a card's workstream is
    `layout-N`; the pick itself (7 two-up + 11 state edge + 14 run timeline) is the default in
    layout.css, and nothing outside the archive board wears these.

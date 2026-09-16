@@ -1,6 +1,8 @@
 """the store's public surface — callers get dicts, never sql, a cursor or a connection"""
 
 import json
+import os
+import re
 import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -31,14 +33,15 @@ CARD_WRITABLE_FIELDS = {
 }
 
 # board-wide values, one settings row per key. unset means no row.
-# the three models are stored only when fabian set them - callers apply the defaults (opus for the
+# the three models are stored only when the operator set them - callers apply the defaults (opus for the
 # orchestrator, sonnet for workers and the reviewer), so a changed default reaches unset boards.
 # max_parallel is the scheduler's cap on cards run-all starts at once - unset means 2, see
 # smortboard.scheduler.DEFAULT_MAX_PARALLEL
 # resume_briefing gates lifecycle.py's resume briefing - "off" disables it, unset means on
 # gate_timeout_seconds caps the test gate - unset means review.gates.GATE_TIMEOUT_SECONDS (600)
-# auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - "off" parks the board until
-# the reset instead (the pre-profiles behaviour), unset means on
+# auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - opt-in, "on" rotates
+# credentials; unset (or any other value, including a stored "off" from before this flipped)
+# parks the board until the reset instead, the pre-profiles behaviour
 # mall_cam_interval_seconds is the workforce drawer's auto-cycle period (cf90bacc) - unset means
 # chat.js's own default (10)
 _SETTING_KEYS = (
@@ -64,6 +67,21 @@ def _check_findings_route(value: str | None) -> None:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
 
 
+# both reach docker or claude argv as their own item, so a leading "-" would read as a flag
+_IMAGE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,254}$")
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,99}$")
+
+
+def _check_image(value: Any) -> None:
+    if value is not None and not (isinstance(value, str) and _IMAGE_REF.match(value)):
+        raise ValueError(f"image must be a docker image reference or null, not {value!r}")
+
+
+def _check_model(value: Any) -> None:
+    if value is not None and not (isinstance(value, str) and _MODEL_NAME.match(value)):
+        raise ValueError(f"model must be a model name or null, not {value!r}")
+
+
 def _check_positive_int(name: str, value: Any) -> None:
     """unset (None) means no cap; anything else must be a positive whole number - zero, a
     negative number and anything that does not parse as one are all refused. a numeric string
@@ -81,6 +99,23 @@ def _check_positive_int(name: str, value: Any) -> None:
         raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
     if value <= 0:
         raise ValueError(f"{name} must be a positive integer or null, not {value!r}")
+
+
+def _check_positive_number(name: str, value: Any) -> None:
+    """same contract as _check_positive_int, but for a dollar amount that need not be whole"""
+    if value is None:
+        return
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive number or null, not {value!r}")
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            raise ValueError(f"{name} must be a positive number or null, not {value!r}") from None
+    elif not isinstance(value, int | float):
+        raise ValueError(f"{name} must be a positive number or null, not {value!r}")
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive number or null, not {value!r}")
 
 
 def _check_read_paths(value: Any) -> list[str]:
@@ -110,6 +145,25 @@ def _check_lease_glob(value: Any) -> str:
     if glob.startswith("/") or ".." in glob.split("/"):
         raise ValueError(f"a lease glob is relative to the repo root, not {glob!r}")
     return glob
+
+
+def _is_catch_all(glob: str) -> bool:
+    """a glob with no literal segment, like ** or */**, matches the whole repo"""
+    return all(set(segment) <= set("*?") for segment in glob.split("/"))
+
+
+def _clean_leases(globs: list[Any]) -> list[str]:
+    """valid, unique globs in first-seen order; a glob the store would refuse is dropped rather
+    than rejecting the whole card - shared by consolidate and the orchestrator's proposed cards"""
+    kept: list[str] = []
+    for glob in globs:
+        try:
+            glob = _check_lease_glob(glob)
+        except ValueError:
+            continue
+        if glob not in kept:
+            kept.append(glob)
+    return kept
 
 
 # card_criteria has deliberately no entry here and no update_criteria method anywhere in this
@@ -142,6 +196,17 @@ class Store:
         self._conn.execute("PRAGMA foreign_keys = ON")
         migrate(self._conn)
         self._purge_expired_backups()
+        self._secure_db_files()
+
+    def _secure_db_files(self) -> None:
+        """0600 on the db file and its -wal/-shm sidecars - tightened on every open, not just on
+        create, so a db that predates this check is not left readable by the rest of the group"""
+        if str(self.path) == ":memory:":
+            return
+        for suffix in ("", "-wal", "-shm"):
+            candidate = self.path.with_name(self.path.name + suffix)
+            if candidate.exists():
+                os.chmod(candidate, 0o600)
 
     def close(self) -> None:
         self._conn.close()
@@ -183,6 +248,15 @@ class Store:
         self._conn.commit()
         return self.get_board(board_id)
 
+    def set_board_daily_budget(self, board_id: str, value: float | None) -> dict[str, Any]:
+        """this board's own daily usd spend cap - None means no cap, so the scheduler never
+        checks spend at all. see scheduler._board_daily_budget and telemetry.board_spend_today"""
+        self.get_board(board_id)  # 404 for an unknown board rather than a silent no-op update
+        _check_positive_number("daily_budget_usd", value)
+        self._conn.execute("UPDATE boards SET daily_budget_usd = ? WHERE id = ?", (value, board_id))
+        self._conn.commit()
+        return self.get_board(board_id)
+
     # -- repos ---------------------------------------------------------------
 
     def create_repo(
@@ -197,7 +271,9 @@ class Store:
     ) -> dict:
         # no validation here on purpose - the http layer (app.py's repos POST route) validates a
         # person's input with validate_repo before this is ever called; the store itself stays the
-        # thing every other test builds a repo row against without needing a real git checkout
+        # thing every other test builds a repo row against without needing a real git checkout.
+        # the image is the exception: a pure shape check, since it lands in docker argv
+        _check_image(image)
         self.get_board(board_id)  # raises NotFoundError on a bad board id
         repo_id = _new_id()
         self._conn.execute(
@@ -219,6 +295,7 @@ class Store:
         default image.
         """
         self.get_repo(repo_id)  # raises NotFoundError on a bad id
+        _check_image(image)
         self._conn.execute("UPDATE repos SET image = ? WHERE id = ?", (image, repo_id))
         self._conn.commit()
         return self.get_repo(repo_id)
@@ -350,6 +427,7 @@ class Store:
         depends_on: list[str] | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
+        _check_model(model)
         # validated before any insert - a brand new card can never be part of an existing
         # cycle or depend on itself (its id does not exist yet), so only existence matters
         cleaned_deps = list(dict.fromkeys(depends_on or []))
@@ -390,7 +468,7 @@ class Store:
                 "INSERT INTO card_criteria (id, card_id, position, text) VALUES (?, ?, ?, ?)",
                 (_new_id(), card_id, i, text),
             )
-        for glob in leases or []:
+        for glob in [_check_lease_glob(glob) for glob in leases or []]:
             self._conn.execute(
                 "INSERT INTO card_leases (id, card_id, path_glob) VALUES (?, ?, ?)",
                 (_new_id(), card_id, glob),
@@ -511,6 +589,8 @@ class Store:
         self._check_blocked_invariant(next_status, next_reason)
         if "findings_route" in fields:
             _check_findings_route(fields["findings_route"])
+        if "model" in fields:
+            _check_model(fields["model"])
 
         merged = {**fields, "status": next_status, "blocked_reason_code": next_reason}
         assignments = ", ".join(f"{key} = ?" for key in merged)
@@ -557,9 +637,17 @@ class Store:
         if key == "mall_cam_interval_seconds":
             _check_positive_int("mall_cam_interval_seconds", value)
         stored = value
-        # a list is the panel's whole-list replace and is checked path by path; a string is already
-        # json and stored as given, which mission_control_read_paths() reads tolerantly
-        if key == "mission_control_read_paths" and isinstance(value, list):
+        # a list is the panel's whole-list replace; a string arrives pre-serialized (e.g. from a
+        # card agent) and is parsed back to a list first - either way it goes through
+        # _check_read_paths before it can ever be mounted read-only into a container
+        if key == "mission_control_read_paths":
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"mission_control_read_paths must be a list of paths, not {value!r}"
+                    ) from exc
             stored = json.dumps(_check_read_paths(value)) if value else None
         if stored is None:
             self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))
@@ -592,7 +680,7 @@ class Store:
     def findings_route(self, card_id: str) -> str:
         """where this card's reviewer findings go.
 
-        the global value FORCES every card when set - fabian's reading of "global override",
+        the global value FORCES every card when set - the operator's reading of "global override",
         2026-09-10. unset, the card's own value decides, and a card with none gets the default
         """
         forced = self.get_settings()["findings_route"]

@@ -76,7 +76,7 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('pulls.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {togglePullsPanel, openPullsPanel, closePullsPanel, pl, BINDINGS};`)(SpyMenu, SpyDrawer);
+;return {togglePullsPanel, openPullsPanel, closePullsPanel, pl, BINDINGS, safeUrl};`)(SpyMenu, SpyDrawer);
 
 const flush = () => new Promise(r => setTimeout(r, 0));
 function press(code) {
@@ -172,5 +172,11 @@ responses.set('/api/pulls', stubJson(200, []));
 press('KeyV');
 await flush(); await flush();
 assert.ok(mod.pl.panel.querySelector('.hazard-placeholder'), 'nothing open renders the empty placeholder');
+
+// ---- a link target from data is only ever a web url --------------------------------------------------
+assert.equal(mod.safeUrl('https://github.com/o/r/pull/1'), 'https://github.com/o/r/pull/1');
+assert.equal(mod.safeUrl('javascript:alert(1)'), '', 'javascript: must never become a link');
+assert.equal(mod.safeUrl('data:text/html,x'), '');
+assert.equal(mod.safeUrl('not a url'), '');
 
 console.log('ok');

@@ -103,7 +103,7 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
     )
     assert status == 202
     assert body["thinking"] is True
-    assert [m["author"] for m in body["messages"]] == ["fabian"]
+    assert [m["author"] for m in body["messages"]] == ["operator"]
 
     deadline = time.time() + 5
     while time.time() < deadline:
@@ -114,7 +114,7 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
     assert status == 200
     assert body["thinking"] is False
     assert body["error"] is None
-    assert [m["author"] for m in body["messages"]] == ["fabian", "orchestrator"]
+    assert [m["author"] for m in body["messages"]] == ["operator", "orchestrator"]
     assert body["plan"] == "the plan"
     assert "model" in body
 
@@ -177,7 +177,7 @@ def test_the_same_message_id_is_accepted_once(running_server):
     status, view = _request(url, "POST", body)
     assert status == 200
     assert started == ["only once"]
-    assert [m["body"] for m in view["messages"] if m["author"] == "fabian"] == ["only once"]
+    assert [m["body"] for m in view["messages"] if m["author"] == "operator"] == ["only once"]
 
 
 def test_orchestrator_post_empty_message_is_400(running_server):
@@ -221,7 +221,7 @@ def test_conversation_walks_events_and_comments_into_one_timeline(running_server
         f"{base_url}/api/cards/{card['id']}/conversation", "POST", {"message": "please redo x"}
     )
     assert status == 201
-    assert comment["author"] == "fabian"
+    assert comment["author"] == "operator"
     assert comment["body"] == "please redo x"
 
     status, view = _request(f"{base_url}/api/cards/{card['id']}/conversation")
@@ -230,7 +230,7 @@ def test_conversation_walks_events_and_comments_into_one_timeline(running_server
     assert view["running"] is False
     assert view["delivery"] == "next_run"
     assert view["messages"][-1] == {
-        "author": "fabian",
+        "author": "operator",
         "body": "please redo x",
         "created_at": view["messages"][-1]["created_at"],
     }

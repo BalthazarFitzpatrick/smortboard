@@ -26,8 +26,19 @@ let bucketsApi = null;
 let grouped = false; // g toggles this; workstream layout itself ships post-v1
 let openCard = null; // {cardId, expander, sectionsApi, input} while a card panel is open
 
+// a 401 means this tab has no api key cookie - opened by hand rather than from the printed link
+function noteMissingKey(res) {
+  if (res.status !== 401 || document.getElementById('key-missing')) return;
+  const note = document.createElement('div');
+  note.id = 'key-missing';
+  note.className = 'hazard-label';
+  note.textContent = 'this tab has no api key - open the link smortboard printed in the terminal';
+  document.body.prepend(note);
+}
+
 async function api(path, opts) {
   const res = await fetch(path, opts);
+  noteMissingKey(res);
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.status === 204 ? null : res.json();
 }
@@ -36,6 +47,7 @@ async function api(path, opts) {
 // the caller needs the server's error text, which plain api() discards
 async function apiOrError(path, opts) {
   const res = await fetch(path, opts);
+  noteMissingKey(res);
   const body = res.status === 204 ? null : await res.json().catch(() => null);
   return {ok: res.ok, body};
 }
@@ -168,6 +180,15 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
 }
 
+// a link target from data is only ever a web url, never javascript: or data:
+function safeUrl(url) {
+  try {
+    return ['https:', 'http:'].includes(new URL(url).protocol) ? url : '';
+  } catch (err) {
+    return '';
+  }
+}
+
 
 // ---- running a card (r) -------------------------------------------------------------
 
@@ -200,7 +221,7 @@ function showRun(cardId, text, href, detail) {
   badge.textContent = '';
   // the foot is one line and must stay one line - the long version is the comment the run left
   badge.title = detail || '';
-  if (href) {
+  if (safeUrl(href)) {
     const link = document.createElement('a');
     link.className = 'pr-link';
     link.href = href;

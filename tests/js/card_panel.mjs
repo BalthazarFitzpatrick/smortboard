@@ -89,8 +89,8 @@ const waiting = mod.cardPanelHtml({...card, next_action: 'Press r to run it agai
 assert.ok(waiting.includes('<div class="card-next">next: Press r to run it again.</div>'),
   'the panel should say what to do next');
 assert.ok(!html1.includes('card-next'), 'a card with no action shows no next line');
-// a fabian comment keeps its own block, so its line breaks survive
-const commented = mod.cardPanelHtml({...card, comments: [{author: 'fabian', body: 'a\nb'}]}, outcome);
+// an operator comment keeps its own block, so its line breaks survive
+const commented = mod.cardPanelHtml({...card, comments: [{author: 'operator', body: 'a\nb'}]}, outcome);
 assert.ok(commented.includes('<div class="comment-body">a\nb</div>'), 'a comment body is its own block');
 
 // a board comment leads with its first line and closes the rest behind details
@@ -123,7 +123,7 @@ assert.ok(
   'a PR url inside the summary text should become a link, not stay as plain text');
 
 // a PR url inside a comment body
-const commentWithUrl = mod.cardPanelHtml({...card, comments: [{author: 'fabian', body: 'see https://x/pull/3'}]}, outcome);
+const commentWithUrl = mod.cardPanelHtml({...card, comments: [{author: 'operator', body: 'see https://x/pull/3'}]}, outcome);
 assert.ok(
   commentWithUrl.includes('<a class="pr-link" href="https://x/pull/3" target="_blank" rel="noreferrer">https://x/pull/3</a>'),
   'a PR url inside a comment should become a link');

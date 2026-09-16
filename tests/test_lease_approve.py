@@ -166,8 +166,8 @@ def test_approve_lease_widens_and_resumes(store):
     updated = store.get_card(card["id"])
     assert sorted(g["path_glob"] for g in updated["leases"]) == ["src/**", "ui/board.js"]
     assert updated["blocked_reason_code"] is None
-    fabian_comments = [c for c in updated["comments"] if c["author"] == "fabian"]
-    assert "ui/board.js" in fabian_comments[-1]["body"]
+    operator_comments = [c for c in updated["comments"] if c["author"] == "operator"]
+    assert "ui/board.js" in operator_comments[-1]["body"]
 
 
 def test_approve_lease_keeps_existing_globs_and_dedupes(store):

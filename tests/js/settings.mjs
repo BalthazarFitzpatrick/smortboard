@@ -16,8 +16,8 @@ const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 const EXPANDS = {'~/Documents/screenshots': '/home/op/Documents/screenshots'};
 const settingsState = {mission_control_read_paths: [], max_parallel: null};
 const boardsState = [
-  {id: 'b1', name: 'alpha', max_parallel: null},
-  {id: 'b2', name: 'beta', max_parallel: 1},
+  {id: 'b1', name: 'alpha', max_parallel: null, daily_budget_usd: null},
+  {id: 'b2', name: 'beta', max_parallel: 1, daily_budget_usd: null},
 ];
 const calls = [];
 function stubJson(status, body) {
@@ -43,6 +43,12 @@ function fetchStub(path, opts) {
         return Promise.resolve(stubJson(400, {error: 'max_parallel must be a positive integer or null'}));
       }
       board.max_parallel = body.max_parallel;
+    }
+    if ('daily_budget_usd' in body) {
+      if (body.daily_budget_usd !== null && (typeof body.daily_budget_usd !== 'number' || body.daily_budget_usd <= 0)) {
+        return Promise.resolve(stubJson(400, {error: 'daily_budget_usd must be a positive number or null'}));
+      }
+      board.daily_budget_usd = body.daily_budget_usd;
     }
     return Promise.resolve(stubJson(200, {...board}));
   }
@@ -126,23 +132,45 @@ assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel
 await flush();
 assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 4,
   'credential profiles, mission control can read, how many cards run at once, mall cam interval');
-assert.ok(mod.st.listEl.querySelector('.settings-auto-switch-checkbox'), 'the credential section carries the auto-switch toggle');
+const autoSwitchBox = mod.st.listEl.querySelector('.settings-auto-switch-checkbox');
+assert.ok(autoSwitchBox, 'the credential section carries the auto-switch toggle');
+assert.equal(autoSwitchBox.checked, false, 'rotation is opt-in - unset renders unchecked');
 assert.ok(mod.rp.listEl.querySelector('.hazard-placeholder'), 'no folders yet shows a placeholder, not nothing');
 
-// ---- the parallelism section loads the global cap and one row per board -------------------------
+// ---- checking the auto-switch box sends "on", unchecking sends null (opt-in, not opt-out) -------
+autoSwitchBox.checked = true;
+autoSwitchBox._listeners.change.forEach(fn => fn());
+await flush();
+let switchPatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+assert.deepEqual(JSON.parse(switchPatch.opts.body), {auto_switch_profiles: 'on'});
+autoSwitchBox.checked = false;
+autoSwitchBox._listeners.change.forEach(fn => fn());
+await flush();
+switchPatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+assert.deepEqual(JSON.parse(switchPatch.opts.body), {auto_switch_profiles: null});
+
+// ---- the parallelism section loads the global cap and one row per board, each with its own
+// daily budget input beside the parallel one -------------------------------------------------
 assert.equal(mod.pl.globalInput.value, '', 'an unset global cap renders as an empty field, not 0');
 const boardRows = mod.pl.boardsList.querySelectorAll('.board-row');
 assert.equal(boardRows.length, 2, 'one row per board');
 assert.equal(boardRows[0].querySelector('.board-name').textContent, 'alpha');
 assert.equal(boardRows[0].querySelector('input').value, '', 'alpha has no board-specific limit');
+assert.equal(boardRows[0].querySelectorAll('input')[1].value, '', 'alpha has no daily budget');
 assert.equal(boardRows[1].querySelector('.board-name').textContent, 'beta');
 assert.equal(boardRows[1].querySelector('input').value, '1', 'beta already carries its own limit');
+
+// ---- saving a board's daily budget PATCHes /api/boards/<id> ------------------------------------
+boardRows[0].querySelectorAll('input')[1].value = '5.5';
+boardRows[0].querySelectorAll('input')[1]._listeners.blur.forEach(fn => fn());
+await flush();
+assert.equal(boardsState[0].daily_budget_usd, 5.5, "alpha now carries its own daily budget");
 
 // ---- adding a path PATCHes the whole list, and stores the server's expanded absolute path -------
 mod.rp.input.value = '~/Documents/screenshots';
 mod.addButtonRef().onclick();
 await flush();
-const patch = calls.find(c => c.path === '/api/settings' && c.opts?.method === 'PATCH');
+const patch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
 assert.deepEqual(JSON.parse(patch.opts.body), {mission_control_read_paths: ['~/Documents/screenshots']}, 'the client sends the raw text typed - the ~ expands server-side');
 assert.deepEqual(settingsState.mission_control_read_paths, ['/home/op/Documents/screenshots'], 'the stored value is the absolute, expanded path');
 assert.equal(mod.rp.input.value, '', 'the input clears after a successful add');

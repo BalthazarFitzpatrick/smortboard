@@ -26,6 +26,13 @@ outputs/
 *.tmp
 *.bak
 
+# board db — holds card tokens' blast radius, never committed even from a local dev run
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
 # usage-watcher's transient live-resume pointer — overwritten per attempt, never meant to be
 # version controlled
 resume_session.md
