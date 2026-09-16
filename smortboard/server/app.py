@@ -37,6 +37,7 @@ from smortboard.review.landing import resolve_repo_key
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
 from smortboard.scheduler import SchedulerRegistry, conflicting_run, relabel_stale_crashes
+from smortboard.server import access
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
 from smortboard.server.runs import (
@@ -145,6 +146,10 @@ _ROLE_DEFAULTS = {
 }
 
 
+class NotJsonError(ValueError):
+    """a json route was sent a body that does not declare itself json"""
+
+
 def _version() -> str:
     try:
         return version("smortboard")
@@ -159,8 +164,12 @@ def _make_handler(
     orchestrator: OrchestratorRegistry,
     scheduler: SchedulerRegistry,
     token_path: str | None = None,
+    api_key: str | None = None,
+    bound_host: str = "127.0.0.1",
 ) -> type[BaseHTTPRequestHandler]:
     """closes over the store instance; http.server wants a class, not an instance"""
+
+    allowed_hosts = access.allowed_hostnames(bound_host)
 
     # the message ids each board's mission control already accepted, newest last - a retried or
     # second-tab send of the same message is answered as done instead of starting another turn
@@ -187,6 +196,10 @@ def _make_handler(
 
         def _dispatch(self, method: str) -> None:
             path = self.path.split("?", 1)[0]
+            refusal = self._refusal(method, path)
+            if refusal:
+                self._send_json(*refusal)
+                return
             try:
                 for pattern, route_method in _ROUTES:
                     if route_method != method:
@@ -207,9 +220,46 @@ def _make_handler(
                 self._send_json(500, {"error": f"store error: {exc}"})
             except MultipartError as exc:
                 self._send_json(400, {"error": str(exc)})
+            except NotJsonError as exc:
+                self._send_json(415, {"error": str(exc)})
             except (KeyError, TypeError, ValueError) as exc:
                 # malformed json body or a request missing a required field
                 self._send_json(400, {"error": str(exc)})
+
+        def _refusal(self, method: str, path: str) -> tuple[int, dict] | None:
+            """the status and body to refuse this request with, or None to let it through"""
+            headers = self.headers
+            if not access.host_ok(headers.get("Host"), allowed_hosts):
+                return 403, {"error": "unexpected Host header"}
+            origin, fetch_site = headers.get("Origin"), headers.get("Sec-Fetch-Site")
+            if not access.origin_ok(method, origin, fetch_site, allowed_hosts):
+                return 403, {"error": "cross-origin request refused"}
+            if api_key is None or not path.startswith("/api/"):
+                return None
+            presented = headers.get(access.KEY_HEADER) or access.cookie_value(
+                headers.get("Cookie"), self._cookie_name()
+            )
+            if not access.key_ok(presented, api_key):
+                return 401, {"error": "missing api key - open the link smortboard printed on start"}
+            return None
+
+        def _cookie_name(self) -> str:
+            return access.cookie_name(self.server.server_address[1])
+
+        def _handle_key_exchange(self) -> bool:
+            """swaps ?key= on the board page for a cookie and a clean url, so the key leaves the
+            address bar and history; True when a redirect was sent"""
+            presented = self._query().get(access.KEY_QUERY, [None])[0]
+            if api_key is None or not access.key_ok(presented, api_key):
+                return False
+            self.send_response(303)
+            self.send_header(
+                "Set-Cookie", f"{self._cookie_name()}={api_key}; Path=/; HttpOnly; SameSite=Strict"
+            )
+            self.send_header("Location", "/ui/index.html")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return True
 
         def _handle(self, method: str, path: str, **params: str) -> None:
             if path == "/health":
@@ -373,6 +423,8 @@ def _make_handler(
                 since = float(self._query().get("since", ["0"])[0])
                 self._send_json(200, board_digest(store, params["board_id"], since))
             elif "name" in params:
+                if params["name"] == "index.html" and self._handle_key_exchange():
+                    return
                 self._handle_asset(params["name"])
             else:
                 self._send_json(404, {"error": f"no route for {method} {path}"})
@@ -923,6 +975,9 @@ def _make_handler(
             length = int(self.headers.get("Content-Length", 0))
             if length == 0:
                 return {}
+            # a cross-site form can only send text/plain or form bodies, never application/json
+            if self.headers.get_content_type() != "application/json":
+                raise NotJsonError("expected Content-Type: application/json")
             return json.loads(self.rfile.read(length))
 
         def _send_json(self, status: int, payload: object) -> None:
@@ -946,7 +1001,9 @@ def build_server(
     port: int,
     host: str = "127.0.0.1",
     token_path: str | None = None,
+    api_key: str | None = None,
 ) -> HTTPServer:
+    """api_key None skips the key check (tests); the cli always passes one"""
     # a new board has no runs, so any card still mid-run lost the last board process under it
     recovered = recover_orphaned_runs(store)
     # one-time: a CRASH card blocked before the classifier learned session-limit/api-unreachable
@@ -959,7 +1016,14 @@ def build_server(
     orchestrator = OrchestratorRegistry(store.path, token_path=token_path)
     scheduler = SchedulerRegistry(store.path, runs)
     handler_cls = _make_handler(
-        store, runs, Readiness(token_path), orchestrator, scheduler, token_path=token_path
+        store,
+        runs,
+        Readiness(token_path),
+        orchestrator,
+        scheduler,
+        token_path=token_path,
+        api_key=api_key,
+        bound_host=host,
     )
     server = HTTPServer((host, port), handler_cls)
     server.runs = runs  # the cli and the tests reach the registry through the server
