@@ -1,4 +1,4 @@
-"""mission control: one message from operator, one headless turn, cards created by the board.
+"""mission control: one message from the operator, one headless turn, cards created by the board.
 
 The orchestrator proposes; it never writes the store directly. It runs in a throwaway container -
 same handoff as the reviewer (docker_available, read_card_token, token on stdin), with read-only
@@ -25,6 +25,7 @@ from typing import Any, Protocol
 
 from smortboard import profiles
 from smortboard.exec.backends import (
+    CONTAINER_HARDENING_FLAGS,
     card_image,
     container_name,
     docker_available,
@@ -32,10 +33,10 @@ from smortboard.exec.backends import (
 )
 from smortboard.exec.repo_snapshot import MOUNT_PARENT, build_repo_snapshot
 from smortboard.exec.runner import build_command, run_process
-from smortboard.operator import OPERATOR_NAME
+from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.prompts import active_prompt
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
-from smortboard.store.api import Store
+from smortboard.store.api import Store, _clean_leases, _is_catch_all
 from smortboard.telemetry import board_evidence
 
 # where a screenshot lands inside the orchestrator's re-run container - mounted read-only, and
@@ -156,7 +157,7 @@ def _clean_model(raw: Any) -> tuple[str | None, str | None]:
 
 
 _MESSAGE_HISTORY = 20
-# operator's actual comment length is unbounded, but the snapshot's cards list stays short - see
+# the operator's actual comment length is unbounded, but the snapshot's cards list stays short - see
 # _snapshot_card
 _BOARD_AUTHOR = "board"
 
@@ -233,6 +234,7 @@ def _real_runner(
                 "-i",
                 "--name",
                 name,
+                *CONTAINER_HARDENING_FLAGS,
                 *snapshot.mount_args,
                 *shot_mount,
                 "-w",
@@ -261,9 +263,11 @@ def _short_id(card_id: str) -> str:
     return card_id[:8]
 
 
-# read on the host from the default branch, never the live checkout, so a card's uncommitted
-# ledger edits never leak in; the root TASKS.jsonl is usually a symlink, hence dev_ledger first
+# a repo that still tracks its ledger is read from the default branch, so uncommitted edits never
+# leak in; otherwise the root TASKS.jsonl is an untracked symlink into a private ledger repo, read
+# from disk - card containers never see it, so nothing a card does can change it
 _LEDGER_PATHS = ("dev_ledger/TASKS.jsonl", "TASKS.jsonl")
+_LEDGER_FILE = "TASKS.jsonl"
 _OPEN_TASK_LIMIT = 80
 _LAYOUT_LIMIT = 60
 
@@ -278,20 +282,33 @@ def _git_show(path: str, ref: str, rel: str) -> str | None:
     return out.stdout if out.returncode == 0 else None
 
 
+def _ledger_rows(text: str) -> list[dict[str, Any]]:
+    rows = []
+    for line in text.splitlines():
+        try:
+            task = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(task, dict):
+            rows.append(task)
+    return rows
+
+
+def _read_ledger(repo: dict[str, Any]) -> list[dict[str, Any]]:
+    for rel in _LEDGER_PATHS:
+        rows = _ledger_rows(_git_show(repo["path"], repo["default_branch"], rel) or "")
+        if rows:
+            return rows
+    try:
+        return _ledger_rows((Path(repo["path"]) / _LEDGER_FILE).read_text())
+    except OSError:
+        return []
+
+
 def _open_tasks(repo: dict[str, Any], links: dict[str, str]) -> list[dict[str, Any]]:
     """the repo's not-done ledger tasks, trimmed for the prompt, each marked with its card if any"""
-    for rel in _LEDGER_PATHS:
-        rows = []
-        for line in (_git_show(repo["path"], repo["default_branch"], rel) or "").splitlines():
-            try:
-                task = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(task, dict):
-                rows.append(task)
-        if rows:
-            break
-    else:
+    rows = _read_ledger(repo)
+    if not rows:
         return []
     tasks = []
     for task in rows:
@@ -403,7 +420,7 @@ def _mounts_description(repo_names: list[str], extra_basenames: list[str]) -> st
 # in the turn prompt rather than ORCHESTRATOR_PROMPT: a stored prompt replaces the code default
 _LEDGER_RULES = (
     "Each repo carries `layout` (its folders with file counts) and `open_tasks` (the not-done tasks "
-    "of its dev_ledger/TASKS.jsonl). To turn a ledger task into a card, set the card's `task_id` to "
+    "of its TASKS.jsonl ledger). To turn a ledger task into a card, set the card's `task_id` to "
     "that task's id; a task with a `linked_card` already has a card, so never propose it again. "
     "Set `task_id` to null for a card that is not a ledger task. Write leases over real paths from "
     "`layout`, gitignore-style: `*` stays inside one folder, `**/` is any depth, none included."
@@ -532,19 +549,19 @@ def run_orchestrator_turn(
     screenshot_taker: ScreenshotTaker | None = None,
     mode: str = "manage",
 ) -> OrchestratorTurnResult:
-    """one full turn: store operator's message, run the orchestrator, create the cards it proposed,
+    """one full turn: store the operator's message, run the orchestrator, create the cards it proposed,
     store its reply and the new plan. a failed or unparseable run stores a board error message
     instead and leaves the plan untouched.
 
     `store_message=False` skips the store for the http path, which already stored it itself.
     a `screenshot` in the reply triggers exactly one re-run with the image readable; the
-    intermediate "let me look" reply is never shown to operator - only the re-run's reply is.
+    intermediate "let me look" reply is never shown to the operator - only the re-run's reply is.
 
     `mode` is "planning" (default) or "manage" - planning never creates a card even if the reply
     proposes some (the turn prompt tells the orchestrator so too); manage creates them as before.
     """
     if store_message:
-        store.add_orchestrator_message(board_id, "operator", message)
+        store.add_orchestrator_message(board_id, AUTHOR_KEY, message)
 
     model = store.get_settings().get("orchestrator_model") or DEFAULT_ORCHESTRATOR_MODEL
     system_prompt = active_prompt(store, "orchestrator", ORCHESTRATOR_PROMPT)
@@ -597,7 +614,7 @@ def run_orchestrator_turn(
 
     # PLANNING MODE NEVER TOUCHES A CARD. the prompt already told the orchestrator not to propose
     # any, but a reply is model output, not a contract - so the code enforces it too, and says so
-    # rather than silently dropping cards operator might expect to see created.
+    # rather than silently dropping cards the operator might expect to see created.
     if mode != "manage" and proposed:
         warnings.append(
             f"planning mode: {len(proposed)} proposed card(s) were not created - switch to "
@@ -628,7 +645,11 @@ def run_orchestrator_turn(
                     f'so "{title}" was not created'
                 )
                 continue
-        if not spec.get("leases"):
+        # a model-proposed lease is untrusted: invalid globs are dropped, and so is a catch-all
+        # like ** or */** - a human may lease the whole repo, the model may not
+        valid = _clean_leases(spec.get("leases") or [])
+        leases = [glob for glob in valid if not _is_catch_all(glob)]
+        if not leases:
             warnings.append(
                 f'"{title}" has no lease, so the board will not run it until one is set'
             )
@@ -640,7 +661,7 @@ def run_orchestrator_turn(
             description=spec.get("description") or None,
             criteria=list(spec.get("criteria") or []),
             tasks=list(spec.get("tasks") or []),
-            leases=list(spec.get("leases") or []),
+            leases=leases,
             model=model,
             ledger_task=task_id,
         )
@@ -704,7 +725,7 @@ class OrchestratorRegistry:
         mode: str = "manage",
     ) -> bool:
         """starts a turn, or refuses if one is already thinking on this board. returns whether it
-        started. `message_already_stored` lets the http handler store operator's message itself,
+        started. `message_already_stored` lets the http handler store the operator's message itself,
         synchronously, before this returns. `mode` is "planning" (talk only, never create/update a
         card) or "manage" (act on what the orchestrator proposes) - see run_orchestrator_turn."""
         with self._lock:

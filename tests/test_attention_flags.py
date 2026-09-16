@@ -1,5 +1,5 @@
 """a flagged card with no reason code is not always a decision: its latest run may have been stopped
-by operator or refused by the board, and the inbox should say which"""
+by the operator or refused by the board, and the inbox should say which"""
 
 from smortboard.attention import attention_rows
 from tests.test_attention import _board_and_card, repo, store  # noqa: F401 (fixtures)
