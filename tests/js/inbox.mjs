@@ -1,8 +1,10 @@
 // the attention inbox (n): the board-bar indicator polls and dims at zero, n opens/closes the
-// panel (not a Menu), cards render title/reason/question, answering posts and shows "resumed"
-// without eating board shortcuts, a refusal renders inline instead of clearing the card, the
-// header scope cycles all boards <-> each board with waiting cards and falls back when one
-// empties, and the list itself picks spread/fan/pile the same way a board column does.
+// panel (not a Menu), cards render as a plain vertical list of board-style overview cards - reason
+// label first, title, board, action, a clamped summary - with the answer field and lease approve
+// row shown only on the focused card. answering posts and shows "resumed" without eating board
+// shortcuts, a refusal renders inline instead of clearing the card, the header scope cycles all
+// boards <-> each board with waiting cards and falls back when one empties, and arrow keys move
+// focus card by card.
 // run: node tests/js/inbox.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
@@ -24,9 +26,7 @@ function fetchStub(path, opts) {
 }
 
 installStubDom({fetchImpl: fetchStub});
-// plenty of room - a wide, tall box so the default 3-row fixtures below always spread (regime 1)
-// unless a test deliberately shrinks it to force a fan or a pile
-stubLayout.rect = () => ({left: 0, top: 0, right: 800, bottom: 2000, width: 800, height: 2000});
+stubLayout.rect = () => ({left: 0, top: 0, right: 460, bottom: 900, width: 460, height: 900});
 responses.set('/api/boards', stubJson(200, []));
 
 const boardBar = element('div', 'board-bar');
@@ -57,8 +57,8 @@ responses.set('/api/attention', stubJson(200, ROWS));
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js'), smort('inbox.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {toggleInboxPanel, openInboxPanel, closeInboxPanel, loadInbox, cycleScope, computeInboxFit,
-  computeScopes, resolveScope, ib, BINDINGS, indicatorRef: () => indicatorEl};`)(SpyMenu, SpyDrawer);
+;return {toggleInboxPanel, openInboxPanel, closeInboxPanel, loadInbox, cycleScope,
+  computeScopes, resolveScope, reasonLabel, ib, BINDINGS, indicatorRef: () => indicatorEl};`)(SpyMenu, SpyDrawer);
 
 const flush = () => new Promise(r => setTimeout(r, 0));
 function press(code, target) {
@@ -87,14 +87,30 @@ assert.ok(mod.ib.backdrop.parentNode, 'the panel is attached once opened');
 assert.equal(mod.ib.headerLabel.textContent, 'all boards (3)', 'a single board opens scoped to all boards');
 let cards = mod.ib.panel.querySelectorAll('.inbox-card');
 assert.equal(cards.length, 3, 'all three blocked cards render as cards');
+
+// ---- the panel is a plain list, not a pile/fan - no pile or covered-card artefacts anywhere -------
+assert.equal(mod.ib.panel.querySelectorAll('.card-pile').length, 0, 'the inbox never piles cards');
+assert.equal(mod.ib.listEl.querySelectorAll('[data-covered]').length, 0, 'no card is ever marked covered');
+
+// ---- the reason label leads the card, using the human label map, not the raw code -----------------
+assert.equal(cards[0].querySelector('.inbox-reason').textContent, 'question', 'AGENT_QUESTION reads as "question"');
+assert.equal(mod.reasonLabel('LEASE_CONFLICT'), 'needs a file outside its lease');
+assert.equal(mod.reasonLabel('MADE_UP_CODE'), 'MADE_UP_CODE', 'an unknown code falls back to itself');
 assert.equal(cards[0].querySelector('.inbox-title').textContent, 'widen the lease');
-assert.equal(cards[0].querySelector('.inbox-reason').textContent, 'AGENT_QUESTION');
-assert.equal(cards[0].querySelector('.inbox-question').textContent, 'should I widen the lease?');
+assert.equal(cards[0].querySelector('.inbox-board').textContent, 'alpha');
+assert.equal(cards[0].querySelector('.inbox-summary').textContent, 'should I widen the lease?');
 // the call to action leads each card, above the note it came from
 assert.equal(cards[0].querySelector('.inbox-action').textContent,
   'next: Answer the agent\'s question in the inbox (n) - the answer resumes it.');
 assert.equal(cards[1].querySelector('.inbox-action').textContent, 'next: open the card',
   'a card with no action text still gets a line to act on');
+
+// ---- the answer field and lease-approve controls only render on the focused card ------------------
+// the panel focuses the first card as soon as it opens, so keyboard nav has somewhere to start
+assert.equal(mod.ib.focusIndex, 0, 'the first card is focused as soon as the panel opens');
+assert.ok(cards[0].querySelector('.inbox-answer'), 'the focused card shows its answer field');
+assert.equal(cards[1].querySelector('.inbox-answer'), null, 'an unfocused card shows no answer field');
+assert.equal(cards[2].querySelector('.inbox-wants'), null, 'an unfocused lease-conflict card shows no wants/approve row');
 
 // ---- header scope: one board only -> the header still lets you flip to that board's own scope ----
 mod.cycleScope(1);
@@ -107,9 +123,16 @@ assert.equal(mod.ib.headerLabel.textContent, 'alpha (3)', 'left cycles the other
 mod.cycleScope(-1);
 assert.equal(mod.ib.headerLabel.textContent, 'all boards (3)');
 
-// ---- typing in the answer input never fires a board shortcut (n does not close the panel) --------
+// ---- focus the first card again, and its answer field, for the answer/escape tests below ----------
+cards = mod.ib.panel.querySelectorAll('.inbox-card');
+cards[0].focus();
+mod.ib.focusIndex = 0;
+mod.loadInbox();
+await flush(); await flush();
 cards = mod.ib.panel.querySelectorAll('.inbox-card');
 const input0 = cards[0].querySelector('.inbox-answer');
+
+// ---- typing in the answer input never fires a board shortcut (n does not close the panel) --------
 input0.value = 'go ahead';
 press('KeyN', input0);
 assert.ok(mod.ib.backdrop.parentNode, 'n typed into the answer input must not toggle the panel');
@@ -133,6 +156,10 @@ assert.ok(status0.className.includes('inbox-ok'));
 assert.ok(input0.disabled, 'the input is disabled once answered');
 
 // ---- a refusal renders inline and leaves the input usable to try again ---------------------------
+mod.ib.focusIndex = 1;
+mod.loadInbox();
+await flush(); await flush();
+cards = mod.ib.panel.querySelectorAll('.inbox-card');
 const input1 = cards[1].querySelector('.inbox-answer');
 input1.value = 'try again';
 responses.set('/api/cards/c2/answer', stubJson(409, {error: 'this card is still running'}));
@@ -143,7 +170,11 @@ assert.equal(status1.textContent, 'this card is still running');
 assert.ok(status1.className.includes('inbox-error'));
 assert.ok(!input1.disabled, 'a refusal leaves the input open to retry');
 
-// ---- a LEASE_CONFLICT card shows the wanted paths and an approve control -------------------------
+// ---- a LEASE_CONFLICT card, once focused, shows the wanted paths and an approve control -----------
+mod.ib.focusIndex = 2;
+mod.loadInbox();
+await flush(); await flush();
+cards = mod.ib.panel.querySelectorAll('.inbox-card');
 assert.equal(cards[2].querySelector('.inbox-wants').textContent, 'wants: ui/board.js, docs/notes.md');
 assert.ok(cards[2].querySelector('.inbox-answer'), 'the answer field still shows too');
 const approveButton = cards[2].querySelector('.inbox-approve');
@@ -158,6 +189,9 @@ assert.deepEqual(JSON.parse(approveCall.opts.body), {paths: ['ui/board.js', 'doc
 
 // ---- a lease/approve refusal renders inline on that card too ---------------------------------------
 responses.set('/api/attention', stubJson(200, ROWS));
+mod.ib.focusIndex = 2;
+mod.loadInbox();
+await flush(); await flush();
 const cards3 = mod.ib.panel.querySelectorAll('.inbox-card');
 const approveButton2 = cards3[2].querySelector('.inbox-approve');
 responses.set('/api/cards/c3/lease/approve', stubJson(409, {error: 'this card is not blocked on a lease conflict'}));
@@ -168,8 +202,11 @@ assert.equal(approveStatus.textContent, 'this card is not blocked on a lease con
 assert.ok(approveStatus.className.includes('inbox-error'));
 
 // ---- arrowdown moves focus card by card, and the focused card is the one wearing tabIndex 0 -------
-cards3[0].focus();
 mod.ib.focusIndex = 0;
+mod.loadInbox();
+await flush(); await flush();
+const cardsForArrow = mod.ib.panel.querySelectorAll('.inbox-card');
+cardsForArrow[0].focus();
 fireKeydown(mod.ib.listEl, {code: 'ArrowDown', key: 'ArrowDown'});
 await flush();
 assert.equal(mod.ib.focusIndex, 1, 'arrowdown moves focus to the next card');
@@ -177,15 +214,23 @@ const focused = mod.ib.panel.querySelector('.inbox-card[data-idx="1"]');
 assert.equal(focused.tabIndex, 0, 'the focused card is the one left tabbable');
 assert.ok(focused.focused, 'the focused card actually took dom focus (wears .focus-glow via :focus)');
 assert.ok(focused.className.includes('focus-glow'), 'every inbox card wears the focus-glow treatment');
+assert.ok(focused.querySelector('.inbox-answer'), 'focus moving forward also moves the answer field with it');
+const prevCard = mod.ib.panel.querySelector('.inbox-card[data-idx="0"]');
+assert.equal(prevCard.querySelector('.inbox-answer'), null, 'the card that lost focus loses its answer field');
+
+fireKeydown(mod.ib.listEl, {code: 'ArrowUp', key: 'ArrowUp'});
+await flush();
+assert.equal(mod.ib.focusIndex, 0, 'arrowup moves focus back');
 
 // ---- escape in the answer input returns focus to its card, not to the panel ------------------------
-const card1 = cards[1];
-fireKeydown(input1, {code: 'Escape', key: 'Escape'});
-assert.ok(card1.focused, 'escape from the answer input returns focus to its card');
+const card0Again = mod.ib.panel.querySelector('.inbox-card[data-idx="0"]');
+const input0Again = card0Again.querySelector('.inbox-answer');
+fireKeydown(input0Again, {code: 'Escape', key: 'Escape'});
+assert.ok(card0Again.focused, 'escape from the answer input returns focus to its card');
 assert.ok(mod.ib.backdrop.parentNode, 'the panel itself stays open');
 
 // ---- escape on a focused card (not its field) closes the panel -------------------------------------
-fireKeydown(card1, {code: 'Escape', key: 'Escape', target: card1});
+fireKeydown(card0Again, {code: 'Escape', key: 'Escape', target: card0Again});
 assert.equal(mod.ib.backdrop.parentNode, null, 'escape on the card itself closes the panel');
 
 // ---- n again reopens it -----------------------------------------------------------------------------
@@ -207,23 +252,5 @@ assert.equal(mod.resolveScope(scopes, 'b2'), 'b2', 'a scope that still has cards
 assert.equal(mod.resolveScope(scopes, 'gone'), 'all', 'an unknown/emptied scope falls back to all boards');
 const noB2 = mod.computeScopes(ROWS); // b2 has nothing waiting any more
 assert.equal(mod.resolveScope(noB2, 'b2'), 'all', 'a scope that emptied out falls back to all boards');
-
-// ---- inbox fit: the same three regimes a board column picks, for a fixed landscape card height ----
-// plenty of room: every card fits whole, spread apart
-assert.deepEqual(mod.computeInboxFit(3, 1000, 10, 170), {regime: 1, n: 3, card: 170, piles: false, scrolls: false});
-// not enough to spread, enough to fan (each covered card still shows PEEK of itself)
-const fanFit = mod.computeInboxFit(3, 300, 10, 170);
-assert.equal(fanFit.regime, 2);
-assert.equal(fanFit.n, 3);
-assert.equal(fanFit.piles, false);
-// too few cards to bother piling (< MIN_PILED_CARDS) even with no room - still fans, and scrolls
-const tinyFit = mod.computeInboxFit(3, 50, 10, 170);
-assert.equal(tinyFit.regime, 2);
-assert.equal(tinyFit.scrolls, true);
-// enough cards and little enough room that even the fan does not fit - piled between two piles
-const piledFit = mod.computeInboxFit(8, 300, 10, 170);
-assert.equal(piledFit.regime, 3);
-assert.equal(piledFit.piles, true);
-assert.ok(piledFit.n < 8, 'the piled group holds fewer than the full count');
 
 console.log('ok');

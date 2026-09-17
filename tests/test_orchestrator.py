@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from smortboard.orchestrator import OrchestratorRegistry, run_orchestrator_turn
+from smortboard.orchestrator import OrchestratorRegistry, build_turn_prompt, run_orchestrator_turn
 from smortboard.store.api import Store
 
 
@@ -337,3 +337,27 @@ def test_the_orchestrator_budget_setting_caps_the_turn(store, board):
     store.set_setting("orchestrator_budget_usd", 3)
     run_orchestrator_turn(store, board["id"], "again", runner=run)
     assert budgets == [1.0, 3.0]
+
+
+def test_the_card_text_rules_ride_in_every_turn_prompt():
+    prompt = build_turn_prompt({"repos": []}, "hi")
+    assert "CARD TEXT RULES" in prompt
+    assert "8 to 10 words" in prompt and "at most 20 words" in prompt
+
+
+def test_long_card_text_is_reported_not_cut(store, board):
+    long_title = "one two three four five six seven eight nine ten eleven twelve"
+    long_description = " ".join(["word"] * 30)
+    payload = {
+        "reply": "ok",
+        "plan": "p",
+        "cards": [{**TWO_CARDS["cards"][0], "title": long_title, "description": long_description}],
+    }
+    run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
+    card = next(c for c in store.list_cards(board["id"]) if c["title"] == long_title)
+    assert card["description"] == long_description, "the board never shortens card text"
+    notes = [
+        m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
+    ]
+    joined = " ".join(notes)
+    assert "12 words in the title" in joined and "30 words in the description" in joined
