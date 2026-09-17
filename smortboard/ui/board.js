@@ -379,12 +379,15 @@ async function stopFocusedCard(cardId = actionableCardId()) {
 }
 
 function openStopConfirm(cardId) {
+  const returnTo = document.activeElement;
   const menu = new Menu({
     title: 'stop this run?',
     sections: [{
       kind: 'list',
       items: [
-        {id: 'stop', label: 'stop the run'},
+        // stopping spends nothing and undoes nothing - the action you already pressed k for holds
+        // focus, so enter carries it through
+        {id: 'stop', label: 'stop the run', autofocus: true},
         {id: 'keep', label: 'keep running'},
       ],
       onPick: item => {
@@ -395,6 +398,8 @@ function openStopConfirm(cardId) {
   });
   menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
   menu.el?.classList.add('menu-centered');
+  focusMenuItem(menu, 'stop');
+  returnFocusOnDismiss(menu, returnTo);
 }
 
 async function doStopCard(cardId) {
@@ -459,7 +464,10 @@ function acceptOrRejectCard(action) {
   const cardId = actionableCardId();
   if (!cardId) return;
   const verb = action === 'accept' ? 'accept' : 'reject';
-  openActionConfirm(`${verb} this card?`, verb, 'cancel', () => doAcceptOrRejectCard(action, cardId));
+  // a status a menu can move back is reversible, so the confirm opens ON the yes: enter straight
+  // after y or x carries it through without breaking the flow
+  openActionConfirm(`${verb} this card?`, verb, 'cancel',
+    () => doAcceptOrRejectCard(action, cardId), null, 'confirm');
 }
 
 async function doAcceptOrRejectCard(action, cardId) {
@@ -519,9 +527,80 @@ function toggleOverlay(key, build) {
     return;
   }
   if (openOverlay) { openOverlay.menu.close(); openOverlay = null; }
+  const returnTo = document.activeElement;
   const menu = build();
+  // a menu that refreshes once its fetch lands REPLACES its own panel, which drops focus on
+  // <body> and leaves the keyboard dead until the next key recovers it. the rebuilt panel is a
+  // plain div, so it needs the tabIndex back before it can hold focus at all
+  const refresh = menu?.refresh?.bind(menu);
+  if (refresh) {
+    menu.refresh = sections => {
+      refresh(sections);
+      if (!menu.el) return;
+      menu.el.tabIndex = -1;
+      menu.el.focus?.();
+    };
+  }
+  returnFocusOnDismiss(menu, returnTo);
   openOverlay = {key, menu};
   return menu;
+}
+
+// ---- fold (f) - merge the todo cards one agent should do as one ------------------------------
+// KEYBOARD ONLY: no board-bar button, per the operator - f is the whole affordance, and the
+// shortcut overlay is where it is written down
+
+// ASKS FIRST, every time: a fold is a model run over the whole board, not a free local action.
+// a destructive confirm, so "no" holds focus - a stray enter must never start it
+function openFoldConfirm() {
+  if (!currentBoardId) return;
+  const boardId = currentBoardId;
+  toggleOverlay('KeyF', () => {
+    const note = document.createElement('div');
+    note.className = 'fold-note';
+    note.textContent = 'an agent reads every card and the ledger, then merges the todo cards one '
+      + 'agent should do as one. this costs tokens and takes a few minutes.';
+    const menu = new Menu({
+      title: "fold this board's cards?",
+      sections: [
+        {kind: 'node', node: note},
+        {kind: 'list',
+          items: [{id: 'yes', label: 'yes, fold (y)'}, {id: 'no', label: 'no (n)', autofocus: true}],
+          onPick: item => answerFold(item.id === 'yes', boardId)},
+      ],
+      onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyF') openOverlay = null; },
+    });
+    menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    menu.el?.classList.add('menu-centered');
+    focusMenuItem(menu, 'no');
+    return menu;
+  });
+}
+
+function answerFold(yes, boardId = currentBoardId) {
+  if (openOverlay && openOverlay.key === 'KeyF') { openOverlay.menu.close(); openOverlay = null; }
+  if (yes && boardId) startFold(boardId);
+}
+
+let foldPoll = null;
+
+// the board writes its progress and the result into mission control, so that is where it shows;
+// the cards re-render once the fold is done
+async function startFold(boardId) {
+  const {ok} = await apiOrError(`/api/boards/${boardId}/fold`, {method: 'POST'});
+  drawerFor('right').open();
+  if (!ok) return; // a 409 is a fold already running, whose messages are already there
+  clearInterval(foldPoll);
+  // unref where it exists, same as followRuns: a browser has none, and a test process must not be
+  // held open for three seconds at a time by a poll nobody is watching
+  foldPoll = setInterval(async () => {
+    const state = await api(`/api/boards/${boardId}/fold`).catch(() => null);
+    if (state && state.running) return;
+    clearInterval(foldPoll);
+    foldPoll = null;
+    if (currentBoardId === boardId) await onBoardEnter(boardId);
+  }, 3000);
+  foldPoll?.unref?.();
 }
 
 // ---- agent roster (a) -----------------------------------------------------------------------
@@ -834,7 +913,7 @@ function buildPromptEditorDom() {
   // cmd/ctrl+s saves without leaving the field - both stop here so they never reach the board's
   // own keydown handler (which the typing check below already shields from every other key)
   textarea.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closePromptEditor(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(textarea); return; }
     if ((evt.metaKey || evt.ctrlKey) && evt.code === 'KeyS') { evt.preventDefault(); savePromptEditor(); }
   });
   textarea.addEventListener('input', () => { pe.drafts[pe.role] = textarea.value; });
@@ -924,7 +1003,9 @@ function openPromptEditor() {
   highlightPromptRole();
   selectPromptRole(pe.role);
   loadPromptEditor();
-  pe.textarea.focus();
+  // the panel takes focus, not the textarea: / is the way into typing here as everywhere else,
+  // and a panel that opens in typing mode swallows every board key
+  focusPanel(pe.panel);
 }
 
 function closePromptEditor() {
@@ -944,5 +1025,7 @@ function togglePromptEditor() {
 // FOCUS STARTS ON THE BOARD BAR, per the brief. returnToBoardBar was wired only to onExitTop, so
 // nothing ever focused on load and every key was dead until the user clicked - which no test saw
 loadBoards().then(() => { buildDrawers(); returnToBoardBar(); followRuns(); });
+// whether the pointer affordances are on - shortcuts.js owns the flag, board.js owns api()
+loadMouseSetting();
 // who the operator is, for their own lines in the chats and comments - "you" until the board answers
 api('/health').then(h => { if (h && h.operator) operatorName = h.operator; }).catch(() => {});

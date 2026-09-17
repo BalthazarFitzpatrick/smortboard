@@ -59,7 +59,7 @@ function buildBoardsDom() {
   const boardStatus = document.createElement('span');
   boardStatus.className = 'boards-status';
   boardNameInput.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeBoardsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     createBoardFromPanel();
@@ -122,7 +122,7 @@ function buildRepoForm() {
     input.placeholder = placeholder;
     if (value) input.value = value;
     input.addEventListener('keydown', evt => {
-      if (evt.code === 'Escape') { evt.stopPropagation(); closeBoardsPanel(); return; }
+      if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
       if (evt.code !== 'Enter') return;
       evt.preventDefault();
       registerRepoFromPanel();
@@ -340,7 +340,7 @@ function renderRepoRow(repo) {
   status.className = 'repo-edit-status';
   save.onclick = () => saveRepoEdit(repo.id, testInput.value, imageInput.value, status);
   [testInput, imageInput].forEach(input => input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeBoardsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     saveRepoEdit(repo.id, testInput.value, imageInput.value, status);
@@ -490,7 +490,9 @@ function openBoardsPanel() {
   document.addEventListener('keydown', onBoardsKey);
   bp.confirmDeleteId = null;
   renderBoardsPanel();
-  bp.boardNameInput.focus();
+  // the panel, not a field: this used to open straight into the name box, so every letter typed
+  // itself there and escape closed the whole panel from inside it
+  focusPanel(bp.panel);
 }
 
 function closeBoardsPanel() {

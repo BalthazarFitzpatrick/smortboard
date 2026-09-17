@@ -584,6 +584,14 @@ let lastDrawerEdge = null;
 // / IS THE ONE WAY INTO TYPING: the open card's comment first, else the chat of an open drawer.
 // opening a card or a drawer never focuses an input, so every letter stays a board key until /
 function focusTypingTarget() {
+  // the topmost panel owns / : its one visible field, or nothing where it has several. / never
+  // guesses between fields, and it never reaches a field under a panel standing over it
+  const surface = topSurface();
+  if (surface) {
+    const fields = surfaceFields(surface);
+    if (fields.length === 1) fields[0].focus();
+    return;
+  }
   if (openCard?.input) { openCard.input.focus(); return; }
   const edges = [lastDrawerEdge, lastDrawerEdge === 'right' ? 'left' : 'right'];
   const edge = edges.find(e => e && drawers[e]?.isOpen());

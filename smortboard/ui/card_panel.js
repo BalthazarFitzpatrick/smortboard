@@ -6,16 +6,28 @@
 
 // ---- one confirm shape for every "starts or lands work" action -------------------------------
 // same two-item menu openDeleteConfirm/openStopConfirm already use, generalised so every shortcut
-// that spends money or moves a card gets the same gate. y or enter confirms without touching the
-// mouse; escape (Menu's own handler) cancels - neither key ever reaches onConfirm on its own.
-function openActionConfirm(title, confirmLabel, cancelLabel, onConfirm, onDismiss) {
+// that spends money or moves a card gets the same gate. y confirms without touching the mouse;
+// escape (Menu's own handler) cancels - neither key ever reaches onConfirm on its own.
+
+// WHICH BUTTON THE CONFIRM OPENS ON, so a stray enter does the safe thing: a reversible move
+// (accept, reject, stop) opens on yes, anything expensive or destructive (run, model, delete,
+// run the board, fold) opens on no. enter then activates whatever is focused, Menu's own job
+function focusMenuItem(menu, id) {
+  const row = menu?.el?.querySelector?.(`.menu-item[data-id="${id}"]`);
+  if (!row) return;
+  row.tabIndex = -1;
+  row.focus();
+}
+
+function openActionConfirm(title, confirmLabel, cancelLabel, onConfirm, onDismiss, defaultTo = 'cancel') {
+  const returnTo = document.activeElement;
   const menu = new Menu({
     title,
     sections: [{
       kind: 'list',
       items: [
-        {id: 'confirm', label: confirmLabel},
-        {id: 'cancel', label: cancelLabel},
+        {id: 'confirm', label: confirmLabel, autofocus: defaultTo === 'confirm'},
+        {id: 'cancel', label: cancelLabel, autofocus: defaultTo !== 'confirm'},
       ],
       onPick: item => {
         menu.close();
@@ -26,8 +38,12 @@ function openActionConfirm(title, confirmLabel, cancelLabel, onConfirm, onDismis
   });
   menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
   menu.el?.classList.add('menu-centered');
+  focusMenuItem(menu, defaultTo === 'confirm' ? 'confirm' : 'cancel');
+  returnFocusOnDismiss(menu, returnTo);
+  // y is the explicit yes whatever holds focus; enter is deliberately NOT bound here, so it
+  // activates the focused button instead of always confirming
   menu.el?.addEventListener('keydown', evt => {
-    if (evt.key !== 'y' && evt.key !== 'Enter') return;
+    if (evt.key !== 'y') return;
     evt.preventDefault();
     evt.stopPropagation();
     menu.close();
@@ -233,6 +249,8 @@ function renderCardStrip(card) {
   });
   strip.addEventListener('keydown', evt => {
     if (withModifier(evt)) return;
+    // a panel over the board owns space and enter - they used to open this card underneath it
+    if (surfaceOverBoard()) return;
     if (evt.code !== 'Enter' && evt.code !== 'NumpadEnter' && evt.code !== 'Space') return;
     evt.preventDefault();
     // the document handler also closes on space, so a press handled here stops here
@@ -241,6 +259,24 @@ function renderCardStrip(card) {
     // second press too - it closes the card it opened
     if (evt.code === 'Space' && openCard?.expander === expander) expander.close();
     else expander.open();
+  });
+  // WITH THE MOUSE ENABLED (settings, o), the pointer does what the arrows do: hovering focuses
+  // this card, which is the same call that lights it and fans its column - one state, not two
+  strip.addEventListener('mouseenter', () => hoverFocus(strip, () => {
+    strip.tabIndex = 0;
+    strip.focus();
+    indicateCardFocus(strip);
+  }));
+  // right-click is m for the mouse: the same menu, anchored where the pointer is. the browser's
+  // own menu is suppressed on a card only, and only while the setting is on
+  strip.addEventListener('contextmenu', evt => {
+    if (!mouseAffordances()) return;
+    evt.preventDefault();
+    // the menu and the keyboard must agree on which card this is, so the click focuses it first
+    strip.tabIndex = 0;
+    strip.focus();
+    indicateCardFocus(strip);
+    openCardOverflowMenu(card.id, {x: evt.clientX, y: evt.clientY});
   });
   strip._expander = expander;
   return strip;
@@ -537,10 +573,12 @@ async function doCycleCardModel(cardId, next) {
   }
 }
 
-// ---- card overflow menu (...) - edit, delete, change model, move status ---------------------------
-// the four actions any card can take. change model reuses cycleCardModel above as-is; edit reuses
-// the same open-to-edit the strip's own Enter/Space already does - the panel is where every field
-// on a card lives, so there is nothing further to build for it. delete and move-status are new.
+// ---- the card's own menu (m, and the ⋯ trigger) - edit, model, complexity, move to, delete ------
+// THE ONLY ROUTE TO FOUR OF THESE. e, j, del and m-cycles-the-model were each their own binding;
+// they are rows here now, so the menu has to be fully operable from the keyboard: m opens it,
+// arrows move, enter picks, escape closes it and hands the card back.
+// change model reuses cycleCardModel below as-is; edit reuses the same open-to-edit the strip's
+// own Enter/Space already does - the panel is where every field on a card lives.
 
 function editCard(cardId = actionableCardId()) {
   if (!cardId || (openCard && openCard.cardId === cardId)) return;
@@ -565,32 +603,40 @@ async function moveCardStatus(cardId, status) {
   if (strip) { strip.focus(); indicateCardFocus(strip); }
 }
 
-function openMoveStatusMenu(cardId = actionableCardId()) {
+// onBack (optional) is what escape goes back TO: opened from the card menu, one level back is
+// that menu rather than the board - the same one-level rule, applied inside a menu
+function openMoveStatusMenu(cardId = actionableCardId(), onBack = null) {
   if (!cardId) return;
+  const returnTo = document.activeElement;
+  let picked = false;
   const current = document.querySelector(`.card-strip[data-card-id="${cardId}"]`)?.dataset.status;
   const menu = new Menu({
     title: 'move to',
     sections: [{
       kind: 'list',
       items: STATUSES.map(s => ({id: s, label: STATUS_LABELS[s] || s, disabled: s === current})),
-      onPick: item => { menu.close(); moveCardStatus(cardId, item.id); },
+      onPick: item => { picked = true; menu.close(); moveCardStatus(cardId, item.id); },
     }],
   });
   menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
   menu.el?.classList.add('menu-centered');
+  if (onBack) menu.onDismiss = () => { if (!picked) onBack(); };
+  else returnFocusOnDismiss(menu, returnTo);
   return menu;
 }
 
 // same two-item confirm shape as the stop-a-run menu above - a destructive action states the
 // consequence and makes the operator pick "keep it" over actually saying delete
 function openDeleteConfirm(cardId) {
+  const returnTo = document.activeElement;
   const menu = new Menu({
     title: 'delete this card?',
     sections: [{
       kind: 'list',
       items: [
         {id: 'delete', label: 'delete the card'},
-        {id: 'keep', label: 'keep it'},
+        // destructive: "keep it" holds focus, so a stray enter never deletes
+        {id: 'keep', label: 'keep it', autofocus: true},
       ],
       onPick: item => {
         menu.close();
@@ -600,6 +646,8 @@ function openDeleteConfirm(cardId) {
   });
   menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
   menu.el?.classList.add('menu-centered');
+  focusMenuItem(menu, 'keep');
+  returnFocusOnDismiss(menu, returnTo);
 }
 
 async function doDeleteCard(cardId) {
@@ -620,7 +668,9 @@ function deleteCard(cardId = actionableCardId()) {
 }
 
 // the ⋯ trigger on a card strip - always acts on that card, not whatever is focused, so a click
-// on card B's menu never touches card A even while A holds keyboard focus
+// on card B's menu never touches card A even while A holds keyboard focus.
+// `anchor` is the element it hangs under, or a {x, y} point - which is what a right-click and the
+// keyboard's own m both need
 function openCardOverflowMenu(cardId, anchor) {
   const menu = new Menu({
     title: 'card actions',
@@ -638,12 +688,25 @@ function openCardOverflowMenu(cardId, anchor) {
         if (item.id === 'edit') editCard(cardId);
         else if (item.id === 'model') cycleCardModel(cardId);
         else if (item.id === 'complexity') cycleCardComplexity(cardId);
-        else if (item.id === 'status') openMoveStatusMenu(cardId);
+        else if (item.id === 'status') openMoveStatusMenu(cardId, () => openCardActionsMenu(cardId));
         else if (item.id === 'delete') deleteCard(cardId);
       },
     }],
   });
-  const rect = anchor.getBoundingClientRect();
-  menu.openAt({x: rect.left, y: rect.bottom});
+  const rect = anchor?.getBoundingClientRect?.();
+  menu.openAt(rect ? {x: rect.left, y: rect.bottom} : {x: anchor.x, y: anchor.y});
+  // escape closes just this menu and hands the keyboard back to the card it was opened on - and
+  // stands aside where a row's own pick (delete, move to) has just opened a menu of its own
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  returnFocusOnDismiss(menu, openCard ? null : strip);
   return menu;
+}
+
+// the same menu from the keyboard (l) - anchored on the focused card's own strip, since there is
+// no click position to open against
+function openCardActionsMenu(cardId = actionableCardId()) {
+  if (!cardId) return;
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  if (!strip) return;
+  return openCardOverflowMenu(cardId, strip);
 }

@@ -52,8 +52,60 @@ async function loadAutoSwitchToggle(box) {
   }
 }
 
+// enable_mouse: the board is driven from the keyboard, and this turns on the pointer half of it -
+// hovering focuses what the arrow keys would (fanning a piled column with it), and right-click
+// opens the card menu m opens. off by default; the clicks that always worked are never gated by it
+const mouseSetting = {box: null};
+
+function buildMouseToggle() {
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.className = 'settings-enable-mouse-checkbox';
+  box.checked = false;
+
+  const row = document.createElement('label');
+  row.className = 'settings-toggle-row';
+  const text = document.createElement('span');
+  text.textContent = 'enable mouse';
+  row.append(box, text);
+
+  const note = document.createElement('div');
+  note.className = 'field-label';
+  note.textContent = 'the keyboard is how the board is driven. with this on, hovering focuses '
+    + 'what the arrows would and right-click opens the card menu.';
+
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    const {ok} = await apiOrError('/api/settings', {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enable_mouse: box.checked ? 'on' : null}),
+    });
+    box.disabled = false;
+    if (!ok) { box.checked = !box.checked; return; } // revert on a failed save
+    setMouseEnabled(box.checked); // live: no reload to start or stop hovering
+  });
+
+  const wrap = document.createElement('div');
+  wrap.className = 'settings-stack';
+  wrap.append(row, note);
+  mouseSetting.box = box;
+  return wrap;
+}
+
+async function loadMouseToggle() {
+  try {
+    const settings = await api('/api/settings');
+    mouseSetting.box.checked = settings.enable_mouse === 'on';
+    setMouseEnabled(mouseSetting.box.checked);
+  } catch {
+    // leave it unchecked - keyboard only is the safe default to fail to
+  }
+}
+
 const SETTINGS_SECTIONS = [
   {label: 'credential profiles', node: buildAutoSwitchToggle()},
+  {label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle},
 ];
 
 function settingsHazardPlaceholder(text) {
@@ -201,7 +253,7 @@ function buildReadPathsSection() {
   const status = document.createElement('span');
   status.className = 'boards-status';
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     addReadPath();
@@ -261,7 +313,7 @@ function buildGlobalParallelRow() {
   }
 
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     save();
@@ -315,7 +367,7 @@ function renderBoardParallelRow(board) {
   }
 
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     save();
@@ -348,7 +400,7 @@ function renderBoardParallelRow(board) {
   }
 
   budgetInput.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     saveBudget();
@@ -445,7 +497,7 @@ function renderSpendCapRow(cap) {
   }
 
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     save();
@@ -528,7 +580,7 @@ function buildMallCamSection() {
   }
 
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     save();
@@ -611,6 +663,8 @@ function openSettingsPanel() {
   document.body.appendChild(st.backdrop);
   document.addEventListener('keydown', onSettingsKey);
   renderSettings();
+  // the panel takes the keyboard; up/down then walk its fields and / types into one
+  focusPanel(st.panel);
 }
 
 function closeSettingsPanel() {

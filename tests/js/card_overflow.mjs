@@ -187,22 +187,28 @@ assert.ok(modelPatch && JSON.parse(modelPatch.opts.body).model === 'haiku',
   "the overflow's change model should act on the card it belongs to");
 assert.ok(!calls.some(c => c.path.startsWith('/api/cards/c2')), 'and never touch the focused card instead');
 
-// ---- each action also has its own keyboard shortcut, scoped to the focused card
+// ---- e, j and del retired into the menu: m is the only key, and every action is still two
+// presses away through it
 strip.focus();
 menus = [];
 press('KeyE');
-assert.equal(backdrops().length, 1, 'e should edit (open) the focused card');
-document._dispatch('keydown', {key: 'Escape', code: 'Escape', target: document.body});
-
-menus = [];
-press('Delete');
-assert.equal(menus.length, 1, 'the delete key should open the confirm, not delete outright');
-assert.equal(menus[0].opts.title, 'delete this card?');
-menus[0].pick('keep'); // leave the card in place for anything else that runs after this file
-
-menus = [];
 press('KeyJ');
-assert.equal(menus.length, 1, 'j should open the move-status menu for the focused card');
-assert.equal(menus[0].opts.title, 'move to');
+press('Delete');
+assert.equal(menus.length, 0, 'e, j and del are not bindings any more');
+assert.equal(backdrops().length, 0, 'and e no longer opens the focused card');
+
+menus = [];
+press('KeyM');
+assert.equal(menus.length, 1, 'm opens the focused card\'s menu');
+assert.equal(menus[0].opts.title, 'card actions');
+menus[0].pick('delete');
+assert.equal(menus.length, 2, 'delete from the menu still asks first');
+assert.equal(menus[1].opts.title, 'delete this card?');
+menus[1].pick('keep'); // leave the card in place for anything else that runs after this file
+
+menus = [];
+press('KeyM');
+menus[0].pick('status');
+assert.equal(menus[1].opts.title, 'move to', 'move to opens as the menu\'s own submenu');
 
 console.log('ok');

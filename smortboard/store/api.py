@@ -48,6 +48,9 @@ COMPLEXITY_LEVELS = (1, 2, 3)
 # parks the board until the reset instead, the pre-profiles behaviour
 # mall_cam_interval_seconds is the workforce drawer's auto-cycle period (cf90bacc) - unset means
 # chat.js's own default (10)
+# enable_mouse turns on the pointer affordances that mirror the keyboard - hover focusing a card,
+# right-click opening its menu. "on" enables them; unset (the default) is keyboard only. it never
+# gates the clicks that always worked: a card, the overflow button, a menu row, a panel's buttons
 _SETTING_KEYS = (
     "findings_route",
     "orchestrator_model",
@@ -58,6 +61,7 @@ _SETTING_KEYS = (
     "gate_timeout_seconds",
     "auto_switch_profiles",
     "mall_cam_interval_seconds",
+    "enable_mouse",
     "worker_budget_usd",
     "reviewer_budget_usd",
     "orchestrator_budget_usd",

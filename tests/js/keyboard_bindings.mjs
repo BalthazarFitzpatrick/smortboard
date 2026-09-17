@@ -66,8 +66,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
-  'KeyG', 'KeyW', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
-  'KeyE', 'KeyJ', 'Delete',
+  'KeyG', 'KeyW', 'KeyF', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
   'KeyT', 'KeyS',
   'KeyP', 'KeyN', 'KeyV', 'KeyQ', 'KeyH', 'KeyO', 'KeyB', 'Slash', 'Comma', 'Period',
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
@@ -177,6 +176,22 @@ press('KeyX');
 assert.equal(openedMenus[openedMenus.length - 1].title, 'reject this card?', 'x should confirm before posting');
 openedMenus[openedMenus.length - 1].menu.pick('confirm');
 assert.ok(fetchCalls.includes('/api/cards/c9/reject'), 'confirming should post reject for the focused card');
+
+// ---- f asks before it folds: n and a second f close the question with no run, y posts the fold
+// for the open board, and y answering the question never also accepts the focused card
+{
+  mod.setBoard('b1');
+  const accepts = () => fetchCalls.filter(p => p === '/api/cards/c9/accept').length;
+  const acceptsBefore = accepts();
+  press('KeyF');
+  assert.equal(openedMenus[openedMenus.length - 1].title, "fold this board's cards?");
+  press('KeyN');
+  press('KeyF'); press('KeyF');
+  assert.ok(!fetchCalls.includes('/api/boards/b1/fold'), 'n and a second f close it without a run');
+  press('KeyF'); press('KeyY');
+  assert.ok(fetchCalls.includes('/api/boards/b1/fold'), 'y posts the fold for the open board');
+  assert.equal(accepts(), acceptsBefore, 'y answers the fold question, it never accepts the card');
+}
 
 // ---- p opens the prompt editor (not a Menu, so it never shows up in openedMenus) and p again closes it
 press('KeyP');

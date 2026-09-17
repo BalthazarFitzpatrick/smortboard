@@ -132,11 +132,28 @@ assert.ok(!boardBar.children.includes(button), 'the button must not live inside 
 button.onclick();
 assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel');
 
-// ---- the panel renders all five sections: credential profiles, mission control can read,
+// ---- the panel renders all six sections: credential profiles, mouse, mission control can read,
 // parallelism, spend caps, mall cam interval (cf90bacc)
 await flush();
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 5,
-  'credential profiles, mission control can read, how many cards run at once, spend caps, mall cam interval');
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 6,
+  'credential profiles, mouse, mission control can read, how many cards run at once, spend caps, mall cam interval');
+
+// ---- the mouse is opt-in: unset renders unchecked, and ticking it PATCHes "on" ------------------
+{
+  const mouseBox = mod.st.listEl.querySelector('.settings-enable-mouse-checkbox');
+  assert.ok(mouseBox, 'the panel carries the enable-mouse toggle');
+  assert.equal(mouseBox.checked, false, 'the mouse is off by default');
+  mouseBox.checked = true;
+  mouseBox._listeners.change.forEach(fn => fn());
+  await flush();
+  const patch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+  assert.deepEqual(JSON.parse(patch.opts.body), {enable_mouse: 'on'});
+  mouseBox.checked = false;
+  mouseBox._listeners.change.forEach(fn => fn());
+  await flush();
+  const off = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+  assert.deepEqual(JSON.parse(off.opts.body), {enable_mouse: null}, 'unticking clears it');
+}
 
 // ---- spend caps: blank is the default, a value is PATCHed under its own key ----------------------
 {

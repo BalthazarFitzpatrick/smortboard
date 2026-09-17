@@ -112,7 +112,7 @@ function buildAddForm() {
   submit.onclick = submitAdd;
   [nameInput, tokenInput].forEach(input => {
     input.addEventListener('keydown', evt => {
-      if (evt.code === 'Escape') { evt.stopPropagation(); closeProfilesPanel(); return; }
+      if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
       if (evt.code !== 'Enter') return;
       evt.preventDefault();
       submitAdd();
@@ -233,6 +233,7 @@ function openProfilesPanel() {
   document.body.appendChild(pr.backdrop);
   document.addEventListener('keydown', onProfilesKey);
   loadProfiles();
+  focusPanel(pr.panel);
 }
 
 function closeProfilesPanel() {

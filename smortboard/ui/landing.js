@@ -135,6 +135,7 @@ function openLandingPanel() {
   document.body.appendChild(ld.backdrop);
   document.addEventListener('keydown', onLandingKey);
   loadLanding();
+  focusPanel(ld.panel);
   ld.timer = setInterval(loadLanding, LANDING_REFRESH_MS);
 }
 
