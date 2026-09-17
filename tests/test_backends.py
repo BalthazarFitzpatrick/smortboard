@@ -613,3 +613,16 @@ def test_on_process_reaches_run_card(tmp_path, monkeypatch):
         None, "card", tmp_path, "prompt", tmp_path / "s.json", on_process=sentinel
     )
     assert received == [sentinel]
+
+
+def test_the_worker_budget_setting_caps_the_card_run(tmp_path):
+    with Store(tmp_path / "b.db") as store:
+        default = ContainerBackend(image="img")._docker_command(
+            tmp_path / "clone", "p", tmp_path / "s.json", "sonnet", None, store
+        )
+        store.set_setting("worker_budget_usd", 7.5)
+        capped = ContainerBackend(image="img")._docker_command(
+            tmp_path / "clone", "p", tmp_path / "s.json", "sonnet", None, store
+        )
+    assert "--max-budget-usd 5.0" in shlex.join(default)
+    assert "--max-budget-usd 7.5" in shlex.join(capped)

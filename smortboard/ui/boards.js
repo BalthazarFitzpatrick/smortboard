@@ -245,15 +245,15 @@ function setBoardStatus(text, isError = false) {
 }
 
 // the folder menu opens in place, like the review tool's save dialog: '..' and each subfolder, git
-// repos marked. the create button only appears once the folder open in it is a git repo
-async function openLocalRepoPicker(anchor) {
+// repos marked. `action` is the one button it offers, shown only for a folder `action.when` accepts
+async function openFolderPicker(anchor, {title, action, onError}) {
   const first = await apiOrError('/api/folders');
-  if (!first.ok) { setBoardStatus((first.body && first.body.error) || 'could not list folders', true); return; }
+  if (!first.ok) { onError((first.body && first.body.error) || 'could not list folders'); return; }
   let where = first.body;
   let menu = null;
   const open = async under => {
     const next = await apiOrError('/api/folders?under=' + encodeURIComponent(under));
-    if (!next.ok) { setBoardStatus((next.body && next.body.error) || 'could not open that folder', true); return; }
+    if (!next.ok) { onError((next.body && next.body.error) || 'could not open that folder'); return; }
     where = next.body;
     menu.refresh(build());
   };
@@ -268,12 +268,20 @@ async function openLocalRepoPicker(anchor) {
       ],
       onPick: item => open(item.id),
     },
-    ...(where.repo ? [{kind: 'buttons', buttons: [
-      {label: 'create board from this repo', tone: 'adds', onClick: m => createBoardFromRepo(where.here, m)},
+    ...(action.when(where) ? [{kind: 'buttons', buttons: [
+      {label: action.label, tone: 'adds', onClick: m => action.run(where.here, m)},
     ]}] : []),
   ];
-  menu = new Menu({title: 'board from local repo', persistent: true, sections: build()});
+  menu = new Menu({title, persistent: true, sections: build()});
   menu.openAt(anchor);
+}
+
+function openLocalRepoPicker(anchor) {
+  return openFolderPicker(anchor, {
+    title: 'board from local repo',
+    action: {label: 'create board from this repo', when: where => where.repo, run: createBoardFromRepo},
+    onError: text => setBoardStatus(text, true),
+  });
 }
 
 async function createBoardFromRepo(path, menu) {

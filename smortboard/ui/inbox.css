@@ -1,12 +1,17 @@
 /* attention inbox (n): the top-right indicator on the board bar, and the panel it opens.
    every visual primitive - toggle, panel-floating, h-divider, field-label, text-field, hazard
-   stripes - comes from base.css; this file only positions and sizes them for the inbox. */
+   stripes, card-pile - comes from base.css; this file only positions and sizes them for the inbox.
+   the list itself wears .bucket-rows (layout.css) so its spread/fan/pile css comes free and can
+   never drift from what a board column draws - only .inbox-card's own look is new here. */
+
+:root {
+  /* every inbox card, whichever regime draws it, is this tall at rest - a landscape shape wide
+     enough to read title + question without the aspect-ratio square .card uses elsewhere */
+  --inbox-card-height: 240px;
+}
 
 .attention-indicator {
-  position: fixed;
-  z-index: 5;
-  top: 6px;
-  right: var(--inset-x, 15px);
+  order: 3;
   min-width: 20px;
   height: calc(var(--row-height, 31px) * 0.56 + 5px);
   padding: 0 8px;
@@ -25,32 +30,69 @@
 }
 
 .inbox-panel {
-  width: min(720px, 90vw);
-  max-height: 80vh;
+  width: min(900px, 90vw);
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
-  gap: var(--gap, 8px);
+  gap: 0;
+  padding: 0;
+}
+
+/* fixed above the list - it never scrolls with it. same row height and bordered-row look the
+   board's own controls use, so it reads as part of the same control language */
+.inbox-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: var(--row-height, 31px);
+  padding: 14px;
+  border-bottom: 2px solid var(--grey-border);
+}
+.inbox-nav {
+  min-width: var(--row-height, 31px);
+  justify-content: center;
+  font-weight: 700;
+}
+.inbox-scope-label {
+  color: var(--cream);
+  font-weight: 600;
+  min-width: 220px;
+  text-align: center;
 }
 
 .inbox-list {
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 260px;
+  padding: 14px;
+  overflow: hidden;
 }
 
-.inbox-row {
-  padding: var(--gap, 8px) 0;
+/* the landscape card: wider than tall, a fixed height set inline by inbox.js's fit (never by
+   css), the same title-band-then-body shape .card uses but without its 1/1.2 aspect ratio, and
+   the attention edge every row in this panel wears since everything here is waiting on you */
+.inbox-card {
+  border: 2px solid var(--grey-border);
+  border-left: 4px solid var(--fill-attention, var(--attention));
+  background: var(--panel-row);
+  padding: 8px 12px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  cursor: pointer;
+  overflow: hidden;
 }
-.inbox-row:first-child .h-divider { display: none; }
+.inbox-list > .inbox-card { flex-shrink: 0; }
+.inbox-list > .card-pile { flex-shrink: 0; }
 
 .inbox-row-head {
   display: flex;
   align-items: baseline;
   gap: 12px;
   flex-wrap: wrap;
+  flex: 0 0 auto;
 }
 .inbox-title {
   font-weight: 600;
@@ -61,17 +103,25 @@
 
 /* what to do, before why - the one line a scan of the inbox should land on */
 .inbox-action {
+  flex: 0 0 auto;
   color: var(--fill-attention, var(--attention));
   font-weight: 600;
 }
 
 .inbox-question {
+  flex: 1 1 auto;
+  min-height: 0;
   white-space: pre-wrap;
   color: var(--text);
   line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 7;
+  -webkit-box-orient: vertical;
 }
 
 .inbox-answer-row {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -83,6 +133,7 @@
 .inbox-status.inbox-error { color: var(--status-warn); }
 
 .inbox-lease-approve {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;

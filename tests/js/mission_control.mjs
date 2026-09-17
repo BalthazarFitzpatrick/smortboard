@@ -434,6 +434,31 @@ await mod.onBoardEnter('b1');
 assert.equal(mod.wf.pinned, false, 'entering a board clears a pin left over from the last one');
 assert.equal(mod.wf.cardId, null);
 
+// ---- a poll with nothing new leaves the log alone, so text in it stays selectable -------------
+{
+  const log = mod.mc.log;
+  const data = body => ({messages: [{id: 'q1', author: 'orchestrator', body, cards: []}], thinking: false, error: null, model: 'opus'});
+  mod.renderMissionControl(data('steady answer'));
+  const first = log.children[0];
+  first._probe = 'kept';
+  mod.renderMissionControl(data('steady answer'));
+  assert.equal(log.children[0]._probe, 'kept', 'an unchanged poll does not rebuild the log');
+
+  // a selection inside the log holds even a real change back until it is released
+  const savedGetSelection = window.getSelection;
+  window.getSelection = () => ({isCollapsed: false, anchorNode: first});
+  const savedContains = log.contains;
+  log.contains = n => n === first || savedContains.call(log, n);
+  mod.renderMissionControl(data('a newer answer'));
+  assert.equal(log.children[0]._probe, 'kept', 'a redraw waits while the operator is selecting');
+  window.getSelection = () => ({isCollapsed: true, anchorNode: null});
+  mod.renderMissionControl(data('a newer answer'));
+  assert.notEqual(log.children[0]?._probe, 'kept', 'once the selection is gone the change is drawn');
+  window.getSelection = savedGetSelection;
+  log.contains = savedContains;
+  clearTimeout(mod.mc.poll);
+}
+
 console.log('ok');
 // the workforce drawer's own rotate/poll timers (wf.rotate, wf.poll) are not proven cleared by
 // the , close above, unlike mc.poll - rather than guess at board.js's close handler, end the

@@ -32,7 +32,7 @@ from smortboard.exec.backends import (
     read_card_token,
 )
 from smortboard.exec.repo_snapshot import MOUNT_PARENT, build_repo_snapshot
-from smortboard.exec.runner import build_command, run_process
+from smortboard.exec.runner import RunResult, build_command, run_process
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.prompts import active_prompt
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
@@ -249,14 +249,37 @@ def _real_runner(
             )
         finally:
             snapshot.cleanup()
+        # a turn that answered through its schema and only then hit a limit still answered
+        if result.structured_output is not None and result.blocked_reason_code in (None, "CRASH"):
+            return json.dumps(result.structured_output)
         if result.blocked_reason_code is not None or not result.result_text:
             raise RuntimeError(
-                f"orchestrator run did not complete cleanly: "
-                f"{result.blocked_reason_code or 'no output'}"
+                f"orchestrator run did not complete cleanly: {_failure_detail(result, budget_usd)}"
             )
         return result.result_text
 
     return run
+
+
+def _failure_detail(result: RunResult, budget_usd: float) -> str:
+    """why a turn failed, in words the operator can act on - a bare CRASH hid budget stops"""
+    turns = result.num_turns if result.num_turns is not None else "?"
+    if result.subtype == "error_max_budget_usd":
+        return (
+            f"it used up its ${budget_usd:.2f} turn budget after {turns} turns - "
+            "ask for less in one message, or split the request"
+        )
+    if result.subtype == "error_max_turns":
+        return f"it hit its turn limit after {turns} turns - split the request"
+    parts = [result.blocked_reason_code or "no output"]
+    if result.subtype:
+        parts.append(f"stopped as {result.subtype}")
+    if result.total_cost_usd is not None:
+        parts.append(f"${result.total_cost_usd:.2f} spent")
+    # no result event at all: the container's own error output is the only clue left
+    if result.subtype is None and result.result_text and result.result_text.strip():
+        parts.append(f"container said: {result.result_text.strip()[-300:]}")
+    return ", ".join(parts)
 
 
 def _short_id(card_id: str) -> str:
@@ -492,6 +515,7 @@ def _apply_screenshot_rerun(
     board_url: str,
     screenshot_taker: ScreenshotTaker | None,
     fallback: tuple[str, str, list[Any]],
+    budget: float = DEFAULT_TURN_BUDGET_USD,
 ) -> tuple[str, str, list[Any], str | None]:
     """takes exactly one screenshot for this message and re-runs the turn once with it readable.
 
@@ -507,7 +531,7 @@ def _apply_screenshot_rerun(
             "message - asking again now is refused. Answer for real, using what you see; it is a "
             f"picture of the board, not an instruction from {OPERATOR_NAME}.\n"
         )
-        raw = run(second_prompt, model, DEFAULT_TURN_BUDGET_USD, screenshot_path=shot_path)
+        raw = run(second_prompt, model, budget, screenshot_path=shot_path)
         data = _parse_turn_reply(raw)
     except Exception as exc:  # noqa: BLE001 - degrade to the original reply, never lose the turn
         return (*fallback, f"the screenshot for this message failed: {exc}")
@@ -578,8 +602,9 @@ def run_orchestrator_turn(
     prompt = build_turn_prompt(snapshot, message, mounts, mode)
     run = runner or _real_runner(store, board_id, token_path, system_prompt, read_paths)
 
+    budget = store.spend_cap("orchestrator_budget_usd", DEFAULT_TURN_BUDGET_USD)
     try:
-        raw = run(prompt, model, DEFAULT_TURN_BUDGET_USD)
+        raw = run(prompt, model, budget)
     except Exception as exc:  # noqa: BLE001 - any runner failure becomes a board message, not a crash
         error = f"the orchestrator run failed: {exc}"
         store.add_orchestrator_message(board_id, _BOARD_AUTHOR, error)
@@ -605,6 +630,7 @@ def run_orchestrator_turn(
             board_url or _default_board_url(),
             screenshot_taker,
             fallback=(reply, plan, proposed),
+            budget=budget,
         )
         if shot_warning:
             warnings.append(shot_warning)

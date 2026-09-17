@@ -19,7 +19,8 @@ function scheduleStatusEl() {
     el.id = 'schedule-status';
     el.className = 'schedule-status';
     el.hidden = true;
-    document.getElementById('board-bar').appendChild(el);
+    // the bar corner, not #board-bar: a board list reload would wipe it from there
+    barCorner().appendChild(el);
   }
   return el;
 }

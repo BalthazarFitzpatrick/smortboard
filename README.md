@@ -184,8 +184,9 @@ every working card. A note sent here reaches a running agent at its next step.
 <td width="50%" valign="top">
 <img src="docs/images/inbox.jpg" alt="Attention inbox" width="100%"><br>
 <b>Attention inbox</b> <code>n</code><br>
-Every card waiting on you, across every board, oldest first. An answer resumes the card in its own
-worktree; a lease conflict can be approved in one action.
+A fixed header switches the list between all boards and one board (arrow keys or click); the cards
+below lay out spread, fanned or piled the same way a board column does. An answer resumes the card
+in its own worktree; a lease conflict can be approved in one action.
 </td>
 <td width="50%" valign="top">
 <img src="docs/images/digest.jpg" alt="Morning digest" width="100%"><br>
@@ -312,8 +313,10 @@ A lease is the list of files a card may change, as gitignore-style globs relativ
 
 ### Spend
 
-- Each worker run is capped at $5 (`--max-budget-usd`), and reviewer findings go back to the worker
-  at most twice.
+- Every run has a dollar cap (`--max-budget-usd`), set per role in settings (`o`): a card run
+  $5.00, a review $1.50, a mission control turn $1.00 and a fold $2.00 unless you change them.
+  Reviewer findings go back to the worker at most twice. A mission control turn that runs out says
+  so, rather than reporting a crash.
 - A board can carry a **daily budget** in dollars (settings, `o`). Once today's spend reaches it, no
   new run starts on that board; running cards finish.
 - On a usage limit the board **waits for the reset**. Switching to another credential profile only
@@ -378,6 +381,19 @@ The card token is a model-only `claude setup-token`, separate from your own logi
 
 The board never reads Claude Code's own login, and a card never sees it.
 
+**A mode-600 file is not a shortcut.** It is how Claude Code itself keeps credentials on Linux, and
+where macOS falls back to when the Keychain refuses a write
+([Claude Code docs: credential management](https://code.claude.com/docs/en/authentication.md)):
+
+| OS | Claude Code's own login |
+|---|---|
+| Linux | `~/.claude/.credentials.json`, plain JSON, mode 600 |
+| macOS | the encrypted Keychain; `~/.claude/.credentials.json` (mode 600) when the Keychain is locked, e.g. over SSH |
+| Windows | `%USERPROFILE%\.claude\.credentials.json`, restricted by the user profile's access controls |
+
+The card token follows the same rule: a file only your user can read, refused if it is any looser.
+`claude setup-token` saves nothing itself, which is why the token has to be stored by hand.
+
 ### Repos and their test command
 
 A repo must already exist on GitHub with its default branch pushed; the board registers it, it
@@ -410,9 +426,32 @@ memory limit (Settings → Resources) and lower `max_parallel` if it is tight.
 
 Board-wide settings (`PATCH /api/settings`, most also in the settings panel `o`): `findings_route`,
 `orchestrator_model`, `worker_model`, `reviewer_model`, `max_parallel`, `resume_briefing`,
-`gate_timeout_seconds`, `auto_switch_profiles`, `mall_cam_interval_seconds`, and
-`mission_control_read_paths` (absolute paths mission control may also read). Per board
+`gate_timeout_seconds`, `auto_switch_profiles`, `mall_cam_interval_seconds`, the per-run caps
+`worker_budget_usd`, `reviewer_budget_usd`, `orchestrator_budget_usd` and `fold_budget_usd`, and
+`mission_control_read_paths` (absolute paths mission control may also read; `browse` in the
+settings panel picks them from a folder list). Per board
 (`PATCH /api/boards/<id>`): its own parallel cap and `daily_budget_usd`.
+
+### Keep main for people
+
+The board and your own Claude Code sessions work best with a `development` branch that agents merge
+into and a `main` only a person merges into. [docs/protect-main.md](docs/protect-main.md) sets that
+up in three steps:
+
+1. create and push `development`, and register it as the repo's default branch
+2. install [`tools/claude-hooks/protect-main.sh`](tools/claude-hooks/protect-main.sh), a Claude Code
+   hook that lets agents merge pull requests into `development` and refuses committing on, pushing
+   to or merging into `main`
+3. add the GitHub ruleset in [`tools/github/protect-main.json`](tools/github/protect-main.json), so
+   `main` stays protected against anything the hook can't see
+
+The hook, for this repo, goes in `.claude/settings.json`:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+  {"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/tools/claude-hooks/protect-main.sh"}
+]}]}}
+```
 
 ### Landing lock
 

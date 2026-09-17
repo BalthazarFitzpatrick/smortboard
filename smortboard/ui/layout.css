@@ -19,6 +19,8 @@ body {
   display: flex;
   gap: 8px;
   padding: 6px var(--inset-x, 15px);
+  /* room for the fixed bar corner, so a long row of board tabs stops short of it */
+  padding-right: calc(var(--inset-x, 15px) + var(--bar-corner-width, 0px) + 16px);
   border-bottom: 2px solid var(--grey-border);
   flex: 0 0 auto;
 }
@@ -480,15 +482,24 @@ body {
 }
 .comment-body { line-height: 1.4; }
 
-/* ---- settings (o): the top-right button and the panel it opens ------------------------------
-   NOT inside #board-bar - board.js's renderBoardBar() wipes it on every board list load, the same
-   gotcha the attention indicator (inbox.js) already found. fixed beside that indicator instead,
-   inset far enough that a two-digit attention count never runs under it. */
-.settings-button {
+/* ---- the bar corner: queue status, settings, attention count ---------------------------------
+   one fixed row at the board bar's top-right (board.js barCorner), ordered left to right and
+   spaced by the flex gap, so a growing status or a two-digit count pushes its neighbours instead of
+   drawing over them */
+.bar-corner {
   position: fixed;
   z-index: 5;
   top: 6px;
-  right: calc(var(--inset-x, 15px) + 60px);
+  right: var(--inset-x, 15px);
+  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ---- settings (o): the button in the bar corner and the panel it opens ---------------------- */
+.settings-button {
+  order: 2;
   height: calc(var(--row-height, 31px) * 0.56 + 5px);
   padding: 0 12px;
   display: flex;
@@ -517,3 +528,30 @@ body {
   flex-direction: column;
   gap: 4px;
 }
+/* a section's own blocks - list, add row, grid - are spaced evenly, so none sits flush against the
+   next while a gap opens above it */
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap, 8px);
+}
+.settings-panel .hazard-placeholder { min-height: 72px; box-sizing: border-box; }
+/* the folder picker opened from settings sits over the settings backdrop, as it does over boards' */
+.settings-backdrop ~ .menu-panel { z-index: 61; }
+
+/* rows of label and fields on one grid, so the fields line up whatever the label's length. a row
+   is display: contents, its cells land in the grid itself */
+.settings-panel .settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px 110px;
+  gap: 6px 10px;
+  align-items: center;
+}
+.settings-panel .settings-grid.settings-grid-two { grid-template-columns: minmax(0, 1fr) 110px; }
+.settings-grid > .settings-grid-row { display: contents; }
+.settings-grid .field-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-grid .text-field { width: 100%; min-width: 0; box-sizing: border-box; }
+.settings-grid-head .field-label { color: var(--text-dim); }
+.settings-grid .settings-grid-note { grid-column: 1 / -1; }
+/* an empty status still takes a flex gap, pushing its row's right edge in from the grid's */
+.settings-panel .boards-status:empty { display: none; }

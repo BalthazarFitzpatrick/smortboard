@@ -791,3 +791,18 @@ def test_no_test_command_gets_a_short_pointer_at_the_repo_setting(board, monkeyp
     result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
     assert result.phase == "refused"
     assert result.refusal == "repo has no test command - set it in b"
+
+
+def test_the_reviewer_budget_setting_reaches_the_review(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    budgets = []
+
+    def review(*args, **kwargs):
+        budgets.append(kwargs.get("budget_usd"))
+        return ReviewResult(approved=True, findings=[])
+
+    monkeypatch.setattr(lifecycle, "run_review", review)
+    store.set_setting("reviewer_budget_usd", 0.75)
+    lifecycle.run_card_lifecycle(store, card_id, backend=_ModelBackend())
+    assert budgets == [0.75]

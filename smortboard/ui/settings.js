@@ -66,6 +66,19 @@ function settingsHazardPlaceholder(text) {
   return box;
 }
 
+// a grid's column captions, as a row whose cells sit in the grid itself
+function settingsGridHeader(captions) {
+  const row = document.createElement('div');
+  row.className = 'settings-grid-row settings-grid-head';
+  captions.forEach(text => {
+    const cell = document.createElement('span');
+    cell.className = 'field-label';
+    cell.textContent = text;
+    row.appendChild(cell);
+  });
+  return row;
+}
+
 function clearChildren(el) {
   [...el.children].forEach(child => child.remove());
 }
@@ -74,7 +87,7 @@ function clearChildren(el) {
 // mounting them is a separate card (out of scope here) - this only maintains the path list, via
 // the same whole-list-replace PATCH /api/settings the other board-wide values already use.
 
-const rp = {input: null, listEl: null, statusEl: null};
+const readPaths = {input: null, listEl: null, statusEl: null};
 
 function renderReadPathRow(path) {
   const row = document.createElement('div');
@@ -100,16 +113,16 @@ async function loadReadPaths() {
   try {
     paths = await currentReadPaths();
   } catch (err) {
-    clearChildren(rp.listEl);
-    rp.listEl.appendChild(settingsHazardPlaceholder(`could not load: ${err.message}`));
+    clearChildren(readPaths.listEl);
+    readPaths.listEl.appendChild(settingsHazardPlaceholder(`could not load: ${err.message}`));
     return;
   }
-  clearChildren(rp.listEl);
+  clearChildren(readPaths.listEl);
   if (!paths.length) {
-    rp.listEl.appendChild(settingsHazardPlaceholder('no folders yet'));
+    readPaths.listEl.appendChild(settingsHazardPlaceholder('no folders yet'));
     return;
   }
-  paths.forEach(path => rp.listEl.appendChild(renderReadPathRow(path)));
+  paths.forEach(path => readPaths.listEl.appendChild(renderReadPathRow(path)));
 }
 
 async function patchReadPaths(paths) {
@@ -121,19 +134,19 @@ async function patchReadPaths(paths) {
 }
 
 async function addReadPath() {
-  const raw = rp.input.value.trim();
+  const raw = readPaths.input.value.trim();
   if (!raw) return;
-  rp.statusEl.textContent = 'adding...';
-  rp.statusEl.className = 'boards-status';
+  readPaths.statusEl.textContent = 'adding...';
+  readPaths.statusEl.className = 'boards-status';
   const existing = await currentReadPaths();
   const {ok, body} = await patchReadPaths([...existing, raw]);
   if (!ok) {
-    rp.statusEl.textContent = (body && body.error) || `could not add ${raw}`;
-    rp.statusEl.className = 'boards-status boards-error';
+    readPaths.statusEl.textContent = (body && body.error) || `could not add ${raw}`;
+    readPaths.statusEl.className = 'boards-status boards-error';
     return;
   }
-  rp.input.value = '';
-  rp.statusEl.textContent = '';
+  readPaths.input.value = '';
+  readPaths.statusEl.textContent = '';
   await loadReadPaths();
 }
 
@@ -141,8 +154,8 @@ async function removeReadPath(path) {
   const existing = await currentReadPaths();
   const {ok, body} = await patchReadPaths(existing.filter(p => p !== path));
   if (!ok) {
-    rp.statusEl.textContent = (body && body.error) || `could not remove ${path}`;
-    rp.statusEl.className = 'boards-status boards-error';
+    readPaths.statusEl.textContent = (body && body.error) || `could not remove ${path}`;
+    readPaths.statusEl.className = 'boards-status boards-error';
     return;
   }
   await loadReadPaths();
@@ -150,6 +163,7 @@ async function removeReadPath(path) {
 
 function buildReadPathsSection() {
   const box = document.createElement('div');
+  box.className = 'settings-stack';
 
   const list = document.createElement('div');
   list.className = 'boards-list';
@@ -164,6 +178,26 @@ function buildReadPathsSection() {
   add.className = 'toggle';
   add.textContent = 'add';
   add.onclick = () => addReadPath();
+  // the same folder picker boards use, so a path is chosen rather than typed
+  const browse = document.createElement('span');
+  browse.className = 'toggle';
+  browse.textContent = 'browse';
+  browse.onclick = () => openFolderPicker(browse, {
+    title: 'a folder mission control can read',
+    action: {
+      label: 'add this folder',
+      when: () => true,
+      run: async (path, menu) => {
+        menu.close();
+        readPaths.input.value = path;
+        await addReadPath();
+      },
+    },
+    onError: text => {
+      readPaths.statusEl.textContent = text;
+      readPaths.statusEl.className = 'boards-status boards-error';
+    },
+  });
   const status = document.createElement('span');
   status.className = 'boards-status';
   input.addEventListener('keydown', evt => {
@@ -172,10 +206,10 @@ function buildReadPathsSection() {
     evt.preventDefault();
     addReadPath();
   });
-  addRow.append(input, add, status);
+  addRow.append(input, browse, add, status);
 
   box.append(list, addRow);
-  Object.assign(rp, {input, listEl: list, statusEl: status});
+  Object.assign(readPaths, {input, listEl: list, statusEl: status});
   return box;
 }
 
@@ -190,7 +224,7 @@ SETTINGS_SECTIONS.push({
 // a board's own number only ever holds it back further, never past the global cap - an unset board
 // row behaves exactly like today, no board-specific limit at all.
 
-const pl = {globalInput: null, globalStatus: null, boardsList: null};
+const parallelCaps = {globalInput: null, globalStatus: null, boardsList: null};
 
 function parallelParseInput(raw) {
   const trimmed = raw.trim();
@@ -235,7 +269,7 @@ function buildGlobalParallelRow() {
   input.addEventListener('blur', save);
 
   row.append(input, status);
-  Object.assign(pl, {globalInput: input, globalStatus: status});
+  Object.assign(parallelCaps, {globalInput: input, globalStatus: status});
   return row;
 }
 
@@ -250,14 +284,15 @@ function budgetParseInput(raw) {
 
 function renderBoardParallelRow(board) {
   const row = document.createElement('div');
-  row.className = 'board-row';
+  row.className = 'board-row settings-grid-row';
   const label = document.createElement('span');
   label.className = 'board-name field-label';
   label.textContent = board.name;
+  label.title = board.name;
   const input = document.createElement('input');
   input.type = 'text';
   input.inputMode = 'numeric';
-  input.className = 'board-name-input text-field settings-parallel-input';
+  input.className = 'text-field settings-parallel-input';
   input.placeholder = 'no limit';
   input.value = board.max_parallel == null ? '' : String(board.max_parallel);
   const status = document.createElement('span');
@@ -290,7 +325,7 @@ function renderBoardParallelRow(board) {
   const budgetInput = document.createElement('input');
   budgetInput.type = 'text';
   budgetInput.inputMode = 'decimal';
-  budgetInput.className = 'board-name-input text-field settings-budget-input';
+  budgetInput.className = 'text-field settings-budget-input';
   budgetInput.placeholder = 'no budget';
   budgetInput.value = board.daily_budget_usd == null ? '' : String(board.daily_budget_usd);
   const budgetStatus = document.createElement('span');
@@ -320,31 +355,36 @@ function renderBoardParallelRow(board) {
   });
   budgetInput.addEventListener('blur', saveBudget);
 
-  row.append(label, input, status, budgetInput, budgetStatus);
+  // statuses span the whole grid row under the fields, and take no room while empty
+  status.classList.add('settings-grid-note');
+  budgetStatus.classList.add('settings-grid-note');
+  row.append(label, input, budgetInput, status, budgetStatus);
   return row;
 }
 
 async function loadParallelSection() {
   try {
     const settings = await api('/api/settings');
-    pl.globalInput.value = settings.max_parallel == null ? '' : String(settings.max_parallel);
-    pl.globalStatus.textContent = '';
+    parallelCaps.globalInput.value = settings.max_parallel == null ? '' : String(settings.max_parallel);
+    parallelCaps.globalStatus.textContent = '';
   } catch (err) {
-    pl.globalStatus.textContent = `could not load: ${err.message}`;
-    pl.globalStatus.className = 'boards-status boards-error';
+    parallelCaps.globalStatus.textContent = `could not load: ${err.message}`;
+    parallelCaps.globalStatus.className = 'boards-status boards-error';
   }
   try {
     const boards = await api('/api/boards');
-    clearChildren(pl.boardsList);
-    boards.forEach(b => pl.boardsList.appendChild(renderBoardParallelRow(b)));
+    clearChildren(parallelCaps.boardsList);
+    parallelCaps.boardsList.appendChild(settingsGridHeader(['board', 'cards at once', 'daily $']));
+    boards.forEach(b => parallelCaps.boardsList.appendChild(renderBoardParallelRow(b)));
   } catch (err) {
-    clearChildren(pl.boardsList);
-    pl.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
+    clearChildren(parallelCaps.boardsList);
+    parallelCaps.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
   }
 }
 
 function buildParallelSection() {
   const box = document.createElement('div');
+  box.className = 'settings-stack';
   const globalLabel = document.createElement('div');
   globalLabel.className = 'field-label';
   globalLabel.textContent = 'global (shared across every board)';
@@ -352,8 +392,8 @@ function buildParallelSection() {
   boardsLabel.className = 'field-label';
   boardsLabel.textContent = 'per board (blank = no board-specific limit or daily budget)';
   const boardsList = document.createElement('div');
-  boardsList.className = 'boards-list';
-  Object.assign(pl, {boardsList});
+  boardsList.className = 'settings-grid';
+  Object.assign(parallelCaps, {boardsList});
   box.append(globalLabel, buildGlobalParallelRow(), boardsLabel, boardsList);
   return box;
 }
@@ -362,6 +402,89 @@ SETTINGS_SECTIONS.push({
   label: 'how many cards run at once',
   node: buildParallelSection(),
   onOpen: loadParallelSection,
+});
+
+// ---- spend caps: the most one run of each role may spend, in usd --------------------------------
+// blank means the role's own default (the placeholder); a run reads its cap when it starts
+
+const SPEND_CAPS = [
+  {key: 'worker_budget_usd', label: 'card run (worker)', fallback: '5.00'},
+  {key: 'reviewer_budget_usd', label: 'review', fallback: '1.50'},
+  {key: 'orchestrator_budget_usd', label: 'mission control turn', fallback: '1.00'},
+  {key: 'fold_budget_usd', label: 'fold', fallback: '2.00'},
+];
+const spendCaps = {inputs: new Map(), statusEl: null};
+
+function renderSpendCapRow(cap) {
+  const row = document.createElement('div');
+  row.className = 'settings-grid-row';
+  const label = document.createElement('span');
+  label.className = 'field-label';
+  label.textContent = cap.label;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'decimal';
+  input.className = 'text-field settings-spend-input';
+  input.placeholder = cap.fallback;
+
+  async function save() {
+    const value = budgetParseInput(input.value);
+    if (value === undefined) {
+      spendCaps.statusEl.textContent = `${cap.label}: must be a positive amount, or empty for the default`;
+      spendCaps.statusEl.className = 'boards-status boards-error settings-grid-note';
+      return;
+    }
+    const {ok, body} = await apiOrError('/api/settings', {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({[cap.key]: value}),
+    });
+    spendCaps.statusEl.textContent = ok ? '' : (body && body.error) || 'could not save';
+    spendCaps.statusEl.className = ok ? 'boards-status settings-grid-note' : 'boards-status boards-error settings-grid-note';
+  }
+
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    save();
+  });
+  input.addEventListener('blur', save);
+  spendCaps.inputs.set(cap.key, input);
+  row.append(label, input);
+  return row;
+}
+
+function buildSpendCapsSection() {
+  const grid = document.createElement('div');
+  grid.className = 'settings-grid settings-grid-two';
+  grid.appendChild(settingsGridHeader(['run', 'max $']));
+  SPEND_CAPS.forEach(cap => grid.appendChild(renderSpendCapRow(cap)));
+  const status = document.createElement('span');
+  status.className = 'boards-status settings-grid-note';
+  grid.appendChild(status);
+  spendCaps.statusEl = status;
+  return grid;
+}
+
+async function loadSpendCaps() {
+  try {
+    const settings = await api('/api/settings');
+    SPEND_CAPS.forEach(cap => {
+      const value = settings[cap.key];
+      spendCaps.inputs.get(cap.key).value = value == null ? '' : String(value);
+    });
+    spendCaps.statusEl.textContent = '';
+  } catch (err) {
+    spendCaps.statusEl.textContent = `could not load: ${err.message}`;
+    spendCaps.statusEl.className = 'boards-status boards-error settings-grid-note';
+  }
+}
+
+SETTINGS_SECTIONS.push({
+  label: 'spend caps per run (the daily budget per board is set above)',
+  node: buildSpendCapsSection(),
+  onOpen: loadSpendCaps,
 });
 
 // ---- mall cam interval (cf90bacc): how long the workforce drawer holds each active card before -
@@ -413,18 +536,18 @@ function buildMallCamSection() {
   input.addEventListener('blur', save);
 
   row.append(input, status);
-  Object.assign(mc, {input, status});
+  Object.assign(mallCam, {input, status});
   return row;
 }
 
 async function loadMallCamSection() {
   try {
     const settings = await api('/api/settings');
-    mc.input.value = settings.mall_cam_interval_seconds == null ? '' : String(settings.mall_cam_interval_seconds);
-    mc.status.textContent = '';
+    mallCam.input.value = settings.mall_cam_interval_seconds == null ? '' : String(settings.mall_cam_interval_seconds);
+    mallCam.status.textContent = '';
   } catch (err) {
-    mc.status.textContent = `could not load: ${err.message}`;
-    mc.status.className = 'boards-status boards-error';
+    mallCam.status.textContent = `could not load: ${err.message}`;
+    mallCam.status.className = 'boards-status boards-error';
   }
 }
 
@@ -503,9 +626,7 @@ function toggleSettingsPanel() {
 }
 
 // ---- top-right button, fixed to the viewport --------------------------------------------------
-// NOT appended inside #board-bar: board.js's renderBoardBar() does `bar.innerHTML = ''` on every
-// board list load, which would wipe out a child living there - the same gotcha the attention
-// indicator (inbox.js) already ran into. fixed to the viewport instead, at the board bar's corner.
+// lives in board.js's bar corner, between the queue status and the attention count
 
 function buildSettingsButton() {
   const btn = document.createElement('div');
@@ -513,7 +634,7 @@ function buildSettingsButton() {
   btn.textContent = 'settings';
   btn.title = 'settings (o)';
   btn.onclick = () => toggleSettingsPanel();
-  document.body.appendChild(btn);
+  barCorner().appendChild(btn);
   return btn;
 }
 

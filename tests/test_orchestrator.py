@@ -324,3 +324,16 @@ def test_a_proposed_lease_keeps_its_literal_globs(store, board):
     run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
     card = next(c for c in store.list_cards(board["id"]) if c["title"] == "mixed")
     assert sorted(row["path_glob"] for row in card["leases"]) == ["docs/*.md", "src/**"]
+
+
+def test_the_orchestrator_budget_setting_caps_the_turn(store, board):
+    budgets = []
+
+    def run(prompt, model, budget_usd):
+        budgets.append(budget_usd)
+        return json.dumps({"reply": "ok", "plan": "p", "cards": []})
+
+    run_orchestrator_turn(store, board["id"], "go", runner=run)
+    store.set_setting("orchestrator_budget_usd", 3)
+    run_orchestrator_turn(store, board["id"], "again", runner=run)
+    assert budgets == [1.0, 3.0]
