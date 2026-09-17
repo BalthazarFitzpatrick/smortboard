@@ -5,15 +5,33 @@
 //
 // relies on globals board.js already defines: api, escapeHtml, showRun, onBoardEnter,
 // currentBoardId, indicateFocus, activateTab, jumpToCard, boards.
-// relies on pile.js's pure geometry (loaded before this file): stackHeight, fanHeight, pileSlot,
-// MIN_PILED_CARDS, PILE, PEEK, computeColumnLayout, pileByRecency, pileLayerJitter.
+//
+// a plain vertical list of board-style attention cards - no pile, no fan, no fixed card height.
+// the list scrolls when there are many; a single card never does.
 
 const INDICATOR_POLL_MS = 10000;
-const INBOX_CARD_GAP_FALLBACK = 10; // matches pile.js's own CARD_GAP fallback
 
 // header + list; scope remembered across opens for the life of the page, reset on reload
 const ib = {backdrop: null, panel: null, headerLabel: null, listEl: null, rows: [], scope: null, scopes: []};
 let indicatorEl = null;
+
+// a short human label for the reason code, the first thing a card says - falls back to the raw
+// code for anything attention.py adds later that this map hasn't caught up with yet
+const REASON_LABELS = {
+  AGENT_QUESTION: 'question',
+  LEASE_CONFLICT: 'needs a file outside its lease',
+  TESTS_FAILED: 'tests failed',
+  REVIEW_REJECTED: 'review rejected',
+  USAGE_LIMIT: 'usage limit',
+  CRASH: 'crashed',
+  DEPENDENCY_REJECTED: 'dependency rejected',
+  MERGE_CONFLICT: 'merge conflict',
+  API_UNREACHABLE: 'api unreachable',
+};
+
+function reasonLabel(reason) {
+  return REASON_LABELS[reason] || reason;
+}
 
 // "3h ago" rather than an iso stamp - how long it has waited is the part worth reading
 function sinceLabel(iso, now = Date.now()) {
@@ -105,34 +123,6 @@ function scopeByKey(key) {
   return ib.scopes.find(s => s.key === key) || ib.scopes[0];
 }
 
-// ---- inbox fit: computeColumnFit's own three regimes (pile.js), mirrored for a fixed landscape
-// card height instead of a width-derived square one - columns.js's own copy can't be reused as-is
-// since it hardcodes squareCard(width). pure, same shape as computeColumnFit's own return value
-function computeInboxFit(total, available, gap, cardHeight) {
-  const card = cardHeight;
-  if (stackHeight(total, card) <= available) return {regime: 1, n: total, card, piles: false, scrolls: false};
-  const fanned = fanHeight(total, card);
-  if (fanned <= available || total < MIN_PILED_CARDS) {
-    return {regime: 2, n: total, card, piles: false, scrolls: fanned > available};
-  }
-  const piles = 2 * pileSlot(gap);
-  for (let n = total - 1; n >= 1; n--) {
-    if (fanHeight(n, card) + piles <= available) return {regime: 3, n, card, piles: true, scrolls: false};
-  }
-  return {regime: 3, n: 1, card, piles: true, scrolls: true};
-}
-
-function inboxCardHeight() {
-  const raw = parseFloat(globalThis.getComputedStyle?.(document.documentElement)?.getPropertyValue?.('--inbox-card-height') || '');
-  return Number.isFinite(raw) ? raw : 240;
-}
-
-// the room the list actually has - it is a flex:1 sibling under the fixed header, so its own
-// rendered box already excludes the header without any extra measurement
-function availableInboxHeight(listEl) {
-  return Math.max(0, listEl.getBoundingClientRect().height);
-}
-
 // ---- the panel itself -------------------------------------------------------------------------
 
 function buildInboxDom() {
@@ -156,7 +146,7 @@ function buildInboxDom() {
   header.append(prev, label, next);
 
   const list = document.createElement('div');
-  list.className = 'inbox-list bucket-rows';
+  list.className = 'inbox-list';
   list.tabIndex = -1;
 
   panel.append(header, list);
@@ -189,60 +179,71 @@ function cycleScope(dir) {
   const nextScope = ib.scopes[(idx + dir + ib.scopes.length) % ib.scopes.length];
   ib.scope = nextScope.key;
   ib.focusIndex = null;
-  ib.start = 0;
-  ib.anchor = 'top';
   renderScopeHeader();
   renderInboxList();
 }
 
+// a short 1-2 line preview of the question/note, full text kept in the title attribute so nothing
+// is actually lost - the card is an overview, not the whole novel
+function buildSummary(row) {
+  const el = document.createElement('div');
+  el.className = 'inbox-summary';
+  el.textContent = row.question || '(no question text)';
+  el.title = row.question || '';
+  return el;
+}
+
 // built with createElement/appendChild, not innerHTML - the test dom stub does not parse innerHTML
-// strings back into a tree, same reason the prompt editor's role row is built this way (board.js)
-function buildInboxCard(row) {
+// strings back into a tree, same reason the prompt editor's role row is built this way (board.js).
+// the card is a board-style overview: reason first and prominent, then title, board, a short
+// summary of what it needs - the lease/answer controls only show up once this card has focus
+function buildInboxCard(row, idx, focused) {
   const card = document.createElement('div');
-  card.className = 'row inbox-card focus-glow';
+  card.className = 'row card card-strip card-attention inbox-card focus-glow';
   card.tabIndex = -1;
   card.dataset.cardId = row.card_id;
+  card.dataset.idx = String(idx);
 
-  const head = document.createElement('div');
-  head.className = 'inbox-row-head';
-  const title = document.createElement('span');
-  title.className = 'inbox-title toggle';
+  const reasonRow = document.createElement('div');
+  reasonRow.className = 'inbox-reason-row';
+  const reason = document.createElement('span');
+  reason.className = 'inbox-reason';
+  reason.textContent = reasonLabel(row.reason);
+  const since = document.createElement('span');
+  since.className = 'inbox-since';
+  since.textContent = sinceLabel(row.since);
+  reasonRow.append(reason, since);
+
+  const title = document.createElement('div');
+  title.className = 'inbox-title';
   title.textContent = row.title;
   title.onclick = () => {
     closeInboxPanel();
     jumpToCard(row.card_id, ib.rows.map(r => ({card_id: r.card_id, board_id: r.board_id})));
   };
-  const board = document.createElement('span');
-  board.className = 'field-label';
-  board.textContent = row.board_name;
-  const reason = document.createElement('span');
-  reason.className = 'field-label inbox-reason';
-  reason.textContent = row.reason;
-  const since = document.createElement('span');
-  since.className = 'field-label inbox-since';
-  since.textContent = sinceLabel(row.since);
-  head.append(title, board, reason, since);
 
-  // the call to action comes first, above the note it came from, so a scan of the inbox reads as a
-  // list of things to do
+  const board = document.createElement('div');
+  board.className = 'field-label inbox-board';
+  board.textContent = row.board_name;
+
   const action = document.createElement('div');
   action.className = 'inbox-action';
   action.textContent = `next: ${row.action || row.hint || 'open the card'}`;
 
-  const question = document.createElement('div');
-  question.className = 'inbox-question';
-  question.textContent = row.question || '(no question text)';
+  card.append(reasonRow, title, board, action, buildSummary(row));
+
+  card.addEventListener('keydown', evt => onCardKey(evt, card));
+
+  if (!focused) return card;
 
   const extras = [];
   if (row.reason === 'LEASE_CONFLICT' && row.wants && row.wants.length) {
     extras.push(buildLeaseApproveRow(row));
   }
 
-  card.addEventListener('keydown', evt => onCardKey(evt, card));
-
   // an answer cannot move a decision or a rate limit - the action line already says what will
   if (row.answerable === false) {
-    card.append(head, action, question, ...extras);
+    card.append(...extras);
     return card;
   }
 
@@ -264,7 +265,7 @@ function buildInboxCard(row) {
 
   // the answer field stays too - the operator may prefer to tell the agent to leave the file be
   // instead of widening the lease for it
-  card.append(head, action, question, ...extras, answerRow);
+  card.append(...extras, answerRow);
   card.dataset.answerable = 'true';
   return card;
 }
@@ -322,128 +323,48 @@ async function approveLease(cardId, paths, button, status) {
   loadInbox();
 }
 
-// a landscape pile row, the exact desk-pile look columns.js draws for a column (card-pile,
-// card-pile-layer, jittered per card id) - every inbox row is an attention card, so the pile
-// always wears the attention edge
-function buildInboxPile(cards, side) {
-  const el = document.createElement('div');
-  el.className = 'row card-pile card-pile-attention';
-  el.tabIndex = -1;
-  el.dataset.pile = 'true';
-  el.dataset.side = side;
-  const drawn = pileByRecency(cards, side);
-  const width = ib.listEl?.getBoundingClientRect?.().width || INBOX_PILE_TILT_WIDTH;
-  for (let i = drawn.length - 1; i >= 0; i--) {
-    el.appendChild(buildInboxPileLayer(drawn[i], i === 0, width));
-  }
-  const count = document.createElement('div');
-  count.className = 'card-pile-count';
-  const badge = document.createElement('span');
-  badge.textContent = String(cards.length);
-  count.appendChild(badge);
-  el.appendChild(count);
-  el.addEventListener('click', () => expandInboxPile());
-  return el;
-}
-
-// the jitter's angle is tuned for a board card about 230px wide; a landscape inbox card is several
-// times wider, so the same angle lifts its far corners several times higher - scale it down
-const INBOX_PILE_TILT_WIDTH = 230;
-
-function buildInboxPileLayer(row, isTop, width = INBOX_PILE_TILT_WIDTH) {
-  const {dx, dy, rot} = pileLayerJitter(row.card_id);
-  const tilt = rot * Math.min(1, INBOX_PILE_TILT_WIDTH / Math.max(width, 1));
-  const layer = document.createElement('div');
-  layer.className = isTop ? 'card-pile-layer card-pile-top' : 'card-pile-layer';
-  layer.dataset.pileCard = row.card_id;
-  layer.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) rotate(${tilt.toFixed(2)}deg)`;
-  layer.style.borderColor = 'var(--fill-attention)';
-  if (!isTop) return layer;
-  const title = document.createElement('div');
-  title.className = 'card-title';
-  title.textContent = row.title || '';
-  layer.appendChild(title);
-  return layer;
-}
-
-// clicking a pile expands the whole scope flat, same affordance a board column's pile gives
-function expandInboxPile() {
-  ib.expanded = true;
-  renderInboxList();
-}
-
 // works on both the real DOM (where .children is read-only) and the test stub - child.remove()
 // is defined on both, unlike reassigning .innerHTML or .children
 function clearChildren(el) {
   [...el.children].forEach(child => child.remove());
 }
 
-// applies the fit numbers to the drawn rows, same as columns.js's fitColumn: every card the fit's
-// one height, every pile PILE, and each card's join as a negative top margin cancelling the gap
-function applyInboxFit(fit, layout, gap) {
-  ib.listEl.classList.toggle('bucket-rows-piled', fit.regime !== 1);
-  ib.listEl.classList.toggle('bucket-rows-scrolls', fit.regime !== 1 && fit.scrolls);
-  ib.listEl.classList.toggle('bucket-rows-bottom', fit.piles && !fit.scrolls && layout.anchor === 'bottom');
-  Array.from(ib.listEl.children).forEach(el => {
-    if (el.classList.contains('card-pile')) {
-      el.style.height = `${PILE}px`;
-      return;
-    }
-    const join = el.dataset.join;
-    el.classList.toggle('card-covered', el.dataset.covered === 'true');
-    el.style.height = `${fit.card}px`;
-    el.style.marginTop = join === 'peek' ? `${-(fit.card - PEEK + gap)}px` : join === 'flush' ? `${-gap}px` : '';
-  });
-}
-
-// redraws the list from ib.scope alone: filters the rows, picks the regime (computeInboxFit),
-// lays out the rows (computeColumnLayout, shared with the board's own columns) and applies it
+// redraws the list from ib.scope alone: a plain vertical list of cards, no pile/fan regime to pick
+// - the only thing that changes per card is whether it's the focused one (answer/lease controls)
 function renderInboxList() {
   clearChildren(ib.listEl);
   const scope = scopeByKey(ib.scope);
   const rows = scope ? scope.rows : [];
   if (!rows.length) {
+    ib.focusIndex = null;
     const label = scope && scope.key !== 'all' ? ` on ${scope.label}` : '';
     ib.listEl.appendChild(hazardPlaceholder(`nothing is waiting on you${label}`));
     return;
   }
-  const gap = parseFloat(globalThis.getComputedStyle?.(ib.listEl)?.getPropertyValue?.('--card-gap') || '') || INBOX_CARD_GAP_FALLBACK;
-  const available = availableInboxHeight(ib.listEl);
-  const natural = computeInboxFit(rows.length, available, gap, inboxCardHeight());
-  const fit = ib.expanded
-    ? {...natural, regime: 1, n: rows.length, piles: false, scrolls: natural.regime > 1}
-    : natural;
-  const layout = computeColumnLayout(rows, ib.focusIndex ?? null, ib.start || 0, ib.anchor || 'top', fit);
-  ib.start = layout.start;
-  ib.anchor = layout.anchor;
-  layout.rows.forEach(entry => {
-    if (entry.type === 'pile') {
-      ib.listEl.appendChild(buildInboxPile(entry.cards, entry.side));
-      return;
-    }
-    const card = buildInboxCard(entry.card);
-    card.dataset.idx = String(entry.idx);
-    card.dataset.join = entry.join;
-    card.dataset.covered = String(entry.covered);
+  // a card is always the one with keyboard focus, from the moment the panel opens - otherwise
+  // arrowdown/arrowup have nothing to move from, and no card would ever wear the focus glow
+  if (ib.focusIndex == null || ib.focusIndex >= rows.length) ib.focusIndex = 0;
+  rows.forEach((row, idx) => {
+    const card = buildInboxCard(row, idx, idx === (ib.focusIndex ?? -1));
     ib.listEl.appendChild(card);
   });
-  applyInboxFit(fit, layout, gap);
   focusInboxIndex(ib.focusIndex);
 }
 
 function focusInboxIndex(idx) {
   const cards = Array.from(ib.listEl.children);
-  cards.forEach(el => { if (!el.classList.contains('card-pile')) el.tabIndex = -1; });
+  cards.forEach(el => { el.tabIndex = -1; });
   if (idx == null) return;
   const target = cards.find(el => el.dataset.idx === String(idx));
   if (!target) return;
   target.tabIndex = 0;
   target.focus();
+  target.scrollIntoView?.({block: 'nearest'});
   indicateFocus?.(target);
 }
 
-// ArrowUp/ArrowDown move focus card by card, the group moving with it (placeGroup, inside
-// computeColumnLayout) exactly as a board column's pile does
+// ArrowUp/ArrowDown move focus card by card - the list itself scrolls the newly focused card into
+// view, no card is ever asked to scroll its own content
 function onInboxListKey(evt) {
   if (evt.code !== 'ArrowDown' && evt.code !== 'ArrowUp') return;
   if (evt.target.closest?.('.inbox-answer')) return;
@@ -465,7 +386,10 @@ function wireInboxListFocus(listEl) {
   listEl.addEventListener('focusin', evt => {
     const row = evt.target.closest?.('[data-idx]');
     if (!row) return;
-    ib.focusIndex = Number(row.dataset.idx);
+    if (ib.focusIndex !== Number(row.dataset.idx)) {
+      ib.focusIndex = Number(row.dataset.idx);
+      renderInboxList();
+    }
   });
   listEl.addEventListener('click', evt => {
     const row = evt.target.closest?.('[data-idx]');
@@ -527,10 +451,7 @@ function onInboxKey(evt) {
 
 function openInboxPanel() {
   if (!ib.backdrop) buildInboxDom();
-  ib.expanded = false;
   ib.focusIndex = null;
-  ib.start = 0;
-  ib.anchor = 'top';
   document.body.appendChild(ib.backdrop);
   document.addEventListener('keydown', onInboxKey, {capture: true});
   loadInbox();

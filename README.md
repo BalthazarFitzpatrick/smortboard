@@ -184,9 +184,9 @@ every working card. A note sent here reaches a running agent at its next step.
 <td width="50%" valign="top">
 <img src="docs/images/inbox.jpg" alt="Attention inbox" width="100%"><br>
 <b>Attention inbox</b> <code>n</code><br>
-A fixed header switches the list between all boards and one board (arrow keys or click); the cards
-below lay out spread, fanned or piled the same way a board column does. An answer resumes the card
-in its own worktree; a lease conflict can be approved in one action.
+A fixed header switches the list between all boards and one board (arrow keys or click); below it,
+a plain scrolling list of board-style cards leads with the reason each one is waiting, then its
+title and a short summary. The focused card expands to answer or approve a lease in place.
 </td>
 <td width="50%" valign="top">
 <img src="docs/images/digest.jpg" alt="Morning digest" width="100%"><br>
