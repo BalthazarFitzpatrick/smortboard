@@ -124,7 +124,7 @@ function computeInboxFit(total, available, gap, cardHeight) {
 
 function inboxCardHeight() {
   const raw = parseFloat(globalThis.getComputedStyle?.(document.documentElement)?.getPropertyValue?.('--inbox-card-height') || '');
-  return Number.isFinite(raw) ? raw : 170;
+  return Number.isFinite(raw) ? raw : 240;
 }
 
 // the room the list actually has - it is a flex:1 sibling under the fixed header, so its own
