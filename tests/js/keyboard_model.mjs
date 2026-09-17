@@ -55,7 +55,7 @@ const src = [uiBase('menu.js'), uiBase('buckets.js'), uiBase('expand.js'), uiBas
   smort('boards.js')].join('\n;\n');
 const mod = new Function('makeDrawer', `${src}
 ;return {renderCardStrip, st, bp, pe, BINDINGS, surfaceOverBoard, topSurface, surfaceFields,
-  setMouseEnabled, mouseAffordances,
+  setMouseEnabled, mouseAffordances, focusFirstCardSection, wireCommentInput,
   setBoard: id => { currentBoardId = id; },
   setOpenCard: value => { openCard = value; },
   openCardRef: () => openCard};`)(SpyDrawer);
@@ -304,5 +304,47 @@ assert.equal(document.activeElement, mod.pe.textarea, 'a hover never takes the c
 fireKeydown(mod.pe.textarea, {code: 'Escape'});
 press('Escape');
 mod.setMouseEnabled(false);
+
+// ---- the open card is a surface of its own: sections are what the cursor walks, and / lands in
+// its one comment box, in view and ready to type ------------------------------------------------
+{
+  const backdrop = element('div', 'modal-backdrop expand-backdrop');
+  const panel = element('div', 'panel-floating expand-panel card-panel');
+  const sections = element('div', 'card-sections');
+  const rows = ['title', 'status', 'comments'].map(name => {
+    const section = element('div', 'card-section');
+    section.dataset.section = name;
+    sections.appendChild(section);
+    return section;
+  });
+  const comment = element('input', 'comment-input text-field');
+  rows[2].appendChild(comment);
+  panel.appendChild(sections);
+  backdrop.appendChild(panel);
+  document.body.appendChild(backdrop);
+
+  // the card takes the keyboard when it renders, so up and down have somewhere to move from
+  mod.focusFirstCardSection(panel);
+  assert.equal(document.activeElement, rows[0], 'an open card focuses its first section');
+
+  // one text entry, so / does not guess - it goes there and brings it into view, however far down
+  // the panel it sits
+  let scrolledTo = null;
+  comment.scrollIntoView = opts => { scrolledTo = opts; };
+  press('Slash', '/');
+  assert.equal(document.activeElement, comment, "/ puts the caret in the card's comment box");
+  assert.deepEqual(scrolledTo, {block: 'nearest'}, 'and scrolls it into view, ready to type');
+
+  // arrows inside the box belong to the box; escape steps one level back, onto the card
+  mod.wireCommentInput(comment, panel, 'c1');
+  let stopped = false;
+  fireKeydown(comment, {code: 'ArrowDown', stopPropagation() { stopped = true; }});
+  assert.ok(stopped, 'down inside the box never reaches the section nav');
+  assert.equal(document.activeElement, comment, 'and the caret stays in the box');
+  fireKeydown(comment, {code: 'Escape'});
+  assert.equal(document.activeElement, rows[0], 'escape from the box steps back onto the card');
+
+  backdrop.remove();
+}
 
 console.log('ok');

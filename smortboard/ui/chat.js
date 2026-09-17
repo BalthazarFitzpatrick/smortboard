@@ -589,7 +589,13 @@ function focusTypingTarget() {
   const surface = topSurface();
   if (surface) {
     const fields = surfaceFields(surface);
-    if (fields.length === 1) fields[0].focus();
+    // READY TO TYPE, HOWEVER FAR DOWN IT SITS: an open card has exactly one text entry, so / goes
+    // straight to it and brings it into view - it can start below the fold of a long card, or be
+    // scrolled past. 'nearest' leaves a field already on screen exactly where it is
+    if (fields.length === 1) {
+      fields[0].focus();
+      fields[0].scrollIntoView?.({block: 'nearest'});
+    }
     return;
   }
   if (openCard?.input) { openCard.input.focus(); return; }

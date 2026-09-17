@@ -284,6 +284,43 @@ function renderCardStrip(card) {
 
 // ---- card panel: the open card's sections, and the outcome they render -----------------------
 
+// the open card is a surface of its own: its sections are the rows the cursor walks, the way the
+// board's arrows walk cards. the first one takes focus when the panel renders, so up and down have
+// somewhere to move from
+function focusFirstCardSection(panel) {
+  const section = panel.querySelector('.card-section');
+  if (!section) return null;
+  section.tabIndex = 0;
+  section.focus();
+  return section;
+}
+
+// the card's one text entry. escape stops here so the panel's own escape (added by makeExpander)
+// sees a still-open card and only takes the input->card step; the card->closed step is its job
+function wireCommentInput(input, panel, cardId) {
+  if (!input) return;
+  input.addEventListener('keydown', evt => {
+    // ARROWS INSIDE THE BOX BELONG TO THE BOX. makeBuckets listens on the panel and the input sits
+    // inside a .card-section, so without this, down from the caret stepped to the next section
+    if (evt.code === 'ArrowUp' || evt.code === 'ArrowDown') { evt.stopPropagation(); return; }
+    if (evt.code === 'Escape') {
+      evt.stopPropagation();
+      // NOT input.blur(). blur drops focus on <body>, and from there every arrow key is dead - the
+      // card has to take it back so escape steps out of the input rather than out of the app
+      const section = panel.querySelector('.card-section');
+      if (section) section.focus(); else input.blur();
+    }
+    if (evt.code === 'Enter') {
+      evt.preventDefault();
+      const body = input.value.trim();
+      if (body) api(`/api/cards/${cardId}/comments`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({author: 'operator', body}),
+      }).then(() => openCardPanel(panel, cardId));
+    }
+  });
+}
+
 async function openCardPanel(panel, cardId) {
   const [card, outcome] = await Promise.all([
     api(`/api/cards/${cardId}`),
@@ -307,27 +344,11 @@ async function openCardPanel(panel, cardId) {
   // the panel's one .card-sections div is a single-column bucket - reuses the 2D grid nav as a
   // plain vertical list rather than inventing a second focus system for "move between sections"
   const sectionsApi = makeBuckets(panel, {bucketSel: '.card-sections', rowSel: '.card-section'});
+  // THE OPEN CARD TAKES THE KEYBOARD. focus used to stay on the strip behind the panel, so up and
+  // down did nothing here and the sections were only reachable by / and then escape
+  focusFirstCardSection(panel);
 
-  const input = panel.querySelector('.comment-input');
-  // stop Escape here so the panel's own Escape (added by makeExpander) sees a still-open card and
-  // only takes the input->panel step - the panel->closed step is makeExpander's own job
-  input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') {
-      evt.stopPropagation();
-      // NOT input.blur(). blur drops focus on <body>, and from there every arrow key is dead - the
-      // panel has to take it back so escape steps out of the input rather than out of the app
-      const section = panel.querySelector('.card-section');
-      if (section) section.focus(); else input.blur();
-    }
-    if (evt.code === 'Enter') {
-      evt.preventDefault();
-      const body = input.value.trim();
-      if (body) api(`/api/cards/${cardId}/comments`, {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({author: 'operator', body}),
-      }).then(() => openCardPanel(panel, cardId));
-    }
-  });
+  wireCommentInput(panel.querySelector('.comment-input'), panel, cardId);
 
   // a board note's own primary action, where the CTA does something other than re-open this
   // already-open panel - run/stop reuse the same handlers the strip's CTA does
