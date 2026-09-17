@@ -383,6 +383,20 @@ _MIGRATIONS: list[str] = [
     """
     ALTER TABLE boards ADD COLUMN daily_budget_usd REAL;
     """,
+    # 18: spend not tied to a card run - mission control turns and fold turns - so board
+    # budgets (17) and telemetry.board_spend_today see the whole board, not just card runs
+    """
+    CREATE TABLE board_spend (
+        id TEXT PRIMARY KEY,
+        board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        cost_usd REAL NOT NULL,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_board_spend_board_created
+        ON board_spend (board_id, created_at);
+    """,
 ]
 
 

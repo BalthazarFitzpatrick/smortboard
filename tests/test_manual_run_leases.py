@@ -160,3 +160,59 @@ def test_a_manual_run_beside_an_overlapping_one_is_a_409(tmp_path, monkeypatch):
         holder["server"].shutdown()
         thread.join()
         holder["server"].server_close()
+
+
+def _run_with_seeded_store(tmp_path, setup):
+    """a real server with the store built and seeded inside its own thread - sqlite3 connections
+    are bound to the thread that opened them, so setup has to happen there too"""
+    ready = threading.Event()
+    holder = {}
+
+    def _serve():
+        store = Store(tmp_path / "board.db")
+        holder["card_id"] = setup(store)
+        srv = build_server(store, port=0, host="127.0.0.1")
+        holder["server"] = srv
+        ready.set()
+        srv.serve_forever()
+        store.close()
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+    ready.wait()
+    try:
+        yield holder["card_id"], f"http://127.0.0.1:{holder['server'].server_address[1]}"
+    finally:
+        holder["server"].shutdown()
+        thread.join(timeout=2)
+
+
+def test_a_manual_run_past_the_daily_budget_is_a_409_with_the_reason(tmp_path):
+    def setup(store):
+        board_id = store.create_board("b")["id"]
+        repo_id = store.create_repo(board_id, "r", "/tmp/r", "main")["id"]
+        store.set_board_daily_budget(board_id, 1.0)
+        card = store.create_card(board_id, repo_id, "over budget")
+        store.append_event(card["id"], "result", {"total_cost_usd": 1.5})
+        return card["id"]
+
+    for card_id, base in _run_with_seeded_store(tmp_path, setup):
+        status, body = _call(f"{base}/api/cards/{card_id}/run", method="POST")
+        assert status == 409
+        assert "daily budget" in body["error"]
+        assert "b" in body["error"]
+
+
+def test_a_manual_run_past_the_card_total_cap_is_a_409_with_the_reason(tmp_path):
+    def setup(store):
+        board_id = store.create_board("b")["id"]
+        repo_id = store.create_repo(board_id, "r", "/tmp/r", "main")["id"]
+        store.set_setting("card_total_budget_usd", "2.0")
+        card = store.create_card(board_id, repo_id, "capped")
+        store.append_event(card["id"], "result", {"total_cost_usd": 2.5})
+        return card["id"]
+
+    for card_id, base in _run_with_seeded_store(tmp_path, setup):
+        status, body = _call(f"{base}/api/cards/{card_id}/run", method="POST")
+        assert status == 409
+        assert "total cap" in body["error"]

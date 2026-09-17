@@ -318,7 +318,13 @@ A lease is the list of files a card may change, as gitignore-style globs relativ
   Reviewer findings go back to the worker at most twice. A mission control turn that runs out says
   so, rather than reporting a crash.
 - A board can carry a **daily budget** in dollars (settings, `o`). Once today's spend reaches it, no
-  new run starts on that board; running cards finish.
+  new run starts on that board - the scheduler, a manual run, an inbox answer and a lease approval
+  all check the same limit before starting, so the cap holds on every path, not just the scheduler.
+  Running cards finish. Mission control turns and folds count toward it too, even a turn that failed
+  or hit its own per-run cap - what it actually spent still counts against the board's day.
+- A card can also carry its own **total cap** across every run it has ever made, restarts included
+  (settings, `o`: *card total (all runs)*, unset means no limit). Once a card's own spend reaches it,
+  nothing starts it again.
 - On a usage limit the board **waits for the reset**. Switching to another credential profile only
   happens if you turn on *switch credential profiles automatically* in settings.
 - A card's pull request states what its branch cost, across every run. Costs come from each run's

@@ -18,6 +18,7 @@ from smortboard.attention import (
     attention_rows,
     with_actions,
 )
+from smortboard.budgets import spend_refusal
 from smortboard.consolidate import FoldRegistry
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
@@ -482,6 +483,10 @@ def _make_handler(
                 conflict = conflicting_run(store, card, [s.card_id for s in runs.active()])
                 if conflict:
                     self._send_json(409, {"error": f"not started: {conflict}"})
+                    return
+                refusal = spend_refusal(store, card)
+                if refusal:
+                    self._send_json(409, {"error": refusal})
                     return
             state = runs.start(card_id)
             self._send_json(202, state.as_dict())

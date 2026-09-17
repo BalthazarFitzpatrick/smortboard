@@ -32,6 +32,7 @@ from typing import Any
 
 from smortboard import profiles, telemetry
 from smortboard.actions import with_next
+from smortboard.budgets import spend_refusal
 from smortboard.exec.runner import _api_unreachable_signal, _session_limit_text_signal
 from smortboard.exec.worktrees import (
     branch_name,
@@ -462,10 +463,6 @@ class BoardScheduler:
             board_cap = _board_max_parallel(store, self.board_id)
             if board_cap is not None:
                 slots = min(slots, board_cap - len(running_ids))
-            if _budget_exhausted(store, self.board_id):
-                # today's spend on this board already hit its cap - no new starts, but a card
-                # already running keeps its slot and finishes
-                slots = 0
             # a card started by hand holds its lease too, but not one of this board's slots
             for state in active_states or []:
                 if state.card_id not in running_ids:
@@ -495,6 +492,7 @@ class BoardScheduler:
                     else:
                         reason = _dependency_wait(store, card, repo_path)
                 reason = reason or _lease_wait(card, pending)
+                reason = reason or spend_refusal(store, card)
                 if reason:
                     waiting[card_id] = reason
                     remaining.append(card_id)

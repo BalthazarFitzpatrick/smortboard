@@ -255,6 +255,22 @@ def test_answer_refuses_a_checking_card_with_no_reason_code(store, repo):
         answer_card(store, runs, card["id"], "hi")
 
 
+def test_answer_refuses_a_card_past_its_boards_daily_budget(store, repo):
+    board, card = _board_and_card(store, repo)
+    store.set_board_daily_budget(board["id"], 1.0)
+    store.append_event(card["id"], "result", {"total_cost_usd": 1.5})
+    store.update_card(card["id"], blocked_reason_code="CRASH", review_flag=True)
+    runs = _FakeRuns()
+
+    with pytest.raises(AnswerRefused, match="daily budget"):
+        answer_card(store, runs, card["id"], "go on")
+    assert runs.started == []
+    # the answer is never stored - it could not be acted on
+    updated = store.get_card(card["id"])
+    assert updated["blocked_reason_code"] == "CRASH"
+    assert [c for c in updated["comments"] if c["author"] == "operator"] == []
+
+
 # ---- worktree reuse on resume (lifecycle.py's worktree-cutting step only) -----------------------
 
 
