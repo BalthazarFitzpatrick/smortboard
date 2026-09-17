@@ -135,13 +135,13 @@ function buildInboxDom() {
   header.className = 'inbox-header';
   const prev = document.createElement('span');
   prev.className = 'inbox-nav toggle inbox-prev';
-  prev.textContent = '‹';
+  prev.textContent = '←';
   prev.onclick = () => cycleScope(-1);
   const label = document.createElement('span');
   label.className = 'inbox-scope-label';
   const next = document.createElement('span');
   next.className = 'inbox-nav toggle inbox-next';
-  next.textContent = '›';
+  next.textContent = '→';
   next.onclick = () => cycleScope(1);
   header.append(prev, label, next);
 
