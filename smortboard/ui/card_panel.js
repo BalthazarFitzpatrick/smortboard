@@ -427,7 +427,7 @@ function cardPanelHtml(card, outcome) {
     <div class="card-sections">
       ${sectionHtml('title', 'title', `${escapeHtml(card.title)} <span class="card-id">${escapeHtml(shortId(card.id))}</span>`)}
       ${sectionHtml('workstream', 'workstream', escapeHtml(card.workstream || '') || '<span class="empty">none</span>')}
-      ${sectionHtml('status', 'status', `${next}${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div><div class="card-model">lease: ${lease}</div>`)}
+      ${sectionHtml('status', 'status', `${next}${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div><div class="card-model">complexity: ${escapeHtml(complexityLabel(card))}</div><div class="card-model">lease: ${lease}</div>`)}
       ${outcomeSectionHtml(outcome, card)}
       ${sectionHtml('description', 'description', escapeHtml(card.description || ''))}
       ${sectionHtml('tasks', 'tasks', listHtml(tasks))}
@@ -440,6 +440,62 @@ function cardPanelHtml(card, outcome) {
       </div>
     </div>
   `;
+}
+
+// ---- complexity - low/medium/high, rated or estimated ------------------------------------------
+
+const COMPLEXITY_LEVELS = [1, 2, 3];
+const COMPLEXITY_LABELS = {1: 'low', 2: 'medium', 3: 'high'};
+
+// mirrors telemetry.estimate_complexity - a display-only guess for an unrated card, never sent
+// back to the server. see that function's docstring for the scoring rule
+function estimateComplexity(card) {
+  const globs = (card.leases || []).map(l => l.path_glob || '');
+  let score = (card.criteria || []).length + (card.tasks || []).length;
+  if (globs.some(g => g.includes('**'))) score += 2;
+  else if (globs.length) score += 1;
+  if (card.model && card.model.toLowerCase().includes('opus')) score += 2;
+  if (score <= 3) return 1;
+  if (score <= 6) return 2;
+  return 3;
+}
+
+function complexityLabel(card) {
+  const level = typeof card === 'object' ? card.complexity : card;
+  if (COMPLEXITY_LEVELS.includes(level)) return COMPLEXITY_LABELS[level];
+  if (typeof card === 'object') return `${COMPLEXITY_LABELS[estimateComplexity(card)]} (estimated)`;
+  return 'unrated';
+}
+
+// cycles low -> medium -> high -> low, same wrap as cycleCardModel
+async function cycleCardComplexity(cardId = actionableCardId()) {
+  if (!cardId) return;
+  let next;
+  try {
+    const card = await api(`/api/cards/${cardId}`);
+    // unrated lands on low first; otherwise the same wrap as cycleCardModel
+    const currentIndex = COMPLEXITY_LEVELS.indexOf(card.complexity);
+    next = COMPLEXITY_LEVELS[(currentIndex + 1) % COMPLEXITY_LEVELS.length];
+  } catch (err) {
+    showRun(cardId, "can't change complexity", null, err.message);
+    return;
+  }
+  openActionConfirm(`switch to ${COMPLEXITY_LABELS[next]}?`, 'switch complexity', 'cancel',
+    () => doCycleCardComplexity(cardId, next));
+}
+
+async function doCycleCardComplexity(cardId, next) {
+  try {
+    const updated = await api(`/api/cards/${cardId}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({complexity: next}),
+    });
+    const label = `complexity: ${complexityLabel(updated)}`;
+    showRun(cardId, label);
+    const shown = document.querySelectorAll('.card-panel [data-section="status"] .card-model');
+    if (shown.length > 1 && openCard && openCard.cardId === cardId) shown[1].textContent = label;
+  } catch (err) {
+    showRun(cardId, "can't change complexity", null, err.message);
+  }
 }
 
 // ---- model (m) - which model the focused card's worker runs on --------------------------------
@@ -573,6 +629,7 @@ function openCardOverflowMenu(cardId, anchor) {
       items: [
         {id: 'edit', label: 'edit'},
         {id: 'model', label: 'change model'},
+        {id: 'complexity', label: 'change complexity'},
         {id: 'status', label: 'move status'},
         {id: 'delete', label: 'delete'},
       ],
@@ -580,6 +637,7 @@ function openCardOverflowMenu(cardId, anchor) {
         menu.close();
         if (item.id === 'edit') editCard(cardId);
         else if (item.id === 'model') cycleCardModel(cardId);
+        else if (item.id === 'complexity') cycleCardComplexity(cardId);
         else if (item.id === 'status') openMoveStatusMenu(cardId);
         else if (item.id === 'delete') deleteCard(cardId);
       },

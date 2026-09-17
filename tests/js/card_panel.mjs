@@ -209,4 +209,14 @@ const detailHtml = mod.cardPanelHtml(detailCard, {});
 assert.ok(detailHtml.includes('abcdef01'), 'the opened detail shows the short-id');
 assert.ok(detailHtml.includes('and the rest of it too'), 'the opened detail shows the full description');
 
+// ---- complexity sits next to model in the status section: rated shows the level, unrated the
+// estimate with an "(estimated)" note -------------------------------------------------------
+
+const ratedCard = {...card, complexity: 2};
+assert.ok(mod.cardPanelHtml(ratedCard, {}).includes('complexity: medium'), 'a rated card shows its level');
+
+const unratedCard = {...card, complexity: null, criteria: [], tasks: [], leases: []};
+assert.ok(mod.cardPanelHtml(unratedCard, {}).includes('complexity: low (estimated)'),
+  'an unrated card with nothing else shows a low estimate');
+
 console.log('ok');
