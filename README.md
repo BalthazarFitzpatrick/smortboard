@@ -294,6 +294,13 @@ than guessing at an unknown one, and drops any proposed lease that would cover t
 climb out of it. It sees what each model has cost and passed on this board, and is told to prefer the
 cheapest model that has been reaching pull requests cleanly on cards like this one.
 
+**Folding** (`f`) is the other board-level turn. It proposes which of a board's `todo` cards one
+agent should do as a single card, and the board applies it: it creates the merged card, re-points
+every dependency at it, and deletes the originals - restorably, so a fold is not a one-way door.
+Only `todo` cards fold; a card that is already running holds a branch and a run, and folding it
+would orphan both. A proposed group past four cards or twelve criteria is refused whatever the model
+suggested, so a fold never turns a queue of small cards into one nobody can finish.
+
 **The workforce chat** (`,`) is a terminal onto one card's agent, pinned to the card you are on. With
 no card focused it rotates through every working card. A **note** sent here reaches a *running* agent
 between two of its tool calls.
@@ -527,8 +534,21 @@ Three consequences of that model worth knowing:
   you were in saves.
 
 Bindings resolve on the physical key, so a non-US layout does not move them. A held cmd, ctrl or alt
-belongs to the browser - `cmd`+`c` copies, it does not open the cost panel. Keys that start, land or
-destroy work (`r`, `y`, `x`, `w`, `m`, `del`) ask once before they act.
+belongs to the browser - `cmd`+`c` copies, it does not open the cost panel.
+
+### Confirmations, and which button is focused
+
+Anything that starts, spends, lands or destroys asks once. The confirmation opens with one button
+**already focused**, and which button that is depends on how bad the mistake would be:
+
+- **`y` and `x` focus confirm.** Pressing enter straight after the key carries on, because a wrong
+  accept or reject is undone from the card's own menu (`l`). Being wrong costs a keypress.
+- **`r`, `m`, `del`, `w` and `f` focus the negative.** A stray enter cancels rather than spending
+  money, starting a run, or destroying something.
+
+The rule behind it: **reversible defaults to yes; expensive or destructive defaults to no.** If a
+confirmation seems to do the opposite of what you expected, that is the rule at work rather than a
+bug - though it is worth a beta report if it reads wrong in practice.
 
 **`s` shows this same list inside the app**, paged left/right; the app builds it from the same table
 this list was read from, so the two cannot drift.
@@ -547,12 +567,14 @@ this list was read from, so the two cannot drift.
 | `x` | reject the focused card, with confirmation |
 | `m` | cycle the card's model, with confirmation |
 | `e` | edit: open the focused card |
+| `l` | the focused card's own menu: edit, delete, change model, and move-to as a submenu |
 | `j` | move the focused card to another status |
 | `del` | delete the focused card, with confirmation |
 | `t` | run replay: scrub the focused card's run step by step |
 | `/` | type: the open card's comment, or the open chat |
 | `g` | toggle kanban / workstream grouping |
 | `w` | run the board: start (with confirmation) / stop the queue |
+| `f` | fold: merge the board's overlapping todo cards into one, with confirmation |
 
 ### Panels and boards
 
@@ -661,8 +683,9 @@ the landing lock, never merging - are the parts that are not going to.
 ### Sending a report
 
 Bug reports go to
-**[GitHub issues](https://github.com/BalthazarFitzpatrick/smortboard/issues/new?template=bug.yml)**.
-The template asks for what is actually useful, and the more of it you fill in the faster it is fixed:
+**[github.com/BalthazarFitzpatrick/smortboard/issues](https://github.com/BalthazarFitzpatrick/smortboard/issues)**.
+Pick the bug report template; it asks for what is actually useful, and the more of it you fill in the
+faster it is fixed:
 
 - the version (`uv run smortboard --version`) and your operating system
 - anything not green in the pre-flight checklist (`h`)
@@ -795,7 +818,7 @@ curl -s -X PATCH -H "$K" -H 'content-type: application/json' 127.0.0.1:8000/api/
 | No new runs start | Check the usage window (`u`) and the board's daily budget (`o`). |
 | Cards were `CRASH`ed on start-up | The board was stopped mid-run; they are waiting in the inbox to be resumed. |
 
-Anything else: [open a bug report](https://github.com/BalthazarFitzpatrick/smortboard/issues/new?template=bug.yml).
+Anything else: [open a bug report](https://github.com/BalthazarFitzpatrick/smortboard/issues).
 
 ---
 
