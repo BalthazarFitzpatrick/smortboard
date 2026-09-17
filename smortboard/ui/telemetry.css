@@ -44,7 +44,8 @@
 .opt-rows {
   display: grid; align-items: center; gap: 6px 16px; font-variant-numeric: tabular-nums;
 }
-.opt-cap-fit, .opt-model-fit { grid-template-columns: minmax(80px, 1fr) minmax(70px, 1fr) repeat(4, auto); }
+.opt-cap-fit { grid-template-columns: minmax(80px, 1fr) minmax(70px, 1fr) repeat(5, auto); }
+.opt-model-fit { grid-template-columns: minmax(80px, 1fr) minmax(70px, 1fr) repeat(4, auto); }
 .opt-suggested-caps { grid-template-columns: minmax(90px, 1fr) repeat(5, auto); }
 .opt-waste { grid-template-columns: minmax(120px, 1fr) repeat(2, auto); }
 .opt-row { display: contents; }
