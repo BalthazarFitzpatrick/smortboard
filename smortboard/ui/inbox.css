@@ -1,14 +1,10 @@
 /* attention inbox (n): the top-right indicator on the board bar, and the panel it opens.
    every visual primitive - toggle, panel-floating, h-divider, field-label, text-field, hazard
-   stripes, card-pile - comes from base.css; this file only positions and sizes them for the inbox.
-   the list itself wears .bucket-rows (layout.css) so its spread/fan/pile css comes free and can
-   never drift from what a board column draws - only .inbox-card's own look is new here. */
-
-:root {
-  /* every inbox card, whichever regime draws it, is this tall at rest - a landscape shape wide
-     enough to read title + question without the aspect-ratio square .card uses elsewhere */
-  --inbox-card-height: 240px;
-}
+   stripes, .card/.card-strip/.card-attention/.focus-glow - comes from base.css and layout.css;
+   this file only positions and sizes the panel and its list, and the bits unique to a summary
+   card (reason line, board line, summary clamp, answer row, lease approve row). the panel is a
+   plain vertical list - no pile, no fan, no fixed card height - so nothing here reaches for
+   columns.js's layout machinery at all. */
 
 .attention-indicator {
   order: 3;
@@ -29,8 +25,10 @@
   color: var(--text-dim);
 }
 
+/* a vertical rectangle, clearly taller than wide - a stack of overview cards to scan top to
+   bottom, not a wide surface trying to hold a landscape layout */
 .inbox-panel {
-  width: min(900px, 90vw);
+  width: min(460px, 92vw);
   max-height: 90vh;
   display: flex;
   flex-direction: column;
@@ -62,66 +60,80 @@
   text-align: center;
 }
 
+/* the list is the thing that scrolls - a card never does */
 .inbox-list {
   flex: 1 1 auto;
-  min-height: 260px;
+  min-height: 0;
   padding: 14px;
-  overflow: hidden;
-}
-
-/* the landscape card: wider than tall, a fixed height set inline by inbox.js's fit (never by
-   css), the same title-band-then-body shape .card uses but without its 1/1.2 aspect ratio, and
-   the attention edge every row in this panel wears since everything here is waiting on you */
-.inbox-card {
-  border: 2px solid var(--grey-border);
-  border-left: 4px solid var(--fill-attention, var(--attention));
-  background: var(--panel-row);
-  padding: 8px 12px;
-  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  cursor: pointer;
-  overflow: hidden;
+  gap: var(--card-gap, 10px);
+  overflow-y: auto;
 }
-.inbox-list > .inbox-card { flex-shrink: 0; }
-.inbox-list > .card-pile { flex-shrink: 0; }
 
-.inbox-row-head {
+/* a board-style card overview: same frame a board card wears in the attention column (.card,
+   .card-strip, .card-attention give the border, the attention edge colour and focus-glow), but
+   no side stripe - just the plain attention-coloured border every card in this panel wears since
+   everything here is waiting on the operator. height fits its content, never fixed, never clipped */
+.inbox-card {
+  aspect-ratio: auto;
+  width: 100%;
+  height: auto;
+  padding: 10px 12px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.inbox-reason-row {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  flex-wrap: wrap;
-  flex: 0 0 auto;
 }
+/* the most prominent line on the card - the reason it called for attention, first thing read */
+.inbox-reason {
+  color: var(--fill-attention, var(--attention));
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.inbox-since {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: calc(var(--font-size, 13px) - 1px);
+}
+
 .inbox-title {
   font-weight: 600;
   color: var(--cream);
+  cursor: pointer;
 }
-.inbox-reason { color: var(--fill-attention, var(--attention)); }
-.inbox-since { margin-left: auto; }
+.inbox-title:hover { text-decoration: underline; }
 
-/* what to do, before why - the one line a scan of the inbox should land on */
+.inbox-board {
+  color: var(--text-dim);
+}
+
+/* what to do, before why - the line a scan of the inbox should land on next */
+/* plain text, so the reason above stays the only attention-coloured line */
 .inbox-action {
-  flex: 0 0 auto;
-  color: var(--fill-attention, var(--attention));
+  color: var(--text);
   font-weight: 600;
 }
 
-.inbox-question {
-  flex: 1 1 auto;
-  min-height: 0;
+/* the note/question, shortened to about two lines - the full text lives in the title attribute */
+.inbox-summary {
   white-space: pre-wrap;
   color: var(--text);
   line-height: 1.4;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 7;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
 
+/* the lease-approve row and the answer field only appear on the focused card (inbox.js decides
+   whether to build them at all) - kept compact here rather than styled as an afterthought */
 .inbox-answer-row {
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -133,7 +145,6 @@
 .inbox-status.inbox-error { color: var(--status-warn); }
 
 .inbox-lease-approve {
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
