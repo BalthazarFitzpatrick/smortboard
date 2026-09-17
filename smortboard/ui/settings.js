@@ -458,7 +458,6 @@ function renderSpendCapRow(cap) {
 function buildSpendCapsSection() {
   const grid = document.createElement('div');
   grid.className = 'settings-grid settings-grid-two';
-  grid.appendChild(settingsGridHeader(['run', 'max $']));
   SPEND_CAPS.forEach(cap => grid.appendChild(renderSpendCapRow(cap)));
   const status = document.createElement('span');
   status.className = 'boards-status settings-grid-note';
