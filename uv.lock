@@ -591,7 +591,7 @@ requires-dist = [
     { name = "keyring", specifier = ">=25.7.0" },
     { name = "platformdirs", specifier = ">=4.0" },
     { name = "playwright", specifier = ">=1.40" },
-    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=2f2af664801a4b89c65fd879796b819ff28b1b74" },
+    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=v0.1.10" },
 ]
 
 [package.metadata.requires-dev]
@@ -612,8 +612,8 @@ wheels = [
 
 [[package]]
 name = "ui-base"
-version = "0.1.0"
-source = { git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=2f2af664801a4b89c65fd879796b819ff28b1b74#2f2af664801a4b89c65fd879796b819ff28b1b74" }
+version = "0.1.10"
+source = { git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=v0.1.10#da5f2a20226301b13a901ea20978e46fe1fdf50b" }
 
 [[package]]
 name = "virtualenv"
