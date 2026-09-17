@@ -180,7 +180,15 @@ assert.ok(cards[2].querySelector('.inbox-answer'), 'the answer field still shows
 const approveButton = cards[2].querySelector('.inbox-approve');
 assert.ok(approveButton.classList.contains('toggle'), 'reuses the existing toggle button class');
 responses.set('/api/cards/c3/lease/approve', stubJson(202, {card_id: 'c3', running: true, phase: 'running'}));
-approveButton.onclick();
+// the board's card keys: space steps into the card onto its first control (the title), arrowdown
+// moves to approve, space presses it
+fireKeydown(cards[2], {code: 'Space', key: ' '});
+const title2 = cards[2].querySelector('.inbox-title');
+assert.ok(title2.focused, 'space on a card focuses its first control');
+fireKeydown(mod.ib.listEl, {code: 'ArrowDown', key: 'ArrowDown', target: title2});
+assert.ok(approveButton.focused, 'arrowdown inside the card moves to the approve control');
+assert.equal(mod.ib.focusIndex, 2, 'moving between controls does not move to another card');
+fireKeydown(cards[2], {code: 'Space', key: ' ', target: approveButton});
 await flush(); await flush();
 const approveCall = calls.find(c => c.path === '/api/cards/c3/lease/approve');
 assert.ok(approveCall, 'the approve control posts to the lease/approve route');
@@ -228,6 +236,10 @@ const input0Again = card0Again.querySelector('.inbox-answer');
 fireKeydown(input0Again, {code: 'Escape', key: 'Escape'});
 assert.ok(card0Again.focused, 'escape from the answer input returns focus to its card');
 assert.ok(mod.ib.backdrop.parentNode, 'the panel itself stays open');
+
+// ---- / on a focused card puts the cursor in its answer field ------------------------------------
+fireKeydown(card0Again, {code: 'Slash', key: '/'});
+assert.ok(input0Again.focused, '/ on a card focuses its answer field');
 
 // ---- escape on a focused card (not its field) closes the panel -------------------------------------
 fireKeydown(card0Again, {code: 'Escape', key: 'Escape', target: card0Again});

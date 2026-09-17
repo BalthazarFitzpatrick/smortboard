@@ -157,3 +157,17 @@
   color: var(--text-dim);
   word-break: break-all;
 }
+
+/* the control focus is on inside a card - the card keeps its glow, the control gets the ring */
+.inbox-control:focus { outline: 2px solid var(--cream); outline-offset: 2px; }
+.inbox-title.inbox-control { cursor: pointer; }
+/* the card you stepped into keeps its glow while focus sits on one of its controls or its field,
+   using the same focus-glow tokens as base.css */
+.inbox-card.focus-glow:focus-within {
+  transform: scale(var(--focus-lift));
+  filter: saturate(var(--focus-light-saturate)) brightness(var(--focus-light-brightness));
+  box-shadow:
+    inset 0 0 0 var(--focus-ring-width) var(--focus-ring-color),
+    inset 0 0 var(--focus-inner-glow-blur) var(--focus-inner-glow-spread) var(--focus-inner-glow-color);
+  z-index: 2;
+}

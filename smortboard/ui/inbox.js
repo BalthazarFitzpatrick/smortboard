@@ -215,7 +215,8 @@ function buildInboxCard(row, idx, focused) {
   reasonRow.append(reason, since);
 
   const title = document.createElement('div');
-  title.className = 'inbox-title';
+  title.className = focused ? 'inbox-title inbox-control' : 'inbox-title';
+  title.tabIndex = -1;
   title.textContent = row.title;
   title.onclick = () => {
     closeInboxPanel();
@@ -252,7 +253,7 @@ function buildInboxCard(row, idx, focused) {
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'inbox-answer text-field';
-  input.placeholder = 'answer, then enter';
+  input.placeholder = '/ to answer, then enter';
   const status = document.createElement('span');
   status.className = 'inbox-status';
   input.addEventListener('keydown', evt => {
@@ -270,16 +271,34 @@ function buildInboxCard(row, idx, focused) {
   return card;
 }
 
-// enter on a focused card, not its answer field, puts the cursor there - escape in the field gives
-// focus back to the card (above); escape on the card itself closes the panel
+// the board's card keys: space (or enter) steps into the focused card onto its first control,
+// arrows move between its controls, space presses one, / puts the cursor in its answer field.
+// stopped here so the board's own space and / never act on the card behind the panel
 function onCardKey(evt, card) {
-  if (evt.target !== card) return;
-  if (evt.code === 'Enter') {
+  const onControl = evt.target.classList?.contains('inbox-control');
+  if (evt.target !== card && !onControl) return;
+  if (evt.code === 'Escape' && evt.target === card) { closeInboxPanel(); return; }
+  if (evt.code === 'Slash' || evt.key === '/') {
     const input = card.querySelector('.inbox-answer');
-    if (input) { evt.preventDefault(); input.focus(); }
+    evt.preventDefault();
+    evt.stopPropagation();
+    if (input) input.focus();
     return;
   }
-  if (evt.code === 'Escape') closeInboxPanel();
+  if (evt.code !== 'Space' && evt.code !== 'Enter') return;
+  evt.preventDefault();
+  evt.stopPropagation();
+  if (onControl) { evt.target.onclick?.(); return; }
+  const first = card.querySelector('.inbox-control');
+  if (first) first.focus();
+}
+
+// up/down between the controls of the card focus is inside; at either end focus stays put
+function moveInsideCard(control, dir) {
+  const card = control.closest('.inbox-card');
+  const controls = Array.from(card.querySelectorAll('.inbox-control'));
+  const next = controls[controls.indexOf(control) + dir];
+  if (next) next.focus();
 }
 
 // the "wants: <paths>" line and its approve control - one click widens exactly those paths and
@@ -293,7 +312,8 @@ function buildLeaseApproveRow(row) {
   wants.textContent = `wants: ${row.wants.join(', ')}`;
 
   const button = document.createElement('span');
-  button.className = 'inbox-approve toggle';
+  button.className = 'inbox-approve toggle inbox-control';
+  button.tabIndex = -1;
   button.textContent = 'approve';
   const status = document.createElement('span');
   status.className = 'inbox-status';
@@ -368,6 +388,12 @@ function focusInboxIndex(idx) {
 function onInboxListKey(evt) {
   if (evt.code !== 'ArrowDown' && evt.code !== 'ArrowUp') return;
   if (evt.target.closest?.('.inbox-answer')) return;
+  if (evt.target.classList?.contains('inbox-control')) {
+    evt.preventDefault();
+    evt.stopPropagation();
+    moveInsideCard(evt.target, evt.code === 'ArrowDown' ? 1 : -1);
+    return;
+  }
   const scope = scopeByKey(ib.scope);
   const rows = scope ? scope.rows : [];
   const row = evt.target.closest?.('[data-idx]');
@@ -441,7 +467,14 @@ async function loadInbox() {
 // listener here would only run after that has already switched boards. capture runs first, and
 // stopPropagation keeps every key the panel owns from ever reaching the board underneath it
 function onInboxKey(evt) {
-  if (evt.code === 'Escape') { evt.stopPropagation(); closeInboxPanel(); return; }
+  if (evt.code === 'Escape') {
+    evt.stopPropagation();
+    // one level back: out of a field or a control onto its card, and only from a card to closed
+    const card = evt.target.closest?.('.inbox-card');
+    if (card && evt.target !== card) { evt.preventDefault?.(); card.focus(); return; }
+    closeInboxPanel();
+    return;
+  }
   const targetTag = (evt.target?.tagName || evt.target?.tag || '').toUpperCase();
   const inField = targetTag === 'INPUT' || targetTag === 'TEXTAREA';
   if (inField) return;
