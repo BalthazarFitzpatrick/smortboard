@@ -190,6 +190,10 @@ def _real_runner(
     read paths, so mission control can open the files it plans against. The clones live in a temp
     dir removed once the turn ends; a missing extra path becomes a board message, not a crash.
     `read_paths` is resolved once by the caller so the setting is not read a second time here.
+
+    Records the turn's cost (even on a failed or capped run) to board_spend via `store`, so mission
+    control and fold spend count toward the board's daily budget - see telemetry.board_spend_today.
+    Fake runners used by tests bypass this entirely, since they never call `_real_runner`.
     """
 
     def run(prompt: str, model: str, budget_usd: float, screenshot_path: Path | None = None) -> str:
@@ -248,6 +252,9 @@ def _real_runner(
             )
         finally:
             snapshot.cleanup()
+        # record whatever it cost even on failure or a cap - a capped run still spent real money
+        if result.total_cost_usd is not None:
+            store.add_board_spend(board_id, role, result.total_cost_usd)
         # a turn that answered through its schema and only then hit a limit still answered
         if result.structured_output is not None and result.blocked_reason_code in (None, "CRASH"):
             return json.dumps(result.structured_output)

@@ -62,14 +62,18 @@ _SETTING_KEYS = (
     "reviewer_budget_usd",
     "orchestrator_budget_usd",
     "fold_budget_usd",
+    "card_total_budget_usd",
 )
 
-# per-run dollar caps an operator may set; unset falls back to each role's own default
+# per-run dollar caps an operator may set; unset falls back to each role's own default.
+# card_total_budget_usd is not per-run - it caps one card's spend across every run and restart,
+# see smortboard.budgets.spend_refusal - but it validates the same way, so it lives here too
 SPEND_CAP_KEYS = (
     "worker_budget_usd",
     "reviewer_budget_usd",
     "orchestrator_budget_usd",
     "fold_budget_usd",
+    "card_total_budget_usd",
 )
 
 # writable settings that are not plain strings. mission_control_read_paths is a json list of
@@ -1188,6 +1192,28 @@ class Store:
             params = (board_id, limit)
         rows = self._conn.execute(query, params).fetchall()
         return [self._orchestrator_message_dict(r) for r in rows]
+
+    def add_board_spend(self, board_id: str, role: str, cost_usd: float) -> dict[str, Any]:
+        """a mission control or fold turn's cost - not tied to a card run, so it lives on its own
+        table rather than a card's events. see telemetry.board_spend_today, which sums these too."""
+        spend_id = _new_id()
+        created_at = _now()
+        self._conn.execute(
+            """
+            INSERT INTO board_spend (id, board_id, role, cost_usd, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (spend_id, board_id, role, cost_usd, created_at),
+        )
+        self._conn.commit()
+        row = self._conn.execute("SELECT * FROM board_spend WHERE id = ?", (spend_id,)).fetchone()
+        return _row_to_dict(row)
+
+    def list_board_spend(self, board_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM board_spend WHERE board_id = ? ORDER BY created_at", (board_id,)
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
 
     def get_plan(self, board_id: str) -> str | None:
         row = self._conn.execute(

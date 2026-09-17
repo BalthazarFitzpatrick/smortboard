@@ -240,6 +240,23 @@ def test_approve_lease_widens_but_leaves_lease_conflict_when_resume_is_refused(s
     assert runs.started == []
 
 
+def test_approve_lease_widens_but_refuses_past_the_daily_budget(store):
+    board, _, card = _board_and_card(store, leases=["src/**"])
+    store.set_board_daily_budget(board["id"], 1.0)
+    store.append_event(card["id"], "result", {"total_cost_usd": 1.5})
+    store.update_card(card["id"], blocked_reason_code="LEASE_CONFLICT", review_flag=True)
+    runs = _FakeRuns()
+
+    with pytest.raises(AnswerRefused, match="daily budget"):
+        approve_lease(store, runs, card["id"], ["ui/board.js"])
+
+    updated = store.get_card(card["id"])
+    # the lease still widened - a person approved exactly this path
+    assert sorted(g["path_glob"] for g in updated["leases"]) == ["src/**", "ui/board.js"]
+    assert updated["blocked_reason_code"] == "LEASE_CONFLICT"
+    assert runs.started == []
+
+
 # ---- the route itself, over real HTTP -------------------------------------------------------------
 # only the cases that never touch RunRegistry.start (which would spin up a real card lifecycle) -
 # the happy path through approve_lease is already proven above with a fake runs registry.

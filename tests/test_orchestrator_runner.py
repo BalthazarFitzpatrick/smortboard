@@ -15,6 +15,7 @@ import pytest
 from smortboard.exec.runner import RunResult
 from smortboard.orchestrator import (
     ORCHESTRATOR_ALLOWED_TOOLS,
+    _real_runner,
     run_orchestrator_turn,
 )
 from smortboard.store.api import Store
@@ -415,6 +416,42 @@ def test_a_container_that_died_shows_its_own_error_output(tmp_path, monkeypatch)
         run_orchestrator_turn(store, board["id"], "plan it")
         note = _board_notes(store, board["id"])[-1]
     assert "CRASH" in note and "container said: docker: Error response from daemon: boom" in note
+
+
+def test_a_successful_turn_records_its_cost_to_board_spend(tmp_path, monkeypatch):
+    calls = []
+    _wire(monkeypatch, calls)
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("dev")
+        run_orchestrator_turn(store, board["id"], "plan it")
+        rows = store.list_board_spend(board["id"])
+    assert len(rows) == 1
+    assert rows[0]["role"] == "orchestrator"
+    assert rows[0]["cost_usd"] == 0.01
+
+
+def test_a_failed_or_capped_turn_still_records_its_cost(tmp_path, monkeypatch):
+    _wire_result(
+        monkeypatch, _failed(subtype="error_max_budget_usd", num_turns=14, total_cost_usd=1.02)
+    )
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("dev")
+        run_orchestrator_turn(store, board["id"], "four things at once")
+        rows = store.list_board_spend(board["id"])
+    assert len(rows) == 1
+    assert rows[0]["cost_usd"] == 1.02
+
+
+def test_the_fold_role_also_records_its_cost_via_the_shared_real_runner(tmp_path, monkeypatch):
+    calls = []
+    _wire(monkeypatch, calls)
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("dev")
+        run = _real_runner(store, board["id"], None, "prompt", [], role="fold")
+        run("prompt", "model", 1.0)
+        rows = store.list_board_spend(board["id"])
+    assert len(rows) == 1
+    assert rows[0]["role"] == "fold"
 
 
 def test_an_answer_given_before_the_budget_stop_is_still_used(tmp_path, monkeypatch):

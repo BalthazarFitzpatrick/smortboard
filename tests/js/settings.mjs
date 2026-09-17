@@ -141,8 +141,9 @@ assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 5,
 // ---- spend caps: blank is the default, a value is PATCHed under its own key ----------------------
 {
   const inputs = mod.st.listEl.querySelectorAll('.settings-spend-input');
-  assert.equal(inputs.length, 4, 'worker, review, mission control and fold each have a cap');
+  assert.equal(inputs.length, 5, 'worker, review, mission control, fold and the card total each have a cap');
   assert.equal(inputs[2].placeholder, '1.00', 'the mission control default shows as the placeholder');
+  assert.equal(inputs[4].placeholder, 'no limit', 'the card total cap has no default - unset means unlimited');
   inputs[2].value = '2.5';
   inputs[2]._listeners.blur.forEach(fn => fn());
   await flush();

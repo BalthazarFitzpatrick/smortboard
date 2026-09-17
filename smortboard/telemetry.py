@@ -434,9 +434,10 @@ def board_costs(store: Store, board_id: str) -> list[dict[str, Any]]:
 
 
 def board_spend_today(store: Store, board_id: str, *, today: str | None = None) -> float:
-    """this board's spend so far today (UTC), summed straight from each card's own `result`
-    events - what scheduler._board_daily_budget compares the board's daily_budget_usd against
-    before starting anything new. `today` is a YYYY-MM-DD override, for tests only."""
+    """this board's spend so far today (UTC): each card's own `result` events plus mission
+    control/fold spend (board_spend, migration 18) - what budgets.spend_refusal and
+    scheduler._board_daily_budget compare daily_budget_usd against before starting anything new.
+    `today` is a YYYY-MM-DD override, for tests only."""
     day = today or datetime.now(UTC).date().isoformat()
     total = 0.0
     for card in store.list_cards(board_id):
@@ -444,6 +445,9 @@ def board_spend_today(store: Store, board_id: str, *, today: str | None = None) 
             if event["kind"] != "result" or not str(event["created_at"]).startswith(day):
                 continue
             total += float(event["payload"].get("total_cost_usd") or 0)
+    for row in store.list_board_spend(board_id):
+        if str(row["created_at"]).startswith(day):
+            total += float(row["cost_usd"] or 0)
     return round(total, 6)
 
 
