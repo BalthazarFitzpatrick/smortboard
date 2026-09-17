@@ -30,7 +30,11 @@ CARD_WRITABLE_FIELDS = {
     "repo_id",
     "findings_route",
     "model",
+    "complexity",
 }
+
+# 1/2/3 = low/medium/high - see schema.py migration 19
+COMPLEXITY_LEVELS = (1, 2, 3)
 
 # board-wide values, one settings row per key. unset means no row.
 # the three models are stored only when the operator set them - callers apply the defaults (opus for the
@@ -92,6 +96,11 @@ def _check_image(value: Any) -> None:
 def _check_model(value: Any) -> None:
     if value is not None and not (isinstance(value, str) and _MODEL_NAME.match(value)):
         raise ValueError(f"model must be a model name or null, not {value!r}")
+
+
+def _check_complexity(value: Any) -> None:
+    if value is not None and value not in COMPLEXITY_LEVELS:
+        raise ValueError(f"complexity must be one of {COMPLEXITY_LEVELS} or null, not {value!r}")
 
 
 def _check_positive_int(name: str, value: Any) -> None:
@@ -437,9 +446,11 @@ class Store:
         model: str | None = None,
         ledger_task: str | None = None,
         depends_on: list[str] | None = None,
+        complexity: int | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
         _check_model(model)
+        _check_complexity(complexity)
         # validated before any insert - a brand new card can never be part of an existing
         # cycle or depend on itself (its id does not exist yet), so only existence matters
         cleaned_deps = list(dict.fromkeys(depends_on or []))
@@ -450,8 +461,8 @@ class Store:
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
                 blocked_reason_code, description, position, review_flag, model, ledger_task,
-                created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                complexity, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -466,6 +477,7 @@ class Store:
                 int(review_flag),
                 model,
                 ledger_task,
+                complexity,
                 now,
                 now,
             ),
@@ -603,6 +615,8 @@ class Store:
             _check_findings_route(fields["findings_route"])
         if "model" in fields:
             _check_model(fields["model"])
+        if "complexity" in fields:
+            _check_complexity(fields["complexity"])
 
         merged = {**fields, "status": next_status, "blocked_reason_code": next_reason}
         assignments = ", ".join(f"{key} = ?" for key in merged)

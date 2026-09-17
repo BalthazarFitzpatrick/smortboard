@@ -8,12 +8,18 @@ usage: rate-limit windows and model spend, summed straight off the event log.
 
 from __future__ import annotations
 
+import statistics
 from datetime import UTC, datetime
+from math import ceil
 from typing import Any
 
 from smortboard import profiles
 from smortboard.exec.runner import classify_rate_limit, classify_result
 from smortboard.store.api import Store
+
+# result subtype set when a run is stopped by --max-budget-usd - see review.reviewer.BUDGET_STOP
+_BUDGET_STOP_SUBTYPE = "error_max_budget_usd"
+_MIN_RUNS_FOR_CAP_SUGGESTION = 5
 
 # tool_use -> the activity phrase it reads as. order matters only for readability; lookup is by key
 _TOOL_ACTIVITY = {
@@ -35,6 +41,55 @@ _PHASE_ACTIVITY = {
     "fixing": "fixing review findings",
     "opening": "opening the pull request",
 }
+
+
+def estimate_complexity(
+    criteria_count: int,
+    task_count: int,
+    lease_glob_count: int,
+    has_broad_lease: bool,
+    model: str | None,
+) -> int:
+    """a guess at an unrated card's complexity (1/2/3), used only by cost analysis - never written
+    back to the card, since a real rating always wins once set.
+
+    score = criteria_count + task_count, plus 2 for a broad lease (one glob holding `**`, which
+    reaches arbitrarily deep) or 1 for any lease at all, plus 2 more if the model is an opus alias
+    (mission control reaches for opus when it already expects the work to need more judgement).
+    score <= 3 is low (1), <= 6 is medium (2), anything higher is high (3).
+    """
+    score = criteria_count + task_count
+    if has_broad_lease:
+        score += 2
+    elif lease_glob_count:
+        score += 1
+    if model and "opus" in model.lower():
+        score += 2
+    if score <= 3:
+        return 1
+    if score <= 6:
+        return 2
+    return 3
+
+
+def _estimate_card_complexity(card: dict[str, Any]) -> int:
+    """estimate_complexity fed straight from one card's own fields"""
+    globs = [lease["path_glob"] for lease in card.get("leases") or []]
+    return estimate_complexity(
+        criteria_count=len(card.get("criteria") or []),
+        task_count=len(card.get("tasks") or []),
+        lease_glob_count=len(globs),
+        has_broad_lease=any("**" in glob for glob in globs),
+        model=card.get("model"),
+    )
+
+
+def _card_complexity(card: dict[str, Any]) -> tuple[int, bool]:
+    """(level, rated) - the card's own rating if set, else an estimate"""
+    rated = card.get("complexity")
+    if rated in (1, 2, 3):
+        return rated, True
+    return _estimate_card_complexity(card), False
 
 
 def _basename(file_path: str) -> str:
@@ -534,6 +589,202 @@ def boards_overview(store: Store) -> dict[str, Any]:
         "totals": totals,
         "orchestrator_turns_counted": False,
         "cost_groups": _cost_outcome_groups(store),
+    }
+
+
+def _attempt_capped(segment: list[dict[str, Any]]) -> bool:
+    """whether this attempt was stopped by its worker's --max-budget-usd cap"""
+    return any(
+        event["kind"] == "result" and event["payload"].get("subtype") == _BUDGET_STOP_SUBTYPE
+        for event in segment
+    )
+
+
+def _cap_fit_rows(store: Store, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """per complexity level, split rated vs estimated, worker run cost against the current
+    worker cap - how often a level's runs actually fit inside it"""
+    from smortboard.exec.runner import DEFAULT_CARD_BUDGET_USD
+
+    cap = store.spend_cap("worker_budget_usd", DEFAULT_CARD_BUDGET_USD)
+    buckets: dict[tuple[int, bool], list[float]] = {}
+    for card in cards:
+        level, rated = _card_complexity(card)
+        for segment in _attempts(store.list_events(card["id"])):
+            summary = _summarize_attempt(segment)
+            if summary["worker_cost_usd"] <= 0:
+                continue
+            buckets.setdefault((level, rated), []).append(summary["worker_cost_usd"])
+    rows = []
+    for (level, rated), costs in sorted(buckets.items(), key=lambda kv: (kv[0][0], not kv[0][1])):
+        hit_cap = sum(1 for c in costs if c >= cap)
+        rows.append(
+            {
+                "complexity": level,
+                "source": "rated" if rated else "estimated",
+                "runs": len(costs),
+                "within_cap": len(costs) - hit_cap,
+                "hit_cap": hit_cap,
+                "median_cost_usd": round(statistics.median(costs), 6),
+                "max_cost_usd": round(max(costs), 6),
+            }
+        )
+    return {"worker_cap_usd": cap, "rows": rows}
+
+
+def _p90(costs: list[float]) -> float:
+    """nearest-rank 90th percentile - the ordinary reading of "p90", not an interpolated one"""
+    ordered = sorted(costs)
+    index = max(0, ceil(0.9 * len(ordered)) - 1)
+    return ordered[index]
+
+
+def _suggested_caps(store: Store, role_costs: dict[str, list[float]]) -> dict[str, dict[str, Any]]:
+    from smortboard.consolidate import FOLD_BUDGET_USD
+    from smortboard.exec.runner import DEFAULT_CARD_BUDGET_USD
+    from smortboard.orchestrator import DEFAULT_TURN_BUDGET_USD
+    from smortboard.review.reviewer import DEFAULT_REVIEW_BUDGET_USD
+
+    role_defaults = {
+        "worker": ("worker_budget_usd", DEFAULT_CARD_BUDGET_USD),
+        "reviewer": ("reviewer_budget_usd", DEFAULT_REVIEW_BUDGET_USD),
+        "orchestrator": ("orchestrator_budget_usd", DEFAULT_TURN_BUDGET_USD),
+        "fold": ("fold_budget_usd", FOLD_BUDGET_USD),
+    }
+    result = {}
+    for role, (setting_key, default) in role_defaults.items():
+        current_cap = store.spend_cap(setting_key, default)
+        costs = role_costs.get(role, [])
+        if len(costs) < _MIN_RUNS_FOR_CAP_SUGGESTION:
+            result[role] = {"current_cap_usd": current_cap, "note": "not enough runs"}
+            continue
+        p90 = _p90(costs)
+        suggested = ceil(p90 / 0.25) * 0.25
+        would_cut = [c for c in costs if c > suggested]
+        result[role] = {
+            "current_cap_usd": current_cap,
+            "runs": len(costs),
+            "p90_cost_usd": round(p90, 6),
+            "suggested_cap_usd": round(suggested, 6),
+            "runs_that_would_be_cut": len(would_cut),
+            "spend_difference_usd": round(sum(c - suggested for c in would_cut), 6),
+        }
+    return result
+
+
+_WASTE_REASONS = {
+    "hit cap": lambda outcome, capped, card_status, last: capped,
+    "refused": lambda outcome, capped, card_status, last: outcome == "refused",
+    "crashed": lambda outcome, capped, card_status, last: outcome == "blocked: CRASH",
+    "rejected (review)": lambda outcome, capped, card_status, last: (
+        outcome == "blocked: REVIEW_REJECTED"
+    ),
+    "rejected (operator)": lambda outcome, capped, card_status, last: (
+        last and card_status == "rejected" and outcome == "pull request"
+    ),
+}
+
+
+def _waste(store: Store, cards: list[dict[str, Any]]) -> dict[str, Any]:
+    """spend on attempts that never turned into accepted work, grouped by why - the cap check
+    goes first, since a capped run can also read as "refused" further down the chain"""
+    totals: dict[str, dict[str, float]] = {}
+    for card in cards:
+        attempts = _attempts(store.list_events(card["id"]))
+        for i, segment in enumerate(attempts):
+            summary = _summarize_attempt(segment)
+            capped = _attempt_capped(segment)
+            is_last = i == len(attempts) - 1
+            for reason, test in _WASTE_REASONS.items():
+                if test(summary["outcome"], capped, card.get("status"), is_last):
+                    bucket = totals.setdefault(reason, {"count": 0, "cost_usd": 0.0})
+                    bucket["count"] += 1
+                    bucket["cost_usd"] += summary["cost_usd"]
+                    break
+    rows = [
+        {"reason": reason, "count": int(v["count"]), "cost_usd": round(v["cost_usd"], 6)}
+        for reason, v in totals.items()
+    ]
+    rows.sort(key=lambda r: r["cost_usd"], reverse=True)
+    return {"rows": rows, "total_cost_usd": round(sum(r["cost_usd"] for r in rows), 6)}
+
+
+def _model_fit(cards: list[dict[str, Any]], store: Store) -> list[dict[str, Any]]:
+    """per model x complexity: how many cards, how many got accepted, what each accepted card
+    cost, and how often the attempt needed a fix round before it got there"""
+    groups: dict[tuple[str, int], dict[str, Any]] = {}
+    for card in cards:
+        level, _rated = _card_complexity(card)
+        attempts = _attempts(store.list_events(card["id"]))
+        summaries = [_summarize_attempt(s) for s in attempts]
+        model = (
+            card.get("model")
+            or next((s["worker_model"] for s in reversed(summaries) if s["worker_model"]), None)
+            or "default"
+        )
+        key = (model, level)
+        group = groups.setdefault(
+            key,
+            {
+                "model": model,
+                "complexity": level,
+                "cards": 0,
+                "accepted_cards": 0,
+                "accepted_cost_usd": 0.0,
+                "attempts": 0,
+                "attempts_needing_fix": 0,
+            },
+        )
+        group["cards"] += 1
+        group["attempts"] += len(summaries)
+        group["attempts_needing_fix"] += sum(1 for s in summaries if s["fix_rounds"] > 0)
+        if card.get("status") == "accepted":
+            group["accepted_cards"] += 1
+            group["accepted_cost_usd"] += sum(s["cost_usd"] for s in summaries)
+    rows = []
+    for group in groups.values():
+        rows.append(
+            {
+                "model": group["model"],
+                "complexity": group["complexity"],
+                "cards": group["cards"],
+                "accepted_cards": group["accepted_cards"],
+                "cost_per_accepted_card_usd": (
+                    round(group["accepted_cost_usd"] / group["accepted_cards"], 6)
+                    if group["accepted_cards"]
+                    else None
+                ),
+                "fix_round_share": (
+                    round(group["attempts_needing_fix"] / group["attempts"], 4)
+                    if group["attempts"]
+                    else None
+                ),
+            }
+        )
+    rows.sort(key=lambda r: (r["model"], r["complexity"]))
+    return rows
+
+
+def cost_optimisation(store: Store, board_id: str | None = None) -> dict[str, Any]:
+    """the cost-optimisation view's data: cap fit, suggested caps, waste and model fit, scoped to
+    one board when `board_id` is given, else across every board"""
+    boards = [store.get_board(board_id)] if board_id else store.list_boards()
+    cards = [card for board in boards for card in store.list_cards(board["id"])]
+
+    role_costs: dict[str, list[float]] = {"worker": [], "reviewer": []}
+    for card in cards:
+        for segment in _attempts(store.list_events(card["id"])):
+            summary = _summarize_attempt(segment)
+            if summary["worker_cost_usd"] > 0:
+                role_costs["worker"].append(summary["worker_cost_usd"])
+            if summary["reviewer_cost_usd"] > 0:
+                role_costs["reviewer"].append(summary["reviewer_cost_usd"])
+
+    return {
+        "board_id": board_id,
+        "cap_fit": _cap_fit_rows(store, cards),
+        "suggested_caps": _suggested_caps(store, role_costs),
+        "waste": _waste(store, cards),
+        "model_fit": _model_fit(cards, store),
     }
 
 

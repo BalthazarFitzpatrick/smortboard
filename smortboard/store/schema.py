@@ -383,6 +383,13 @@ _MIGRATIONS: list[str] = [
     """
     ALTER TABLE boards ADD COLUMN daily_budget_usd REAL;
     """,
+    # 19: card complexity rating - 1/2/3 (low/medium/high), NULL means unrated. set by mission
+    # control at card creation or by hand; unrated cards fall back to telemetry.estimate_complexity
+    # NOTE: numbered 19 while migration 18 (board_spend, feature/budget-on-every-start) is still
+    # unmerged on this branch - renumber to whatever slot follows 18 once that branch lands
+    """
+    ALTER TABLE cards ADD COLUMN complexity INTEGER;
+    """,
 ]
 
 

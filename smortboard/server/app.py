@@ -55,6 +55,7 @@ from smortboard.telemetry import (
     board_costs,
     boards_overview,
     card_telemetry,
+    cost_optimisation,
     roster_rows,
     usage_projection,
 )
@@ -103,6 +104,7 @@ _ROUTES = [
     (re.compile(r"^/api/roster$"), "GET"),
     (re.compile(r"^/api/usage$"), "GET"),
     (re.compile(r"^/api/costs$"), "GET"),
+    (re.compile(r"^/api/costs/optimisation$"), "GET"),
     (re.compile(r"^/api/prompts$"), "GET"),
     (re.compile(r"^/api/prompts/(?P<role>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/telemetry$"), "GET"),
@@ -393,6 +395,11 @@ def _make_handler(
                 self._send_json(200, usage_projection(store))
             elif path == "/api/costs":
                 self._send_json(200, boards_overview(store))
+            elif path == "/api/costs/optimisation":
+                board_id = self._query().get("board", [None])[0]
+                if board_id:
+                    store.get_board(board_id)  # a 404 for an unknown board
+                self._send_json(200, cost_optimisation(store, board_id))
             elif path == "/api/prompts" and method == "GET":
                 self._send_json(200, self._prompts_view())
             elif "role" in params and method == "PATCH":
