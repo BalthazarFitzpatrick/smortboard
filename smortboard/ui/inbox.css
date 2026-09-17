@@ -7,7 +7,7 @@
 :root {
   /* every inbox card, whichever regime draws it, is this tall at rest - a landscape shape wide
      enough to read title + question without the aspect-ratio square .card uses elsewhere */
-  --inbox-card-height: 170px;
+  --inbox-card-height: 240px;
 }
 
 .attention-indicator {
@@ -31,7 +31,7 @@
 
 .inbox-panel {
   width: min(900px, 90vw);
-  max-height: 80vh;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -116,7 +116,7 @@
   line-height: 1.4;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 7;
   -webkit-box-orient: vertical;
 }
 
