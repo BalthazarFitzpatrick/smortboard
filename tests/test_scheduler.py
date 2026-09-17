@@ -528,6 +528,22 @@ def test_a_running_card_finishes_once_the_boards_budget_is_hit_mid_run(store, bo
     assert scheduler.schedule_view()["budget_paused"] is True
 
 
+def test_a_card_past_its_own_total_cap_never_starts_even_with_budget_left(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    store.set_setting("card_total_budget_usd", "1.0")
+    a = store.create_card(board_id, repo_id, "capped")
+    b = store.create_card(board_id, repo_id, "fine")
+    store.append_event(a["id"], "result", {"total_cost_usd": 1.5})
+
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+
+    assert a["id"] not in runs.started
+    assert b["id"] in runs.started
+    assert scheduler.schedule_view()["budget_paused"] is False  # board cap is untouched
+
+
 # -- blocked cards rejoin the queue --------------------------------------------------
 
 

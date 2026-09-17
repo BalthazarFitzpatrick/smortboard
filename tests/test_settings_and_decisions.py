@@ -52,6 +52,7 @@ def test_the_global_route_forces_every_card(store, card_id):
         "reviewer_budget_usd": None,
         "orchestrator_budget_usd": None,
         "fold_budget_usd": None,
+        "card_total_budget_usd": None,
         "mission_control_read_paths": [],
     }
 
@@ -162,6 +163,7 @@ def test_settings_travel_in_the_export_bundle(store, tmp_path):
             "reviewer_budget_usd": None,
             "orchestrator_budget_usd": None,
             "fold_budget_usd": None,
+            "card_total_budget_usd": None,
             "mission_control_read_paths": [],
         }
 

@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from smortboard.actions import next_action, short_action
+from smortboard.budgets import spend_refusal
 from smortboard.lifecycle import BOARD_AUTHOR
 from smortboard.operator import AUTHOR_KEY
 from smortboard.scheduler import API_UNREACHABLE_MAX_RETRIES, _latest_reset, conflicting_run
@@ -169,6 +170,9 @@ def answer_card(store: Store, runs: Any, card_id: str, message: str) -> dict[str
     conflict = conflicting_run(store, card, [s.card_id for s in active()]) if active else None
     if conflict:
         raise AnswerRefused(f"not resumed: {conflict} - answer again once it finishes")
+    refusal = spend_refusal(store, card)
+    if refusal:
+        raise AnswerRefused(refusal)
 
     store.add_comment(card_id, author=AUTHOR_KEY, body=message)
     store.update_card(card_id, blocked_reason_code=None, review_flag=False)
