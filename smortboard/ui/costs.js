@@ -88,7 +88,10 @@ function totalsFoot(totals) {
     .join(', ');
   const roles = `worker ${formatUsd(totals.worker_cost_usd || 0)} - reviewer ${formatUsd(totals.reviewer_cost_usd || 0)}`;
   foot.appendChild(textLine(models ? `${roles} - ${models}` : roles, 'stat'));
-  foot.appendChild(textLine('mission-control turns are not counted - the log carries no cost for them', 'stat cost-note'));
+  foot.appendChild(textLine(
+    `mission control and fold turns ${formatUsd(totals.turn_cost_usd || 0)} - not in the card totals above`,
+    'stat cost-note'
+  ));
   return foot;
 }
 

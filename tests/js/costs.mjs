@@ -111,7 +111,7 @@ assert.match(text, /board \| share \| spend \| runs \| accepted \| prs \| per pr
 assert.match(text, /pricey board \| \$0\.88 \| 1 \| 0\/1 \| 0 \| - \| \$0\.88/);
 assert.match(text, /cheap board \| \$0\.13 \| 1 \| 1\/1 \| 1 \| \$0\.13 \| -/);
 assert.ok(text.indexOf('pricey board') < text.indexOf('cheap board'), 'costliest board leads');
-assert.match(text, /mission-control turns are not counted/);
+assert.match(text, /mission control and fold turns \$/);
 assert.match(text, /2 boards - 2 cards - 2 runs - \$1\.01/);
 assert.match(text, /\$0\.88 on runs with a permission denial/);
 assert.match(text, /worker \$0\.98 - reviewer \$0\.03 - opus \$0\.88, claude-sonnet-4 \$0\.13/);

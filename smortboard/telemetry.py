@@ -56,7 +56,8 @@ def estimate_complexity(
     score = criteria_count + task_count, plus 2 for a broad lease (one glob holding `**`, which
     reaches arbitrarily deep) or 1 for any lease at all, plus 2 more if the model is an opus alias
     (mission control reaches for opus when it already expects the work to need more judgement).
-    score <= 3 is low (1), <= 6 is medium (2), anything higher is high (3).
+    score <= 5 is low (1), <= 9 is medium (2), anything higher is high (3) - a typical card with
+    three criteria, three tasks and a narrow lease scores 7, which is medium.
     """
     score = criteria_count + task_count
     if has_broad_lease:
@@ -65,9 +66,9 @@ def estimate_complexity(
         score += 1
     if model and "opus" in model.lower():
         score += 2
-    if score <= 3:
+    if score <= 5:
         return 1
-    if score <= 6:
+    if score <= 9:
         return 2
     return 3
 
@@ -567,8 +568,8 @@ def _cost_outcome_groups(store: Store) -> dict[str, Any]:
 
 def boards_overview(store: Store) -> dict[str, Any]:
     """one row per board, costliest first, plus a totals row across every board - the c panel's
-    data. orchestrator (mission-control) turns are never counted here: build_board_snapshot's
-    turns cost nothing the event log records, so the panel says so rather than guessing a number."""
+    data. card spend and mission control/fold turn spend (board_spend) are kept apart, so the
+    per-card and per-pr numbers stay about card work"""
     rows = [_board_overview_row(store, board) for board in store.list_boards()]
     rows.sort(key=lambda r: r["cost_usd"], reverse=True)
 
@@ -584,6 +585,12 @@ def boards_overview(store: Store) -> dict[str, Any]:
         "worker_cost_usd": round(sum(r["worker_cost_usd"] for r in rows), 6),
         "reviewer_cost_usd": round(sum(r["reviewer_cost_usd"] for r in rows), 6),
         "spend_by_model": _sum_spend_by_model(rows),
+        "turn_cost_usd": round(
+            sum(
+                s["cost_usd"] for b in store.list_boards() for s in store.list_board_spend(b["id"])
+            ),
+            6,
+        ),
     }
     total_prs = totals["pull_requests_opened"]
     totals["cost_per_pr_usd"] = round(totals["cost_usd"] / total_prs, 6) if total_prs else None
@@ -591,7 +598,7 @@ def boards_overview(store: Store) -> dict[str, Any]:
     return {
         "boards": rows,
         "totals": totals,
-        "orchestrator_turns_counted": False,
+        "orchestrator_turns_counted": True,
         "cost_groups": _cost_outcome_groups(store),
     }
 
@@ -774,7 +781,17 @@ def cost_optimisation(store: Store, board_id: str | None = None) -> dict[str, An
     boards = [store.get_board(board_id)] if board_id else store.list_boards()
     cards = [card for board in boards for card in store.list_cards(board["id"])]
 
-    role_costs: dict[str, list[float]] = {"worker": [], "reviewer": []}
+    role_costs: dict[str, list[float]] = {
+        "worker": [],
+        "reviewer": [],
+        "orchestrator": [],
+        "fold": [],
+    }
+    # mission control and fold turns are recorded per board since migration 18
+    for board in boards:
+        for spend in store.list_board_spend(board["id"]):
+            if spend["role"] in role_costs and spend["cost_usd"] > 0:
+                role_costs[spend["role"]].append(spend["cost_usd"])
     for card in cards:
         for segment in _attempts(store.list_events(card["id"])):
             summary = _summarize_attempt(segment)

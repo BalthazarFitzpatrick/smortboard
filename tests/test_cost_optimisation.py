@@ -213,3 +213,13 @@ def test_cost_optimisation_route_scoped_to_a_board(running_server):
 
     status, _ = _request(f"{running_server}/api/costs/optimisation?board=does-not-exist")
     assert status == 404
+
+
+def test_mission_control_turn_spend_feeds_its_suggested_cap(tmp_path):
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("b")
+        for cost in (0.2, 0.3, 0.4, 0.5, 0.9):
+            store.add_board_spend(board["id"], "orchestrator", cost)
+        caps = cost_optimisation(store)["suggested_caps"]
+    assert caps["orchestrator"]["runs"] == 5
+    assert caps["orchestrator"]["suggested_cap_usd"] > 0

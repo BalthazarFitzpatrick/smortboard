@@ -108,22 +108,26 @@ def test_fold_keeps_the_highest_member_complexity(store):
 
 def test_estimate_complexity_low_for_a_tiny_card():
     assert estimate_complexity(1, 1, 0, False, "sonnet") == 1
+    assert estimate_complexity(2, 2, 1, False, "sonnet") == 1
 
 
 def test_estimate_complexity_medium_for_a_moderate_card():
-    assert estimate_complexity(3, 2, 1, False, "sonnet") == 2
+    # three criteria, three tasks, a narrow lease - the typical terse card
+    assert estimate_complexity(3, 3, 1, False, "sonnet") == 2
 
 
-def test_estimate_complexity_high_for_a_broad_lease():
-    assert estimate_complexity(3, 3, 1, True, "sonnet") == 3
+def test_estimate_complexity_a_broad_lease_pushes_a_bigger_card_to_high():
+    assert estimate_complexity(3, 3, 1, True, "sonnet") == 2
+    assert estimate_complexity(4, 4, 1, True, "sonnet") == 3
 
 
-def test_estimate_complexity_high_for_opus():
-    assert estimate_complexity(1, 1, 0, False, "opus") == 2
+def test_estimate_complexity_opus_raises_the_estimate():
+    assert estimate_complexity(2, 2, 1, False, "sonnet") == 1
+    assert estimate_complexity(2, 2, 1, False, "opus") == 2
 
 
 def test_estimate_complexity_opus_plus_broad_lease_is_high():
-    assert estimate_complexity(2, 1, 1, True, "opus") == 3
+    assert estimate_complexity(3, 3, 1, True, "opus") == 3
 
 
 def test_estimate_complexity_no_model_no_leases():
