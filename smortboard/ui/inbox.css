@@ -93,6 +93,8 @@
 .inbox-reason {
   color: var(--fill-attention, var(--attention));
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 .inbox-since {
   margin-left: auto;
@@ -112,8 +114,9 @@
 }
 
 /* what to do, before why - the line a scan of the inbox should land on next */
+/* plain text, so the reason above stays the only attention-coloured line */
 .inbox-action {
-  color: var(--fill-attention, var(--attention));
+  color: var(--text);
   font-weight: 600;
 }
 
