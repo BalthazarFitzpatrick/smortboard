@@ -70,16 +70,37 @@ function overlayRows(bindings) {
 // the single section for one page - built fresh from BINDINGS each time, never cached, so paging
 // can never show a group's stale copy
 function shortcutPageSection(index) {
-  const [group, label] = BINDING_GROUPS[index];
-  return {kind: 'list', label, items: overlayRows(BINDINGS.filter(b => b.group === group))};
+  const [group] = BINDING_GROUPS[index];
+  return {kind: 'list', items: overlayRows(BINDINGS.filter(b => b.group === group))};
+}
+
+// the page header: the same arrows-and-label row the attention inbox uses, so paging is visible
+// and clickable rather than a key you have to know about
+function shortcutPagerSection(index, turnPage) {
+  const header = document.createElement('div');
+  header.className = 'pager-header';
+  const prev = document.createElement('span');
+  prev.className = 'pager-nav toggle';
+  prev.textContent = '←';
+  prev.onclick = () => turnPage(-1);
+  const label = document.createElement('span');
+  label.className = 'pager-label';
+  label.textContent = `${BINDING_GROUPS[index][1]} (${index + 1}/${BINDING_GROUPS.length})`;
+  const next = document.createElement('span');
+  next.className = 'pager-nav toggle';
+  next.textContent = '→';
+  next.onclick = () => turnPage(1);
+  header.append(prev, label, next);
+  return {kind: 'node', node: header};
 }
 
 function openShortcutOverlay() {
   toggleOverlay('KeyS', () => {
     let page = 0;
+    const turnPage = dir => menu.turnPage(dir);
     const menu = new Menu({
       title: 'keyboard shortcuts',
-      sections: [shortcutPageSection(page)],
+      sections: [shortcutPagerSection(page, turnPage), shortcutPageSection(page)],
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyS') openOverlay = null; },
     });
     menu.openAt({x: Math.max(16, window.innerWidth / 2 - 280), y: 60});
@@ -87,7 +108,7 @@ function openShortcutOverlay() {
     // left/right move here; wrapping means either direction reaches every page
     menu.turnPage = dir => {
       page = (page + dir + BINDING_GROUPS.length) % BINDING_GROUPS.length;
-      menu.refresh([shortcutPageSection(page)]);
+      menu.refresh([shortcutPagerSection(page, turnPage), shortcutPageSection(page)]);
     };
     return menu;
   });

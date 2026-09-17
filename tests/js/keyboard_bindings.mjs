@@ -126,18 +126,22 @@ const overlay = openedMenus[openedMenus.length - 1];
     .map(b => (b.code === 'Digit1' ? 'boards' : b.code));
   const [firstGroup, secondGroup] = mod.BINDING_GROUPS.map(([group]) => group);
 
-  assert.equal(overlay.menu.sections.length, 1, 'the overlay shows one page at a time, not two columns');
-  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(firstGroup), 's opens on the first BINDINGS group');
+  const listSection = () => overlay.menu.sections.find(sec => sec.kind === 'list');
+  const pagerLabel = () => overlay.menu.sections.find(sec => sec.kind === 'node').node.children[1].textContent;
+  assert.equal(overlay.menu.sections.filter(sec => sec.kind === 'list').length, 1, 'the overlay shows one page at a time, not two columns');
+  assert.equal(pagerLabel(), `${mod.BINDING_GROUPS[0][1]} (1/${mod.BINDING_GROUPS.length})`, 'a pager header names the page');
+  assert.deepEqual(listSection().items.map(i => i.id), pageIds(firstGroup), 's opens on the first BINDINGS group');
 
   press('ArrowRight');
-  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(secondGroup), 'right turns to the next page');
+  assert.deepEqual(listSection().items.map(i => i.id), pageIds(secondGroup), 'right turns to the next page');
+  assert.ok(pagerLabel().startsWith(mod.BINDING_GROUPS[1][1]), 'the pager label follows the page');
   press('ArrowRight');
-  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(firstGroup), 'right wraps back to the first page');
+  assert.deepEqual(listSection().items.map(i => i.id), pageIds(firstGroup), 'right wraps back to the first page');
 
   press('ArrowLeft');
-  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(secondGroup), 'left wraps the other way, to the last page');
+  assert.deepEqual(listSection().items.map(i => i.id), pageIds(secondGroup), 'left wraps the other way, to the last page');
   press('ArrowLeft');
-  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(firstGroup), 'left steps back to the first page');
+  assert.deepEqual(listSection().items.map(i => i.id), pageIds(firstGroup), 'left steps back to the first page');
 
   // every binding lands on exactly one page - the groups partition the whole table between them
   const allPageIds = mod.BINDING_GROUPS.flatMap(([group]) => mod.BINDINGS.filter(b => b.group === group).map(b => b.code));
@@ -145,7 +149,7 @@ const overlay = openedMenus[openedMenus.length - 1];
     'every binding in BINDINGS appears on exactly one page');
 
   mod.BINDINGS.filter(b => b.group === firstGroup && !folded(b.code)).forEach((b, i) => {
-    assert.ok(overlay.menu.sections[0].items[i].label.startsWith(b.label), `page 1 row ${i} should show binding label "${b.label}"`);
+    assert.ok(listSection().items[i].label.startsWith(b.label), `page 1 row ${i} should show binding label "${b.label}"`);
   });
 }
 

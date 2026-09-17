@@ -396,6 +396,17 @@ body {
 /* ---- keyboard shortcuts (s): one page at a time, wide enough that the longest binding stays on
    one line. left/right swaps the page's section in place, so this only ever sizes a single list */
 .menu-panel.shortcut-overlay { width: min(560px, 94vw); max-height: 90vh; }
+
+/* a paged panel's header: wide arrow buttons either side of a centred label, spaced from the
+   shared tokens - the same row the attention inbox uses to switch scope */
+.pager-header {
+  display: flex;
+  align-items: center;
+  gap: var(--inset-x, 14px);
+  padding: var(--inset, 12px) 0;
+}
+.pager-nav { min-width: calc(var(--row-height, 31px) * 2); justify-content: center; font-weight: 700; }
+.pager-label { flex: 1 1 auto; text-align: center; color: var(--cream); font-weight: 600; }
 /* the whole page at once - ui_base caps a menu section at 60vh, which hid boards 8 and 9 */
 .shortcut-overlay .menu-section { max-height: none; }
 
