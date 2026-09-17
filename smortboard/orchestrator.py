@@ -70,18 +70,7 @@ ORCHESTRATOR_PROMPT = (
     "change nothing and the board will not run it. Cover every file the card must touch - its "
     "tests, and any file it moves or deletes - and keep cards that run in parallel from sharing a "
     "glob, since two cards whose leases overlap never run at once.\n\n"
-    "Card text is read as plain text in the card panel (newlines kept, no markdown rendering). "
-    "Write every card description for a quick scan, in this shape:\n"
-    "GOAL: <one or two lines>\n"
-    "SCOPE:\n"
-    "- <one line per piece of work>\n"
-    "OUT OF SCOPE:\n"
-    "- <one line each>\n"
-    "RULES:\n"
-    "- <one line per constraint>\n"
-    "Short lines, '- ' bullets, a blank line between sections; no paragraph longer than three "
-    "lines, no **bold** or # headers. Acceptance criteria go in the card's criteria, not in the "
-    "description.\n\n"
+    "Card text is scanned, not read. Follow the card text rules in each turn exactly.\n\n"
     "If you need to see something on screen rather than have "
     f"{OPERATOR_NAME} describe it, set `screenshot` to a short name for what you want to look at "
     '(for example "board") and give your best answer so far in `reply` anyway - the board takes '
@@ -440,6 +429,44 @@ def _mounts_description(repo_names: list[str], extra_basenames: list[str]) -> st
     return "\n".join(lines)
 
 
+# how long card text may be - a word count the model targets, never a length the board cuts to
+TITLE_WORDS = (8, 10)
+DESCRIPTION_MAX_WORDS = 20
+CRITERION_MAX_WORDS = 12
+
+# in the turn prompt, not ORCHESTRATOR_PROMPT, so an edited prompt can't drop them
+CARD_TEXT_RULES = (
+    "CARD TEXT RULES. The operator scans cards; write no prose.\n"
+    f"- title: {TITLE_WORDS[0]} to {TITLE_WORDS[1]} words, complete on its own. Write it that "
+    "short; never write a long title and rely on it being cut.\n"
+    f"- description: at most {DESCRIPTION_MAX_WORDS} words in total. What changes and why, one or "
+    "two plain sentences. No sections, no bullets.\n"
+    f"- criteria: each at most {CRITERION_MAX_WORDS} words, one checkable fact.\n"
+    "- tasks: each a short imperative, about 6 words.\n"
+    "Drop filler words (that, very, just, basically, in order to, note that). No markdown. Detail "
+    "the worker needs goes in criteria and tasks, tersely, not in the description."
+)
+
+
+def _word_count(text: str) -> int:
+    return len(str(text or "").split())
+
+
+def card_text_warnings(spec: dict[str, Any]) -> list[str]:
+    """notes for card text that runs past the rules - reported to the operator, never cut"""
+    title = str(spec.get("title") or "").strip()
+    notes = []
+    if _word_count(title) > TITLE_WORDS[1]:
+        notes.append(f"{_word_count(title)} words in the title (target {TITLE_WORDS[1]} at most)")
+    if _word_count(spec.get("description")) > DESCRIPTION_MAX_WORDS:
+        words = _word_count(spec.get("description"))
+        notes.append(f"{words} words in the description (max {DESCRIPTION_MAX_WORDS})")
+    long_criteria = [c for c in spec.get("criteria") or [] if _word_count(c) > CRITERION_MAX_WORDS]
+    if long_criteria:
+        notes.append(f"{len(long_criteria)} criteria over {CRITERION_MAX_WORDS} words")
+    return [f'"{title}" runs long: {note}' for note in notes]
+
+
 # in the turn prompt rather than ORCHESTRATOR_PROMPT: a stored prompt replaces the code default
 _LEDGER_RULES = (
     "Each repo carries `layout` (its folders with file counts) and `open_tasks` (the not-done tasks "
@@ -473,6 +500,8 @@ def build_turn_prompt(
         + json.dumps(snapshot, indent=2)
         + "\n\n"
         + _LEDGER_RULES
+        + "\n\n"
+        + CARD_TEXT_RULES
         + "\n\n"
         + (_PLANNING_MODE_RULES if mode != "manage" else _MANAGE_MODE_RULES)
         + (f"\n\n{mounts}" if mounts else "")
@@ -679,6 +708,7 @@ def run_orchestrator_turn(
             warnings.append(
                 f'"{title}" has no lease, so the board will not run it until one is set'
             )
+        warnings.extend(card_text_warnings(spec))
         card = store.create_card(
             board_id,
             repo_id,
