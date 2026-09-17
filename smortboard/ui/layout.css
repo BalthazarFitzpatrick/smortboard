@@ -508,6 +508,20 @@ body {
   gap: 12px;
 }
 
+/* the beta's bug form (board.js buildIssueButton): FIRST in the corner, left of the board's own
+   numbers. it is an <a> so the keyboard can reach it, which is the only reason it needs rules of
+   its own - a link arrives underlined and inline, and next to the settings button that read as a
+   different kind of thing at a different height */
+.issue-button {
+  order: 0;
+  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size, 13px);
+  text-decoration: none;
+}
+
 /* ---- settings (o): the button in the bar corner and the panel it opens ---------------------- */
 .settings-button {
   order: 2;

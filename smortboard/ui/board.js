@@ -72,6 +72,26 @@ function barCorner() {
   return el;
 }
 
+// ---- beta: submit issue ------------------------------------------------------------------
+// the repo's own bug form, FIRST in the corner group so it reads before the board's own numbers.
+// an <a>, not a .toggle div like the settings button: tab reaches it and enter opens it, so it is
+// operable without a mouse without taking one of the few single keys still free
+const ISSUE_FORM_URL =
+  'https://github.com/BalthazarFitzpatrick/smortboard/issues/new?template=bug.yml';
+
+function buildIssueButton() {
+  const link = document.createElement('a');
+  link.id = 'issue-button';
+  link.className = 'toggle issue-button';
+  link.textContent = 'beta: submit issue';
+  link.href = ISSUE_FORM_URL;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  const corner = barCorner();
+  corner.insertBefore(link, corner.firstChild);
+  return link;
+}
+
 function renderBoardBar() {
   const bar = document.getElementById('board-bar');
   bar.innerHTML = '';
@@ -1027,5 +1047,12 @@ function togglePromptEditor() {
 loadBoards().then(() => { buildDrawers(); returnToBoardBar(); followRuns(); });
 // whether the pointer affordances are on - shortcuts.js owns the flag, board.js owns api()
 loadMouseSetting();
-// who the operator is, for their own lines in the chats and comments - "you" until the board answers
-api('/health').then(h => { if (h && h.operator) operatorName = h.operator; }).catch(() => {});
+const issueButton = buildIssueButton();
+// who the operator is, for their own lines in the chats and comments - "you" until the board
+// answers - and the version the bug form asks for as its first field (version, in bug.yml), which
+// is the only field id prefilled: the rest are the tester's to fill in
+api('/health').then(h => {
+  if (!h) return;
+  if (h.operator) operatorName = h.operator;
+  if (h.version) issueButton.href = `${ISSUE_FORM_URL}&version=${encodeURIComponent(h.version)}`;
+}).catch(() => {});
