@@ -541,10 +541,11 @@ belongs to the browser - `cmd`+`c` copies, it does not open the cost panel.
 Anything that starts, spends, lands or destroys asks once. The confirmation opens with one button
 **already focused**, and which button that is depends on how bad the mistake would be:
 
-- **`y` and `x` focus confirm.** Pressing enter straight after the key carries on, because a wrong
-  accept or reject is undone from the card's own menu (`l`). Being wrong costs a keypress.
-- **`r`, `m`, `del`, `w` and `f` focus the negative.** A stray enter cancels rather than spending
-  money, starting a run, or destroying something.
+- **`y`, `x` and `k` focus confirm.** Pressing enter straight after the key carries on, because a
+  wrong accept or reject is undone from the card's own menu (`m`), and a stopped run can be started
+  again. Being wrong costs a keypress.
+- **`r`, `w`, `f`, and delete or change-model inside the card menu focus the negative.** A stray
+  enter cancels rather than spending money, starting a run, or destroying something.
 
 The rule behind it: **reversible defaults to yes; expensive or destructive defaults to no.** If a
 confirmation seems to do the opposite of what you expected, that is the rule at work rather than a
@@ -565,11 +566,7 @@ this list was read from, so the two cannot drift.
 | `k` | stop the focused card if it is running |
 | `y` | accept the focused card, with confirmation |
 | `x` | reject the focused card, with confirmation |
-| `m` | cycle the card's model, with confirmation |
-| `e` | edit: open the focused card |
-| `l` | the focused card's own menu: edit, delete, change model, and move-to as a submenu |
-| `j` | move the focused card to another status |
-| `del` | delete the focused card, with confirmation |
+| `m` | menu for the focused card: edit, model, complexity, move to, delete |
 | `t` | run replay: scrub the focused card's run step by step |
 | `/` | type: the open card's comment, or the open chat |
 | `g` | toggle kanban / workstream grouping |
