@@ -97,7 +97,10 @@ function renderBoardBar() {
   bar.innerHTML = '';
   boards.forEach(board => {
     const btn = document.createElement('div');
-    btn.className = 'nav-tab toggle';
+    // focus-glow-soft is the quiet focus treatment (ui_base), the same one a card's sections wear.
+    // FOCUS AND ACTIVE SAY DIFFERENT THINGS: the glow is the tab the keyboard is on, the accent
+    // fill (.board-bar .nav-tab.active) is the board being shown - the active tab focused wears both
+    btn.className = 'nav-tab toggle focus-glow focus-glow-soft';
     btn.dataset.tab = board.id;
     btn.textContent = board.name;
     bar.appendChild(btn);

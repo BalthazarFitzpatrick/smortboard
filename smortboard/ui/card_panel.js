@@ -418,9 +418,12 @@ function outcomeSectionHtml(outcome, card = {}) {
   return sectionHtml('outcome', 'outcome', parts.join(''));
 }
 
-// one section per field: data-section names it for the layouts, .field-value holds what it says
+// one section per field: data-section names it for the layouts, .field-value holds what it says.
+// focus-glow-soft is the quiet version of the card's own focus treatment (ui_base): a section is a
+// smaller thing than a card, so it wears the same look at a third of the lift and light
+const SECTION_CLASS = 'card-section focus-glow focus-glow-soft';
 function sectionHtml(name, label, value) {
-  return `<div class="card-section" tabindex="0" data-section="${name}"><div class="field-label">${label}</div><div class="section-value">${value}</div></div>`;
+  return `<div class="${SECTION_CLASS}" tabindex="0" data-section="${name}"><div class="field-label">${label}</div><div class="section-value">${value}</div></div>`;
 }
 
 // board-written notes lead with a one-line headline now (lifecycle.py's _note callers write it
@@ -494,7 +497,7 @@ function cardPanelHtml(card, outcome) {
       ${sectionHtml('criteria', 'acceptance criteria', listHtml(criteria))}
       ${sectionHtml('deps', 'dependencies', listHtml(deps))}
       ${sectionHtml('attachments', 'attachments', listHtml(attachments))}
-      <div class="card-section" tabindex="0" data-section="comments"><div class="field-label">comments</div>
+      <div class="${SECTION_CLASS}" tabindex="0" data-section="comments"><div class="field-label">comments</div>
         <div class="section-value">${listHtml(comments)}</div>
         <input class="comment-input text-field" placeholder="add a comment, enter to send">
       </div>

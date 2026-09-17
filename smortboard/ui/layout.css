@@ -39,6 +39,12 @@ body {
   border: 2px solid var(--grey-border);
   border-bottom: 2px solid var(--grey-border);
 }
+/* FOCUS AND ACTIVE ARE DIFFERENT STATES AND MUST READ DIFFERENTLY. focus is the tab the keyboard is
+   on and wears ui_base's .focus-glow-soft (board.js puts the class on every tab); active is the
+   board actually being shown and is this fill, unchanged. the active tab focused wears both, which
+   is why the soft variant's light is a filter over whatever is there rather than a colour of its
+   own - it lifts the accent fill instead of covering it. retune the glow by restating one of its
+   tokens, never by drawing a second one here. */
 .board-bar .nav-tab.active {
   background: var(--accent-on);
   color: var(--accent-on-text);
@@ -239,7 +245,13 @@ body {
 .card-panel .card-section:not([data-section="title"]) > .field-label {
   padding: 2px 0; margin-bottom: 10px; border-bottom: 2px solid var(--grey-border);
 }
-/* with no box of its own, a focused section lights its rule rather than drawing a ring */
+/* A FOCUSED SECTION WEARS THE CARD'S OWN LOOK, QUIETER (operator, 2026-09-17) - ui_base's
+   .focus-glow-soft, put on every section by card_panel.js: the same inset ring, inner glow and
+   coloured light the card itself wears, at a third of the lift and light and half the ring. A
+   section inside a card is a smaller thing than a card on a board, so the loud one read as the
+   whole card jumping. Retune a part by restating that part's token, not the rule.
+   The rule below stays: the label lighting is what a section had before the glow and it still says
+   which section this is once the ring is drawing round several fields' worth of text. */
 .card-panel .card-section:focus-visible { outline: none; }
 .card-panel .card-section:not([data-section="title"]):focus-visible > .field-label {
   color: var(--cream); border-bottom-color: var(--cream);
