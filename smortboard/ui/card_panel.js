@@ -348,7 +348,10 @@ async function openCardPanel(panel, cardId) {
   // down did nothing here and the sections were only reachable by / and then escape
   focusFirstCardSection(panel);
 
-  wireCommentInput(panel.querySelector('.comment-input'), panel, cardId);
+  // kept as a const: openCard carries it below, which is what / falls back to when the card is
+  // the only thing open
+  const input = panel.querySelector('.comment-input');
+  wireCommentInput(input, panel, cardId);
 
   // a board note's own primary action, where the CTA does something other than re-open this
   // already-open panel - run/stop reuse the same handlers the strip's CTA does
