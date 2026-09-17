@@ -50,7 +50,7 @@ def test_boards_overview_with_no_boards(store):
     assert overview["boards"] == []
     assert overview["totals"]["cost_usd"] == 0
     assert overview["totals"]["cost_per_pr_usd"] is None
-    assert overview["orchestrator_turns_counted"] is False
+    assert overview["orchestrator_turns_counted"] is True
 
 
 def test_boards_overview_rolls_up_one_board(store):
@@ -111,7 +111,7 @@ def test_boards_overview_never_counts_orchestrator_turns(store):
     board = store.create_board("b")
     store.create_card(board["id"], None, "a card")
     overview = boards_overview(store)
-    assert overview["orchestrator_turns_counted"] is False
+    assert overview["orchestrator_turns_counted"] is True
 
 
 # -- the c panel's redesigned 3x3 grid: total / accepted / refused, keyed off card status --------

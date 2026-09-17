@@ -397,6 +397,11 @@ _MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_board_spend_board_created
         ON board_spend (board_id, created_at);
     """,
+    # 19: card complexity rating - 1/2/3 (low/medium/high), NULL means unrated. set by mission
+    # control at card creation or by hand; unrated cards fall back to telemetry.estimate_complexity
+    """
+    ALTER TABLE cards ADD COLUMN complexity INTEGER;
+    """,
 ]
 
 

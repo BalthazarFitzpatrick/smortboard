@@ -465,6 +465,24 @@ def _refused_attempt(store: Store, card_id: str, model: str) -> None:
     )
 
 
+def _capped_attempt(store: Store, card_id: str, model: str, cost: float) -> None:
+    """a run stopped by its worker's --max-budget-usd cap - what the cost-optimisation view's cap
+    fit and waste sections read off result.subtype == error_max_budget_usd"""
+    store.append_event(card_id, "lifecycle_started", {})
+    _narration(store, card_id, _WALKTHROUGH[:2])
+    result = _result_payload(cost, 22, model)
+    result["subtype"] = "error_max_budget_usd"
+    store.append_event(card_id, "result", result)
+
+
+def _crashed_attempt(store: Store, card_id: str, model: str) -> None:
+    """the container died mid-run - is_error with no other signal reads as CRASH"""
+    store.append_event(card_id, "lifecycle_started", {})
+    result = _result_payload(0.09, 1, model)
+    result["is_error"] = True
+    store.append_event(card_id, "result", result)
+
+
 def _in_flight(store: Store, card_id: str) -> None:
     """a card an agent is working: the transcript the workforce panel shows, no gate yet.
 
@@ -682,6 +700,10 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
             _slug(card["title"]),
         )
     for i, card in enumerate(checking):
+        if i == 0:
+            # this one overran its worker cap before the attempt that finally passed - the cost
+            # optimisation view's cap-fit and waste sections need at least one of these to show
+            _capped_attempt(store, card["id"], "claude-opus-5", 5.85)
         _clean_attempt(
             store,
             card["id"],
@@ -691,8 +713,17 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
             repo,
             _slug(card["title"]),
         )
-    for card in rejected:
+    for i, card in enumerate(rejected):
+        if i == 0:
+            _crashed_attempt(store, card["id"], "claude-sonnet-5")
         _rejected_review_attempt(store, card["id"], "claude-opus-5")
+
+    # a couple of rated cards, one at each end of the scale - the rest stay unrated so the cost
+    # optimisation view's cap-fit table shows both a "rated" and an "estimated" row
+    if todo:
+        store.update_card(todo[0]["id"], complexity=1)
+    if len(accepted) > 1:
+        store.update_card(accepted[1]["id"], complexity=3)
 
     # one fully dressed card per board: a dependency, both comments and the attachment, so there
     # is always a card whose panel shows every section filled in

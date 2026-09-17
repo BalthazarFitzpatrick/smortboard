@@ -88,8 +88,8 @@ overflow.onclick({stopPropagation: () => { stopped = true; }});
 assert.equal(menus.length, 1, 'clicking ... should open exactly one menu');
 assert.ok(stopped, 'the click must not bubble to the strip and also open the card behind the menu');
 const overflowItems = menus[0].opts.sections[0].items.map(i => i.id);
-assert.deepEqual(overflowItems, ['edit', 'model', 'status', 'delete'],
-  'the menu should offer edit, change model, move status and delete');
+assert.deepEqual(overflowItems, ['edit', 'model', 'complexity', 'status', 'delete'],
+  'the menu should offer edit, change model, change complexity, move status and delete');
 
 // ---- edit reuses the strip's own open-to-edit, nothing forked for it
 menus[0].pick('edit');
@@ -138,6 +138,33 @@ await flush();
 const moved = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
 assert.ok(moved, 'move status should PATCH the card');
 assert.equal(JSON.parse(moved.opts.body).status, 'checking');
+
+// ---- change complexity cycles low -> medium -> high, same confirm-then-patch shape as model
+calls.length = 0;
+setResponse('GET', '/api/cards/c1', 200, {id: 'c1', complexity: null});
+setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', complexity: 1});
+menus = [];
+overflow.onclick({stopPropagation(){}});
+menus[0].pick('complexity');
+await flush();
+assert.equal(menus.length, 2, 'change complexity should open a confirm before it patches anything');
+menus[1].pick('confirm');
+await flush();
+const complexityPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
+assert.ok(complexityPatch, 'change complexity should PATCH the card');
+assert.equal(JSON.parse(complexityPatch.opts.body).complexity, 1, 'unrated cycles to low first');
+
+calls.length = 0;
+setResponse('GET', '/api/cards/c1', 200, {id: 'c1', complexity: 3});
+setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', complexity: 1});
+menus = [];
+overflow.onclick({stopPropagation(){}});
+menus[0].pick('complexity');
+await flush();
+menus[1].pick('confirm');
+await flush();
+const wrapPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
+assert.equal(JSON.parse(wrapPatch.opts.body).complexity, 1, 'high wraps back to low');
 
 // ---- change model reuses cycleCardModel exactly, and acts on the card whose ... was clicked -
 // even while a different card holds keyboard focus

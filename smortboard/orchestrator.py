@@ -104,6 +104,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "depends_on": {"type": "array", "items": {"type": "string"}},
                     "model": {"type": ["string", "null"]},
                     "task_id": {"type": ["string", "null"]},
+                    "complexity": {"type": "string", "enum": ["low", "medium", "high"]},
                 },
                 "required": [
                     "title",
@@ -115,6 +116,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "depends_on",
                     "model",
                     "task_id",
+                    "complexity",
                 ],
             },
         },
@@ -133,6 +135,14 @@ ORCHESTRATOR_DISALLOWED_TOOLS = ("Edit", "Write", "NotebookEdit", "Bash", "WebFe
 
 # a model name reaches the card's `claude --model`, so anything but a plain alias or id is refused
 _MODEL_NAME = re.compile(r"^[a-z0-9][a-z0-9.\-]{0,63}$")
+
+
+_COMPLEXITY_LEVELS = {"low": 1, "medium": 2, "high": 3}
+
+
+def _clean_complexity(raw: Any) -> int | None:
+    """the schema's low/medium/high string mapped to the store's 1/2/3, or None if unrecognised"""
+    return _COMPLEXITY_LEVELS.get(str(raw or "").strip().lower())
 
 
 def _clean_model(raw: Any) -> tuple[str | None, str | None]:
@@ -450,6 +460,8 @@ CARD_TEXT_RULES = (
     "two plain sentences. No sections, no bullets.\n"
     f"- criteria: each at most {CRITERION_MAX_WORDS} words, one checkable fact.\n"
     "- tasks: each a short imperative, about 6 words.\n"
+    "- complexity: rate each card's complexity: low, medium or high, by how much judgement and how "
+    "many files it needs.\n"
     "Drop filler words (that, very, just, basically, in order to, note that). No markdown. Detail "
     "the worker needs goes in criteria and tasks, tersely, not in the description."
 )
@@ -727,6 +739,7 @@ def run_orchestrator_turn(
             leases=leases,
             model=model,
             ledger_task=task_id,
+            complexity=_clean_complexity(spec.get("complexity")),
         )
         created_by_title[title] = card["id"]
         created_summaries.append({"id": card["id"], "title": title})

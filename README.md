@@ -144,6 +144,7 @@ Anything that needs you lands in the inbox, `n`. The board never merges into mai
 |---|---|
 | **Board** | A named set of cards and repos. `1`-`9` jump between boards. |
 | **Card** | One unit of work: title, description, acceptance criteria, tasks, dependencies, a lease, and optionally a model. |
+| **Complexity** | A card's rated difficulty - low, medium or high. Set by mission control or by hand; an unrated card falls back to an estimate for cost analysis only. |
 | **Repo** | Where cards work: a path, a default branch, a test command, an optional lint command and image. |
 | **Lease** | The path globs a card may Edit or Write. An empty lease allows nothing, so a card without one is refused. See [Leases](#leases). |
 | **Worktree** | One git worktree and branch per card. The container works on a clone; its commits are fetched back. |
@@ -200,6 +201,9 @@ and two cards whose leases may overlap never run at once.
 <img src="docs/images/costs.jpg" alt="Cost overview across boards" width="100%"><br>
 <b>Cost per board</b> <code>c</code><br>
 Each board's share of spend, runs, accepted cards, pull requests and cost per pull request.
+Left/right switches to <b>cost optimisation</b>: cap fit by complexity, a suggested cap per role,
+spend wasted on a refused, crashed, rejected or capped attempt, and cost per accepted card by
+model and complexity.
 </td>
 <td width="50%" valign="top">
 <img src="docs/images/telemetry.jpg" alt="Card telemetry" width="100%"><br>

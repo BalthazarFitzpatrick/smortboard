@@ -181,6 +181,9 @@ def _fold(
         criteria=criteria,
         model=next((card["model"] for card in fresh if card["model"]), None),
         ledger_task=ledger[0] if ledger else None,
+        # a fold merges scope, never shrinks it - the merged card is at least as complex as its
+        # most complex member
+        complexity=max((c["complexity"] for c in fresh if c["complexity"]), default=None),
     )
     store.set_leases(merged["id"], leases)
     for card in fresh:

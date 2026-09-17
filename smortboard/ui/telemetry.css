@@ -33,3 +33,22 @@
 .cost-group-counts { color: var(--text-dim); font-size: 0.85em; }
 .cost-group-accepted { border-color: var(--status-good); }
 .cost-group-refused { border-color: var(--fill-warn); }
+
+/* the cost / cost-optimisation switcher - the header comes from inbox.css's .inbox-header/-nav/
+   -scope-label as-is; this file only owns the body underneath it and the optimisation tables */
+.costs-view { display: flex; flex-direction: column; gap: 0; }
+.costs-view-body { padding: var(--inset, 12px) var(--inset-x, 14px); }
+.opt-card { gap: 14px; }
+.opt-section { display: flex; flex-direction: column; gap: 6px; }
+.opt-section-heading { text-transform: none; }
+.opt-rows {
+  display: grid; align-items: center; gap: 6px 16px; font-variant-numeric: tabular-nums;
+}
+.opt-cap-fit { grid-template-columns: minmax(80px, 1fr) minmax(70px, 1fr) repeat(5, auto); }
+.opt-model-fit { grid-template-columns: minmax(80px, 1fr) minmax(70px, 1fr) repeat(4, auto); }
+.opt-suggested-caps { grid-template-columns: minmax(90px, 1fr) repeat(5, auto); }
+.opt-waste { grid-template-columns: minmax(120px, 1fr) repeat(2, auto); }
+.opt-row { display: contents; }
+.opt-rows .cost-head { color: var(--text-dim); }
+.opt-rows .num { text-align: right; white-space: nowrap; }
+.opt-empty { grid-column: 1 / -1; color: var(--text-dim); }
