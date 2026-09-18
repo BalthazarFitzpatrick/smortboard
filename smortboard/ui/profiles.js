@@ -2,10 +2,10 @@
 // smortboard/profiles.py. lists each profile's state, pastes a token straight into its mode-600
 // file, and lets the operator activate or remove one by hand.
 //
-// built from the same modal-backdrop / panel-floating pair as preflight.js and inbox.js - nothing
-// here needs arrow/enter/escape hijacked from the document, so it stays out of Menu.
+// built from the same modal-backdrop / panel-floating pair as preflight.js and inbox.js; only the
+// two credential choices use Menu through smortui's standard listMenu helper
 //
-// relies on globals board.js already defines: api, apiOrError, reenterIfFocusLost.
+// relies on board globals api, apiOrError and reenterIfFocusLost, plus smortui's listMenu helper
 //
 // THE TOKEN NEVER COMES BACK. the add form clears its field on submit whether the paste succeeds
 // or not, and nothing here ever writes a token into localStorage or renders one back from the api
@@ -92,34 +92,52 @@ function buildAddForm() {
   const form = document.createElement('div');
   form.className = 'profile-add-row';
 
-  const labInput = document.createElement('select');
-  labInput.className = 'profile-add-lab text-field';
-  labInput.setAttribute('aria-label', 'lab');
-  for (const lab of ['anthropic', 'openai']) {
-    const option = document.createElement('option');
-    option.value = lab;
-    option.textContent = lab;
-    labInput.appendChild(option);
-  }
-  labInput.value = 'anthropic';
-  const kindInput = document.createElement('select');
-  kindInput.className = 'profile-add-kind text-field';
-  kindInput.setAttribute('aria-label', 'credential kind');
-  const setKinds = () => {
-    clearChildren(kindInput);
-    const choices = labInput.value === 'openai'
-      ? [['auth_json', 'ChatGPT login JSON'], ['api_key', 'API key']]
-      : [['oauth', 'setup token']];
-    choices.forEach(([value, label]) => {
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      kindInput.appendChild(option);
-    });
-    kindInput.value = choices[0][0];
-  };
-  labInput.onchange = setKinds;
-  setKinds();
+  let lab = 'anthropic';
+  let kind = 'oauth';
+  const labChoices = [
+    {id: 'anthropic', label: 'anthropic'},
+    {id: 'openai', label: 'openai'},
+  ];
+  const openaiKindChoices = [
+    {id: 'auth_json', label: 'ChatGPT login JSON'},
+    {id: 'api_key', label: 'API key'},
+  ];
+
+  const labButton = document.createElement('button');
+  labButton.type = 'button';
+  labButton.className = 'profile-add-lab profile-add-choice toggle';
+  labButton.setAttribute('aria-label', 'lab');
+  labButton.setAttribute('aria-haspopup', 'menu');
+  labButton.textContent = lab;
+
+  const kindButton = document.createElement('button');
+  kindButton.type = 'button';
+  kindButton.className = 'profile-add-kind profile-add-choice toggle';
+  kindButton.setAttribute('aria-label', 'credential kind');
+  kindButton.setAttribute('aria-haspopup', 'menu');
+  kindButton.textContent = openaiKindChoices[0].label;
+
+  labButton.onclick = () => listMenu('choose lab', labChoices.map(choice => ({
+    ...choice, on: choice.id === lab,
+  })), choice => {
+    lab = choice.id;
+    labButton.textContent = choice.label;
+    if (lab === 'openai') {
+      kind = openaiKindChoices[0].id;
+      kindButton.textContent = openaiKindChoices[0].label;
+      form.insertBefore(kindButton, nameInput);
+    } else {
+      kind = 'oauth';
+      kindButton.remove();
+    }
+  }).openAt(labButton);
+
+  kindButton.onclick = () => listMenu('credential kind', openaiKindChoices.map(choice => ({
+    ...choice, on: choice.id === kind,
+  })), choice => {
+    kind = choice.id;
+    kindButton.textContent = choice.label;
+  }).openAt(kindButton);
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
@@ -138,7 +156,7 @@ function buildAddForm() {
   const status = document.createElement('span');
   status.className = 'profile-status';
 
-  const submitAdd = () => addProfile(nameInput, tokenInput, submit, status, labInput.value, kindInput.value);
+  const submitAdd = () => addProfile(nameInput, tokenInput, submit, status, lab, kind);
   submit.onclick = submitAdd;
   [nameInput, tokenInput].forEach(input => {
     input.addEventListener('keydown', evt => {
@@ -149,7 +167,7 @@ function buildAddForm() {
     });
   });
 
-  form.append(labInput, kindInput, nameInput, tokenInput, submit, status);
+  form.append(labButton, nameInput, tokenInput, submit, status);
   return form;
 }
 

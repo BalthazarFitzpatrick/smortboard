@@ -9,6 +9,18 @@ from smortboard.labs.catalog import load_catalog, parse_ref, resolve_ref, tier_o
 
 def test_legacy_refs_and_unknown_refs(tmp_path):
     catalog = load_catalog(tmp_path / "missing.json")
+    assert [row["label"] for row in catalog["anthropic"]["models"]] == [
+        "Fable",
+        "Opus",
+        "Sonnet",
+        "Haiku",
+    ]
+    assert [row["label"] for row in catalog["openai"]["models"]] == [
+        "Astra",
+        "Sol",
+        "Terra",
+        "Luna",
+    ]
     assert parse_ref("sonnet") == ("anthropic", "sonnet")
     assert parse_ref("openai/x") == ("openai", "x")
     assert resolve_ref("sonnet", catalog) == ("anthropic", "sonnet")
