@@ -159,8 +159,11 @@ def check_image_freshness(
     image = repo.get("image")
     if not image:
         return ImageFreshness(True, None, "no repo-specific image is set - nothing to check.")
+    path = repo.get("path")
+    if not path:
+        return ImageFreshness(True, None, "no repo path is set - nothing to check.")
 
-    stack = detect_stack(Path(repo["path"]))
+    stack = detect_stack(Path(path))
     if stack is None:
         return ImageFreshness(True, None, "no recognised lockfile - nothing to check.")
 

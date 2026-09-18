@@ -29,6 +29,14 @@ def store(tmp_path):
     s.close()
 
 
+@pytest.fixture(autouse=True)
+def _docker_on_path(monkeypatch):
+    """build_repo_image asks shutil.which whether docker exists before ever touching the
+    injected `run` - fake its presence so these tests do not depend on the host actually having
+    a docker binary installed (the one test that cares about its absence overrides this itself)."""
+    monkeypatch.setattr("smortboard.repo_image.shutil.which", lambda name: "/usr/bin/docker")
+
+
 def _fake_run(returncode=0, stdout="build ok", stderr=""):
     def run(cmd, cwd, capture_output, text, timeout, check):
         return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
