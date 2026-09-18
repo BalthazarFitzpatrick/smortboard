@@ -498,6 +498,24 @@ def test_the_brief_says_the_card_may_format_not_only_check():
     assert "write form" not in plain
 
 
+def test_a_bash_written_reformat_outside_the_lease_still_classifies_lease_conflict():
+    """the write-form grant lets a formatter touch paths the Edit/Write hook never sees, so
+    permission_denials alone cannot carry this one - exec/backends.py's fetch-back path is the
+    other half of this contract (it flags an out-of-lease diff by putting LEASE_CONFLICT_PREFIX in
+    the result text), and this is the runner-side half: classify_result must still catch it with
+    no Edit/Write denial at all, the same as if the hook itself had refused it."""
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "permission_denials": [],
+        "result": f"{LEASE_CONFLICT_PREFIX} billing.py was reformatted outside the lease",
+    }
+    run_result = result_to_run_result(result_event)
+    assert run_result.is_error is False
+    assert run_result.blocked_reason_code == "LEASE_CONFLICT"
+
+
 # -- bash guard: refuses a command that reaches outside the worktree ----------
 
 
