@@ -23,6 +23,7 @@ WORKDIR /workspace
 COPY --chown=agent:agent pyproject.toml uv.lock ./
 COPY --chown=agent:agent smortboard ./smortboard
 RUN uv sync --frozen && rm -rf /workspace/* \
-    && chown -R agent:agent /opt/venv /opt/python
+    && mkdir -p /opt/python \
+    && chown -R agent:agent /opt/venv /opt/python /home/agent/.cache
 
 USER agent
