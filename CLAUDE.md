@@ -37,7 +37,7 @@ board, kanban or agent in class names, ids, storage keys or comments.
 
 Card lifecycle: To do -> Doing -> Checking -> Accepted / Rejected, plus **Blocked** with a reason
 code (`CRASH`, `USAGE_LIMIT`, `LEASE_CONFLICT`, `AGENT_QUESTION`, `TESTS_FAILED`,
-`REVIEW_REJECTED`, `DEPENDENCY_REJECTED`). Reaching Checking requires unit tests passing AND the
+`REVIEW_REJECTED`, `DEPENDENCY_REJECTED`, `MERGE_CONFLICT`). Reaching Checking requires unit tests passing AND the
 reviewer approving. Boards default to review-required: they open a PR and wait for accept before
 landing on an unprotected base. Free-merge boards land after the gates pass. Neither mode merges
 into main/master/trunk. Review mode can stack one unmerged parent, at most three cards deep.
@@ -46,9 +46,18 @@ See `docs/PLAN.md` for the full flowchart.
 
 ## Active Context
 
-Pre-beta. The board, mission control, the landing lock and the demo board are built. As of
-2026-09-16 the work is the pre-beta security audit's remediation: api request gate, csp,
-container and db hardening, spend guards, ci, and scrubbing private names from the public repo.
+Public beta, run daily on real repos by one person on macOS. The board, mission control, the
+landing lock and the demo board are built, the security audit's remediation landed, and the public
+history was rewritten (a github support request covers the pull-request refs a force-push cannot
+touch).
+
+Since 2026-09-18 two things changed the shape of the board. **Multi-lab**: a run picks a lab and a
+model per role, Claude Code or Codex, with credential profiles per lab and a fallback list per role -
+`smortboard/labs/` holds the adapters and the catalog, and `docs/spikes/S4`-`S7` hold what was
+measured about Codex before any of it was built. **Merge modes**: a board is review-required by
+default and accepting a card is what lands it, with free-merge as the opt-in per board. Review mode
+stacks a dependent card on its unmerged parent so the queue keeps moving while nobody is watching.
+
 The task ledger holds the current queue.
 
 ## The local loop
