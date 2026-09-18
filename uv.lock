@@ -354,7 +354,7 @@ dev = [
 requires-dist = [
     { name = "platformdirs", specifier = ">=4.0" },
     { name = "playwright", specifier = ">=1.40" },
-    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=2eb5e932d4bc9ce2a16e2cade229890c3d9e7a0b" },
+    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=e2a6b2ff03af784a2802c5a9bd785b2e07b20ef9" },
 ]
 
 [package.metadata.requires-dev]
@@ -376,7 +376,7 @@ wheels = [
 [[package]]
 name = "ui-base"
 version = "0.1.10"
-source = { git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=2eb5e932d4bc9ce2a16e2cade229890c3d9e7a0b#2eb5e932d4bc9ce2a16e2cade229890c3d9e7a0b" }
+source = { git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=e2a6b2ff03af784a2802c5a9bd785b2e07b20ef9#e2a6b2ff03af784a2802c5a9bd785b2e07b20ef9" }
 
 [[package]]
 name = "virtualenv"

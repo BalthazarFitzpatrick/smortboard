@@ -33,7 +33,7 @@ below.
 | Truth | Cards are ground truth. The orchestrator keeps its own plan ledger, derived from and reconciled against them. |
 | Statuses | To do / Doing / Checking / Accepted / Rejected. **Blocked is not a sixth status** — a card keeps its status and raises a nullable reason code, which draws the gold outline. |
 | Gate to Checking | Unit tests pass **and** reviewer approves. |
-| Merge | Board pushes and links the GitHub PR. Board never merges. |
+| Merge | Review-required boards open a PR and land on accept; free-merge boards land after gates pass. Main/master/trunk remain human-only. Review mode stacks one unmerged parent, at most three cards deep. |
 | Rejection | Fresh worktree from base, plus a read-only diff of the failed attempt. |
 | Outputs | Always a git commit — decisions and documents included. |
 | Prompts | Layered by **role** only: orchestrator, worker, reviewer. |

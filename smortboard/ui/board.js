@@ -49,7 +49,7 @@ async function apiOrError(path, opts) {
   const res = await fetch(path, opts);
   noteMissingKey(res);
   const body = res.status === 204 ? null : await res.json().catch(() => null);
-  return {ok: res.ok, body};
+  return {ok: res.ok, status: res.status, body};
 }
 
 // ---- board bar ------------------------------------------------------------------
@@ -111,7 +111,11 @@ async function loadBoards() {
   boards = await api('/api/boards');
   renderBoardBar();
   renderEmptyState(boards.length === 0);
-  if (boards.length === 0) return;
+  if (boards.length === 0) {
+    currentBoardId = null;
+    renderBoardMergeMode();
+    return;
+  }
   initShell({onEnter: onBoardEnter, fallback: boards[0]?.id || ''});
 }
 
@@ -132,11 +136,12 @@ function renderEmptyState(empty) {
 
 async function onBoardEnter(boardId) {
   currentBoardId = boardId;
-  // a fresh board has its own cards under these ids - forget the old board's snapshot so
-  // followRunsOnce learns this one before it starts diffing against it
+  renderBoardMergeMode();
+  // forget the old board and seed polling from what we actually draw
   followedCardStates = null;
   const cards = await api(`/api/boards/${boardId}/cards`);
   renderBuckets(cards);
+  followedCardStates = new Map(cards.map(c => [c.id, `${c.status}|${c.updated_at}`]));
   // resumes this board's send queue (a reload landed here with something still unsent) whether or
   // not mission control is open - a message keeps retrying in the background either way.
   // guarded: messageQueue.js is a separate script (see index.html's load order) and some isolated
@@ -152,6 +157,43 @@ async function onBoardEnter(boardId) {
   // into - without forcing the drawer open itself, which would fight its own toggle key
   resetWorkforceTarget();
   if (drawers.left && drawers.left.isOpen()) await loadWorkforce();
+}
+
+function renderBoardMergeMode() {
+  const board = boards.find(b => b.id === currentBoardId);
+  const free = board?.merge_mode === 'free';
+  document.getElementById('bucket-row')?.classList.toggle('edge-pulse', free);
+  let label = document.getElementById('merge-mode-label');
+  if (!label) {
+    label = document.createElement('span');
+    label.id = 'merge-mode-label';
+    label.className = 'hazard-note';
+    barCorner().appendChild(label);
+  }
+  label.hidden = !board;
+  label.textContent = free ? 'free merge' : 'review required';
+  label.title = 'shift+a: change merge mode';
+}
+
+function toggleBoardMergeMode() {
+  const board = boards.find(b => b.id === currentBoardId);
+  if (!board) return;
+  const mode = board.merge_mode === 'free' ? 'review' : 'free';
+  const title = mode === 'free'
+    ? 'merge cards into their base branch without asking? main stays protected'
+    : 'stop at a pull request for review?';
+  openActionConfirm(title, 'confirm', 'cancel', async () => {
+    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({merge_mode: mode}),
+    });
+    if (!ok) {
+      openActionConfirm(body?.error || 'could not change merge mode', 'close', 'cancel', () => {});
+      return;
+    }
+    board.merge_mode = mode;
+    renderBoardMergeMode();
+  });
 }
 
 // ---- buckets of card strips -------------------------------------------------------
@@ -504,10 +546,14 @@ async function doAcceptOrRejectCard(action, cardId) {
   const aboveCardId = strip?.previousElementSibling?.dataset.cardId || null;
   const oldStatus = strip?.closest('.bucket')?.dataset.status || null;
 
-  const {ok, body} = await apiOrError(`/api/cards/${cardId}/${action}`, {method: 'POST'});
+  const {ok, status, body} = await apiOrError(`/api/cards/${cardId}/${action}`, {method: 'POST'});
   // NAME THE ACTION THAT WAS REFUSED. a bare "refused" beside the card's own "accepted" read as
   // the two labels swapped
   if (!ok) { showRun(cardId, `can't ${action}`, null, (body && body.error) || ''); return; }
+  if (status === 202) {
+    showRun(cardId, 'landing');
+    return;
+  }
 
   // same order finishRun uses and for the same reason: reload first, THEN focus, THEN badge, or
   // the reload's fresh strips throw the badge and the focus away with the old ones

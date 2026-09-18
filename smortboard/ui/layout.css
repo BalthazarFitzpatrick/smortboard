@@ -51,6 +51,15 @@ body {
   border-color: var(--cream);
 }
 .bucket-row {
+  --ambient-pulse-color: #e06f2d;
+  --ambient-pulse-ms: 4800ms;
+  --ambient-pulse-drift-ms: 5500ms;
+  --ambient-pulse-min: 0.5;
+  --ambient-pulse-max: 0.84;
+  --ambient-pulse-width: 2px;
+  --ambient-pulse-blur: 16px;
+  --ambient-pulse-spread: 3px;
+  --ambient-pulse-reach: 4px;
   flex: 1 1 auto;
   display: flex;
   /* 16px, not 34: the gap was eating the columns' width, and a focused card only grows 1.5% a
