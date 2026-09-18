@@ -29,7 +29,7 @@ def test_v19_card_model_is_unchanged_and_reads_as_anthropic(tmp_path):
     conn.commit()
     conn.close()
     with Store(path) as migrated:
-        assert current_version(migrated._conn) == 20
+        assert current_version(migrated._conn) == len(_MIGRATIONS)
         card = migrated.get_card("c")
         assert (card["lab"], card["model"]) == ("anthropic", "sonnet")
         assert migrated.list_cards("b")[0] == card

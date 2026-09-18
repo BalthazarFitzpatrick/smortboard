@@ -2,8 +2,9 @@
   "anthropic": {
     "adapter": "claude-code",
     "models": [
-      {"id": "sonnet", "label": "Sonnet", "tier": "standard", "prefer_for": ["worker", "reviewer"]},
+      {"id": "fable", "label": "Fable", "tier": "deep"},
       {"id": "opus", "label": "Opus", "tier": "deep", "prefer_for": ["orchestrator", "fold"]},
+      {"id": "sonnet", "label": "Sonnet", "tier": "standard", "prefer_for": ["worker", "reviewer"]},
       {"id": "haiku", "label": "Haiku", "tier": "light"}
     ]
   },

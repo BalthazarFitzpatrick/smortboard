@@ -73,6 +73,7 @@ def store(tmp_path):
 @pytest.fixture
 def board_and_repo(store):
     board = store.create_board("b")
+    store.set_board_merge_mode(board["id"], "free")
     repo = store.create_repo(board["id"], "r", "/tmp/r", "main")
     return board["id"], repo["id"]
 
@@ -1027,8 +1028,10 @@ def test_patch_board_max_parallel_over_http(server):
 @pytest.fixture(autouse=True)
 def _clear_sweep_throttle():
     scheduler_module._last_sweep.clear()
+    scheduler_module._last_base_sha.clear()
     yield
     scheduler_module._last_sweep.clear()
+    scheduler_module._last_base_sha.clear()
 
 
 def _checking_card(store, board_id, repo_path, tmp_path):
@@ -1048,6 +1051,7 @@ def _checking_card(store, board_id, repo_path, tmp_path):
 
 
 def _stub_git_plumbing(monkeypatch, *, has_remote=True, fetch_ok=True):
+    monkeypatch.setattr(scheduler_module, "_read_base_sha", lambda *a: "base-sha")
     monkeypatch.setattr(scheduler_module, "has_remote", lambda *a, **k: has_remote)
     monkeypatch.setattr(scheduler_module, "fetch_base", lambda *a, **k: fetch_ok)
 
@@ -1133,7 +1137,7 @@ def test_a_not_behind_branch_is_left_alone(store, board_and_repo, tmp_path, monk
     assert card["blocked_reason_code"] is None
 
 
-def test_the_sweep_is_throttled_per_repo(store, board_and_repo, tmp_path, monkeypatch):
+def test_an_unchanged_base_does_not_sweep_again(store, board_and_repo, tmp_path, monkeypatch):
     from smortboard.review.mergeable import MergeSyncResult
 
     board_id, _ = board_and_repo
@@ -1149,7 +1153,7 @@ def test_the_sweep_is_throttled_per_repo(store, board_and_repo, tmp_path, monkey
     scheduler_module._sweep_checking_prs(store, board_id)
     scheduler_module._sweep_checking_prs(store, board_id)
 
-    assert calls == [1]  # the second call landed inside the 5-minute throttle window
+    assert calls == [1]  # the second fetch found the same base
 
 
 def test_the_sweep_reads_a_non_main_default_branch(store, board_and_repo, tmp_path, monkeypatch):
@@ -1185,3 +1189,265 @@ def test_the_sweep_reads_a_non_main_default_branch(store, board_and_repo, tmp_pa
 
     assert fetched == ["development"]
     assert checked == ["origin/development"]
+
+
+def test_changed_base_sweeps_every_checking_card_in_one_repo(
+    store, board_and_repo, tmp_path, monkeypatch
+):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    repo_path = tmp_path / "repo"
+    first, _, branch = _checking_card(store, board_id, repo_path, tmp_path)
+    repo_id = store.get_card(first)["repo_id"]
+    branches = [branch]
+    for number in range(2):
+        card = store.create_card(board_id, repo_id, f"waiting {number}")
+        store.update_card(card["id"], status="checking")
+        _merge(store, card["id"], f"https://x/pull/{number}")
+        scheduler_module.worktree_path(repo_path, card["id"]).mkdir(parents=True)
+        branches.append(scheduler_module.branch_name(card["id"]))
+    _stub_git_plumbing(monkeypatch)
+    fetched, checked, pushed = [], [], []
+    sha = ["first"]
+    monkeypatch.setattr(scheduler_module, "_read_base_sha", lambda *a: sha[0])
+    monkeypatch.setattr(scheduler_module, "fetch_base", lambda *a: fetched.append(1) or True)
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda tree, branch, base: checked.append(branch) or MergeSyncResult(True, behind=True),
+    )
+    monkeypatch.setattr(
+        scheduler_module, "merge_branch", lambda *a: MergeSyncResult(True, merged=True)
+    )
+    monkeypatch.setattr(
+        scheduler_module, "push_branch", lambda tree, branch: pushed.append(branch) or True
+    )
+    scheduler_module._sweep_checking_prs(store, board_id)
+    assert set(checked) == set(branches)
+    assert set(pushed) == set(branches)
+    assert len(fetched) == 1
+    scheduler_module._sweep_checking_prs(store, board_id)
+    assert len(checked) == 3
+    assert len(fetched) == 2
+    sha[0] = "changed"
+    scheduler_module.sweep_checking_prs(store, board_id, repo_path=repo_path)
+    assert len(checked) == 6
+    assert len(pushed) == 6
+
+
+def test_failed_fetch_does_not_consume_base_change(store, board_and_repo, tmp_path, monkeypatch):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    _stub_git_plumbing(monkeypatch, fetch_ok=False)
+    checked = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a: checked.append(1) or MergeSyncResult(True),
+    )
+    scheduler_module._sweep_checking_prs(store, board_id)
+    assert not scheduler_module._last_base_sha
+    assert not scheduler_module._last_sweep
+    monkeypatch.setattr(scheduler_module, "fetch_base", lambda *a: True)
+    scheduler_module._sweep_checking_prs(store, board_id)
+    assert checked == [1]
+    assert list(scheduler_module._last_base_sha.values()) == ["base-sha"]
+
+
+def test_stacked_card_waits_for_retarget_before_sweeping(
+    store, board_and_repo, tmp_path, monkeypatch
+):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    card_id, _, _ = _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    parent = store.create_card(board_id, store.get_card(card_id)["repo_id"], "parent")
+    store.update_card(parent["id"], status="checking")
+    store.append_event(card_id, "stacked_on", {"parent_id": parent["id"], "branch": "card/parent"})
+    _stub_git_plumbing(monkeypatch)
+    checked = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a: checked.append(1) or MergeSyncResult(True),
+    )
+    scheduler_module._sweep_checking_prs(store, board_id)
+    assert checked == []
+    store.append_event(card_id, "stacked_retargeted", {"parent_id": "parent"})
+    scheduler_module._sweep_checking_prs(store, board_id)
+    assert checked == [1]
+
+
+def test_slow_backstop_rechecks_unchanged_base(store, board_and_repo, tmp_path, monkeypatch):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    _stub_git_plumbing(monkeypatch)
+    checked = []
+    now = [1000.0]
+    monkeypatch.setattr(scheduler_module.time, "time", lambda: now[0])
+    monkeypatch.setattr(
+        scheduler_module,
+        "check_mergeable",
+        lambda *a: checked.append(1) or MergeSyncResult(True),
+    )
+    scheduler_module._sweep_checking_prs(store, board_id)
+    now[0] += scheduler_module._SWEEP_INTERVAL_SECONDS
+    scheduler_module._sweep_checking_prs(store, board_id)
+    assert checked == [1, 1]
+
+
+@pytest.mark.parametrize(
+    ("status", "blocked", "ready"),
+    [
+        ("todo", None, False),
+        ("doing", None, False),
+        ("checking", None, True),
+        ("checking", "MERGE_CONFLICT", False),
+        ("rejected", None, False),
+        ("accepted", None, True),
+    ],
+)
+def test_review_dependencies_start_only_when_ready(
+    store, board_and_repo, monkeypatch, status, blocked, ready
+):
+    board_id, repo_id = board_and_repo
+    store.set_repo_default_branch(repo_id, "development")
+    store.set_board_merge_mode(board_id, "review")
+    parent = store.create_card(board_id, repo_id, "parent")
+    child = store.create_card(board_id, repo_id, "child")
+    store.add_dependency(child["id"], parent["id"])
+    store.update_card(parent["id"], status=status, blocked_reason_code=blocked)
+    _merge(store, parent["id"], "https://x/pull/parent")
+    monkeypatch.setattr(
+        scheduler_module, "pr_view", lambda *a: pytest.fail("review mode need not ask GitHub")
+    )
+    wait = scheduler_module._dependency_wait(store, store.get_card(child["id"]), "/tmp/r")
+    assert (wait is None) is ready
+
+
+@pytest.mark.parametrize("pr_state", [None, "OPEN", "CLOSED", "ERROR", "MERGED"])
+def test_review_accepted_dependency_does_not_wait_for_github(
+    store, board_and_repo, monkeypatch, pr_state
+):
+    board_id, repo_id = board_and_repo
+    store.set_repo_default_branch(repo_id, "development")
+    store.set_board_merge_mode(board_id, "review")
+    parent = store.create_card(board_id, repo_id, "parent")
+    child = store.create_card(board_id, repo_id, "child")
+    store.add_dependency(child["id"], parent["id"])
+    store.update_card(parent["id"], status="accepted")
+    if pr_state:
+        _merge(store, parent["id"], "https://x/pull/parent")
+    monkeypatch.setattr(
+        scheduler_module, "pr_view", lambda *a: pytest.fail("accepted review dependency is ready")
+    )
+    assert scheduler_module._dependency_wait(store, store.get_card(child["id"]), "/tmp/r") is None
+
+
+def test_review_waits_for_two_unaccepted_parents(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    store.set_board_merge_mode(board_id, "review")
+    child = store.create_card(board_id, repo_id, "child")
+    for number in range(2):
+        parent = store.create_card(board_id, repo_id, f"parent {number}")
+        store.update_card(parent["id"], status="checking")
+        _merge(store, parent["id"], f"https://x/pull/{number}")
+        store.add_dependency(child["id"], parent["id"])
+    assert scheduler_module._dependency_wait(store, store.get_card(child["id"]), "/tmp/r")
+
+
+def test_review_stack_stops_at_three_cards(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    store.set_board_merge_mode(board_id, "review")
+    parent = None
+    for depth in range(1, 5):
+        card = store.create_card(board_id, repo_id, f"level {depth}")
+        if parent:
+            store.add_dependency(card["id"], parent["id"])
+        wait = scheduler_module._dependency_wait(store, store.get_card(card["id"]), "/tmp/r")
+        assert (wait is None) is (depth <= 3)
+        if parent:
+            store.append_event(
+                card["id"],
+                "stacked_on",
+                {"parent_id": parent["id"], "branch": scheduler_module.branch_name(parent["id"])},
+            )
+        store.update_card(card["id"], status="checking")
+        _merge(store, card["id"], f"https://x/pull/{depth}")
+        parent = card
+
+
+def test_sweep_waits_until_landing_releases_its_tested_tree(
+    store, board_and_repo, tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    from smortboard.review.integrate import integration_lock
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    repo_path = tmp_path / "repo"
+    _checking_card(store, board_id, repo_path, tmp_path)
+    _stub_git_plumbing(monkeypatch)
+    attempting, swept = threading.Event(), threading.Event()
+    errors = []
+
+    @contextmanager
+    def observe_lock(path, base):
+        attempting.set()
+        with integration_lock(path, base):
+            yield
+
+    monkeypatch.setattr(scheduler_module, "integration_lock", observe_lock)
+    monkeypatch.setattr(
+        scheduler_module, "check_mergeable", lambda *a: swept.set() or MergeSyncResult(True)
+    )
+
+    def sweep():
+        try:
+            with Store(store.path) as connection:
+                scheduler_module._sweep_checking_prs(connection, board_id)
+        except Exception as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=sweep)
+    with integration_lock(repo_path, "main"):
+        worker.start()
+        assert attempting.wait(5)
+        assert not swept.is_set()
+    worker.join(5)
+    assert not worker.is_alive()
+    assert errors == []
+    assert swept.is_set()
+
+
+def test_sweep_retries_retarget_after_parent_lands(store, board_and_repo, tmp_path, monkeypatch):
+    from smortboard.review import land_card as landing_module
+    from smortboard.review.mergeable import MergeSyncResult
+
+    board_id, _ = board_and_repo
+    child_id, _, _ = _checking_card(store, board_id, tmp_path / "repo", tmp_path)
+    parent = store.create_card(board_id, store.get_card(child_id)["repo_id"], "parent")
+    store.add_dependency(child_id, parent["id"])
+    store.update_card(parent["id"], status="accepted")
+    store.append_event(parent["id"], "integrated", {"base": "main"})
+    store.append_event(child_id, "stacked_on", {"parent_id": parent["id"], "branch": "card/parent"})
+    _stub_git_plumbing(monkeypatch)
+    retargeted, swept = [], []
+
+    def retarget(connection, card, repo, base):
+        retargeted.append(card["id"])
+        connection.append_event(child_id, "stacked_retargeted", {"base": base})
+
+    monkeypatch.setattr(landing_module, "retarget_children", retarget)
+    monkeypatch.setattr(
+        scheduler_module, "check_mergeable", lambda *a: swept.append(1) or MergeSyncResult(True)
+    )
+    scheduler_module._sweep_checking_prs(store, board_id)
+    assert retargeted == [parent["id"]]
+    assert swept == [1]

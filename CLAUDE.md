@@ -37,21 +37,60 @@ board, kanban or agent in class names, ids, storage keys or comments.
 
 Card lifecycle: To do -> Doing -> Checking -> Accepted / Rejected, plus **Blocked** with a reason
 code (`CRASH`, `USAGE_LIMIT`, `LEASE_CONFLICT`, `AGENT_QUESTION`, `TESTS_FAILED`,
-`REVIEW_REJECTED`, `DEPENDENCY_REJECTED`). Reaching Checking requires unit tests passing AND the
-reviewer approving. The board pushes and links a PR; it never merges.
+`REVIEW_REJECTED`, `DEPENDENCY_REJECTED`, `MERGE_CONFLICT`). Reaching Checking requires unit tests passing AND the
+reviewer approving. Boards default to review-required: they open a PR and wait for accept before
+landing on an unprotected base. Free-merge boards land after the gates pass. Neither mode merges
+into main/master/trunk. Review mode can stack one unmerged parent, at most three cards deep.
 
 See `docs/PLAN.md` for the full flowchart.
 
 ## Active Context
 
-Pre-beta. The board, mission control, the landing lock and the demo board are built. As of
-2026-09-16 the work is the pre-beta security audit's remediation: api request gate, csp,
-container and db hardening, spend guards, ci, and scrubbing private names from the public repo.
+Public beta, run daily on real repos by one person on macOS. The board, mission control, the
+landing lock and the demo board are built, the security audit's remediation landed, and the public
+history was rewritten (a github support request covers the pull-request refs a force-push cannot
+touch).
+
+Since 2026-09-18 two things changed the shape of the board. **Multi-lab**: a run picks a lab and a
+model per role, Claude Code or Codex, with credential profiles per lab and a fallback list per role -
+`smortboard/labs/` holds the adapters and the catalog, and `docs/spikes/S4`-`S7` hold what was
+measured about Codex before any of it was built. **Merge modes**: a board is review-required by
+default and accepting a card is what lands it, with free-merge as the opt-in per board. Review mode
+stacks a dependent card on its unmerged parent so the queue keeps moving while nobody is watching.
+
 The task ledger holds the current queue.
+
+## The local loop
+
+**Commit as often as the work wants. Only ruff runs at commit time, and it takes about a second.**
+Never run the suite per commit - it buys nothing CI does not already guarantee, and it is what turns
+an afternoon of small commits into an afternoon of waiting.
+
+| when | what runs | cost |
+|---|---|---|
+| while writing | nothing you start by hand - a hook formats python on save | - |
+| every commit | `uv run ruff check . --fix && uv run ruff format .` | ~1s |
+| the file you are changing | `uv run pytest tests/test_<thing>.py -q` | a second or two |
+| after a failure | `uv run pytest --lf -q` | only what broke |
+| before a push or a pull request | `uv run pytest -q` - the whole suite, parallel | ~24s |
+| pushing, merging | CI, on github | not your wait |
+
+The suite runs `-n auto` by default (`pyproject.toml`), which is what makes the last line
+affordable: measured 2026-09-18, 1039 tests took 129s on one process at 37% cpu across ten cores,
+and 24s in parallel. Pass `-n0` when you are reading one test's output or using a debugger.
+
+CI is the guarantee nobody can skip: it runs ruff, the format check and the suite on every pull
+request, and again on a push to `main` or `development`. A markdown-only change skips the heavy
+steps but still reports, so a docs pull request stays mergeable without burning four minutes. A
+second push to a branch cancels the run it superseded.
+
+**Never point `UV_CACHE_DIR` at a directory inside the repo.** The shared `~/.cache/uv` is warm and
+large; a project-local cache starts empty and makes every worktree sync re-download everything.
 
 ## Tech Stack
 
 python (uv, ruff, pytest) - `uv run ruff check . --fix && uv run ruff format .` before every commit.
+the suite is parallel by default; see `## The local loop` above for what to run when.
 
 frontend: plain css and script globals from `ui_base` - no build step, no npm, no framework. a js
 toolchain is deliberately not being added; ui_base is designed to avoid one. all keyboard bindings
@@ -79,6 +118,10 @@ committed here.
      surprise a new contributor -->
 
 ## Rules
+
+This repo uses approval-required Git mode. Work in a feature worktree, open a PR against
+`development`, then wait for the operator's approval before merging. A later explicit session
+mode choice takes precedence.
 
 These hold in this project even if `~/.claude/CLAUDE.md` isn't loaded (a teammate's machine, a
 stripped agent). The full version — with rationale — lives in the global playbook.

@@ -48,11 +48,18 @@
 .profile-add-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding-top: 6px;
 }
+.profile-add-choice { justify-content: flex-start; }
+.profile-add-lab { flex: 0 0 110px; }
+.profile-add-kind { flex: 0 0 170px; }
 .profile-add-name { flex: 0 1 140px; }
-.profile-add-token { flex: 1 1 auto; }
+.profile-add-token { flex: 1 1 180px; }
 
 .profile-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
 .profile-status.profile-error { color: var(--status-warn); }
+
+/* credential pickers opened from profiles sit over the profile backdrop */
+.profiles-backdrop ~ .menu-panel { z-index: 61; }

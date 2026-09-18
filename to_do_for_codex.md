@@ -1,5 +1,23 @@
 # To do for codex: merge modes, review-required and free-merge
 
+## Implementation notes, 2026-09-18
+
+- Network-based landing detection runs in the background and returns 202. A recorded landing
+  still accepts synchronously. Checking cards created before a switch to free mode also land
+  before acceptance; changing mode cannot bypass that step.
+- Operator-triggered landing tests the current branch under the integration lock, including
+  branches already synced by a sweep. Sweep and retarget operations share that lock.
+- A doing child is retargeted at handoff, so landing its parent never changes its live worktree.
+- Rejected stacks cannot safely be rebuilt under the same published branch names without a
+  separate attempt-naming design. The implementation keeps the branches and refuses unsafe
+  retries. Decide the dependent attempts and define fresh work instead of reusing rejected code.
+- Accepted protected-base parents still count as unmerged until GitHub confirms the merge.
+- Part B lives in `_agentic_work_setup/claude`; its PR targets main because that repo has no
+  development branch. Source and deployed hook tests cover scoped review approvals.
+
+The plan below is retained as the original handoff. Browser walkthroughs remain unverified;
+automated coverage uses DOM fixtures and real temporary Git repos with fake model/GitHub edges.
+
 Handed over 2026-09-18, approved in principle by the operator. Work in a worktree off
 `origin/development`, never in the main checkout. smortboard runs in **review** git mode: open a
 pull request against `development` and wait for his okay before merging. Start with A11, which

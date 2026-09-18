@@ -51,6 +51,15 @@ body {
   border-color: var(--cream);
 }
 .bucket-row {
+  --ambient-pulse-color: #e06f2d;
+  --ambient-pulse-ms: 4800ms;
+  --ambient-pulse-drift-ms: 5500ms;
+  --ambient-pulse-min: 0.5;
+  --ambient-pulse-max: 0.84;
+  --ambient-pulse-width: 2px;
+  --ambient-pulse-blur: 16px;
+  --ambient-pulse-spread: 3px;
+  --ambient-pulse-reach: 4px;
   flex: 1 1 auto;
   display: flex;
   /* 16px, not 34: the gap was eating the columns' width, and a focused card only grows 1.5% a
@@ -545,7 +554,7 @@ body {
 }
 
 .settings-panel {
-  width: min(520px, 90vw);
+  width: min(600px, 90vw);
   max-height: 80vh;
   display: flex;
   flex-direction: column;
@@ -558,6 +567,13 @@ body {
   flex-direction: column;
   gap: var(--gap, 8px);
 }
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-group + .settings-group { margin-top: var(--gap, 8px); }
+.settings-group-title { color: var(--cream); font-weight: 600; }
 
 .settings-section {
   padding: 6px 0;
@@ -571,6 +587,51 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--gap, 8px);
+}
+.settings-role-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0;
+}
+.settings-role-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.settings-role-name { color: var(--cream); font-weight: 600; }
+.settings-role-status { text-align: right; }
+.settings-role-control {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.settings-role-control > .toggle { justify-self: start; }
+.settings-role-fallback-trigger {
+  justify-self: stretch !important;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-cost-triggers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap, 8px);
+}
+.settings-cost-trigger {
+  justify-content: flex-start;
+  min-width: 0;
+}
+.settings-cost-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  gap: 6px 10px;
+  align-items: center;
+  width: min(420px, 70vw);
 }
 .settings-panel .hazard-placeholder { min-height: 72px; box-sizing: border-box; }
 /* the folder picker opened from settings sits over the settings backdrop, as it does over boards' */
