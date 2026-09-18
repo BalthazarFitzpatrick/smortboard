@@ -973,6 +973,7 @@ def test_schedule_endpoint_reports_an_empty_board_cleanly(server):
         "queued": [],
         "waiting": {},
         "paused_until": None,
+        "paused_labs": {},
         "card_retry_at": {},
         "budget_paused": False,
     }

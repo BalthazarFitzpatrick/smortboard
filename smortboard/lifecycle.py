@@ -45,6 +45,7 @@ from smortboard.exec.worktrees import (
     has_remote,
     worktree_path,
 )
+from smortboard.labs.routing import command_model, run_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.review.decide import accept_card
 from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
@@ -509,9 +510,18 @@ def run_card_lifecycle(
         return _refuse(store, state, NO_LEASE_NOTE)
     repo = store.get_repo(card["repo_id"])
     base = default_branch(repo)
+    configured = store.get_settings()
+    worker_lab, worker_id = run_ref(store, "worker", card)
+    reviewer_lab, reviewer_id = run_ref(store, "reviewer", card)
+    worker_model = command_model(worker_lab, worker_id)
+    reviewer_model = command_model(reviewer_lab, reviewer_id)
 
     try:
-        runtime = backend or require_card_runtime(token_path)
+        runtime = backend or (
+            require_card_runtime(token_path)
+            if worker_lab == "anthropic"
+            else require_card_runtime(lab=worker_lab)
+        )
     except CardRuntimeUnavailable as exc:
         return _refuse(store, state, f"The card runtime is not ready:\n{exc}")
 
@@ -531,6 +541,8 @@ def run_card_lifecycle(
             if card.get("depends_on"):
                 cut_base = _base_for_fresh_cut(store, state, repo["path"], base)
             tree = create_worktree(repo["path"], card_id, base=cut_base)
+            if tree.base_commit:
+                store.append_event(card_id, "worktree_created", {"base_commit": tree.base_commit})
     except WorktreeError as exc:
         return _refuse(store, state, f"Could not cut a worktree for this card: {exc}")
     state.branch, state.worktree = tree.branch, str(tree.path)
@@ -540,18 +552,19 @@ def run_card_lifecycle(
 
     # the card's own model wins, then the board's worker setting, then sonnet. the reviewer has a
     # setting of its own, so a cheap worker never means a cheap review
-    configured = store.get_settings()
-    worker_model = card.get("model") or configured.get("worker_model") or DEFAULT_WORKER_MODEL
-    reviewer_model = configured.get("reviewer_model") or DEFAULT_REVIEWER_MODEL
 
     # the worker's own final message, kept for the screenshot step below - it is where the worker
     # names which view to open, per runner.SYSTEM_PROMPT's SCREENSHOT: instruction
     last_summary: str | None = None
+    worker_started = reviewer_started = False
 
     def work(prompt: str) -> LifecycleResult | None:
-        nonlocal last_summary
+        nonlocal last_summary, worker_started
         """one agent run in the card's worktree; returns the blocked/stopped state if it stopped
         short"""
+        if not worker_started:
+            run_ref(store, "worker", card, consume=True)
+            worker_started = True
         run = runtime.run_card(
             store,
             card_id,
@@ -570,7 +583,13 @@ def run_card_lifecycle(
         if stopped_now():
             return _stopped(store, state)
         if run.auth_failed:
-            return _refuse(store, state, TOKEN_REFUSED_NOTE)
+            from smortboard.labs.registry import get_adapter
+
+            return _refuse(
+                store,
+                state,
+                "The run credential was refused. " + get_adapter(worker_lab).setup_hint(),
+            )
         if run.subtype in BUDGET_CAPPED_SUBTYPES:
             if branch_has_commits(repo["path"], tree.branch, base):
                 store.append_event(card_id, "budget_capped_with_commits", {"subtype": run.subtype})
@@ -638,6 +657,9 @@ def run_card_lifecycle(
         phase("reviewing")
         diff_text = branch_diff(repo["path"], base, tree.branch)
         try:
+            if not reviewer_started:
+                run_ref(store, "reviewer", card, consume=True)
+                reviewer_started = True
             review = run_review(
                 store,
                 card_id,
@@ -667,7 +689,7 @@ def run_card_lifecycle(
             return _block(
                 store,
                 state,
-                "REVIEW_REJECTED",
+                review.blocked_reason_code or "REVIEW_REJECTED",
                 f"The reviewer did not approve.\n\n{_format_findings(review) or review.error or ''}"
                 + (f"\n\nAfter {state.fix_rounds} fix round(s)." if state.fix_rounds else ""),
             )

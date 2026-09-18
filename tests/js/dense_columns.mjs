@@ -3,10 +3,10 @@
 // button or a pile click. run: node tests/js/dense_columns.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element, stubMotion, stubLayout} from './dom_stub.mjs';
+import {installStubDom, element, stubMotion, stubLayout, uiBaseAsset} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 const {dispatchWindow} = installStubDom({fetchImpl: () => new Promise(() => {})});
@@ -930,7 +930,9 @@ function specificity(selector) {
 // rather than the numbers the operator tuned. resolve them off base.css's own :root and the
 // assertions below still check the numbers rather than the spelling
 const rootTokens = Object.fromEntries(
-  [...stripComments(uiBase('base.css')).matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g)].map(m => [m[1], m[2].trim()]));
+  [...stripComments(uiBase('base.css')).matchAll(/:root\s*\{([^}]+)\}/g)]
+    .flatMap(block => [...block[1].matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g)])
+    .map(m => [m[1], m[2].trim()]));
 const resolveTokens = value => {
   let out = value, guard = 0;
   while (/var\(/.test(out) && guard++ < 10) {

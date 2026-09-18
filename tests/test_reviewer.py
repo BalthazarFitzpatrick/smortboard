@@ -185,6 +185,39 @@ def test_a_crashed_run_is_not_treated_as_approval(tmp_path, monkeypatch):
     assert not result.approved
 
 
+def test_reviewer_limit_remains_a_usage_limit(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    limited = replace(_clean_result(), blocked_reason_code="USAGE_LIMIT", is_error=True)
+    _wire(monkeypatch, run_result=limited)
+    result = run_review(None, "card", DIFF, tmp_path, tmp_path / "s.json", REPO)
+    assert result.blocked_reason_code == "USAGE_LIMIT"
+    assert not result.approved
+
+
+@pytest.mark.parametrize("lab", ["anthropic", "openai"])
+def test_reviewer_uses_its_labs_active_credential(tmp_path, monkeypatch, lab):
+    from smortboard import profiles
+
+    profiles.add_profile("claude", "anthropic-test", lab="anthropic")
+    profiles.set_active("claude", lab="anthropic")
+    profiles.add_profile("codex", "openai-test", lab="openai", kind="api_key")
+    profiles.set_active("codex", lab="openai")
+    monkeypatch.setattr("smortboard.review.reviewer.docker_available", lambda: True)
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(kwargs)
+        return _clean_result()
+
+    monkeypatch.setattr("smortboard.review.reviewer.run_process", run)
+    model = "sonnet" if lab == "anthropic" else "openai/gpt-5.6-sol"
+    run_review(None, "card", DIFF, tmp_path, tmp_path / ".claude/s.json", REPO, model=model)
+    assert calls[0]["stdin_text"] == f"{lab}-test\n"
+    assert calls[0]["profile"] == ("claude" if lab == "anthropic" else "codex")
+    assert calls[0]["lab"] == lab
+
+
 def test_no_docker_is_refused_rather_than_skipped(tmp_path, monkeypatch):
     _wire(monkeypatch, docker=False)
     with pytest.raises(ReviewUnavailable, match="Docker"):

@@ -15,16 +15,16 @@ from __future__ import annotations
 from typing import Any
 
 from smortboard import telemetry
+from smortboard.labs.events import cost_sum, event_cost, result_fields
 from smortboard.store.api import Store
 
 
-def _card_total_spend(store: Store, card_id: str) -> float:
-    total = 0.0
-    for event in store.list_events(card_id):
-        if event["kind"] != "result":
-            continue
-        total += float(event["payload"].get("total_cost_usd") or 0)
-    return round(total, 6)
+def _card_total_spend(store: Store, card_id: str) -> float | None:
+    return cost_sum(
+        event_cost(event)
+        for event in store.list_events(card_id)
+        if result_fields(event) is not None
+    )
 
 
 def spend_refusal(store: Store, card: dict[str, Any]) -> str | None:
@@ -33,6 +33,8 @@ def spend_refusal(store: Store, card: dict[str, Any]) -> str | None:
     daily_budget = board.get("daily_budget_usd")
     if daily_budget is not None:
         spent_today = telemetry.board_spend_today(store, board["id"])
+        if spent_today is None:
+            return "daily spend is unknown; configure model prices before enforcing a daily budget"
         if spent_today >= daily_budget:
             return (
                 f"daily budget of ${daily_budget:.2f} for {board['name']} is spent "
@@ -43,6 +45,8 @@ def spend_refusal(store: Store, card: dict[str, Any]) -> str | None:
     if raw_cap is not None:
         cap = float(raw_cap)
         spent = _card_total_spend(store, card["id"])
+        if spent is None:
+            return "this card's spend is unknown; configure model prices before enforcing its total cap"
         if spent >= cap:
             return f"this card has spent ${spent:.2f} of its ${cap:.2f} total cap"
 

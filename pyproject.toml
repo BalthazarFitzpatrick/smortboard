@@ -6,7 +6,6 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
-    "keyring>=25.7.0",
     # tags now mean something (smortui #33 fixed version-per-tag); this still moves
     # to a fresh sha or tag whenever the two repos need to co-develop in lockstep.
     # A SHA WHILE IT IS UNRELEASED: smortui#34 (the soft focus glow, which the open card's sections
@@ -40,7 +39,7 @@ build-backend = "hatchling.build"
 # packaging must be told about them explicitly or the wheel installs but serves nothing
 [tool.hatch.build.targets.wheel]
 packages = ["smortboard"]
-artifacts = ["smortboard/ui/**"]
+artifacts = ["smortboard/ui/**", "smortboard/labs/*.json", "smortboard/labs/NOTICE", "smortboard/labs/LICENSE.seccomp"]
 
 # hatchling's sdist default is "every git-tracked file" - none of this is needed to pip install
 # or run the package; docker/ is for users who clone and build the card image themselves

@@ -10,8 +10,10 @@ into three identical columns.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -46,6 +48,7 @@ def _regimes_from_columns_js() -> list[dict]:
         capture_output=True,
         text=True,
         timeout=60,
+        env={**os.environ, "UI_BASE_ASSETS_DIR": str(files("ui_base") / "assets")},
     )
     if result.returncode != 0:
         pytest.fail(f"demo_regimes.mjs failed (exit {result.returncode}):\n{result.stderr}")

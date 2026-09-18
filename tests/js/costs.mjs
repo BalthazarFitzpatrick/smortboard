@@ -85,6 +85,7 @@ responses.set('/api/costs', stubJson(200, {
     worker_cost_usd: 0.98, reviewer_cost_usd: 0.03,
     spend_by_model: [{model: 'opus', cost_usd: 0.88}, {model: 'claude-sonnet-4', cost_usd: 0.13}],
     cost_per_pr_usd: 1.01,
+    turn_cost_usd: 0,
   },
   orchestrator_turns_counted: false,
   cost_groups: {
@@ -114,7 +115,8 @@ assert.ok(text.indexOf('pricey board') < text.indexOf('cheap board'), 'costliest
 assert.match(text, /mission control and fold turns \$/);
 assert.match(text, /2 boards - 2 cards - 2 runs - \$1\.01/);
 assert.match(text, /\$0\.88 on runs with a permission denial/);
-assert.match(text, /worker \$0\.98 - reviewer \$0\.03 - opus \$0\.88, claude-sonnet-4 \$0\.13/);
+assert.match(text, /worker \$0\.98 - reviewer \$0\.03/);
+assert.match(text, /anthropic - opus \$0\.88, claude-sonnet-4 \$0\.13/);
 
 // ---- clicking a board's name jumps to it: same switch-and-render a tab click does ---------------
 

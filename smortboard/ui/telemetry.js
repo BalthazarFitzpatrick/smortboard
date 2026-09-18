@@ -2,8 +2,8 @@
 // table. reuses board.js's globals - api, escapeHtml, fillBar, textLine, actionableCardId,
 // openCard, currentBoardId, toggleOverlay, Menu - rather than redeclaring any of them.
 
-function formatUsd(n) {
-  return `$${(n || 0).toFixed(2)}`;
+function formatUsd(n, estimated = false) {
+  return n == null ? 'unknown' : `${estimated ? '~' : ''}$${n.toFixed(2)}`;
 }
 
 function refusalLabel(count) {
@@ -19,14 +19,14 @@ function telemetryAttemptSection(attempt, cardTotal) {
   const when = attempt.started_at ? new Date(attempt.started_at).toLocaleString() : 'unknown time';
   section.appendChild(textLine(when, 'field-label'));
 
-  const share = cardTotal > 0 ? attempt.cost_usd / cardTotal : null;
+  const share = cardTotal > 0 && attempt.cost_usd != null ? attempt.cost_usd / cardTotal : null;
   // named by role: the same model twice read as a typo
   const modelBits = [
     attempt.worker_model ? `worker ${attempt.worker_model}` : null,
     attempt.reviewer_model ? `reviewer ${attempt.reviewer_model}` : null,
   ].filter(Boolean);
   const modelNote = modelBits.length ? ` - ${modelBits.join(', ')}` : '';
-  section.appendChild(textLine(`${formatUsd(attempt.cost_usd)}${modelNote}`, 'usage-model-name'));
+  section.appendChild(textLine(`${formatUsd(attempt.cost_usd, attempt.cost_estimated)}${modelNote}`, 'usage-model-name'));
   if (share != null) section.appendChild(fillBar(share, attempt.refusal_count ? 'warn' : ''));
 
   const statBits = [
@@ -74,7 +74,7 @@ function telemetryCard(data) {
     ? ` - ${formatUsd(data.totals.refusal_cost_usd)} on runs with refusals`
     : '';
   foot.appendChild(
-    textLine(`${data.totals.attempts} attempt${data.totals.attempts === 1 ? '' : 's'} - ${formatUsd(data.totals.cost_usd)}${wasteNote}`, 'stat')
+    textLine(`${data.totals.attempts} attempt${data.totals.attempts === 1 ? '' : 's'} - ${formatUsd(data.totals.cost_usd, data.totals.cost_estimated)}${wasteNote}`, 'stat')
   );
   card.appendChild(foot);
   return card;
@@ -101,17 +101,21 @@ function costTable(rows) {
     table.appendChild(box);
     return table;
   }
-  const total = rows.reduce((sum, r) => sum + (r.cost_usd || 0), 0);
+  const total = rows.some(r => r.cost_usd == null) ? null : rows.reduce((sum, r) => sum + r.cost_usd, 0);
   const refusalTotal = rows.reduce((sum, r) => sum + (r.refusal_cost_usd || 0), 0);
 
-  rows.forEach((row, i) => {
+  let lastLab = null;
+  rows.slice().sort((a, b) => (a.lab || 'anthropic').localeCompare(b.lab || 'anthropic')).forEach((row, i) => {
     if (i) table.appendChild(textLine('', 'h-divider'));
+    const lab = row.lab || 'anthropic';
+    if (lab !== lastLab) table.appendChild(textLine(lab, 'field-label'));
+    lastLab = lab;
     const section = document.createElement('div');
     section.className = 'usage-section cost-row';
     section.appendChild(textLine(row.title, 'field-label'));
     const share = total > 0 ? (row.cost_usd || 0) / total : null;
     section.appendChild(
-      textLine(`${formatUsd(row.cost_usd)} - model: ${row.model || 'board default'}`, 'usage-model-name')
+      textLine(`${formatUsd(row.cost_usd, row.cost_estimated)} - model: ${modelLabel(row.model, row.lab)}`, 'usage-model-name')
     );
     if (share != null) section.appendChild(fillBar(share, row.refusal_count ? 'warn' : ''));
     const statBits = [
@@ -127,7 +131,7 @@ function costTable(rows) {
   const foot = document.createElement('div');
   foot.className = 'card-foot usage-foot';
   const wasteNote = refusalTotal ? ` - ${formatUsd(refusalTotal)} on runs with refusals` : '';
-  foot.appendChild(textLine(`${rows.length} cards - ${formatUsd(total)}${wasteNote}`, 'stat'));
+  foot.appendChild(textLine(`${rows.length} cards - ${formatUsd(total, rows.some(row => row.cost_estimated))}${wasteNote}`, 'stat'));
   table.appendChild(foot);
   return table;
 }

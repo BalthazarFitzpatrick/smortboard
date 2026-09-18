@@ -47,7 +47,7 @@ pre-flight checklist (`h`) tells you exactly what is missing and how to fix each
 
 ### Steps
 
-**1. Clone and build the card image** (git, uv and the `claude` CLI, no credentials, no code):
+**1. Clone and build the card image** (git, uv, Claude Code and Codex, no credentials):
 
 ```bash
 git clone https://github.com/BalthazarFitzpatrick/smortboard && cd smortboard
@@ -347,16 +347,56 @@ files alone. An answer alone never widens a lease.
 
 ### Credential profiles
 
-The card token is a model-only `claude setup-token`, kept separate from your own Claude login, which
-the board never reads and a card never sees.
+Anthropic profiles use a model-only `claude setup-token`, separate from your own Claude login.
+Existing token files and settings keep working without a migration step.
 
 If you have several subscriptions, `shift`+`p` holds **profiles**: a name plus its own mode-600 token
-file, one active at a time.
+file. Profiles belong to a lab, with one active profile per lab.
 
 **The surprising part: rotation is off by default.** When a profile hits its rate limit, the board
-parks new starts until the window resets rather than quietly spending your other subscription.
+parks new starts on that lab until the window resets.
 Turn on *switch credential profiles automatically* in settings if you want rotation. Cards already
 running are left alone either way.
+
+### OpenAI models
+
+Rebuild the card image with the command above, then open `shift`+`p`, choose
+`openai` and add a profile. Choose **ChatGPT login JSON** to import the contents
+of the `auth.json` created by your Codex login, or **API key** for an OpenAI key.
+The board stores the imported credential in its own mode-600 file. At run time
+it sends the credential over stdin into the container's temporary memory-backed
+Codex home. It does not mount your host Codex home.
+
+Open settings to choose a lab and model for each role: worker, reviewer,
+mission control and fold. A card's `m` menu overrides the worker default.
+Labs without a usable profile are disabled in the model menu.
+
+Each role can have an ordered fallback list such as `openai/gpt-5.6-sol`.
+Leave it empty to keep the role on its chosen lab. Automatic profile rotation
+stays within a lab; a cross-lab retry needs an explicit fallback and leaves a
+message on the card. Codex notes are delivered on the next run.
+
+Models come from `smortboard/labs/catalog.json`. Add or override entries in
+`~/.config/smortboard/catalog.json` (under `XDG_CONFIG_HOME` when set):
+
+```json
+{
+  "openai": {
+    "models": [
+      {"id": "your-model-id", "label": "Your model", "tier": "standard"}
+    ]
+  }
+}
+```
+
+To estimate Codex spend, add `price_per_mtok` with numeric `input`,
+`cached_input` and `output` rates to the model entry. Supply your own rates;
+the packaged catalog assumes none. Estimates carry `~`; missing prices show
+`unknown`. An enabled cumulative spend cap refuses new starts when prior spend
+is unknown. Codex's per-run watchdog acts when token usage arrives, which the
+measured CLI emitted at turn completion, so it cannot guarantee a hard dollar
+ceiling during the turn. See the [event spike](docs/spikes/S4-codex-events.md)
+and [credential spike](docs/spikes/S7-codex-auth.md) for the measured limits.
 
 ### Cost and telemetry
 
@@ -745,14 +785,11 @@ paths mission control may also read). Per board: its own parallel cap and `daily
   ```
 
 - **By hand:** create the file, `chmod 600` it, then paste the token in with any editor.
-- **Elsewhere:** `SMORTBOARD_CARD_TOKEN_PATH` points at any file. With no file, the board falls back
-  to the OS credential store (service `smortboard-card-token`, account `smortboard`).
+- **Elsewhere:** `SMORTBOARD_CARD_TOKEN_PATH` points at any file. Credentials are read only from
+  files; a missing file requires saving a token before running a card.
 - **Several subscriptions:** `shift`+`p`, paste each token under its own profile name; it lands at
-  `~/.config/smortboard/tokens/<name>` (mode 600).
+  `~/.config/smortboard/tokens/anthropic/<name>` (mode 600).
 
-**A mode-600 file is not a shortcut.** It is how Claude Code itself keeps credentials on Linux, and
-where macOS falls back to when the Keychain refuses a write
-([Claude Code docs: credential management](https://code.claude.com/docs/en/authentication.md)).
 `claude setup-token` saves nothing itself, which is why the token has to be stored by hand.
 
 ### Repos and their test command

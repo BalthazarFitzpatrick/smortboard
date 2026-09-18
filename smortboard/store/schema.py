@@ -402,6 +402,25 @@ _MIGRATIONS: list[str] = [
     """
     ALTER TABLE cards ADD COLUMN complexity INTEGER;
     """,
+    # 20: a missing lab on a legacy model still means anthropic, without rewriting cards
+    """
+    ALTER TABLE cards ADD COLUMN lab TEXT;
+    CREATE TABLE board_spend_new (
+        id TEXT PRIMARY KEY,
+        board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        cost_usd REAL,
+        created_at TEXT NOT NULL,
+        lab TEXT,
+        model TEXT,
+        cost_estimated INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO board_spend_new (id, board_id, role, cost_usd, created_at)
+        SELECT id, board_id, role, cost_usd, created_at FROM board_spend;
+    DROP TABLE board_spend;
+    ALTER TABLE board_spend_new RENAME TO board_spend;
+    CREATE INDEX idx_board_spend_board_created ON board_spend (board_id, created_at);
+    """,
 ]
 
 

@@ -806,3 +806,30 @@ def test_the_reviewer_budget_setting_reaches_the_review(board, monkeypatch):
     store.set_setting("reviewer_budget_usd", 0.75)
     lifecycle.run_card_lifecycle(store, card_id, backend=_ModelBackend())
     assert budgets == [0.75]
+
+
+def test_reviewer_fallback_is_kept_when_worker_never_reaches_review(board, monkeypatch):
+    from dataclasses import replace
+
+    from smortboard.labs.routing import run_ref
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    store.append_event(
+        card_id,
+        "lab_fallback",
+        {
+            "role": "reviewer",
+            "lab": "openai",
+            "model": "gpt-5.6-sol",
+        },
+    )
+    backend = _Backend()
+    backend.result = replace(backend.result, is_error=True, blocked_reason_code="CRASH")
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.blocked_reason_code == "CRASH"
+    assert run_ref(store, "reviewer", store.get_card(card_id)) == ("openai", "gpt-5.6-sol")
+    assert not any(
+        event["kind"] == "fallback_consumed" and event["payload"]["role"] == "reviewer"
+        for event in store.list_events(card_id)
+    )

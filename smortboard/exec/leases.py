@@ -8,6 +8,7 @@ one card's worktree — the lease itself, and a `--settings` file wiring the hoo
 import inspect
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -49,6 +50,33 @@ def lease_glob_regex(glob: str) -> str:
 def lease_allows(rel: str, globs: list[str]) -> bool:
     """whether a repo-relative path is inside any of the lease's globs"""
     return any(re.match(lease_glob_regex(glob), rel) for glob in globs)
+
+
+def changed_paths_outside_lease(
+    repo_path: str | Path, base: str, branch: str, globs: list[str]
+) -> list[str]:
+    """check committed paths independently of the agent's tool hooks"""
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_path),
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            f"{base}..{branch}",
+            "--",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        from smortboard.exec.worktrees import WorktreeError
+
+        raise WorktreeError("could not verify the card's committed path lease")
+    paths = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+    return sorted(path for path in paths if path and not lease_allows(path, globs))
 
 
 # the hook runs inside the card's container with no smortboard installed, so it carries the two

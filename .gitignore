@@ -22,6 +22,7 @@ secrets.*
 # outputs and logs
 output/
 outputs/
+.work/
 *.log
 *.tmp
 *.bak

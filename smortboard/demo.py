@@ -288,6 +288,34 @@ _MODELS = ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"]
 
 
 def _result_payload(cost: float, turns: int, model: str, denials: list | None = None) -> dict:
+    if model.startswith("openai/"):
+        identity = {"lab": "openai", "model": model.split("/", 1)[1], "profile": "demo"}
+        return {
+            **identity,
+            "neutral": [
+                {
+                    **identity,
+                    "kind": "usage",
+                    "usage": {
+                        "input_tokens": turns * 4200,
+                        "output_tokens": turns * 380,
+                        "cached_tokens": turns * 1000,
+                        "cost_usd": cost,
+                        "cost_estimated": True,
+                    },
+                },
+                {
+                    **identity,
+                    "kind": "result",
+                    "result": {
+                        "ok": True,
+                        "subtype": "success",
+                        "num_turns": turns,
+                        "text": "done",
+                    },
+                },
+            ],
+        }
     return {
         "total_cost_usd": cost,
         "num_turns": turns,
@@ -690,10 +718,17 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
         if i == 0:
             _failed_tests_attempt(store, card["id"], "claude-sonnet-5")
             _refused_attempt(store, card["id"], "claude-sonnet-5")
+        model = _MODELS[i % len(_MODELS)]
+        if i % 2:
+            from smortboard.labs.catalog import load_catalog
+
+            model_id = load_catalog()["openai"]["models"][0]["id"]
+            store.update_card(card["id"], lab="openai", model=model_id)
+            model = f"openai/{model_id}"
         _clean_attempt(
             store,
             card["id"],
-            _MODELS[i % len(_MODELS)],
+            model,
             0.94 + i * 0.31,
             140 + i,
             repo,

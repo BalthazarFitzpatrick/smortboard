@@ -765,7 +765,7 @@ function profileRow(profileName, window) {
   row.appendChild(textLine(profileName, 'field-label'));
   if (window) {
     const {fraction} = windowMeasure(window);
-    if (fraction != null) row.appendChild(fillBar(fraction, window.status === 'allowed' ? '' : 'warn'));
+    if (fraction != null) row.appendChild(fillBar(fraction, ['allowed', 'ok'].includes(window.status) ? '' : 'warn'));
     row.appendChild(textLine(windowStats(window), 'stat'));
   } else {
     row.appendChild(fillBar(0));
@@ -776,14 +776,14 @@ function profileRow(profileName, window) {
 
 // windows grouped by type, each type a section holding one row per known profile - windows carry
 // no profile of their own before this card, so a window with none reads as the "default" profile
-function windowSections(windows, profileNames) {
+function windowSections(windows, profileNames, lab = '') {
   const byType = new Map();
   windows.forEach(w => {
     if (!byType.has(w.type)) byType.set(w.type, new Map());
     byType.get(w.type).set(w.profile || 'default', w);
   });
   return [...byType.entries()].map(([type, byProfile]) => {
-    const section = usageSection(windowLabel(type), 'usage-window');
+    const section = usageSection(`${lab ? lab + ' - ' : ''}${windowLabel(type)}`, 'usage-window');
     const names = profileNames.length ? profileNames : [...byProfile.keys()];
     names.forEach(name => section.appendChild(profileRow(name, byProfile.get(name))));
     // the section total is the sum of the rows it holds, never a figure computed apart from them
@@ -800,26 +800,31 @@ function windowSections(windows, profileNames) {
 // A CARD'S LANGUAGE: ruled sections with dim labels, and a foot carrying the total - built with
 // createElement so every line is its own element, which is also what the node tests read
 function usageCard(data) {
-  const profileNames = (data.profiles || []).map(p => p.name);
-  const windowParts = windowSections(data.windows || [], profileNames);
+  const labOf = row => row.lab || (row.model?.includes('/') ? row.model.split('/')[0] : 'anthropic');
+  const labs = [...new Set([...(data.profiles || []), ...(data.windows || []), ...(data.models || [])].map(labOf))];
+  const windowParts = labs.flatMap(lab => windowSections(
+    (data.windows || []).filter(w => labOf(w) === lab),
+    (data.profiles || []).filter(p => labOf(p) === lab).map(p => p.name), lab));
   const modelParts = [];
-  const models = data.models || [];
-  if (models.length) {
-    const section = usageSection('spend by model', 'usage-models');
-    const total = data.total_cost_usd || 0;
+  const money = row => row.cost_usd == null ? 'unknown' : `${row.cost_estimated ? '~' : ''}$${row.cost_usd.toFixed(2)}`;
+  labs.forEach(lab => {
+    const models = (data.models || []).filter(m => labOf(m) === lab);
+    if (!models.length) return;
+    const section = usageSection(`${lab} - spend by model`, 'usage-models');
+    const total = data.total_cost_usd;
     models.forEach(m => {
       const row = document.createElement('div');
       row.className = 'usage-model';
-      const share = total > 0 ? (m.cost_usd || 0) / total : null;
+      const share = total > 0 && m.cost_usd != null ? m.cost_usd / total : null;
       const shareNote = share != null ? ` - ${Math.round(share * 100)}% of spend` : '';
-      row.appendChild(textLine(`${m.model} - $${(m.cost_usd || 0).toFixed(2)}${shareNote}`, 'usage-model-name'));
+      row.appendChild(textLine(`${m.model} - ${money(m)}${shareNote}`, 'usage-model-name'));
       if (share != null) row.appendChild(fillBar(share));
       row.appendChild(textLine(`in ${formatTokenCount(m.input_tokens)} - out ${formatTokenCount(m.output_tokens)} - ` +
         `cache ${formatTokenCount((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))}`, 'stat'));
       section.appendChild(row);
     });
     modelParts.push(section);
-  }
+  });
   const card = document.createElement('div');
   card.className = 'usage-card usage-wide';
   // wide, not tall: the rate-limit windows in one column, the spend by model in the other
@@ -838,7 +843,7 @@ function usageCard(data) {
   card.appendChild(textLine('', 'h-divider'));
   const foot = document.createElement('div');
   foot.className = 'card-foot usage-foot';
-  foot.appendChild(textLine(`${data.runs || 0} runs - $${(data.total_cost_usd || 0).toFixed(2)}`, 'stat'));
+  foot.appendChild(textLine(`${data.runs || 0} runs - ${money({cost_usd: data.total_cost_usd, cost_estimated: data.cost_estimated})}`, 'stat'));
   card.appendChild(foot);
   return card;
 }
@@ -1050,6 +1055,7 @@ function togglePromptEditor() {
 loadBoards().then(() => { buildDrawers(); returnToBoardBar(); followRuns(); });
 // whether the pointer affordances are on - shortcuts.js owns the flag, board.js owns api()
 loadMouseSetting();
+loadModelCatalog().catch(() => {});
 const issueButton = buildIssueButton();
 // who the operator is, for their own lines in the chats and comments - "you" until the board
 // answers - and the version the bug form asks for as its first field (version, in bug.yml), which

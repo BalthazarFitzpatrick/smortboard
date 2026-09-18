@@ -169,9 +169,19 @@ def _profile_checks() -> list[dict[str, Any]]:
     rest of this module reuses backends' probes: one source of truth for what "ok" means.
     """
     rows = []
-    for row in profiles.list_profiles():
-        label = f"profile: {row['name']}" + (" (active)" if row["active"] else "")
-        check_id = f"profile-{row['name']}"
+    for row in profiles.list_all_profiles():
+        lab = row["lab"]
+        label = f"{lab} profile: {row['name']}" + (" (active)" if row["active"] else "")
+        check_id = (
+            f"profile-{row['name']}" if lab == "anthropic" else f"profile-{lab}-{row['name']}"
+        )
+        setup = (
+            "claude setup-token"
+            if lab == "anthropic"
+            else "codex login, then paste the ChatGPT login JSON from ~/.codex/auth.json"
+            if row["kind"] == "auth_json"
+            else f"codex login --with-{row['kind'].replace('_', '-')}"
+        )
         if not row["present"]:
             rows.append(
                 _check(
@@ -180,8 +190,7 @@ def _profile_checks() -> list[dict[str, Any]]:
                     label,
                     "fail",
                     f"no token file at {row['path']}.",
-                    "claude setup-token, then (umask 077; pbpaste | tr -d '\\r\\n ' > "
-                    f"{row['path']})",
+                    f"{setup}, then save the credential with mode 600 at {row['path']}",
                 )
             )
         elif not row["mode_ok"]:
@@ -190,7 +199,7 @@ def _profile_checks() -> list[dict[str, Any]]:
                     check_id,
                     "machine",
                     label,
-                    "warn",
+                    "fail",
                     f"mode is not 600 at {row['path']}.",
                     f"chmod 600 {row['path']}",
                 )
@@ -206,9 +215,15 @@ def _profile_checks() -> list[dict[str, Any]]:
                 )
             )
         else:
-            rows.append(
-                _check(check_id, "machine", label, "ok", f"present at {row['path']}, mode 600.")
-            )
+            try:
+                profiles.read_profile_token(lab, row["name"])
+            except profiles.ProfileError as exc:
+                rows.append(_check(check_id, "machine", label, "fail", str(exc), setup))
+            else:
+                rows.append(
+                    _check(check_id, "machine", label, "ok", f"present at {row['path']}, mode 600.")
+                )
+        rows[-1].update(lab=lab, kind=row["kind"], profile=row["name"])
     return rows
 
 
@@ -233,6 +248,82 @@ def _gh_check(run: CommandRunner) -> dict[str, Any]:
             "gh auth login",
         )
     return _check("gh", "machine", "gh cli", "ok", "gh is installed and authenticated.")
+
+
+def _lab_checks(store: Store, run: CommandRunner) -> list[dict[str, Any]]:
+    """configured additional labs need a CLI in every runnable image and usable cost data"""
+    from smortboard.labs.base import RunRequest
+    from smortboard.labs.catalog import load_catalog
+    from smortboard.labs.registry import get_adapter
+
+    catalog = load_catalog()
+    rows = []
+    images = {card_image()}
+    for board in store.list_boards():
+        images.update(repo["image"] for repo in store.list_repos(board["id"]) if repo.get("image"))
+    for lab in profiles.configured_labs():
+        adapter = get_adapter(lab)
+        if lab != "anthropic":
+            executable = adapter.build_command(RunRequest(prompt="", budget_usd=None))[0]
+            for index, image in enumerate(sorted(images)):
+                ready = docker_available()
+                result = (
+                    run(
+                        [
+                            "docker",
+                            "run",
+                            "--rm",
+                            "--network",
+                            "none",
+                            "--entrypoint",
+                            executable,
+                            image,
+                            "--version",
+                        ]
+                    )
+                    if ready
+                    else None
+                )
+                present = result is not None and result.returncode == 0
+                rows.append(
+                    _check(
+                        f"lab-{lab}-image-{index}",
+                        "machine",
+                        f"{lab} CLI in {image}",
+                        "ok" if present else "fail",
+                        f"{executable} is available in {image}."
+                        if present
+                        else f"{image} cannot run {executable}."
+                        if ready
+                        else f"cannot check {image}: docker is not reachable.",
+                        ""
+                        if present
+                        else f"rebuild {image} from docker/card.Dockerfile with {executable} installed.",
+                    )
+                )
+                rows[-1]["lab"] = lab
+        if not adapter.capabilities.reports_cost_usd:
+            missing = [
+                row["id"]
+                for row in catalog.get(lab, {}).get("models", [])
+                if not all(
+                    key in (row.get("price_per_mtok") or {})
+                    for key in ("input", "cached_input", "output")
+                )
+            ]
+            if missing:
+                rows.append(
+                    _check(
+                        f"lab-{lab}-pricing",
+                        "machine",
+                        f"{lab} cost estimates",
+                        "warn",
+                        f"cost is unknown for {', '.join(missing)}; budgets cannot be enforced for these models.",
+                        "set input, cached_input and output price_per_mtok in ~/.config/smortboard/catalog.json.",
+                    )
+                )
+                rows[-1]["lab"] = lab
+    return rows
 
 
 def _git_check() -> dict[str, Any]:
@@ -408,8 +499,13 @@ def run_preflight(
         _docker_check(),
         _image_check(),
         # the credential the next run will use, which follows the active profile
-        _token_check(profiles.token_path_for_run(token_path)),
+        *(
+            [_token_check(profiles.token_path_for_run(token_path))]
+            if profiles.active_profile() is not None or token_path is not None
+            else []
+        ),
         *_profile_checks(),
+        *_lab_checks(store, run),
         _gh_check(run),
         _git_check(),
     ]
