@@ -153,7 +153,12 @@ assert.deepEqual(JSON.parse(answerCall.opts.body), {message: 'go ahead'});
 const status0 = cards[0].querySelector('.inbox-status');
 assert.equal(status0.textContent, 'resumed');
 assert.ok(status0.className.includes('inbox-ok'));
-assert.ok(input0.disabled, 'the input is disabled once answered');
+// THE KEYBOARD COMES BACK TO THE ROW. this used to assert the input stayed disabled, which is what
+// dropped focus on <body>: the list's arrows are bound to the list and never fired again, and
+// escape found no card above body so it closed the panel instead of stepping back
+assert.equal(input0.disabled, false, 'the input is usable again once the answer landed');
+assert.equal(input0.value, '', 'and it is cleared, so the next answer starts empty');
+assert.ok(cards[0].focused, 'focus is handed back to the row, where the queue continues');
 
 // ---- a refusal renders inline and leaves the input usable to try again ---------------------------
 mod.ib.focusIndex = 1;
