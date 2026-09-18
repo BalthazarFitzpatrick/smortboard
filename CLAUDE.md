@@ -4,17 +4,15 @@
 
 ## Project Mission
 
-A convenience wrapper around coding agents. Cards are defined in detail up front, handed to
-headless Claude Code sessions running in isolated git worktrees, and surfaced back only when they
-need a decision. Single user, local-first, browser-based, distributed via Docker.
+A convenience wrapper around coding agents. Cards are defined in detail up front, handed to headless
+agent sessions - Claude Code or Codex - running in isolated git worktrees and throwaway containers,
+and surfaced back only when they need a decision. Single user, local-first, browser-based,
+distributed via Docker.
 
 **It is not a harness.** It does not reimplement the agent loop - it schedules and observes one.
 
 The design test for every feature: does it help the operator define work and then walk away? Anything
 that rewards hovering is wrong, and should be argued against rather than built.
-
-mode: outcome-defined - the target is a stated vision to be checked and then implemented, not an
-open-ended investigation. lock the output and prove unknown mechanics small before building.
 
 Brief: `docs/dev-board-brief.md`. Approved plan: `docs/PLAN.md` - phases, spikes, unit contracts,
 the whole-system test case and the flowchart all live there.
@@ -24,7 +22,8 @@ the whole-system test case and the flowchart all live there.
 ```
 smortboard/
   store/        sqlite schema, migrations, export
-  exec/         worktree manager, lease store, claude runner, event log
+  labs/         one adapter per lab (claude code, codex), the model catalog, neutral events
+  exec/         worktree manager, lease store, agent runner, event log
   review/       test runner, reviewer agent, merge request builder
   orchestrate/  mission control session, role prompts, orchestrator ledger
   server/       http api, asset serving (own files first, ui_base fallback)
@@ -59,8 +58,6 @@ model per role, Claude Code or Codex, with credential profiles per lab and a fal
 measured about Codex before any of it was built. **Merge modes**: a board is review-required by
 default and accepting a card is what lands it, with free-merge as the opt-in per board. Review mode
 stacks a dependent card on its unmerged parent so the queue keeps moving while nobody is watching.
-
-The task ledger holds the current queue.
 
 ## The local loop
 
@@ -107,26 +104,27 @@ consumer, so there is no need to pay for it up front.
 
 ## Related repos
 
-this project spans repos. `ui_base` (`../ui_base`) is the shared interface package - read its
-`CLAUDE.md` before writing any interface code. all final results live here in smortboard.
+this project spans repos. `ui_base` is the shared interface package, consumed as the pinned git
+dependency in `pyproject.toml` and developed in its own repo - read its `CLAUDE.md` before writing
+any interface code. all final results live here in smortboard.
 
-ledgers: `TASKS.jsonl` and `WORKLOG.md` live in a private ledger repo checked out beside this
-one. The root files are untracked, gitignored symlinks into it; nothing about them is ever
-committed here.
+`CLAUDE.local.md`, if it exists beside this file, is the maintainer's own working notes - untracked
+and gitignored. Nothing in it is needed to work on this repo.
 
 ## Constraints and Gotchas
 
-<!-- fill in: known limitations, required env vars, external dependencies, things that will
-     surprise a new contributor -->
+- **the js tests read `ui_base` from a sibling checkout first** (`tests/js/dom_stub.mjs`), falling
+  back to the pinned install. a sibling sitting on an older commit than `pyproject.toml` pins means
+  the suite tests a stylesheet the app does not ship - check the pin before trusting a green run
+- **the database is gitignored and lives in the platform's data dir**, never the working directory;
+  `smortboard export` is the portable bundle
+- **a card cannot run without Docker, a credential and a repo image.** the preflight check (`h`)
+  names whatever is missing rather than letting a card fail minutes in
 
 ## Rules
 
-This repo uses approval-required Git mode. Work in a feature worktree, open a PR against
-`development`, then wait for the operator's approval before merging. A later explicit session
-mode choice takes precedence.
-
-These hold in this project even if `~/.claude/CLAUDE.md` isn't loaded (a teammate's machine, a
-stripped agent). The full version — with rationale — lives in the global playbook.
+Work in a feature worktree, open a pull request against `development`, and let a human merge it.
+These hold on their own: an agent working here needs nothing but this file.
 
 **Git — never commit to `main`/`master`.** Not once, not for a hotfix. The only commit that lands
 on main is the initial scaffold. The human merges PRs and then works from `main`, so the checkout
@@ -140,10 +138,9 @@ Before every commit, in order:
 
 Commit messages: past tense, lowercase, no trailing period. Branches: `feature/`, `fix/`, `chore/`.
 Never commit `.env`, `*.key`, `*.pem`, `credentials*.yaml`, or anything that looks like a token.
-After `git push`, surface the create-pull-request URL from the remote output. `gh` is often
-unavailable — if `gh pr create` fails, don't retry, print the compare URL
-(`https://github.com/<owner>/<repo>/compare/main...<branch>`) and a plain-text PR summary.
-Human approves all merges. Never force-push to main.
+After `git push`, surface the create-pull-request URL from the remote output; if `gh pr create` is
+unavailable, print the compare URL instead of retrying. A human approves every merge. Never
+force-push to `main`.
 
 **Scope.** Implement exactly what was asked — no unrequested extras; propose them in one line
 instead. If a second attempt at the same bug fails, stop and state the root cause before editing again.
@@ -159,26 +156,6 @@ or `.env`, never committed.
 every commit. If python appears in a project that has no toolchain yet, set it up rather than
 asking: `pyproject.toml` with the tuned ruff config, `uv sync`, `tests/`.
 
-**Other languages.** Suggest, don't install — name the conventional linter, formatter and test
-runner, and ask once. Record whatever is agreed under `## Tech Stack`, including its lint command:
-step 3 of the pre-commit list above names only the python one, so a second language is silently
-skipped unless it is written down there.
-
-**Work.** Any task with two or more independent parts → parallel subagents, not serial work. Keep
-replies short and plain; normal eloquence only where real complexity earns it. Mask default AI tone
-in anything others will read (docs, PRs, client reports) — load the `write-like-fabs` skill first.
-
-## Handover notes
-
-`TASKS.jsonl` is the task ledger, not a changelog. One JSON object per line, one line per task, in
-priority order. Fields: `id`, `title`, `status` (`queued`/`in_progress`/`blocked`/`done`),
-`acceptance_criteria` (concrete, testable), `verify_command` (the exact shell command proving it's
-done), `blocked_reason_code`, `last_verified_commit`, `notes` (quirks, rejected approaches and why,
-exact errors — what a fresh context can't rediscover). Mutate a line **in place** as its task
-changes; never append a second line for the same `id`. The next action is the first entry whose
-status isn't `done` — read it first when resuming.
-
-`WORKLOG.md` is the changelog the ledger isn't: **append** a short dated entry per session or stop.
-Never rewrite or delete a past entry.
-
-Update both BEFORE stopping whenever a session heads toward a forced break, not after.
+**Prose.** Anything a person will read — a pull request body, a comment, a doc — says what happened
+and what it cost, in plain words. No filler adjectives, no restating the obvious, no summary of a
+summary.
