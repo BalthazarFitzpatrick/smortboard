@@ -265,4 +265,39 @@ assert.equal(mod.resolveScope(scopes, 'gone'), 'all', 'an unknown/emptied scope 
 const noB2 = mod.computeScopes(ROWS); // b2 has nothing waiting any more
 assert.equal(mod.resolveScope(noB2, 'b2'), 'all', 'a scope that emptied out falls back to all boards');
 
+// ---- one press where a row has one thing to do, step-in where it has more ------------------------
+// the lease-conflict card above keeps its two-step walk (title, then approve) because the choice is
+// real. a row whose only control IS its title opens on the first press instead of reading as "it
+// selected the title" - the complaint that started this
+responses.set('/api/attention', stubJson(200, ROWS));
+responses.set('/api/boards/b1/cards', stubJson(200, []));
+mod.openInboxPanel();
+await flush(); await flush();
+// a row is only a control once it holds focus, so arrow onto the tests-failed row first
+fireKeydown(mod.ib.listEl, {code: 'ArrowDown', key: 'ArrowDown',
+  target: Array.from(mod.ib.listEl.children)[0]});
+const singleControl = Array.from(mod.ib.listEl.children)[1];
+assert.equal(singleControl.querySelectorAll('.inbox-control').length, 1,
+  'a tests-failed row offers only its title');
+fireKeydown(singleControl, {code: 'Space', key: ' '});
+assert.equal(mod.ib.backdrop.parentNode, null,
+  'one space on a single-control row acts on it, closing the panel behind the card');
+
+// ---- coming back from a glance lands on the row you went into -------------------------------------
+// the card panel's close calls back into the inbox (card_panel.js afterCardCloses), which reopens
+// the panel with returnToCardId set; the list then focuses that row wherever it now sits
+mod.ib.focusIndex = null;
+mod.ib.returnToCardId = 'c3';
+mod.openInboxPanel();
+await flush(); await flush();
+assert.equal(mod.ib.focusIndex, 2, 'the glanced row is focused again, not the first one');
+assert.equal(mod.ib.returnToCardId, null, 'the return is consumed, so the next open starts fresh');
+
+// a card that left the inbox while you were in it (you answered it) falls back to the first row
+mod.ib.focusIndex = null;
+mod.ib.returnToCardId = 'gone';
+mod.openInboxPanel();
+await flush(); await flush();
+assert.equal(mod.ib.focusIndex, 0, 'a row that is no longer waiting falls back to the top');
+
 console.log('ok');
