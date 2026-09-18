@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from smortboard.labs.catalog import ROLES, load_catalog, parse_ref, resolve_ref
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
 from smortboard.store.schema import (
     BACKUP_RETENTION_DAYS,
@@ -30,6 +31,7 @@ CARD_WRITABLE_FIELDS = {
     "repo_id",
     "findings_route",
     "model",
+    "lab",
     "complexity",
 }
 
@@ -56,6 +58,11 @@ _SETTING_KEYS = (
     "orchestrator_model",
     "worker_model",
     "reviewer_model",
+    "fold_model",
+    "worker_lab",
+    "reviewer_lab",
+    "orchestrator_lab",
+    "fold_lab",
     "max_parallel",
     "resume_briefing",
     "gate_timeout_seconds",
@@ -83,7 +90,8 @@ SPEND_CAP_KEYS = (
 # writable settings that are not plain strings. mission_control_read_paths is a json list of
 # absolute host paths, parsed by mission_control_read_paths() - get_settings reports it through that
 # tolerant reader as a list, and the settings panel (o) replaces it whole with a list of paths
-_EXTRA_SETTING_KEYS = ("mission_control_read_paths",)
+_FALLBACK_KEYS = tuple(f"{role}_cross_lab_fallback" for role in ROLES)
+_EXTRA_SETTING_KEYS = ("mission_control_read_paths", *_FALLBACK_KEYS)
 
 
 def _check_findings_route(value: str | None) -> None:
@@ -104,6 +112,32 @@ def _check_image(value: Any) -> None:
 def _check_model(value: Any) -> None:
     if value is not None and not (isinstance(value, str) and _MODEL_NAME.match(value)):
         raise ValueError(f"model must be a model name or null, not {value!r}")
+
+
+def _model_pair(lab: Any, model: Any) -> tuple[str | None, str | None]:
+    """retain legacy bare model ids; explicit lab refs must exist in the catalog"""
+    if model is not None and isinstance(model, str) and "/" in model:
+        ref_lab, model = parse_ref(model)
+        if lab is not None and lab != ref_lab:
+            raise ValueError("lab does not match the model ref")
+        lab = ref_lab
+    _check_model(model)
+    if lab is not None:
+        catalog = load_catalog()
+        if not isinstance(lab, str) or lab not in catalog:
+            raise ValueError(f"unknown lab: {lab!r}")
+        if model is not None and resolve_ref(f"{lab}/{model}", catalog) is None:
+            raise ValueError(f"unknown model: {lab}/{model}")
+    if model is None:
+        lab = None
+    return lab, model
+
+
+def _card_dict(row: sqlite3.Row) -> dict[str, Any]:
+    card = dict(row)
+    if card["model"] is not None and card["lab"] is None:
+        card["lab"] = "anthropic"
+    return card
 
 
 def _check_complexity(value: Any) -> None:
@@ -455,9 +489,10 @@ class Store:
         ledger_task: str | None = None,
         depends_on: list[str] | None = None,
         complexity: int | None = None,
+        lab: str | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
-        _check_model(model)
+        lab, model = _model_pair(lab, model)
         _check_complexity(complexity)
         # validated before any insert - a brand new card can never be part of an existing
         # cycle or depend on itself (its id does not exist yet), so only existence matters
@@ -469,8 +504,8 @@ class Store:
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
                 blocked_reason_code, description, position, review_flag, model, ledger_task,
-                complexity, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                complexity, created_at, updated_at, lab)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -488,6 +523,7 @@ class Store:
                 complexity,
                 now,
                 now,
+                lab,
             ),
         )
         for i, text in enumerate(tasks or []):
@@ -528,7 +564,7 @@ class Store:
         return row
 
     def get_card(self, card_id: str) -> dict[str, Any]:
-        card = _row_to_dict(self._card_row(card_id))
+        card = _card_dict(self._card_row(card_id))
         card["tasks"] = [
             _row_to_dict(r)
             for r in self._conn.execute(
@@ -559,7 +595,7 @@ class Store:
         """every card on the board, each exactly as get_card shapes it - but one query per child
         table for the whole board instead of eight per card, since the inbox polls this"""
         cards = [
-            _row_to_dict(r)
+            _card_dict(r)
             for r in self._conn.execute(
                 "SELECT * FROM cards WHERE board_id = ? ORDER BY position", (board_id,)
             ).fetchall()
@@ -621,8 +657,11 @@ class Store:
         self._check_blocked_invariant(next_status, next_reason)
         if "findings_route" in fields:
             _check_findings_route(fields["findings_route"])
-        if "model" in fields:
-            _check_model(fields["model"])
+        if "model" in fields or "lab" in fields:
+            lab, model = _model_pair(
+                fields.get("lab", current["lab"]), fields.get("model", current["model"])
+            )
+            fields.update(lab=lab, model=model)
         if "complexity" in fields:
             _check_complexity(fields["complexity"])
 
@@ -658,6 +697,12 @@ class Store:
         stored = {r["key"]: r["value"] for r in rows}
         settings = {key: stored.get(key) for key in _SETTING_KEYS}
         settings["mission_control_read_paths"] = self.mission_control_read_paths()
+        for key in _FALLBACK_KEYS:
+            try:
+                value = json.loads(stored.get(key) or "[]")
+            except (json.JSONDecodeError, TypeError):
+                value = []
+            settings[key] = value if isinstance(value, list) else []
         return settings
 
     def spend_cap(self, key: str, default: float) -> float:
@@ -667,36 +712,73 @@ class Store:
 
     def set_setting(self, key: str, value: Any) -> dict[str, Any]:
         """sets a board-wide value, or clears it with None (or an empty list, for the read paths)"""
-        if key not in _SETTING_KEYS and key not in _EXTRA_SETTING_KEYS:
-            raise UnknownFieldError(f"no setting {key!r}")
-        if key == "findings_route":
-            _check_findings_route(value)
-        if key == "max_parallel":
-            _check_positive_int("max_parallel", value)
-        if key == "mall_cam_interval_seconds":
-            _check_positive_int("mall_cam_interval_seconds", value)
-        if key in SPEND_CAP_KEYS:
-            _check_positive_number(key, value)
-        stored = value
-        # a list is the panel's whole-list replace; a string arrives pre-serialized (e.g. from a
-        # card agent) and is parsed back to a list first - either way it goes through
-        # _check_read_paths before it can ever be mounted read-only into a container
-        if key == "mission_control_read_paths":
-            if isinstance(value, str):
-                try:
-                    value = json.loads(value)
-                except json.JSONDecodeError as exc:
-                    raise ValueError(
-                        f"mission_control_read_paths must be a list of paths, not {value!r}"
-                    ) from exc
-            stored = json.dumps(_check_read_paths(value)) if value else None
-        if stored is None:
-            self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))
-        else:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, stored)
-            )
-        self._conn.commit()
+        return self.set_settings({key: value})
+
+    def set_settings(self, fields: dict[str, Any]) -> dict[str, Any]:
+        """validate role lab/model pairs together, then save the whole request atomically"""
+        unknown = set(fields) - set(_SETTING_KEYS) - set(_EXTRA_SETTING_KEYS)
+        if unknown:
+            raise UnknownFieldError(f"no setting {sorted(unknown)!r}")
+        fields = dict(fields)
+        current = self.get_settings()
+        catalog = load_catalog()
+        for role in ROLES:
+            lab_key, model_key = f"{role}_lab", f"{role}_model"
+            if not ({lab_key, model_key} & fields.keys()):
+                continue
+            lab = fields.get(lab_key, current[lab_key]) or "anthropic"
+            model = fields.get(model_key, current[model_key])
+            if isinstance(model, str) and "/" in model:
+                ref_lab, model = parse_ref(model)
+                if fields.get(lab_key) is not None and fields[lab_key] != ref_lab:
+                    raise ValueError("lab does not match the model ref")
+                lab = ref_lab
+                fields[lab_key], fields[model_key] = lab, model
+            if not isinstance(lab, str) or lab not in catalog:
+                raise ValueError(f"unknown lab: {lab!r}")
+            if model is not None:
+                _check_model(model)
+                if resolve_ref(f"{lab}/{model}", catalog) is None:
+                    raise ValueError(f"unknown model: {lab}/{model}")
+
+        updates = {}
+        for key, value in fields.items():
+            if key == "findings_route":
+                _check_findings_route(value)
+            if key in {"max_parallel", "mall_cam_interval_seconds"}:
+                _check_positive_int(key, value)
+            if key in SPEND_CAP_KEYS:
+                _check_positive_number(key, value)
+            stored = value
+            if key == "mission_control_read_paths" or key in _FALLBACK_KEYS:
+                if isinstance(value, str):
+                    try:
+                        value = json.loads(value)
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(f"{key} must be a list, not {value!r}") from exc
+                if key == "mission_control_read_paths":
+                    stored = json.dumps(_check_read_paths(value)) if value else None
+                else:
+                    if value is None:
+                        value = []
+                    if not isinstance(value, list):
+                        raise ValueError(f"{key} must be a list of model refs")
+                    refs = []
+                    for item in value:
+                        ref = resolve_ref(item, catalog)
+                        if ref is None:
+                            raise ValueError(f"unknown fallback model: {item!r}")
+                        refs.append("/".join(ref))
+                    stored = json.dumps(refs) if refs else None
+            updates[key] = stored
+        with self._conn:
+            for key, stored in updates.items():
+                if stored is None:
+                    self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+                else:
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, stored)
+                    )
         return self.get_settings()
 
     def mission_control_read_paths(self) -> list[str]:
@@ -825,6 +907,9 @@ class Store:
             "position",
             "review_flag",
             "model",
+            "lab",
+            "complexity",
+            "ledger_task",
             "findings_route",
             "created_at",
             "updated_at",
@@ -856,8 +941,8 @@ class Store:
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
                 blocked_reason_code, description, position, review_flag, model, findings_route,
-                created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, lab, complexity, ledger_task)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card["id"],
@@ -874,6 +959,9 @@ class Store:
                 card["findings_route"],
                 card["created_at"],
                 card["updated_at"],
+                card.get("lab"),
+                card.get("complexity"),
+                card.get("ledger_task"),
             ),
         )
         for task in payload["tasks"]:
@@ -1197,27 +1285,36 @@ class Store:
         rows = self._conn.execute(query, params).fetchall()
         return [self._orchestrator_message_dict(r) for r in rows]
 
-    def add_board_spend(self, board_id: str, role: str, cost_usd: float) -> dict[str, Any]:
+    def add_board_spend(
+        self,
+        board_id: str,
+        role: str,
+        cost_usd: float | None,
+        *,
+        lab: str = "anthropic",
+        model: str | None = None,
+        cost_estimated: bool = False,
+    ) -> dict[str, Any]:
         """a mission control or fold turn's cost - not tied to a card run, so it lives on its own
         table rather than a card's events. see telemetry.board_spend_today, which sums these too."""
         spend_id = _new_id()
         created_at = _now()
         self._conn.execute(
             """
-            INSERT INTO board_spend (id, board_id, role, cost_usd, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO board_spend (id, board_id, role, cost_usd, created_at, lab, model, cost_estimated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (spend_id, board_id, role, cost_usd, created_at),
+            (spend_id, board_id, role, cost_usd, created_at, lab, model, int(cost_estimated)),
         )
         self._conn.commit()
         row = self._conn.execute("SELECT * FROM board_spend WHERE id = ?", (spend_id,)).fetchone()
-        return _row_to_dict(row)
+        return {**_row_to_dict(row), "lab": row["lab"] or "anthropic"}
 
     def list_board_spend(self, board_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT * FROM board_spend WHERE board_id = ? ORDER BY created_at", (board_id,)
         ).fetchall()
-        return [_row_to_dict(r) for r in rows]
+        return [{**_row_to_dict(r), "lab": r["lab"] or "anthropic"} for r in rows]
 
     def get_plan(self, board_id: str) -> str | None:
         row = self._conn.execute(
@@ -1237,15 +1334,16 @@ class Store:
 
     # -- telemetry projections: reads only, see smortboard/telemetry.py for the shaping ----
 
-    def list_events_by_kind(self, kinds: list[str]) -> list[dict[str, Any]]:
+    def list_events_by_kind(self, kinds: list[str] | None) -> list[dict[str, Any]]:
         """every event of these kinds, across every card - usage is board-agnostic, see the
         /api/usage contract. ordered oldest first BY WALL-CLOCK TIME across cards - `seq` only
         orders events within one card, so `ORDER BY card_id, seq` grouped by card instead of time
         and let a stale event from an alphabetically-later card_id win telemetry's "latest wins"
         merge (usage_projection, scheduler._latest_reset)."""
-        placeholders = ", ".join("?" for _ in kinds)
+        placeholders = ", ".join("?" for _ in kinds or [])
+        where = f"WHERE kind IN ({placeholders})" if kinds is not None else ""
         rows = self._conn.execute(
-            f"SELECT * FROM events WHERE kind IN ({placeholders}) ORDER BY created_at, seq", kinds
+            f"SELECT * FROM events {where} ORDER BY created_at, seq", kinds or []
         ).fetchall()
         events = []
         for row in rows:

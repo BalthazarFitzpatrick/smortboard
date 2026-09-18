@@ -173,18 +173,26 @@ todoRows.appendChild(strip2);
 strip2.focus();
 calls.length = 0;
 setResponse('GET', '/api/cards/c1', 200, {id: 'c1', model: null});
-setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', model: 'haiku'});
+setResponse('GET', '/api/catalog', 200, {
+  anthropic: {available: false, unavailable_reason: 'no usable profile', models: [{id: 'haiku', label: 'Haiku', tier: 'light'}]},
+  openai: {available: true, models: [{id: 'x', label: 'X', tier: 'standard'}]},
+});
+setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', lab: 'openai', model: 'x'});
 menus = [];
 overflow.onclick({stopPropagation(){}});
 menus[0].pick('model');
 await flush();
-assert.equal(menus.length, 2, 'change model should open a confirm before it patches anything');
-assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0, 'no write before the confirm is answered');
-menus[1].pick('confirm');
+assert.equal(menus.length, 2, 'change model opens the lab picker');
+assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0, 'no write before a model is selected');
+menus[1].pick('anthropic');
+assert.equal(menus.length, 2, 'a lab without a usable profile cannot be selected');
+menus[1].pick('openai');
+assert.equal(menus.length, 3, 'picking a lab opens its models');
+menus[2].pick('x');
 await flush();
 const modelPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
-assert.ok(modelPatch && JSON.parse(modelPatch.opts.body).model === 'haiku',
-  "the overflow's change model should act on the card it belongs to");
+assert.deepEqual(JSON.parse(modelPatch.opts.body), {lab: 'openai', model: 'x'},
+  "the picker patches both parts of the card's model ref");
 assert.ok(!calls.some(c => c.path.startsWith('/api/cards/c2')), 'and never touch the focused card instead');
 
 // ---- e, j and del retired into the menu: m is the only key, and every action is still two

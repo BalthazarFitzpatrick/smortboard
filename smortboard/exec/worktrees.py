@@ -38,6 +38,7 @@ class WorktreeInfo:
     card_id: str
     path: Path
     branch: str
+    base_commit: str | None = None
 
 
 def _worktree_root(repo_path: Path) -> Path:
@@ -83,7 +84,8 @@ def create_worktree(repo_path: str | Path, card_id: str, base: str = "main") -> 
     # card branch cut from origin/<base> would otherwise track the base; its push sets its own
     with repo_lock(repo_path):
         _run_git(repo_path, "worktree", "add", "--no-track", "-b", branch, str(path), base)
-    return WorktreeInfo(card_id=card_id, path=path, branch=branch)
+        base_commit = _run_git(path, "rev-parse", "HEAD").stdout.strip()
+    return WorktreeInfo(card_id=card_id, path=path, branch=branch, base_commit=base_commit)
 
 
 def existing_worktree(repo_path: str | Path, card_id: str) -> WorktreeInfo:

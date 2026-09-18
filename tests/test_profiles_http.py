@@ -68,7 +68,16 @@ def _request(url, method="GET", body=None):
 def test_list_profiles_starts_with_just_default(running_server):
     status, body = _request(f"{running_server}/api/profiles")
     assert status == 200
-    assert body == [{"name": "default", "active": True, "present": False, "limited_until": None}]
+    assert body == [
+        {
+            "name": "default",
+            "active": True,
+            "present": False,
+            "limited_until": None,
+            "lab": "anthropic",
+            "kind": "oauth",
+        }
+    ]
 
 
 def test_add_profile_writes_a_mode_600_file_and_never_echoes_the_token(running_server, tmp_path):
@@ -76,11 +85,18 @@ def test_add_profile_writes_a_mode_600_file_and_never_echoes_the_token(running_s
         f"{running_server}/api/profiles", "POST", {"name": "alt", "token": VALID_TOKEN}
     )
     assert status == 201
-    assert body == {"name": "alt", "active": False, "present": True, "limited_until": None}
+    assert body == {
+        "name": "alt",
+        "active": False,
+        "present": True,
+        "limited_until": None,
+        "lab": "anthropic",
+        "kind": "oauth",
+    }
     assert "token" not in body
     assert json.dumps(body).find(VALID_TOKEN) == -1
 
-    token_path = tmp_path / "smortboard" / "tokens" / "alt"
+    token_path = tmp_path / "smortboard" / "tokens" / "anthropic" / "alt"
     assert token_path.is_file()
     assert token_path.read_text().strip() == VALID_TOKEN
     assert (token_path.stat().st_mode & 0o777) == 0o600
@@ -97,7 +113,7 @@ def test_add_profile_rejects_a_malformed_token_and_writes_no_file(running_server
     )
     assert status == 400
     assert "error" in body
-    assert not (tmp_path / "smortboard" / "tokens" / "bad").exists()
+    assert not (tmp_path / "smortboard" / "tokens" / "anthropic" / "bad").exists()
 
     status, body = _request(f"{running_server}/api/profiles")
     assert not any(r["name"] == "bad" for r in body)
@@ -132,7 +148,7 @@ def test_activate_unknown_profile_is_refused(running_server):
 
 def test_remove_deletes_the_token_file(running_server, tmp_path):
     _request(f"{running_server}/api/profiles", "POST", {"name": "alt", "token": VALID_TOKEN})
-    token_path = tmp_path / "smortboard" / "tokens" / "alt"
+    token_path = tmp_path / "smortboard" / "tokens" / "anthropic" / "alt"
     assert token_path.is_file()
 
     status, _ = _request(f"{running_server}/api/profiles/alt", "DELETE")
@@ -151,7 +167,16 @@ def test_remove_the_active_profile_switches_active_first(running_server):
 
     status, body = _request(f"{running_server}/api/profiles")
     assert status == 200
-    assert body == [{"name": "default", "active": True, "present": False, "limited_until": None}]
+    assert body == [
+        {
+            "name": "default",
+            "active": True,
+            "present": False,
+            "limited_until": None,
+            "lab": "anthropic",
+            "kind": "oauth",
+        }
+    ]
 
 
 def test_remove_default_is_now_allowed(running_server, tmp_path):
@@ -172,3 +197,103 @@ def test_remove_unknown_profile_is_404(running_server):
     status, body = _request(f"{running_server}/api/profiles/ghost", "DELETE")
     assert status == 404
     assert "error" in body
+
+
+def test_scoped_profiles_keep_names_and_active_choices_independent(running_server, tmp_path):
+    _request(f"{running_server}/api/profiles", "POST", {"name": "work", "token": VALID_TOKEN})
+    status, row = _request(
+        f"{running_server}/api/profiles",
+        "POST",
+        {"lab": "openai", "name": "work", "kind": "api_key", "token": "test-key"},
+    )
+    assert status == 201
+    assert row["lab"] == "openai" and row["kind"] == "api_key" and row["active"]
+    assert (
+        tmp_path / "smortboard" / "tokens" / "openai" / "work"
+    ).read_text().strip() == "test-key"
+    status, row = _request(f"{running_server}/api/profiles/anthropic/work/activate", "POST")
+    assert status == 200 and row["lab"] == "anthropic"
+    _, rows = _request(f"{running_server}/api/profiles")
+    assert {(row["lab"], row["name"]) for row in rows if row["active"]} == {
+        ("anthropic", "work"),
+        ("openai", "work"),
+    }
+    status, _ = _request(f"{running_server}/api/profiles/openai/work", "DELETE")
+    assert status == 204
+    assert (tmp_path / "smortboard" / "tokens" / "anthropic" / "work").exists()
+
+
+def test_last_lab_profile_removal_reports_referencing_card(running_server):
+    _request(
+        f"{running_server}/api/profiles",
+        "POST",
+        {"lab": "openai", "name": "work", "kind": "api_key", "token": "test-key"},
+    )
+    _, catalog = _request(f"{running_server}/api/catalog")
+    model = catalog["openai"]["models"][0]["id"]
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "test"})
+    status, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {
+            "board_id": board["id"],
+            "repo_id": None,
+            "title": "dependent task",
+            "lab": "openai",
+            "model": model,
+        },
+    )
+    assert status == 201
+    status, body = _request(f"{running_server}/api/profiles/openai/work", "DELETE")
+    assert status == 409
+    assert card["id"] in body["error"] and "dependent task" in body["error"]
+
+
+def test_catalog_reports_usable_profiles_and_settings_patch_is_atomic(running_server):
+    _, catalog = _request(f"{running_server}/api/catalog")
+    assert not catalog["openai"]["available"]
+    assert catalog["openai"]["unavailable_reason"]
+    _request(
+        f"{running_server}/api/profiles",
+        "POST",
+        {"lab": "openai", "name": "work", "kind": "api_key", "token": "test-key"},
+    )
+    _, catalog = _request(f"{running_server}/api/catalog")
+    assert catalog["openai"]["available"]
+    model = catalog["openai"]["models"][0]["id"]
+    status, body = _request(
+        f"{running_server}/api/settings", "PATCH", {"worker_model": model, "worker_lab": "openai"}
+    )
+    assert status == 200
+    assert body["worker_lab"] == "openai" and body["worker_model"] == model
+    status, _ = _request(
+        f"{running_server}/api/settings",
+        "PATCH",
+        {"worker_lab": "anthropic", "worker_model": "not-a-catalog-model"},
+    )
+    assert status == 400
+    _, body = _request(f"{running_server}/api/settings")
+    assert body["worker_lab"] == "openai" and body["worker_model"] == model
+
+
+def test_chatgpt_login_json_is_compacted_and_never_echoed(running_server, tmp_path):
+    login = json.dumps(
+        {"tokens": {"access_token": "private-access", "refresh_token": "private-refresh"}}, indent=2
+    )
+    status, row = _request(
+        f"{running_server}/api/profiles",
+        "POST",
+        {"lab": "openai", "name": "chatgpt", "kind": "auth_json", "token": login},
+    )
+    assert status == 201 and row["kind"] == "auth_json"
+    assert "private-" not in json.dumps(row)
+    saved = (tmp_path / "smortboard" / "tokens" / "openai" / "chatgpt").read_text()
+    assert len(saved.splitlines()) == 1
+    assert json.loads(saved) == json.loads(login)
+    status, body = _request(
+        f"{running_server}/api/profiles",
+        "POST",
+        {"lab": "openai", "name": "bad", "kind": "auth_json", "token": "private-invalid"},
+    )
+    assert status == 400
+    assert "private-invalid" not in json.dumps(body)

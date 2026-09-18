@@ -30,6 +30,9 @@ function expandReadPath(raw) {
 }
 function fetchStub(path, opts) {
   calls.push({path, opts});
+  if (path === '/api/catalog') return Promise.resolve(stubJson(200, {
+    openai: {available: true, models: [{id: 'x', label: 'X', tier: 'standard'}]},
+  }));
   if (path === '/api/boards' && (!opts || !opts.method || opts.method === 'GET')) {
     return Promise.resolve(stubJson(200, boardsState.map(b => ({...b}))));
   }
@@ -96,7 +99,8 @@ document.body.appendChild(bucketRow);
 function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
-class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; } refresh() {} close() {} }
+const modelMenus = [];
+class SpyMenu { constructor(opts) { this.opts = opts; modelMenus.push(this); } openAt() { return this; } refresh() {} close() {} }
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
@@ -135,8 +139,23 @@ assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel
 // ---- the panel renders all six sections: credential profiles, mouse, mission control can read,
 // parallelism, spend caps, mall cam interval (cf90bacc)
 await flush();
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 6,
-  'credential profiles, mouse, mission control can read, how many cards run at once, spend caps, mall cam interval');
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 7,
+  'credential profiles, mouse, models by role, mission control can read, parallelism, spend caps, mall cam interval');
+
+const rolePickers = mod.st.listEl.querySelectorAll('.role-model');
+assert.equal(rolePickers.length, 4);
+const reviewerPicker = rolePickers.find(row => row.dataset.role === 'reviewer');
+await reviewerPicker.onclick();
+modelMenus.at(-1).opts.sections[0].onPick({id: 'openai'});
+await modelMenus.at(-1).opts.sections[0].onPick({id: 'x'});
+await flush();
+assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
+  {reviewer_lab: 'openai', reviewer_model: 'x'});
+const fallbackInput = mod.st.listEl.querySelectorAll('.role-fallback').find(row => row.dataset.role === 'fold');
+fallbackInput.value = 'openai/x';
+await fallbackInput.parentNode.children.find(row => row.textContent === 'save fallbacks').onclick();
+assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
+  {fold_cross_lab_fallback: ['openai/x']});
 
 // ---- the mouse is opt-in: unset renders unchecked, and ticking it PATCHes "on" ------------------
 {

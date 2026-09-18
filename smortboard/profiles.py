@@ -1,18 +1,4 @@
-"""named claude credential profiles: several subscriptions, one active at a time.
-
-Per the credential-profiles card: rotate to the next profile when the active one hits its rate
-limit, instead of parking the whole board until the window resets. A profile is a name plus a
-mode-600 token file under ~/.config/smortboard/tokens/<name>. "default" is special-cased onto the
-pre-existing card_token file (smortboard.exec.backends.card_token_path) rather than a file of its
-own, so a board that only ever had one credential keeps working exactly as before - nothing is
-moved, and nothing here is ever written to disk while only "default" is configured. That last part
-is not an optimisation: BoardScheduler calls into this module on every USAGE_LIMIT, including from
-tests this card cannot edit, and those must not grow a real ~/.config/smortboard/profiles.json as a
-side effect of running the suite.
-
-A token VALUE never passes through this module except the moment write_token_file() puts one on
-disk - list/read/mark/rotate operations move names, paths and timestamps only.
-"""
+"""lab-scoped credential profiles, with read-only compatibility for legacy state and tokens."""
 
 import json
 import os
@@ -24,66 +10,92 @@ from typing import Any
 from smortboard.exec.backends import card_token_path, config_base
 
 DEFAULT_PROFILE = "default"
-
-# a test seam, mirrors CARD_TOKEN_PATH_ENV - points the state file at a tmp path instead of the
-# operator's real config directory
+DEFAULT_LAB = "anthropic"
 STATE_PATH_ENV = "SMORTBOARD_PROFILES_STATE_PATH"
-
-# guards every load-mutate-save cycle below. BoardScheduler can run several cards at once
-# (max_parallel > 1), each on its own thread, and two USAGE_LIMIT events landing close together
-# must not interleave their read-modify-write of the same state file - one would clobber the
-# other's rotation (a lost mark_limited or set_active).
 _STATE_LOCK = threading.Lock()
-
 _NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+_KINDS = {"anthropic": ("oauth",), "openai": ("access_token", "api_key", "auth_json")}
 
 
 class ProfileError(RuntimeError):
-    """a profile operation could not be completed - bad name, unknown profile, insecure file"""
+    """a profile operation could not be completed"""
 
 
-def profiles_dir() -> Path:
-    return config_base() / "smortboard" / "tokens"
+def _validate_lab(lab: str) -> None:
+    if not isinstance(lab, str) or lab not in _KINDS:
+        raise ProfileError(f"unknown lab '{lab}'")
+
+
+def _validate_name(name: str) -> None:
+    if not isinstance(name, str) or not name or any(ch not in _NAME_CHARS for ch in name):
+        raise ProfileError(
+            f"'{name}' is not a valid profile name - letters, digits, '-' and '_' only."
+        )
+
+
+def profiles_dir(lab: str = DEFAULT_LAB) -> Path:
+    _validate_lab(lab)
+    return config_base() / "smortboard" / "tokens" / lab
 
 
 def state_path() -> Path:
-    """where profile metadata (active profile, per-profile limit windows) lives - names and
-    timestamps only, never a token value"""
     override = os.environ.get(STATE_PATH_ENV)
     return Path(override) if override else config_base() / "smortboard" / "profiles.json"
 
 
+def _empty_lab() -> dict[str, Any]:
+    return {"active": None, "profiles": [], "limits": {}, "kinds": {}}
+
+
 def _default_state() -> dict[str, Any]:
-    return {"active": DEFAULT_PROFILE, "profiles": [DEFAULT_PROFILE], "limits": {}}
+    state = _empty_lab()
+    state.update(active=DEFAULT_PROFILE, profiles=[DEFAULT_PROFILE])
+    return {"version": 2, "labs": {DEFAULT_LAB: state}}
 
 
 def _load_state() -> dict[str, Any]:
-    """a pure read - an absent or corrupt file is just the default state, never written back here.
-    see the module docstring: this is called on every scheduler tick, so it must never turn a
-    single-profile board into one with a state file on disk.
-
-    an existing state file's "profiles" list is trusted as-is, "default" included: once "default"
-    has been deliberately removed, a state file exists and no longer names it, so it must not be
-    re-inserted here on every load - only a MISSING file (never touched) falls back to the
-    single-default board."""
-    path = state_path()
-    if not path.is_file():
-        return _default_state()
+    """reading a v1 or missing file never writes or moves anything"""
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(state_path().read_text())
     except (json.JSONDecodeError, OSError):
         return _default_state()
-    state = _default_state()
-    state["active"] = data.get("active") or DEFAULT_PROFILE
-    names = data.get("profiles")
-    state["profiles"] = list(names) if names else []
-    state["limits"] = dict(data.get("limits") or {})
-    return state
+    if not isinstance(data, dict):
+        return _default_state()
+    labs = data.get("labs") if data.get("version") == 2 else {DEFAULT_LAB: data}
+    if not isinstance(labs, dict):
+        return _default_state()
+    result = {"version": 2, "labs": {}}
+    for lab, values in labs.items():
+        if lab not in _KINDS or not isinstance(values, dict):
+            continue
+        state = _empty_lab()
+        names = values.get("profiles") or []
+        if not isinstance(names, list):
+            continue
+        for name in names:
+            try:
+                _validate_name(name)
+            except ProfileError:
+                continue
+            if name not in state["profiles"]:
+                state["profiles"].append(name)
+        active = values.get("active")
+        state["active"] = (
+            active if active in state["profiles"] else next(iter(state["profiles"]), None)
+        )
+        for key in ("limits", "kinds"):
+            if isinstance(values.get(key), dict):
+                state[key] = dict(values[key])
+        result["labs"][lab] = state
+    return result
+
+
+def _lab_state(state: dict[str, Any], lab: str) -> dict[str, Any]:
+    _validate_lab(lab)
+    return state["labs"].setdefault(lab, _empty_lab())
 
 
 def _save_state(state: dict[str, Any]) -> None:
-    # write-then-rename: a crash or power loss mid-write leaves the old file (or a stray .tmp-*
-    # file) intact rather than half-written json that _load_state would silently treat as absent
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
@@ -91,37 +103,44 @@ def _save_state(state: dict[str, Any]) -> None:
     tmp_path.replace(path)
 
 
-def _validate_name(name: str) -> None:
-    if not name or any(ch not in _NAME_CHARS for ch in name):
-        raise ProfileError(
-            f"'{name}' is not a valid profile name - letters, digits, '-' and '_' only."
-        )
+def configured_labs() -> list[str]:
+    return [lab for lab, state in _load_state()["labs"].items() if state["profiles"]]
 
 
-def profile_path(name: str) -> Path:
-    """the token file for one profile - the legacy card_token file itself for 'default', so
-    adopting profiles never moves anything the operator already set up"""
-    if name == DEFAULT_PROFILE:
+def profile_path(name: str, lab: str = DEFAULT_LAB) -> Path:
+    """legacy anthropic files remain in place; newly added profiles use lab directories"""
+    _validate_lab(lab)
+    _validate_name(name)
+    if lab == DEFAULT_LAB and name == DEFAULT_PROFILE:
         return card_token_path()
-    return profiles_dir() / name
+    path = profiles_dir(lab) / name
+    legacy = profiles_dir(lab).parent / name
+    if lab == DEFAULT_LAB and not path.exists() and legacy.is_file():
+        return legacy
+    return path
 
 
 def _mode_ok(path: Path) -> bool:
     return (path.stat().st_mode & 0o077) == 0
 
 
-def list_profiles(now: float | None = None) -> list[dict[str, Any]]:
-    """every configured profile: present, mode 600, and whether it is rate-limited right now -
-    the shape preflight renders one row per profile from"""
-    state = _load_state()
+def profile_kind(name: str, lab: str = DEFAULT_LAB) -> str:
+    state = _lab_state(_load_state(), lab)
+    return state["kinds"].get(name, _KINDS[lab][0])
+
+
+def list_profiles(now: float | None = None, lab: str = DEFAULT_LAB) -> list[dict[str, Any]]:
+    state = _lab_state(_load_state(), lab)
     now = time.time() if now is None else now
     rows = []
     for name in state["profiles"]:
-        path = profile_path(name)
+        path = profile_path(name, lab)
         present = path.is_file()
         limited_until = (state["limits"].get(name) or {}).get("limited_until")
         rows.append(
             {
+                "lab": lab,
+                "kind": state["kinds"].get(name, _KINDS[lab][0]),
                 "name": name,
                 "path": str(path),
                 "active": name == state["active"],
@@ -134,157 +153,177 @@ def list_profiles(now: float | None = None) -> list[dict[str, Any]]:
     return rows
 
 
-def active_profile() -> str:
-    return _load_state()["active"]
+def list_all_profiles(now: float | None = None) -> list[dict[str, Any]]:
+    return [row for lab in configured_labs() for row in list_profiles(now, lab)]
 
 
-def active_profile_path() -> Path:
-    return profile_path(active_profile())
+def active_profile(lab: str = DEFAULT_LAB) -> str | None:
+    return _lab_state(_load_state(), lab)["active"]
 
 
-def has_multiple_profiles() -> bool:
-    return len(_load_state()["profiles"]) > 1
+def active_profile_path(lab: str = DEFAULT_LAB) -> Path:
+    name = active_profile(lab)
+    if name is None:
+        raise ProfileError(f"no credential profile configured for {lab}")
+    return profile_path(name, lab)
 
 
-def token_path_for_run(explicit_override: str | Path | None) -> str | Path | None:
-    """what a card run should pass as token_path: an explicit override always wins (tests, and any
-    deployment that pins SMORTBOARD_CARD_TOKEN_PATH); otherwise None for the default profile -
-    preserving its file-then-keychain fallback exactly as before profiles existed - or the named
-    profile's own file, which has no keychain fallback of its own."""
+def has_multiple_profiles(lab: str = DEFAULT_LAB) -> bool:
+    return len(_lab_state(_load_state(), lab)["profiles"]) > 1
+
+
+def token_path_for_run(
+    explicit_override: str | Path | None, lab: str = DEFAULT_LAB
+) -> str | Path | None:
     if explicit_override is not None:
         return explicit_override
-    active = active_profile()
-    return None if active == DEFAULT_PROFILE else profile_path(active)
+    active = active_profile(lab)
+    if active is None:
+        raise ProfileError(f"no credential profile configured for {lab}")
+    return None if lab == DEFAULT_LAB and active == DEFAULT_PROFILE else profile_path(active, lab)
+
+
+def token_path_for_profile(
+    name: str, explicit_override: str | Path | None = None
+) -> str | Path | None:
+    """resolve the captured anthropic identity, even if another run has since rotated it"""
+    if explicit_override is not None:
+        return explicit_override
+    return None if name == DEFAULT_PROFILE else profile_path(name, DEFAULT_LAB)
 
 
 def write_token_file(path: str | Path, token: str) -> None:
-    """writes a token with umask 077 so it (and its parent dir) land at owner-only regardless of
-    the process umask, then verifies - a file that somehow ends up group- or world-readable is
-    refused rather than silently used."""
+    """create private files without changing the process-wide umask of concurrent runs"""
     path = Path(path)
-    previous = os.umask(0o077)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(token.strip() + "\n")
-    finally:
-        os.umask(previous)
-    path.chmod(0o600)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
+    if path.is_symlink():
+        raise ProfileError(f"{path} is a symbolic link - refusing to write a token")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "w") as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        handle.write(token.strip() + "\n")
     if not _mode_ok(path):
         raise ProfileError(f"{path} is not mode 600 after writing - refusing to use it")
 
 
-def add_profile(name: str, token: str | None = None) -> Path:
+def add_profile(
+    name: str, token: str | None = None, lab: str = DEFAULT_LAB, kind: str | None = None
+) -> Path:
     _validate_name(name)
+    _validate_lab(lab)
+    kind = kind or _KINDS[lab][0]
+    if kind not in _KINDS[lab]:
+        raise ProfileError(f"invalid credential kind '{kind}' for {lab}")
+    if token is not None and kind == "auth_json":
+        token = _auth_json(token)
     with _STATE_LOCK:
-        state = _load_state()
+        document = _load_state()
+        state = _lab_state(document, lab)
         if name in state["profiles"]:
             raise ProfileError(f"profile '{name}' already exists")
-        path = profile_path(name)
+        path = profile_path(name, lab)
         if token is not None:
             write_token_file(path, token)
         state["profiles"].append(name)
-        _save_state(state)
+        state["kinds"][name] = kind
+        if state["active"] is None:
+            state["active"] = name
+        _save_state(document)
         return path
 
 
 def _pick_replacement(state: dict[str, Any], exclude: str, now: float) -> str | None:
-    """a profile to switch to once `exclude` is removed, preferring one that is not rate-limited
-    right now - falls back to any other configured profile if every remaining one is limited"""
     remaining = [name for name in state["profiles"] if name != exclude]
-    if not remaining:
-        return None
     for name in remaining:
         limited_until = (state["limits"].get(name) or {}).get("limited_until")
         if not (limited_until and limited_until > now):
             return name
-    return remaining[0]
+    return next(iter(remaining), None)
 
 
-def remove_profile(name: str, now: float | None = None) -> None:
-    """removes a profile by name - "default" and the active profile included.
-
-    Removing the active profile first switches active to another configured profile (preferring
-    one that is not currently rate-limited), then removes it - no more "switch to another one
-    first" for the operator to do by hand. Only the LAST remaining profile is refused, since a
-    board always needs exactly one active credential.
-
-    Also unlinks the profile's token file - moved here from server/app.py's
-    _handle_remove_profile, which cannot see this module's lock and previously did the unlink
-    after the state write itself had already succeeded, as two separate steps.
-    """
+def remove_profile(
+    name: str,
+    now: float | None = None,
+    lab: str = DEFAULT_LAB,
+    referenced_cards: list[dict[str, Any]] | None = None,
+) -> None:
+    """callers pass lab-dependent cards to protect the final credential of a configured lab"""
     now = time.time() if now is None else now
     with _STATE_LOCK:
-        state = _load_state()
+        document = _load_state()
+        state = _lab_state(document, lab)
         if name not in state["profiles"]:
             raise ProfileError(f"no such profile '{name}'")
         if len(state["profiles"]) <= 1:
-            raise ProfileError(f"'{name}' is the last remaining profile and cannot be removed")
+            if referenced_cards:
+                labels = ", ".join(
+                    f"{card.get('title', card['id'])} ({card['id']})" for card in referenced_cards
+                )
+                raise ProfileError(
+                    f"'{name}' is the last {lab} profile, still referenced by cards: {labels}"
+                )
+            if referenced_cards is None:
+                raise ProfileError(f"'{name}' is the last remaining profile and cannot be removed")
+        path = profile_path(name, lab)
         if state["active"] == name:
-            replacement = _pick_replacement(state, name, now)
-            state["active"] = replacement  # always set: len(profiles) > 1 guarantees one exists
+            state["active"] = _pick_replacement(state, name, now)
         state["profiles"].remove(name)
         state["limits"].pop(name, None)
-        _save_state(state)
-    profile_path(name).unlink(missing_ok=True)
+        state["kinds"].pop(name, None)
+        _save_state(document)
+        path.unlink(missing_ok=True)
 
 
-def set_active(name: str) -> None:
+def set_active(name: str, lab: str = DEFAULT_LAB) -> None:
     with _STATE_LOCK:
-        state = _load_state()
+        document = _load_state()
+        state = _lab_state(document, lab)
         if name not in state["profiles"]:
             raise ProfileError(f"no such profile '{name}'")
-        state["active"] = name
-        _save_state(state)
+        if state["active"] != name:
+            state["active"] = name
+            _save_state(document)
 
 
 def _mark_limited(state: dict[str, Any], name: str, resets_at: float | None) -> None:
-    """in-memory mutation only - callers load and save around this, see mark_limited() and
-    handle_usage_limit() below. an unknown name is registered rather than refused: the profile it
-    names is real (it was just the active one), only unrecorded here yet."""
     if name not in state["profiles"]:
         state["profiles"].append(name)
     state["limits"][name] = {"limited_until": resets_at}
 
 
-def mark_limited(name: str, resets_at: float | None) -> None:
-    """records that `name` hit its rate limit until resets_at."""
+def mark_limited(name: str, resets_at: float | None, lab: str = DEFAULT_LAB) -> None:
+    _validate_name(name)
     with _STATE_LOCK:
-        state = _load_state()
-        _mark_limited(state, name, resets_at)
-        _save_state(state)
+        document = _load_state()
+        _mark_limited(_lab_state(document, lab), name, resets_at)
+        _save_state(document)
 
 
-def is_limited(name: str, now: float | None = None) -> bool:
-    state = _load_state()
+def is_limited(name: str, now: float | None = None, lab: str = DEFAULT_LAB) -> bool:
+    state = _lab_state(_load_state(), lab)
     limited_until = (state["limits"].get(name) or {}).get("limited_until")
-    now = time.time() if now is None else now
-    return bool(limited_until and limited_until > now)
+    return bool(limited_until and limited_until > (time.time() if now is None else now))
 
 
 def _next_available(state: dict[str, Any], now: float) -> str | None:
-    """in-memory: the next profile after the active one, in rotation order, that is not limited
-    at `now` - None once every configured profile is"""
     order = state["profiles"]
     active = state["active"]
     if active in order:
         idx = order.index(active)
-        rotated = order[idx + 1 :] + order[: idx + 1]
-    else:
-        rotated = list(order)
-    for name in rotated:
+        order = order[idx + 1 :] + order[: idx + 1]
+    for name in order:
         limited_until = (state["limits"].get(name) or {}).get("limited_until")
         if not (limited_until and limited_until > now):
             return name
     return None
 
 
-def next_available(now: float | None = None) -> str | None:
-    state = _load_state()
-    return _next_available(state, time.time() if now is None else now)
+def next_available(now: float | None = None, lab: str = DEFAULT_LAB) -> str | None:
+    return _next_available(_lab_state(_load_state(), lab), time.time() if now is None else now)
 
 
 def _earliest_reset(state: dict[str, Any], now: float) -> float | None:
-    """in-memory: the soonest a currently-limited profile resets, at `now`"""
     resets = [
         info.get("limited_until")
         for info in state["limits"].values()
@@ -293,33 +332,31 @@ def _earliest_reset(state: dict[str, Any], now: float) -> float | None:
     return min(resets) if resets else None
 
 
-def earliest_reset(now: float | None = None) -> float | None:
-    """the soonest a currently-limited profile resets - what the board parks until once every
-    profile is limited"""
-    state = _load_state()
-    return _earliest_reset(state, time.time() if now is None else now)
+def earliest_reset(now: float | None = None, lab: str = DEFAULT_LAB) -> float | None:
+    return _earliest_reset(_lab_state(_load_state(), lab), time.time() if now is None else now)
 
 
-def handle_usage_limit(resets_at: float | None, now: float | None = None) -> dict[str, Any]:
-    """the one transaction a USAGE_LIMIT event needs: mark the active profile limited, rotate to
-    the next one that is not, in a single load-mutate-save under _STATE_LOCK - not the four
-    separate load/save round trips (has_multiple_profiles + mark_limited + next_available +
-    set_active) this used to take, each reading and some writing the same file again.
-
-    Returns {"rotated": bool, "next_profile": str | None, "earliest_reset": float | None}.
-    rotated is False only for a single-profile board, which - like every read-only path in this
-    module - must never write a state file just because a run hit its limit alone.
-    """
+def handle_usage_limit(
+    resets_at: float | None,
+    now: float | None = None,
+    lab: str = DEFAULT_LAB,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """mark the run's credential and rotate within its lab under one state lock"""
     now = time.time() if now is None else now
     with _STATE_LOCK:
-        state = _load_state()
+        document = _load_state()
+        state = _lab_state(document, lab)
         if len(state["profiles"]) <= 1:
+            if state["profiles"] and state_path().exists():
+                _mark_limited(state, name or state["active"], resets_at)
+                _save_state(document)
             return {"rotated": False, "next_profile": None, "earliest_reset": None}
-        _mark_limited(state, state["active"], resets_at)
+        _mark_limited(state, name or state["active"], resets_at)
         next_profile = _next_available(state, now)
         if next_profile is not None:
             state["active"] = next_profile
-        _save_state(state)
+        _save_state(document)
         return {
             "rotated": True,
             "next_profile": next_profile,
@@ -327,16 +364,46 @@ def handle_usage_limit(resets_at: float | None, now: float | None = None) -> dic
         }
 
 
-def read_active_token() -> str:
-    """the active profile's token, the same way a card run reads it - for tooling and tests, never
-    for anything that could log or print it."""
+def read_profile_token(lab: str, name: str) -> str:
+    """read credential files only at execution time"""
     from smortboard.exec.backends import CardTokenMissing, read_card_token
 
-    active = active_profile()
-    path = profile_path(active)
-    if active != DEFAULT_PROFILE and path.is_file() and not _mode_ok(path):
-        raise ProfileError(f"{path} is not mode 600 - refusing to read it. chmod 600 {path}")
+    path = profile_path(name, lab)
+    if lab == DEFAULT_LAB and name == DEFAULT_PROFILE:
+        try:
+            return read_card_token()
+        except CardTokenMissing as exc:
+            raise ProfileError(str(exc)) from exc
     try:
-        return read_card_token(token_path_for_run(None))
-    except CardTokenMissing as exc:
-        raise ProfileError(str(exc)) from exc
+        if not _mode_ok(path):
+            raise ProfileError(f"{path} is not mode 600 - refusing to read it. chmod 600 {path}")
+        token = path.read_text().strip()
+    except OSError as exc:
+        raise ProfileError(f"cannot read {lab} credential at {path}") from exc
+    if profile_kind(name, lab) == "auth_json":
+        return _auth_json(token)
+    if not token or any(char.isspace() for char in token):
+        raise ProfileError(f"no usable {lab} credential at {path}")
+    return token
+
+
+def _auth_json(token: str) -> str:
+    """validate a ChatGPT login without exposing its contents in errors or metadata"""
+    try:
+        data = json.loads(token)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ProfileError(
+            "ChatGPT login must be a JSON object containing tokens.access_token"
+        ) from exc
+    tokens = data.get("tokens") if isinstance(data, dict) else None
+    access = tokens.get("access_token") if isinstance(tokens, dict) else None
+    if not isinstance(access, str) or not access.strip():
+        raise ProfileError("ChatGPT login must be a JSON object containing tokens.access_token")
+    return json.dumps(data, separators=(",", ":"))
+
+
+def read_active_token(lab: str = DEFAULT_LAB) -> str:
+    active = active_profile(lab)
+    if active is None:
+        raise ProfileError(f"no credential profile configured for {lab}")
+    return read_profile_token(lab, active)

@@ -108,6 +108,64 @@ const SETTINGS_SECTIONS = [
   {label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle},
 ];
 
+const roleModels = {node: document.createElement('div')};
+roleModels.node.className = 'settings-stack';
+
+async function loadRoleModels() {
+  try {
+    const settings = await api('/api/settings');
+    clearChildren(roleModels.node);
+    for (const role of ['worker', 'reviewer', 'orchestrator', 'fold']) {
+      const row = document.createElement('div');
+      row.className = 'board-row';
+      const label = document.createElement('span');
+      label.className = 'field-label';
+      label.textContent = role;
+      const picker = document.createElement('button');
+      picker.className = 'toggle role-model';
+      picker.dataset.role = role;
+      picker.textContent = modelLabel(settings[`${role}_model`], settings[`${role}_lab`]);
+      const status = document.createElement('span');
+      status.className = 'field-label';
+      picker.onclick = async () => {
+        try {
+          await openModelPicker(async (lab, model) => {
+            const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({[`${role}_lab`]: lab, [`${role}_model`]: model})});
+            if (ok) loadRoleModels();
+            else status.textContent = body?.error || 'could not save model';
+          });
+        } catch (err) { status.textContent = err.message; }
+      };
+      const fallback = document.createElement('input');
+      fallback.className = 'text-field role-fallback';
+      fallback.dataset.role = role;
+      fallback.placeholder = 'fallbacks: lab/model, lab/model (optional)';
+      fallback.setAttribute('aria-label', `${role} fallback models in order`);
+      fallback.value = (settings[`${role}_cross_lab_fallback`] || []).join(', ');
+      fallback.addEventListener('keydown', evt => {
+        if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); }
+      });
+      const save = document.createElement('button');
+      save.className = 'toggle';
+      save.textContent = 'save fallbacks';
+      save.onclick = async () => {
+        const refs = fallback.value.split(',').map(value => value.trim()).filter(Boolean);
+        const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({[`${role}_cross_lab_fallback`]: refs})});
+        status.textContent = ok ? 'saved' : body?.error || 'could not save fallbacks';
+      };
+      row.append(label, picker, fallback, save, status);
+      roleModels.node.appendChild(row);
+    }
+  } catch (err) {
+    roleModels.node.textContent = `could not load models: ${err.message}`;
+  }
+}
+SETTINGS_SECTIONS.push({label: 'models by role', node: roleModels.node, onOpen: loadRoleModels});
+
 function settingsHazardPlaceholder(text) {
   const box = document.createElement('div');
   box.className = 'hazard-stripes hazard-placeholder';
