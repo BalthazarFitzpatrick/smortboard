@@ -107,12 +107,80 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         version=_version(),
         help="print the installed version and exit",
     )
+
+    # export/import work on the database directly, no server involved - the whole point is that
+    # they still run when the board itself will not start. --db/--demo mirror the flags above
+    # exactly, so the same precedence rules apply to which database a bundle round-trips through
+    _db_flags = argparse.ArgumentParser(add_help=False)
+    _db_flags.add_argument(
+        "--db",
+        type=str,
+        default=None,
+        help="sqlite db path (env: SMORTBOARD_DB, default: a user data dir)",
+    )
+    _db_flags.add_argument(
+        "--demo",
+        action="store_true",
+        help="refused - a demo db is a fresh throwaway created on every run, nothing to export "
+        "or import into",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+    export_parser = subparsers.add_parser(
+        "export", parents=[_db_flags], help="write the board to a portable bundle file"
+    )
+    export_parser.add_argument("path", type=str, help="file to write the bundle to")
+    import_parser = subparsers.add_parser(
+        "import", parents=[_db_flags], help="restore a bundle file into an empty board"
+    )
+    import_parser.add_argument("path", type=str, help="bundle file to read")
+
     return parser.parse_args(argv)
+
+
+def _run_export(args: argparse.Namespace) -> None:
+    if args.demo:
+        raise SystemExit(
+            "--demo has no board to export - it is a fresh throwaway database created and "
+            "discarded on every run"
+        )
+    db_path = _resolve_db(args.db)
+    if not db_path.exists():
+        raise SystemExit(f"no database at {db_path} - nothing to export")
+    with Store(db_path) as store:
+        store.export(args.path)
+    print(f"exported {db_path} to {args.path}")
+
+
+def _run_import(args: argparse.Namespace) -> None:
+    if args.demo:
+        raise SystemExit(
+            "--demo has no board to import into - it is a fresh throwaway database discarded "
+            "when the process exits"
+        )
+    db_path = _resolve_db(args.db)
+    with Store(db_path) as store:
+        # import_bundle restores into dependency order assuming empty tables (see
+        # store/export.py) - a populated target would surface as a raw sqlite IntegrityError,
+        # so it is refused here with a message that says what to do instead
+        if store.list_boards():
+            raise SystemExit(
+                f"{db_path} already has a board - import only restores into an empty database; "
+                "point --db at a fresh path, or use the settings panel's import while the board "
+                "is running, which offers a choice for an existing board"
+            )
+        store.import_bundle(args.path)
+    print(f"imported {args.path} into {db_path}")
 
 
 def main(argv: list[str] | None = None) -> None:
     """cli entry point: parse args, open the store, and serve the board until interrupted."""
     args = parse_args(argv)
+    if args.command == "export":
+        _run_export(args)
+        return
+    if args.command == "import":
+        _run_import(args)
+        return
     # --demo deliberately bypasses _resolve_db entirely: a demo must never be able to reach the
     # operator's own board, not through --db, not through SMORTBOARD_DB, not through the data dir
     db_path = make_demo_db() if args.demo else _resolve_db(args.db)
