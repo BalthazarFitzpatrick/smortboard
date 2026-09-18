@@ -174,6 +174,10 @@ const status1 = cards[1].querySelector('.inbox-status');
 assert.equal(status1.textContent, 'this card is still running');
 assert.ok(status1.className.includes('inbox-error'));
 assert.ok(!input1.disabled, 'a refusal leaves the input open to retry');
+assert.equal(input1.value, 'try again', 'and keeps what was typed, to edit rather than retype');
+// re-enabling is not enough: disabling a focused field blurred it, and focus has to be put back
+// or the keyboard sits on <body> - arrows dead, escape closing the panel instead of stepping back
+assert.ok(input1.focused, 'the keyboard goes back into the field a refusal asks you to fix');
 
 // ---- a LEASE_CONFLICT card, once focused, shows the wanted paths and an approve control -----------
 mod.ib.focusIndex = 2;
