@@ -206,6 +206,9 @@ def _make_handler(
     # second-tab send of the same message is answered as done instead of starting another turn
     accepted_messages: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=500))
     folds = FoldRegistry(store.path, token_path=token_path)
+    from smortboard.server.landings import LandingRegistry, needs_landing
+
+    landings = LandingRegistry(store.path)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "smortboard/0.1"
@@ -296,6 +299,21 @@ def _make_handler(
             return True
 
         def _handle(self, method: str, path: str, **params: str) -> None:
+            card_id = params.get("card_id")
+            if card_id and (
+                method in ("PATCH", "DELETE")
+                or path.endswith(("/run", "/accept", "/reject", "/answer"))
+            ):
+                landing = landings.get(card_id)
+                if landing is not None and landing.running:
+                    self._send_json(409, {"error": "this card is landing"})
+                    return
+            if method == "DELETE" and "board_id" in params:
+                for card in store.list_cards(params["board_id"]):
+                    landing = landings.get(card["id"])
+                    if landing is not None and landing.running:
+                        self._send_json(409, {"error": "a card on this board is landing"})
+                        return
             if path == "/health":
                 self._send_json(200, {"ok": True, "version": _version(), "operator": OPERATOR_NAME})
             elif path == "/api/boards" and method == "GET":
@@ -450,6 +468,8 @@ def _make_handler(
                 # only this board's own parallel cap and daily budget are writable here; "unset"
                 # arrives as an explicit null, same convention PATCH /api/settings uses for
                 # clearing a value
+                if "merge_mode" in body:
+                    store.set_board_merge_mode(params["board_id"], body["merge_mode"])
                 if "max_parallel" in body:
                     store.set_board_max_parallel(params["board_id"], body["max_parallel"])
                 if "daily_budget_usd" in body:
@@ -523,7 +543,18 @@ def _make_handler(
             if state is not None and state.running:
                 self._send_json(409, {"error": "this card is still running"})
                 return
+            landing = landings.get(card_id)
+            if landing is not None and landing.running:
+                self._send_json(409, {"error": "this card is already landing"})
+                return
             try:
+                candidate = store.get_card(card_id)
+                if decide is accept_card and needs_landing(store, candidate):
+                    if candidate["blocked_reason_code"]:
+                        raise DecisionRefused("this card is blocked")
+                    landings.start(card_id)
+                    self._send_json(202, {"state": "landing"})
+                    return
                 card = decide(store, card_id)
             except DecisionRefused as exc:
                 self._send_json(409, {"error": str(exc)})

@@ -421,6 +421,8 @@ _MIGRATIONS: list[str] = [
     ALTER TABLE board_spend_new RENAME TO board_spend;
     CREATE INDEX idx_board_spend_board_created ON board_spend (board_id, created_at);
     """,
+    # 21: only free opts into automatic landing; existing boards require review
+    """ALTER TABLE boards ADD COLUMN merge_mode TEXT;""",
 ]
 
 

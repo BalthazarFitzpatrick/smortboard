@@ -116,7 +116,8 @@ It is the right way to learn the keys and read the concepts below against someth
 4. Press `.` and tell mission control what you want built. It answers with a plan and proposed cards.
 5. Focus a card and press `r` (it asks once), or `w` to run the whole board.
 
-Anything that needs you lands in the inbox, `n`. The board never merges. You do.
+Anything that needs you lands in the inbox, `n`. Boards default to review-required: inspect the
+pull request, then accept with `y` to land it on an unprotected base. Main stays yours.
 
 ![A card opened over the board: criteria, tasks, dependencies and the run as a timeline - tests passed, reviewer approved, pull request open](docs/images/hero-card.jpg)
 
@@ -251,12 +252,26 @@ worth of tokens nobody asked for.
 
 ### The landing lock and the push queue
 
-The board never merges into `main`. What it does depends on the repo's base branch:
+The board never merges into `main`, `master` or `trunk`. Other bases follow the board's mode:
 
-- **Base is `main`**: the card ends at an open pull request. A person merges it.
-- **Base is a development branch**: the board **lands** the card there itself, so the next card
-  starts on top of it instead of every card queueing behind a human. It also keeps one standing pull
-  request open from that branch into `main`, which is the one a person merges.
+- **Review required** (default): a card stops at an open pull request. Accept with `y` to land it
+  in the background. If you already merged it on GitHub, accept records that without merging again.
+- **Free merge**: a card lands and is accepted once tests and review pass.
+
+`shift+a` changes the focused board's mode after confirmation. A free-merge board shows a burnt-orange
+pulsing frame and a text label. Reduced motion keeps a static frame.
+
+Review mode keeps dependent work moving: a child can start on one unmerged parent's branch once
+that parent reaches checking. Its PR targets that branch until the parent lands, then moves to the
+repo base. Stacks are at most three cards deep. Two unmerged parents wait. A rejected parent blocks
+its dependents. A child conflict never undoes a parent's successful landing.
+
+A rejected parent keeps its local branch while undecided children need it. Those children cannot
+run against rejected work, and that parent cannot rerun while they remain undecided. Decide the
+dependent attempts and create fresh work; the board does not rewrite an existing stack.
+
+The board also keeps one standing pull request from the development branch into `main`, for you
+to merge. Accepting a protected-base card records your decision; it cannot merge the PR.
 
 Landing is guarded by the **landing lock**: one holder per repo and target branch, with a FIFO queue
 behind it. It is stored in the database, so it survives a board restart, and a holder that stops
@@ -715,7 +730,7 @@ thing it was built to do.
 **What will change.** Anything on the rough list. The database migrates itself forward on every open,
 so upgrading does not cost you your boards - but this is a `0.1.x`, and settings, defaults and the
 shape of individual panels are expected to move. The concepts above - cards, leases, the two gates,
-the landing lock, never merging - are the parts that are not going to.
+the landing lock, and human-only merges into main - are the parts that are not going to.
 
 ### Sending a report
 

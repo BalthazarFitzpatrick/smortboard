@@ -311,6 +311,17 @@ class Store:
         self._conn.commit()
         return self.get_board(board_id)
 
+    def set_board_merge_mode(self, board_id: str, value: str | None) -> dict[str, Any]:
+        self.get_board(board_id)
+        if value not in (None, "review", "free"):
+            raise ValueError("merge_mode must be review, free, or null")
+        self._conn.execute("UPDATE boards SET merge_mode = ? WHERE id = ?", (value, board_id))
+        self._conn.commit()
+        return self.get_board(board_id)
+
+    def board_merges_freely(self, board_id: str) -> bool:
+        return self.get_board(board_id)["merge_mode"] == "free"
+
     def set_board_daily_budget(self, board_id: str, value: float | None) -> dict[str, Any]:
         """this board's own daily usd spend cap - None means no cap, so the scheduler never
         checks spend at all. see scheduler._board_daily_budget and telemetry.board_spend_today"""

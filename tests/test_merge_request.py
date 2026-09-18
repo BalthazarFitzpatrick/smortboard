@@ -153,7 +153,7 @@ def test_the_body_carries_what_the_tests_and_the_reviewer_said(tmp_path, monkeyp
     assert "reads the file twice" in body and "a.py:4" in body
     assert "the thing exists" in body  # the acceptance criteria
     assert "$0.42" in body and "9 turns" in body
-    assert "never merges" in body
+    assert "Review mode waits for acceptance" in body
     assert seen  # the fake was in use throughout
     store.close()
 

@@ -38,7 +38,9 @@ board, kanban or agent in class names, ids, storage keys or comments.
 Card lifecycle: To do -> Doing -> Checking -> Accepted / Rejected, plus **Blocked** with a reason
 code (`CRASH`, `USAGE_LIMIT`, `LEASE_CONFLICT`, `AGENT_QUESTION`, `TESTS_FAILED`,
 `REVIEW_REJECTED`, `DEPENDENCY_REJECTED`). Reaching Checking requires unit tests passing AND the
-reviewer approving. The board pushes and links a PR; it never merges.
+reviewer approving. Boards default to review-required: they open a PR and wait for accept before
+landing on an unprotected base. Free-merge boards land after the gates pass. Neither mode merges
+into main/master/trunk. Review mode can stack one unmerged parent, at most three cards deep.
 
 See `docs/PLAN.md` for the full flowchart.
 
@@ -79,6 +81,10 @@ committed here.
      surprise a new contributor -->
 
 ## Rules
+
+This repo uses approval-required Git mode. Work in a feature worktree, open a PR against
+`development`, then wait for the operator's approval before merging. A later explicit session
+mode choice takes precedence.
 
 These hold in this project even if `~/.claude/CLAUDE.md` isn't loaded (a teammate's machine, a
 stripped agent). The full version — with rationale — lives in the global playbook.

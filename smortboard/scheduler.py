@@ -4,8 +4,8 @@
 It does not run a card itself - it decides WHEN a card may start and hands it to RunRegistry.start,
 the same entry point a manual run uses. Three rules gate a start, each documented at its check:
 
-DEPENDENCIES - a card starts only once every card it depends on has a pull request MERGED on
-  GitHub, not merely `accepted` on the board.
+DEPENDENCIES - free mode waits for merged pull requests; review mode allows one checking parent
+  and a stack of at most three cards.
 LEASES - two cards in the same repo whose lease globs could touch the same file never run together.
 USAGE_LIMIT - a run that blocks on it marks the active credential profile limited. Rotation to the
   next configured profile is opt-in (auto_switch_profiles == "on"); by default the board just
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import subprocess
 import threading
 import time
 from collections.abc import Iterable
@@ -43,6 +44,7 @@ from smortboard.exec.worktrees import (
 from smortboard.labs.catalog import resolve_ref
 from smortboard.labs.events import neutral_events
 from smortboard.labs.routing import role_ref, run_ref
+from smortboard.review.integrate import integration_lock
 from smortboard.review.merge_request import PullRequestState, pr_view
 from smortboard.review.mergeable import check_mergeable, merge_branch, push_branch
 from smortboard.store.api import Store
@@ -133,15 +135,44 @@ def _latest_merge_request_url(store: Store, card_id: str) -> str | None:
     return url or None
 
 
-# a checking card's branch is re-synced with its base no more often than this, per repo - the
-# board has no push signal for "someone merged a PR on this repo" (only for a specific PR's own
-# state, see _dependency_wait above), so this is the timer fallback the spec allows
+# base changes trigger sweeps; the timer retries unavailable worktrees
 _SWEEP_INTERVAL_SECONDS = 5 * 60
-_last_sweep: dict[str, float] = {}
+_last_sweep: dict[tuple[str, str, str], float] = {}
+_last_base_sha: dict[tuple[str, str, str], str] = {}
 
 
-def _sweep_checking_prs(store: Store, board_id: str) -> None:
-    """keeps every checking card's branch mergeable with its base while its pull request waits.
+def _read_base_sha(repo_path: str, base: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "rev-parse", "--verify", f"origin/{base}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _is_stacked(store: Store, card_id: str) -> bool:
+    for event in reversed(store.list_events(card_id)):
+        if event["kind"] == "stacked_retargeted":
+            return False
+        if event["kind"] == "stacked_on":
+            return True
+    return False
+
+
+def sweep_checking_prs(store: Store, board_id: str, *, repo_path: str | Path | None = None) -> None:
+    """check the fetched base immediately after a board landing"""
+    _sweep_checking_prs(store, board_id, repo_path=repo_path)
+
+
+def _sweep_checking_prs(
+    store: Store, board_id: str, *, repo_path: str | Path | None = None
+) -> None:
+    """sweep every waiting branch when its fetched base changes, with a slow retry backstop.
 
     Measured 2026-09-14 (card 59727ba3, PR #112): a branch cut once at the start of a run and
     never updated drifted 34 commits behind main while its PR waited, and conflicted in four files
@@ -149,33 +180,55 @@ def _sweep_checking_prs(store: Store, board_id: str) -> None:
     stays current. Behind and conflicting: blocks the card MERGE_CONFLICT with the files, same as
     lifecycle.py does at hand-over - never touches the pull request either way.
     """
-    now = time.time()
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for card in store.list_cards(board_id):
         if card["status"] != "checking" or card.get("blocked_reason_code"):
             continue
         if not _latest_merge_request_url(store, card["id"]):
             continue  # opening never finished - nothing open to keep current
+        if _is_stacked(store, card["id"]):
+            from smortboard.review.land_card import retry_retarget
+
+            if retry_retarget(store, card):
+                continue
         try:
             repo = store.get_repo(card["repo_id"])
         except NotFoundError:
             continue
-        repo_path = repo["path"]
-        last = _last_sweep.get(repo_path, 0.0)
-        if now - last < _SWEEP_INTERVAL_SECONDS:
+        if repo_path is not None and str(repo_path) != repo["path"]:
             continue
-        _last_sweep[repo_path] = now
-        if not has_remote(repo_path):
+        key = (board_id, repo["path"], default_branch(repo))
+        groups.setdefault(key, []).append(card)
+
+    now = time.time()
+    for key, cards in groups.items():
+        _, path, base = key
+        # landing tests must observe the same tree that gets integrated
+        with integration_lock(path, base):
+            _sweep_repo(store, key, cards, now)
+
+
+def _sweep_repo(store, key, cards, now):
+    _, path, base = key
+    if not has_remote(path) or not fetch_base(path, base):
+        return
+    sha = _read_base_sha(path, base)
+    if not sha:
+        return
+    if sha == _last_base_sha.get(key) and now - _last_sweep[key] < _SWEEP_INTERVAL_SECONDS:
+        return
+    base_ref = f"origin/{base}"
+    for card in cards:
+        card = store.get_card(card["id"])
+        if card["status"] != "checking" or card.get("blocked_reason_code"):
             continue
-        base = default_branch(repo)
-        if not fetch_base(repo_path, base):
-            continue
-        tree = worktree_path(repo_path, card["id"])
+        tree = worktree_path(path, card["id"])
         if not tree.exists():
-            continue  # worktree cleaned up - nothing here to sync
-        branch, base_ref = branch_name(card["id"]), f"origin/{base}"
+            continue
+        branch = branch_name(card["id"])
         check = check_mergeable(tree, branch, base_ref)
         if not check.behind:
-            continue  # already current
+            continue
         if not check.clean:
             _flag_merge_conflict(store, card["id"], branch, base_ref, check.conflicting_files)
             continue
@@ -184,6 +237,8 @@ def _sweep_checking_prs(store: Store, board_id: str) -> None:
             _flag_merge_conflict(store, card["id"], branch, base_ref, merged.conflicting_files)
         elif merged.merged:
             push_branch(tree, branch)
+    _last_base_sha[key] = sha
+    _last_sweep[key] = now
 
 
 def _flag_merge_conflict(
@@ -295,14 +350,15 @@ def _budget_exhausted(store: Store, board_id: str) -> bool:
 
 
 def _dependency_wait(store: Store, card: dict[str, Any], repo_path: str | Path) -> str | None:
-    """None once every dependency's pull request is actually MERGED on GitHub.
+    """review mode can stack on ready work; free mode requires proof every dependency landed"""
+    if not store.board_merges_freely(card["board_id"]):
+        from smortboard.review.stacks import stacking_parent
 
-    `accepted` alone used to be enough - it no longer is. THE BOARD NEVER MERGES, so `accepted`
-    only means the operator signed off and a PR is open; a dependent's worktree is cut fresh from the
-    repo's base branch, so it sees the dependency's code only once that PR landed there. `repo_path`
-    is any local checkout with `gh` available - `gh pr view <url>` resolves from the url itself, so
-    it does not need to be the dependency's own repo.
-    """
+        try:
+            stacking_parent(store, card)
+        except ValueError as exc:
+            return str(exc)
+        return None
     for dep_id in card.get("depends_on") or []:
         try:
             dep = store.get_card(dep_id)
@@ -469,7 +525,7 @@ class BoardScheduler:
         store = Store(self._db_path)
         try:
             # no push signal for "a PR merged on this repo" exists board-wide, so every tick is
-            # the opportunity to notice one - _sweep_checking_prs throttles itself per repo
+            # the opportunity to fetch once per repo and notice a changed base
             _sweep_checking_prs(store, self.board_id)
             running_cards = []
             for card_id in running_ids:

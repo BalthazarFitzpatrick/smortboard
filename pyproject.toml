@@ -6,12 +6,9 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
-    # tags now mean something (smortui #33 fixed version-per-tag); this still moves
-    # to a fresh sha or tag whenever the two repos need to co-develop in lockstep.
-    # A SHA WHILE IT IS UNRELEASED: smortui#34 (the soft focus glow, which the open card's sections
-    # and the board tabs wear) is not merged, so there is no tag to point at and cutting one to
-    # unblock a pin is not a release. back to a tag once the operator releases one
-    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@2eb5e932d4bc9ce2a16e2cade229890c3d9e7a0b",
+    # pinned while the shared soft focus glow and ambient pulse await release
+    # return to a tag once both primitives ship
+    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@e2a6b2ff03af784a2802c5a9bd785b2e07b20ef9",
     # os-correct data dir for the default db location — not the cwd, not a hand-rolled path
     "platformdirs>=4.0",
     # mission control's one screenshot per ask - host-side only, chromium headless. the browser
