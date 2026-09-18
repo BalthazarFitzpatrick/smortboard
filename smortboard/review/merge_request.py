@@ -242,7 +242,7 @@ def _body(card: dict[str, Any], evidence: _CardEvidence, branch: str) -> str:
     if evidence.tasks:
         lines += ["", "## Tasks", ""]
         lines += [
-            f"- [{'x' if task.get('done') else ' '}] {task.get('text', '')}"
+            f"- {task.get('text', '')}{' (done)' if task.get('done') else ''}"
             for task in evidence.tasks
         ]
 
