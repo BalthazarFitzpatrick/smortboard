@@ -4,6 +4,22 @@
 // back into board.js globals (openCard, currentBoardId, api, showRun, actionableCardId,
 // returnToBoardBar, onBoardEnter, escapeHtml) the same way every other split file does.
 
+// ---- coming back to whatever opened a card ----------------------------------------------------
+// a surface that sends you into a card (the inbox's glance) registers here, and is called once the
+// card panel closes however it closed - escape, space, a decision. one-shot: each watcher fires
+// once and is dropped, so a surface that is no longer there cannot be called twice
+let cardClosedWatchers = [];
+
+function afterCardCloses(watcher) {
+  cardClosedWatchers.push(watcher);
+}
+
+function runCardClosedWatchers() {
+  const watchers = cardClosedWatchers;
+  cardClosedWatchers = [];
+  watchers.forEach(watcher => watcher());
+}
+
 // ---- one confirm shape for every "starts or lands work" action -------------------------------
 // same two-item menu openDeleteConfirm/openStopConfirm already use, generalised so every shortcut
 // that spends money or moves a card gets the same gate. y confirms without touching the mouse;
@@ -245,7 +261,7 @@ function renderCardStrip(card) {
       openCard = {cardId: card.id, expander};
       openCardPanel(panel, card.id);
     },
-    onClose: () => { openCard = null; },
+    onClose: () => { openCard = null; runCardClosedWatchers(); },
   });
   strip.addEventListener('keydown', evt => {
     if (withModifier(evt)) return;
