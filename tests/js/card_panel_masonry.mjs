@@ -170,4 +170,24 @@ assert.ok(/\.card-panel:not\(\[class\*="panel-layout-"\]\)\s*\.card-section\s*\{
 assert.ok(!/(^|\s)\.card-panel \.card-section\s*\{[^}]*position:\s*absolute/m.test(css),
   'an unscoped .card-panel .card-section rule should not itself set position: absolute');
 
+// ---- the layout box wins over the rect, so an opening panel is measured at its real size ---------
+// the panel opens under a transform (ui_base's expander scales it out of the strip's box), so a
+// rect read mid-animation is the scaled one - and a transform fires no resize, so nothing asks
+// again once it settles. measuring offsetWidth/offsetHeight makes the pass immune to it
+const scaled = buildPanel(240);            // what the rect would say at 30% of the way open
+scaled.sections.offsetWidth = 800;         // what the layout box says all along
+const big = makeSection('description', 40);
+big.offsetHeight = 120;                    // ditto: the rect would report a squashed height
+const small = makeSection('status', 40);
+small.offsetHeight = 30;
+scaled.sections.appendChild(big);
+scaled.sections.appendChild(small);
+mod.layoutCardSections(scaled.panel);
+assert.equal(big.style.width, '380px',   // (800 - the 40px column gap) / 2
+  'the column width comes from the layout box, not the transformed rect');
+assert.equal(small.style.top, '0px',
+  'a second column exists at the real width, so the status sits beside the description');
+assert.equal(scaled.sections.style.height, '120px',
+  'the container is sized from the layout height, not the scaled one');
+
 console.log('ok');
