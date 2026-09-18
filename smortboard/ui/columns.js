@@ -39,14 +39,22 @@ function layoutCardSections(panel) {
   const container = panel.querySelector('.card-sections');
   const sections = container ? [...container.querySelectorAll('.card-section')] : [];
   if (!container || !sections.length) return;
-  const width = container.getBoundingClientRect().width;
+  // THE LAYOUT BOX, NOT getBoundingClientRect - the panel opens under a transform (ui_base's
+  // expander scales it out of the strip's box), and a rect read mid-animation is the scaled one.
+  // a transform never changes the border box, so the ResizeObserver below does not fire when the
+  // animation settles, and a layout computed at 30% width stayed - every section stacked on top of
+  // the others. offsetWidth/offsetHeight ignore transforms; attachCardShadow learned this already
+  const width = container.offsetWidth || container.getBoundingClientRect().width;
   // nothing sane to measure before the panel has a real box - a later call (resize, reopen) fixes it
   if (!width || width < 0) return;
   const columnCount = width < CARD_PANEL_NARROW_PX ? 1 : 2;
   const columnWidth = (width - CARD_PANEL_COL_GAP * (columnCount - 1)) / columnCount;
   const isFull = section => columnCount === 1 || FULL_WIDTH_SECTIONS.has(section.dataset.section);
   sections.forEach(section => { section.style.width = isFull(section) ? '100%' : `${columnWidth}px`; });
-  const items = sections.map(section => ({full: isFull(section), height: section.getBoundingClientRect().height}));
+  const items = sections.map(section => ({
+    full: isFull(section),
+    height: section.offsetHeight || section.getBoundingClientRect().height,
+  }));
   const placed = computeMasonryLayout(items, columnCount, CARD_PANEL_ROW_GAP);
   let reach = 0;
   sections.forEach((section, i) => {
@@ -78,6 +86,18 @@ function watchCardSections(panel) {
   observer.observe(container);
   container.querySelectorAll('.card-section').forEach(section => observer.observe(section));
   panel.sectionsObserver = observer;
+
+  // one more pass once the open animation has finished. measuring the layout box already survives
+  // the transform, but fonts and images land during those same milliseconds and a section's height
+  // is only final afterwards - a transform fires no resize, so nothing else would ask again
+  if (typeof panel.getAnimations === 'function') {
+    const running = panel.getAnimations().map(animation => animation.finished);
+    if (running.length) {
+      Promise.allSettled(running).then(() => {
+        if (panel.isConnected) layoutCardSections(panel);
+      });
+    }
+  }
 }
 
 // the open panel re-flows on resize. layoutCardSections reads the container's own width to decide
