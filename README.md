@@ -2,17 +2,24 @@
 
 **A kanban board whose cards are worked by coding agents.**
 
-Each card is one piece of work handed to an agent: it carries the brief, the acceptance criteria,
-the paths the agent is allowed to write, and the model it should run on. Press a key and the agent
-picks the card up in its own container, on its own git branch. When it says it is done, the board
-does not take its word for it - it re-runs the repo's own tests itself, hands the diff to a second,
-read-only agent that reviews it, and only then pushes the branch and opens a pull request. It never
-merges into `main`. Anything that needs a decision from you stops and waits in one inbox.
+**One card is one piece of work.** It carries the brief, the acceptance criteria, the paths the
+agent may write, and the model it runs on.
 
-The model can come from either lab: Claude Code or OpenAI's Codex, chosen per role and per card, so
-mission control can plan on one while the workers execute on the other. By default a finished card
-waits at its pull request until you accept it; tell a board otherwise and it lands them itself, and
-says so with a pulsing frame you can see from across the room.
+Press a key and the agent picks it up in its own container, on its own git branch.
+
+When it says it is done, the board does not take its word for it. It re-runs the repo's own tests
+itself, hands the diff to a second, read-only agent that reviews it, and only then pushes the branch
+and opens a pull request.
+
+It never merges into `main`. Anything that needs a decision from you stops and waits in one inbox.
+
+**Two labs.** A run can go to Claude Code or to OpenAI's Codex, chosen per role and per card - so
+mission control can plan on one while the workers execute on the other, and the reviewer can read a
+diff from a lab that did not write it.
+
+**Two modes.** By default a finished card waits at its pull request until you accept it. Tell a
+board otherwise and it lands them itself - and says so with a pulsing frame you can see from across
+the room.
 
 ![A payments service mid-sprint: cards in every state across the columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
 
@@ -43,9 +50,19 @@ says so with a pulsing frame you can see from across the room.
 |---|---|---|
 | Python 3.11+ and **uv** | runs the board | [uv install](https://docs.astral.sh/uv/getting-started/installation/) |
 | **Docker** (Desktop or Engine), running | every card runs in its own container | [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
-| **Claude Code** | the agent inside the container, and `claude setup-token` | `npm install -g @anthropic-ai/claude-code` |
 | **GitHub CLI**, logged in | the board opens pull requests with it | [cli.github.com](https://cli.github.com/), then `gh auth login` |
 | git | worktrees, branches, pushes | usually already there |
+
+And at least one lab, for the agent inside the container. Both CLIs are installed in the card image
+already; what you need locally is whichever one mints the credential:
+
+| Lab | Install locally | To get a credential |
+|---|---|---|
+| **Claude Code** | `npm install -g @anthropic-ai/claude-code` | `claude setup-token` |
+| **OpenAI Codex** | `npm install -g @openai/codex` or `brew install codex` | `codex login`, which writes `~/.codex/auth.json` |
+
+One lab is enough to run the board; a second buys you an independent reviewer and somewhere to fall
+back when the first is rate-limited.
 
 Only Python and uv are needed to open the board. The rest is needed before a card can run, and the
 pre-flight checklist (`h`) tells you exactly what is missing and how to fix each one.
@@ -60,24 +77,7 @@ uv sync
 docker build -f docker/card.Dockerfile -t smortboard-card:latest .
 ```
 
-**2. Give cards their own token.** Cards use a model-only token, never your Claude login:
-
-```bash
-claude setup-token
-```
-
-It prints the token once. Copy it, then on macOS:
-
-```bash
-mkdir -p ~/.config/smortboard
-(umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
-wc -c < ~/.config/smortboard/card_token      # 108
-```
-
-The file must be mode 600; the board refuses a token file others can read. Linux, Windows and the
-other ways to store it: [Card token](#card-token).
-
-**3. Start the board:**
+**2. Start the board:**
 
 ```bash
 uv run smortboard
@@ -86,6 +86,25 @@ uv run smortboard
 It prints and opens `http://127.0.0.1:8000/ui/index.html?key=...`. The key is swapped for a cookie
 on the first load and dropped from the address bar, so a tab opened by hand has no key - use the
 printed link. Keep the terminal open: closing it stops the board and any running card.
+
+**3. Give cards a credential**, in the board itself. Press `shift`+`p` for credential profiles, add
+one, and paste. The board writes the mode-600 file for you and refuses anything a file others could
+read.
+
+Cards never use your own login. What you paste is:
+
+- **Claude**: the token `claude setup-token` prints once. It prints it, you copy it, the board
+  stores it - a model-only token, not your Claude Code session.
+- **OpenAI**: either **ChatGPT login JSON**, which is the whole contents of the `~/.codex/auth.json`
+  that `codex login` wrote (paste it entire - a bare access token from inside it is refused), or an
+  **API key**.
+
+At run time the credential goes into the container over stdin, into a memory-backed home that dies
+with the container. Your own `~/.claude` and `~/.codex` are never mounted.
+
+Several profiles per lab are fine; the board rotates to the next one when the active profile hits
+its rate limit. The manual file layout, the OS credential store and the Windows and Linux paths are
+under [Card token](#card-token).
 
 No checkout at all: `uvx --from git+https://github.com/BalthazarFitzpatrick/smortboard smortboard`
 runs the board, though you still need the clone once to build the image.
@@ -169,7 +188,7 @@ restart it. The nine reason codes:
 
 ### The attention column
 
-The board shows **six** columns: `todo`, `doing`, **attention**, `checking`, `accepted`, `rejected`.
+The board shows **six** columns: `todo`, `doing`, `attention`, `checking`, `accepted`, `rejected`.
 
 **The surprising part: attention is not a status.** It is a presentation column sitting between
 doing and checking, and a card appears in it when it carries a blocked reason code *or* a review
@@ -823,10 +842,18 @@ paths mission control may also read). Per board: its own parallel cap and `daily
 
 ### Card token
 
-| OS | Token file |
+Adding a profile with `shift`+`p` writes these files for you, at mode 600. This is what it writes,
+for when you would rather do it by hand or script it.
+
+| What | Where |
 |---|---|
-| macOS, Linux | `~/.config/smortboard/card_token` (`$XDG_CONFIG_HOME/smortboard/card_token` if set) |
-| Windows | `%APPDATA%\smortboard\card_token` |
+| the original single Claude token | `~/.config/smortboard/card_token`, or `%APPDATA%\smortboard\card_token` on Windows |
+| any named profile | `~/.config/smortboard/tokens/<lab>/<name>` - `<lab>` being `anthropic` or `openai` |
+
+`$XDG_CONFIG_HOME` is honoured where it is set. An OpenAI profile holds either the whole
+`~/.codex/auth.json` or an API key, depending on the kind chosen when it was added; a bare access
+token pulled out of that JSON is refused, which is measured in
+[the credential spike](docs/spikes/S7-codex-auth.md).
 
 - **Linux:** the macOS command in [Install](#install) with `wl-paste` (Wayland) or
   `xclip -selection clipboard -o` (X11) in place of `pbpaste`.
@@ -841,10 +868,12 @@ paths mission control may also read). Per board: its own parallel cap and `daily
 - **By hand:** create the file, `chmod 600` it, then paste the token in with any editor.
 - **Elsewhere:** `SMORTBOARD_CARD_TOKEN_PATH` points at any file. Credentials are read only from
   files; a missing file requires saving a token before running a card.
-- **Several subscriptions:** `shift`+`p`, paste each token under its own profile name; it lands at
-  `~/.config/smortboard/tokens/anthropic/<name>` (mode 600).
+- **Several subscriptions, or both labs:** `shift`+`p`, one profile per credential, each under its
+  own name. The board rotates to the next profile of the same lab when the active one is
+  rate-limited; crossing to the other lab needs a fallback list per role, which is deliberate.
 
-`claude setup-token` saves nothing itself, which is why the token has to be stored by hand.
+Neither `claude setup-token` nor `codex login` hands its credential to the board. That is why the
+board stores its own copy, and why it is a model-only token rather than your login.
 
 ### Repos and their test command
 
