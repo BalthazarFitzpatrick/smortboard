@@ -834,11 +834,28 @@ A flag beats the matching `SMORTBOARD_*` env var, which beats the default.
 scatter database files. Configuration and tokens live separately, under `~/.config/smortboard`
 (`%APPDATA%\smortboard` on Windows).
 
-Board-wide settings (settings panel, `o`): `findings_route`, `orchestrator_model`, `worker_model`,
-`reviewer_model`, `max_parallel`, `resume_briefing`, `gate_timeout_seconds`, `auto_switch_profiles`,
-the per-run caps `worker_budget_usd`, `reviewer_budget_usd`, `orchestrator_budget_usd`,
-`fold_budget_usd`, the per-card `card_total_budget_usd`, and `mission_control_read_paths` (absolute
-paths mission control may also read). Per board: its own parallel cap and `daily_budget_usd`.
+**The settings panel** (`o`) is three groups: how the board behaves, which lab and model each role
+runs on, and what it may spend.
+
+<table>
+<tr>
+<td width="33%"><img src="docs/images/settings-general.jpg" alt="General board settings: the mouse toggle, how many cards run at once globally and per board, the resume briefing, the gate timeout and the mall cam interval" width="100%"></td>
+<td width="33%"><img src="docs/images/settings-labs.jpg" alt="Labs and models: automatic credential profile rotation, and a primary model plus a fallback order for the worker, reviewer, orchestrator and fold" width="100%"></td>
+<td width="33%"><img src="docs/images/settings-cost.jpg" alt="Spend caps per run: a card run, a review, a mission control turn, a fold, and a per-card total across every run" width="100%"></td>
+</tr>
+<tr>
+<td align="center"><sub>general — how it behaves</sub></td>
+<td align="center"><sub>labs and models — who runs what</sub></td>
+<td align="center"><sub>cost control — what it may spend</sub></td>
+</tr>
+</table>
+
+Every one of those is a stored setting: `findings_route`, the per-role `*_lab` and `*_model` pairs
+and their `*_cross_lab_fallback` lists, `max_parallel`, `resume_briefing`, `gate_timeout_seconds`,
+`auto_switch_profiles`, the per-run caps `worker_budget_usd`, `reviewer_budget_usd`,
+`orchestrator_budget_usd`, `fold_budget_usd`, the per-card `card_total_budget_usd`, and
+`mission_control_read_paths` (absolute paths mission control may also read). Per board: its own
+parallel cap, its `daily_budget_usd`, and its merge mode.
 
 ### Card token
 
