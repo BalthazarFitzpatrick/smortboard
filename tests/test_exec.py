@@ -426,6 +426,78 @@ def test_the_brief_names_the_exact_test_and_lint_commands():
     assert commands_preamble({}) == ""
 
 
+# -- the declared formatter's write form is admitted, scoped to what was declared -------
+
+
+def test_allowed_tools_admits_the_declared_formatters_write_form():
+    tools = allowed_tools_for_repo(
+        {
+            "test_command": "uv run pytest",
+            "lint_command": "uv run ruff check . && uv run ruff format --check .",
+        }
+    )
+    # the check form stays granted (still how a card sees it is misformatted)...
+    assert "Bash(uv run ruff format --check . *)" in tools
+    # ...and the write form is now granted too, so a card can also fix it
+    assert "Bash(uv run ruff format . *)" in tools
+
+
+def test_allowed_tools_formatter_write_form_keeps_the_repos_other_flags():
+    # the write form must be the declared command with only --check dropped, not a rebuilt one
+    tools = allowed_tools_for_repo(
+        {
+            "test_command": (
+                "uv run --no-sync ruff format --check --no-cache --extend-exclude .claude . "
+                "&& uv run --no-sync pytest -q"
+            )
+        }
+    )
+    assert "Bash(uv run --no-sync ruff format --no-cache --extend-exclude .claude . *)" in tools
+
+
+def test_allowed_tools_formatter_write_form_absent_without_a_declared_check():
+    # a repo that never declares "ruff format --check" grants no write form - a command the repo
+    # never named is still refused, not admitted because it shares a word with something granted
+    tools = allowed_tools_for_repo(
+        {"test_command": "uv run pytest", "lint_command": "uv run ruff check ."}
+    )
+    assert not any("ruff format" in tool for tool in tools)
+
+
+def test_allowed_tools_formatter_write_form_does_not_match_a_shared_prefix():
+    # tokenised, not substring-matched: "formatter" is not "format", so this stays refused
+    tools = allowed_tools_for_repo(
+        {"test_command": "uv run pytest", "lint_command": "uv run ruff formatter --check ."}
+    )
+    assert not any("ruff format ." in tool for tool in tools)
+    assert "Bash(uv run ruff formatter --check . *)" in tools
+
+
+def test_allowed_tools_never_grants_a_blanket_bash():
+    tools = allowed_tools_for_repo(
+        {
+            "test_command": "uv run pytest",
+            "lint_command": "uv run ruff check . && uv run ruff format --check .",
+        }
+    )
+    assert "Bash" not in tools
+    assert "Bash(*)" not in tools
+    assert not any(tool.startswith("Bash(ruff format") for tool in tools)
+
+
+def test_the_brief_says_the_card_may_format_not_only_check():
+    repo = {
+        "test_command": "uv run pytest",
+        "lint_command": "uv run ruff check . && uv run ruff format --check .",
+    }
+    brief = commands_preamble(repo)
+    assert "write form" in brief
+    assert "format and commit" in brief
+    # a repo with no formatter declared gets no such promise
+    plain = commands_preamble({"test_command": "uv run pytest"})
+    assert "write form" not in plain
+
+
 # -- bash guard: refuses a command that reaches outside the worktree ----------
 
 

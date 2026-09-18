@@ -30,6 +30,7 @@ import json
 import queue
 import re
 import secrets
+import shlex
 import subprocess
 import threading
 from collections.abc import Callable
@@ -147,11 +148,17 @@ def commands_preamble(repo: dict[str, Any] | None) -> str:
     ]
     if not lines:
         return ""
-    return (
+    body = (
         "\n".join(lines)
         + "\nThese exact commands are the only test and lint invocations permitted; where the "
-        "repo's own instructions name others, use these instead.\n\n"
+        "repo's own instructions name others, use these instead.\n"
     )
+    if _declares_formatter(repo):
+        body += (
+            "The lint command's formatter may also be run in its write form: format and commit "
+            "the result, not only check it.\n"
+        )
+    return body + "\n"
 
 
 def allowed_tools_for_repo(repo: dict[str, Any] | None) -> tuple[str, ...]:
@@ -180,9 +187,50 @@ def allowed_tools_for_repo(repo: dict[str, Any] | None) -> tuple[str, ...]:
 
 def _bash_grants(command: str) -> tuple[str, ...]:
     """allow rules for one repo command, each `&&` part on its own - a rule must match every
-    subcommand of a compound command. a trailing ` *` also matches the bare part (probed)"""
+    subcommand of a compound command. a trailing ` *` also matches the bare part (probed).
+
+    a part that is the repo's formatter run check-only (`ruff format --check ...`) also grants
+    its write form - the same declared tokens with `--check` dropped, so a card can see its own
+    work is misformatted AND fix it. the grant is derived from this exact declared part; nothing
+    admits a bare "ruff format *" or any command the repo did not itself name."""
     parts = [part.strip() for part in command.split("&&") if part.strip()]
-    return tuple(f"Bash({part} *)" for part in parts)
+    grants: list[str] = []
+    for part in parts:
+        grants.append(f"Bash({part} *)")
+        write_form = _formatter_write_form(part)
+        if write_form is not None:
+            grants.append(f"Bash({write_form} *)")
+    return tuple(grants)
+
+
+def _declares_formatter(repo: dict[str, Any] | None) -> bool:
+    """whether `repo`'s test or lint command names the formatter in its check-only form - the
+    signal used to add the write-form line to the card's brief"""
+    repo = repo or {}
+    for command in (repo.get("test_command"), repo.get("lint_command")):
+        if not command:
+            continue
+        if any(_formatter_write_form(part.strip()) for part in command.split("&&")):
+            return True
+    return False
+
+
+def _formatter_write_form(part: str) -> str | None:
+    """the write form of one declared command part, if it runs `ruff format --check` - the same
+    tokens with exactly the `--check` flag dropped, else None.
+
+    tokenised rather than substring-matched, so a command that merely shares a prefix - `ruff
+    formatter --check .`, `unruffled format --check` - is correctly left alone: the grant this
+    feeds must never admit a command the repo did not actually declare."""
+    try:
+        tokens = shlex.split(part)
+    except ValueError:
+        return None
+    if "--check" not in tokens:
+        return None
+    if not any(tokens[i] == "ruff" and tokens[i + 1] == "format" for i in range(len(tokens) - 1)):
+        return None
+    return shlex.join(token for token in tokens if token != "--check")
 
 
 # GLOB AND GREP ARE FREE AND THEIR ABSENCE IS EXPENSIVE. without a search tool an agent reaches for
