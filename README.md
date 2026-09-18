@@ -9,6 +9,11 @@ does not take its word for it - it re-runs the repo's own tests itself, hands th
 read-only agent that reviews it, and only then pushes the branch and opens a pull request. It never
 merges into `main`. Anything that needs a decision from you stops and waits in one inbox.
 
+The model can come from either lab: Claude Code or OpenAI's Codex, chosen per role and per card, so
+mission control can plan on one while the workers execute on the other. By default a finished card
+waits at its pull request until you accept it; tell a board otherwise and it lands them itself, and
+says so with a pulsing frame you can see from across the room.
+
 ![A payments service mid-sprint: cards in every state across the columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
 
 <sub>Every screenshot on this page is the built-in demo board: invented projects, invented cards.</sub>
@@ -290,9 +295,29 @@ releases. It exits non-zero with the reason on a conflict, a failed test or a re
 refuses `main`, `master` and `trunk` outright.
 
 Two structural guarantees, not careful habits: `main`, `master` and `trunk` are refused as a landing
-target in code, and every `gh` call goes through an allowlist of exactly four subcommands -
-`pr create`, `pr list`, `pr view`, `pr close`. **`pr merge` is not on it and cannot be added by a
-caller.** A push that is rejected because the base moved is re-synced and retried, never forced.
+target in code, and every `gh` call goes through an allowlist of exactly five subcommands -
+`pr create`, `pr list`, `pr view`, `pr close` and `pr edit`, the last one only so a stacked child's
+pull request can be re-pointed at the base when its parent lands. **`pr merge` is not on it and
+cannot be added by a caller.** A push rejected because the base moved is re-synced and retried,
+never forced.
+
+### Keeping a waiting pull request current
+
+GitHub tells nobody when something merges. There is no push event the board can subscribe to, and it
+can only ask about one named pull request at a time. So it watches the thing that actually changes:
+the base branch's own commit.
+
+Every tick the board fetches each repo's base and compares it to the last sha it saw. Unchanged
+means there is nothing to do and no branch is touched. When it moves, every card waiting in checking
+on that repo gets the base merged into its branch and pushed, so the diff you review is against the
+current base rather than whatever it looked like when the card started. A branch that now conflicts
+blocks its card `MERGE_CONFLICT` with the file list instead, and the pull request is left alone. The
+board's own landings trigger the same sweep directly, so a stack moves within seconds rather than
+waiting for the next poll.
+
+This matters more than it sounds. Measured on card `59727ba3` (PR #112): a branch cut at the start
+of a run and never updated drifted **34 commits** behind main while its pull request waited, and
+conflicted in four files other pull requests had since touched.
 
 ### Mission control and the workforce chat
 
@@ -385,6 +410,20 @@ Codex home. It does not mount your host Codex home.
 Open settings to choose a lab and model for each role: worker, reviewer,
 mission control and fold. A card's `m` menu overrides the worker default.
 Labs without a usable profile are disabled in the model menu.
+
+**Which model for which role.** The board ships with `opus` for mission control and `sonnet` for the
+worker and reviewer, and those defaults exist because the roles want different things:
+
+| role | what it does | what that asks for |
+|---|---|---|
+| mission control | reads the repos, argues about scope, writes the cards | the strongest model you have. It decides what gets built; every other role only executes it |
+| worker | one card, in one container, against a stated lease | the cheapest model that has been reaching pull requests without fix rounds. The `i` view tells you which that is on your board |
+| reviewer | reads a diff and gives a verdict | a model from **a different lab than the worker**, once you have two. An independent reader is the point of the gate, and two models from one family share their blind spots |
+| fold | consolidates the card backlog | the same class as mission control; it is the same kind of judgement on a smaller surface |
+
+A card's own complexity should move the worker, not the board default: raise it for genuine design
+work, leave it low for mechanical edits. The evidence table under `i` groups finished cards by model
+and complexity with what each attempt cost, so the choice is a measurement rather than a habit.
 
 Each role can have an ordered fallback list such as `openai/gpt-5.6-sol`.
 Leave it empty to keep the role on its chosen lab. Automatic profile rotation
@@ -879,8 +918,20 @@ uv run ruff check . && uv run ruff format --check .
 uv run pytest -q          # includes the js suite (tests/js/*.mjs) when node is installed
 ```
 
-Neither suite calls a model. CI runs the same on every pull request and must pass before anything
-reaches `main`. `tools/shoot_docs_images.py` retakes this page's screenshots against the demo board.
+The suite runs in parallel by default (`-n auto`), which is what keeps it worth running: it is a
+thousand small I/O-bound tests, and measured on ten cores it takes about 20 seconds that way against
+roughly three minutes on one process. Pass `-n0` when you want one test's output in order, or a
+debugger.
+
+That shapes the loop. Commit as often as the work wants and let ruff be the only thing that runs -
+about a second. Run the file you are changing while you work, `--lf` after a failure, and the whole
+suite once before you push. Running the suite per commit buys nothing CI does not already guarantee
+and turns an afternoon of small commits into an afternoon of waiting.
+
+Neither suite calls a model. CI runs the same checks on every pull request and must pass before
+anything reaches `main`. A markdown-only change skips the toolchain and the suite but still reports,
+so a documentation pull request stays mergeable rather than waiting on a required check that never
+starts. A second push to a branch cancels the run it superseded. `tools/shoot_docs_images.py` retakes this page's screenshots against the demo board.
 `docs/PLAN.md` holds the plan and the containment reasoning, `docs/PHASE1-CONTRACTS.md` the schema and
 API, `docs/PROMPTS.md` the prompt layering, and `docs/spikes/` what was proven before it was built on.
 
