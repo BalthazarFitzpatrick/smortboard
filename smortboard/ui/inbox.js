@@ -478,7 +478,11 @@ async function sendAnswer(cardId, input, status) {
   if (!ok) {
     status.textContent = (body && body.error) || 'could not answer';
     status.className = 'inbox-status inbox-error';
+    // disabling a focused field blurs it there and then, and re-enabling does NOT give the focus
+    // back - so without this the keyboard is on <body> exactly as it was after a success, and the
+    // refusal is the moment the answer is still in the box waiting to be edited and sent again
     input.disabled = false;
+    input.focus();
     return;
   }
   // the row stays put and says "resumed" - it drops out on the panel's next load, same moment the
