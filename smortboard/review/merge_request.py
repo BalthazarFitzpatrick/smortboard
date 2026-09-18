@@ -244,11 +244,10 @@ def _body(card: dict[str, Any], evidence: _CardEvidence, branch: str) -> str:
         lines += [f"- {text}" for text in evidence.criteria]
 
     if evidence.tasks:
-        lines += ["", "## Tasks", ""]
-        lines += [
-            f"- [{'x' if task.get('done') else ' '}] {task.get('text', '')}"
-            for task in evidence.tasks
-        ]
+        # plain text, never a checkbox: nothing here ticks a task, and a box that never fills
+        # in reads as work left undone rather than as the brief the card was given (the operator, 2026-09-18)
+        lines += ["", "## Tasks the card was given", ""]
+        lines += [f"- {task.get('text', '')}" for task in evidence.tasks]
 
     cost = f"{evidence.cost_usd:.2f}" if evidence.cost_usd is not None else "unknown"
     lines += [
