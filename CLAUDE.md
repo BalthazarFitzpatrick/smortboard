@@ -51,9 +51,37 @@ Pre-beta. The board, mission control, the landing lock and the demo board are bu
 container and db hardening, spend guards, ci, and scrubbing private names from the public repo.
 The task ledger holds the current queue.
 
+## The local loop
+
+**Commit as often as the work wants. Only ruff runs at commit time, and it takes about a second.**
+Never run the suite per commit - it buys nothing CI does not already guarantee, and it is what turns
+an afternoon of small commits into an afternoon of waiting.
+
+| when | what runs | cost |
+|---|---|---|
+| while writing | nothing you start by hand - a hook formats python on save | - |
+| every commit | `uv run ruff check . --fix && uv run ruff format .` | ~1s |
+| the file you are changing | `uv run pytest tests/test_<thing>.py -q` | a second or two |
+| after a failure | `uv run pytest --lf -q` | only what broke |
+| before a push or a pull request | `uv run pytest -q` - the whole suite, parallel | ~24s |
+| pushing, merging | CI, on github | not your wait |
+
+The suite runs `-n auto` by default (`pyproject.toml`), which is what makes the last line
+affordable: measured 2026-09-18, 1039 tests took 129s on one process at 37% cpu across ten cores,
+and 24s in parallel. Pass `-n0` when you are reading one test's output or using a debugger.
+
+CI is the guarantee nobody can skip: it runs ruff, the format check and the suite on every pull
+request, and again on a push to `main` or `development`. A markdown-only change skips the heavy
+steps but still reports, so a docs pull request stays mergeable without burning four minutes. A
+second push to a branch cancels the run it superseded.
+
+**Never point `UV_CACHE_DIR` at a directory inside the repo.** The shared `~/.cache/uv` is warm and
+large; a project-local cache starts empty and makes every worktree sync re-download everything.
+
 ## Tech Stack
 
 python (uv, ruff, pytest) - `uv run ruff check . --fix && uv run ruff format .` before every commit.
+the suite is parallel by default; see `## The local loop` above for what to run when.
 
 frontend: plain css and script globals from `ui_base` - no build step, no npm, no framework. a js
 toolchain is deliberately not being added; ui_base is designed to avoid one. all keyboard bindings

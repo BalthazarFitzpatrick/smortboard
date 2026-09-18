@@ -25,6 +25,10 @@ smortboard-land = "smortboard.land_cli:main"
 dev = [
     "ruff>=0.11.0",
     "pytest>=8.0",
+    # the suite is a thousand small i/o-bound tests, not a few slow ones: measured 2026-09-18 it
+    # ran 129s at 37% cpu on ten cores, and 24s under `-n auto`. that difference is what makes
+    # running the whole thing before every push affordable
+    "pytest-xdist>=3.5",
     "pre-commit>=3.7",
 ]
 
@@ -88,3 +92,6 @@ known-first-party = ["smortboard"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+# parallel by default - see the dev dependency note. `-n0` puts it back on one process, which is
+# what you want when reading one test's output or dropping into a debugger
+addopts = "-n auto"
