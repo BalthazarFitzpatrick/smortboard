@@ -478,13 +478,24 @@ async function sendAnswer(cardId, input, status) {
   if (!ok) {
     status.textContent = (body && body.error) || 'could not answer';
     status.className = 'inbox-status inbox-error';
+    // disabling a focused field blurs it there and then, and re-enabling does NOT give the focus
+    // back - so without this the keyboard is on <body> exactly as it was after a success, and the
+    // refusal is the moment the answer is still in the box waiting to be edited and sent again
     input.disabled = false;
+    input.focus();
     return;
   }
   // the row stays put and says "resumed" - it drops out on the panel's next load, same moment the
   // board re-renders and no longer shows the card as blocked
   status.textContent = 'resumed';
   status.className = 'inbox-status inbox-ok';
+  // A DISABLED INPUT DROPS THE KEYBOARD ON THE FLOOR. it was disabled while the answer posted, and
+  // leaving it that way put focus on <body>: the list's arrow keys are bound to the list and never
+  // fired again, and escape found no card above body so it closed the whole panel instead of
+  // stepping back one level. hand the keyboard back to the row, which is where the queue continues
+  input.disabled = false;
+  input.value = '';
+  input.closest?.('.inbox-card')?.focus();
   pollAttentionCount();
   if (currentBoardId) onBoardEnter(currentBoardId);
 }

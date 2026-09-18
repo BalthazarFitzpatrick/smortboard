@@ -153,7 +153,12 @@ assert.deepEqual(JSON.parse(answerCall.opts.body), {message: 'go ahead'});
 const status0 = cards[0].querySelector('.inbox-status');
 assert.equal(status0.textContent, 'resumed');
 assert.ok(status0.className.includes('inbox-ok'));
-assert.ok(input0.disabled, 'the input is disabled once answered');
+// THE KEYBOARD COMES BACK TO THE ROW. this used to assert the input stayed disabled, which is what
+// dropped focus on <body>: the list's arrows are bound to the list and never fired again, and
+// escape found no card above body so it closed the panel instead of stepping back
+assert.equal(input0.disabled, false, 'the input is usable again once the answer landed');
+assert.equal(input0.value, '', 'and it is cleared, so the next answer starts empty');
+assert.ok(cards[0].focused, 'focus is handed back to the row, where the queue continues');
 
 // ---- a refusal renders inline and leaves the input usable to try again ---------------------------
 mod.ib.focusIndex = 1;
@@ -169,6 +174,10 @@ const status1 = cards[1].querySelector('.inbox-status');
 assert.equal(status1.textContent, 'this card is still running');
 assert.ok(status1.className.includes('inbox-error'));
 assert.ok(!input1.disabled, 'a refusal leaves the input open to retry');
+assert.equal(input1.value, 'try again', 'and keeps what was typed, to edit rather than retype');
+// re-enabling is not enough: disabling a focused field blurred it, and focus has to be put back
+// or the keyboard sits on <body> - arrows dead, escape closing the panel instead of stepping back
+assert.ok(input1.focused, 'the keyboard goes back into the field a refusal asks you to fix');
 
 // ---- a LEASE_CONFLICT card, once focused, shows the wanted paths and an approve control -----------
 mod.ib.focusIndex = 2;
