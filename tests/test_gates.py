@@ -5,10 +5,12 @@ import json
 
 import pytest
 
+from smortboard.repo_image import ImageFreshness
 from smortboard.review.gates import (
     GATE_TIMEOUT_SECONDS,
     GateResult,
     GateUnavailable,
+    StaleRepoImage,
     gate_is_configured,
     run_test_gate,
 )
@@ -18,6 +20,9 @@ REPO = {"test_command": "uv run pytest", "image": "card-python:latest"}
 
 
 def _fake_docker(monkeypatch, returncode=0, stdout="", stderr="", capture=None):
+    """fakes both the container run and the freshness check - the two are orthogonal, and a test
+    exercising the suite run should not have to also fabricate a valid `docker image inspect`
+    response just to reach it. tests of staleness itself override check_image_freshness."""
     import subprocess as sp
 
     class _Completed:
@@ -33,6 +38,10 @@ def _fake_docker(monkeypatch, returncode=0, stdout="", stderr="", capture=None):
 
     monkeypatch.setattr(sp, "run", _run)
     monkeypatch.setattr("smortboard.review.gates.docker_available", lambda: True)
+    monkeypatch.setattr(
+        "smortboard.review.gates.check_image_freshness",
+        lambda repo, **kwargs: ImageFreshness(True, None, "fresh"),
+    )
 
 
 def test_a_passing_suite_is_a_passing_gate(tmp_path, monkeypatch):
@@ -99,6 +108,10 @@ def test_a_suite_that_never_finishes_is_a_failure_not_a_hang(tmp_path, monkeypat
 
     monkeypatch.setattr(sp, "run", _run)
     monkeypatch.setattr("smortboard.review.gates.docker_available", lambda: True)
+    monkeypatch.setattr(
+        "smortboard.review.gates.check_image_freshness",
+        lambda repo, **kwargs: ImageFreshness(True, None, "fresh"),
+    )
     result = run_test_gate(None, "card", tmp_path, REPO)
     assert not result.passed
     assert "did not finish" in result.output
@@ -128,3 +141,38 @@ def test_a_long_output_is_tailed_rather_than_stored_whole(tmp_path, monkeypatch)
 def test_gate_result_reports_its_own_reason_code():
     assert GateResult(True, "c", 0, "").blocked_reason_code is None
     assert GateResult(False, "c", 1, "").blocked_reason_code == "TESTS_FAILED"
+
+
+def test_a_stale_repo_image_blocks_before_the_suite_ever_runs(tmp_path, monkeypatch):
+    """measured 2026-09-18: a stale image failed cards TESTS_FAILED for reasons that had nothing
+    to do with the card's work. the check must run, and block, before the suite does."""
+    seen = []
+    _fake_docker(monkeypatch, capture=seen)
+    monkeypatch.setattr(
+        "smortboard.review.gates.check_image_freshness",
+        lambda repo, **kwargs: ImageFreshness(
+            False, "lock", "a dependency moved. rebuild it - docker build -t x ."
+        ),
+    )
+    with pytest.raises(StaleRepoImage, match="dependency moved"):
+        run_test_gate(None, "card", tmp_path, REPO)
+    assert seen == []  # the suite never ran
+
+
+def test_a_stale_repo_image_is_never_reported_as_tests_failed(tmp_path, monkeypatch):
+    _fake_docker(monkeypatch, returncode=0, stdout="12 passed")
+    monkeypatch.setattr(
+        "smortboard.review.gates.check_image_freshness",
+        lambda repo, **kwargs: ImageFreshness(False, "base", "the base image moved."),
+    )
+    with pytest.raises(StaleRepoImage) as excinfo:
+        run_test_gate(None, "card", tmp_path, REPO)
+    assert excinfo.value.reason_code == "STALE_IMAGE"
+
+
+def test_a_fresh_image_still_runs_the_suite(tmp_path, monkeypatch):
+    seen = []
+    _fake_docker(monkeypatch, returncode=0, stdout="12 passed", capture=seen)
+    result = run_test_gate(None, "card", tmp_path, REPO)
+    assert result.passed
+    assert seen  # the suite ran

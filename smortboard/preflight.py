@@ -22,6 +22,7 @@ from smortboard.exec.backends import (
     docker_available,
     read_card_token,
 )
+from smortboard.repo_image import check_image_freshness
 from smortboard.store.api import Store
 
 _TIMEOUT = 10
@@ -475,6 +476,22 @@ def _repo_checks(repo: dict[str, Any], run: CommandRunner) -> list[dict[str, Any
         inspect = run(["docker", "image", "inspect", image])
         if inspect.returncode == 0:
             checks.append(row("image", "repo image", "ok", f"{image} is present."))
+            if repo.get("image"):
+                # visible before a card starts, not minutes in as a red suite that reads as the
+                # card's fault - see smortboard/repo_image.py::check_image_freshness
+                freshness = check_image_freshness(repo, run=run)
+                checks.append(
+                    row(
+                        "image-freshness",
+                        "image freshness",
+                        "ok" if freshness.fresh else "fail",
+                        freshness.detail,
+                        ""
+                        if freshness.fresh
+                        else f"docker build -t {image} . (rebuild from the repo's own "
+                        "Dockerfile, stamped with the current uv.lock/pyproject.toml).",
+                    )
+                )
         else:
             checks.append(
                 row(
