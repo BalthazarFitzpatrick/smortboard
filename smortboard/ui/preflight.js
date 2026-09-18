@@ -155,6 +155,7 @@ function openPreflightPanel() {
   document.body.appendChild(pf.backdrop);
   document.addEventListener('keydown', onPreflightKey);
   loadPreflight();
+  focusPanel(pf.panel);
 }
 
 function closePreflightPanel() {

@@ -15,6 +15,7 @@ import pytest
 from smortboard.exec.runner import RunResult
 from smortboard.orchestrator import (
     ORCHESTRATOR_ALLOWED_TOOLS,
+    _real_runner,
     run_orchestrator_turn,
 )
 from smortboard.store.api import Store
@@ -52,6 +53,72 @@ def _wire(monkeypatch, calls, result_text=GOOD_JSON, token="t0k3n"):
         )
 
     monkeypatch.setattr("smortboard.orchestrator.run_process", _fake_run_process)
+
+
+def test_role_runner_resolves_the_active_anthropic_profile(tmp_path, monkeypatch):
+    from smortboard import profiles
+    from smortboard.exec.backends import read_card_token
+
+    profiles.add_profile("second", "second-test-token")
+    profiles.set_active("second")
+    calls = []
+    _wire(monkeypatch, calls)
+    monkeypatch.setattr("smortboard.orchestrator.read_card_token", read_card_token)
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("b")
+        assert (
+            _real_runner(store, board["id"], None, "rules", [])("brief", "sonnet", 1) == GOOD_JSON
+        )
+    assert calls[0]["stdin"] == "second-test-token\n"
+
+
+@pytest.mark.parametrize("role", ["orchestrator", "fold"])
+@pytest.mark.parametrize("fallback_enabled", [False, True])
+def test_board_role_cross_lab_retry_requires_its_own_fallback(
+    tmp_path, monkeypatch, role, fallback_enabled
+):
+    from smortboard import profiles
+
+    profiles.add_profile("openai-work", "test-key", lab="openai", kind="api_key")
+    monkeypatch.setattr("smortboard.orchestrator.docker_available", lambda: True)
+    monkeypatch.setattr("smortboard.orchestrator.read_card_token", lambda path=None: "claude-test")
+    calls = []
+
+    def run_process(*args, **kwargs):
+        calls.append(kwargs)
+        limited = kwargs["lab"] == "anthropic"
+        return RunResult(
+            subtype="error" if limited else "success",
+            is_error=limited,
+            blocked_reason_code="USAGE_LIMIT" if limited else None,
+            session_id="test",
+            total_cost_usd=0.1,
+            num_turns=1,
+            result_text=None if limited else GOOD_JSON,
+        )
+
+    monkeypatch.setattr("smortboard.orchestrator.run_process", run_process)
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("b")
+        if fallback_enabled:
+            store.set_setting(f"{role}_cross_lab_fallback", ["openai/gpt-5.6-sol"])
+        run = _real_runner(store, board["id"], None, "rules", [], role=role)
+        if fallback_enabled:
+            assert run("brief", "sonnet", 1) == GOOD_JSON
+        else:
+            with pytest.raises(RuntimeError, match="USAGE_LIMIT"):
+                run("brief", "sonnet", 1)
+        assert [call["lab"] for call in calls] == (
+            ["anthropic", "openai"] if fallback_enabled else ["anthropic"]
+        )
+        rows = store.list_board_spend(board["id"])
+        assert sum(row["cost_usd"] for row in rows) == len(calls) * 0.1
+        if fallback_enabled:
+            assert calls[-1]["stdin_text"] == "test-key\n"
+            assert all(row["role"] == role for row in rows)
+            assert any(
+                "Retrying" in row["body"] for row in store.list_orchestrator_messages(board["id"])
+            )
 
 
 def test_the_command_mounts_clones_and_extra_paths_read_only(tmp_path, monkeypatch):
@@ -415,6 +482,42 @@ def test_a_container_that_died_shows_its_own_error_output(tmp_path, monkeypatch)
         run_orchestrator_turn(store, board["id"], "plan it")
         note = _board_notes(store, board["id"])[-1]
     assert "CRASH" in note and "container said: docker: Error response from daemon: boom" in note
+
+
+def test_a_successful_turn_records_its_cost_to_board_spend(tmp_path, monkeypatch):
+    calls = []
+    _wire(monkeypatch, calls)
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("dev")
+        run_orchestrator_turn(store, board["id"], "plan it")
+        rows = store.list_board_spend(board["id"])
+    assert len(rows) == 1
+    assert rows[0]["role"] == "orchestrator"
+    assert rows[0]["cost_usd"] == 0.01
+
+
+def test_a_failed_or_capped_turn_still_records_its_cost(tmp_path, monkeypatch):
+    _wire_result(
+        monkeypatch, _failed(subtype="error_max_budget_usd", num_turns=14, total_cost_usd=1.02)
+    )
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("dev")
+        run_orchestrator_turn(store, board["id"], "four things at once")
+        rows = store.list_board_spend(board["id"])
+    assert len(rows) == 1
+    assert rows[0]["cost_usd"] == 1.02
+
+
+def test_the_fold_role_also_records_its_cost_via_the_shared_real_runner(tmp_path, monkeypatch):
+    calls = []
+    _wire(monkeypatch, calls)
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("dev")
+        run = _real_runner(store, board["id"], None, "prompt", [], role="fold")
+        run("prompt", "model", 1.0)
+        rows = store.list_board_spend(board["id"])
+    assert len(rows) == 1
+    assert rows[0]["role"] == "fold"
 
 
 def test_an_answer_given_before_the_budget_stop_is_still_used(tmp_path, monkeypatch):

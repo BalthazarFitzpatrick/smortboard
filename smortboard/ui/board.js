@@ -72,12 +72,35 @@ function barCorner() {
   return el;
 }
 
+// ---- beta: submit issue ------------------------------------------------------------------
+// the repo's own bug form, FIRST in the corner group so it reads before the board's own numbers.
+// an <a>, not a .toggle div like the settings button: tab reaches it and enter opens it, so it is
+// operable without a mouse without taking one of the few single keys still free
+const ISSUE_FORM_URL =
+  'https://github.com/BalthazarFitzpatrick/smortboard/issues/new?template=bug.yml';
+
+function buildIssueButton() {
+  const link = document.createElement('a');
+  link.id = 'issue-button';
+  link.className = 'toggle issue-button';
+  link.textContent = 'beta: submit issue';
+  link.href = ISSUE_FORM_URL;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  const corner = barCorner();
+  corner.insertBefore(link, corner.firstChild);
+  return link;
+}
+
 function renderBoardBar() {
   const bar = document.getElementById('board-bar');
   bar.innerHTML = '';
   boards.forEach(board => {
     const btn = document.createElement('div');
-    btn.className = 'nav-tab toggle';
+    // focus-glow-soft is the quiet focus treatment (ui_base), the same one a card's sections wear.
+    // FOCUS AND ACTIVE SAY DIFFERENT THINGS: the glow is the tab the keyboard is on, the accent
+    // fill (.board-bar .nav-tab.active) is the board being shown - the active tab focused wears both
+    btn.className = 'nav-tab toggle focus-glow focus-glow-soft';
     btn.dataset.tab = board.id;
     btn.textContent = board.name;
     bar.appendChild(btn);
@@ -379,12 +402,15 @@ async function stopFocusedCard(cardId = actionableCardId()) {
 }
 
 function openStopConfirm(cardId) {
+  const returnTo = document.activeElement;
   const menu = new Menu({
     title: 'stop this run?',
     sections: [{
       kind: 'list',
       items: [
-        {id: 'stop', label: 'stop the run'},
+        // stopping spends nothing and undoes nothing - the action you already pressed k for holds
+        // focus, so enter carries it through
+        {id: 'stop', label: 'stop the run', autofocus: true},
         {id: 'keep', label: 'keep running'},
       ],
       onPick: item => {
@@ -395,6 +421,8 @@ function openStopConfirm(cardId) {
   });
   menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
   menu.el?.classList.add('menu-centered');
+  focusMenuItem(menu, 'stop');
+  returnFocusOnDismiss(menu, returnTo);
 }
 
 async function doStopCard(cardId) {
@@ -459,7 +487,10 @@ function acceptOrRejectCard(action) {
   const cardId = actionableCardId();
   if (!cardId) return;
   const verb = action === 'accept' ? 'accept' : 'reject';
-  openActionConfirm(`${verb} this card?`, verb, 'cancel', () => doAcceptOrRejectCard(action, cardId));
+  // a status a menu can move back is reversible, so the confirm opens ON the yes: enter straight
+  // after y or x carries it through without breaking the flow
+  openActionConfirm(`${verb} this card?`, verb, 'cancel',
+    () => doAcceptOrRejectCard(action, cardId), null, 'confirm');
 }
 
 async function doAcceptOrRejectCard(action, cardId) {
@@ -519,9 +550,80 @@ function toggleOverlay(key, build) {
     return;
   }
   if (openOverlay) { openOverlay.menu.close(); openOverlay = null; }
+  const returnTo = document.activeElement;
   const menu = build();
+  // a menu that refreshes once its fetch lands REPLACES its own panel, which drops focus on
+  // <body> and leaves the keyboard dead until the next key recovers it. the rebuilt panel is a
+  // plain div, so it needs the tabIndex back before it can hold focus at all
+  const refresh = menu?.refresh?.bind(menu);
+  if (refresh) {
+    menu.refresh = sections => {
+      refresh(sections);
+      if (!menu.el) return;
+      menu.el.tabIndex = -1;
+      menu.el.focus?.();
+    };
+  }
+  returnFocusOnDismiss(menu, returnTo);
   openOverlay = {key, menu};
   return menu;
+}
+
+// ---- fold (f) - merge the todo cards one agent should do as one ------------------------------
+// KEYBOARD ONLY: no board-bar button, per the operator - f is the whole affordance, and the
+// shortcut overlay is where it is written down
+
+// ASKS FIRST, every time: a fold is a model run over the whole board, not a free local action.
+// a destructive confirm, so "no" holds focus - a stray enter must never start it
+function openFoldConfirm() {
+  if (!currentBoardId) return;
+  const boardId = currentBoardId;
+  toggleOverlay('KeyF', () => {
+    const note = document.createElement('div');
+    note.className = 'fold-note';
+    note.textContent = 'an agent reads every card and the ledger, then merges the todo cards one '
+      + 'agent should do as one. this costs tokens and takes a few minutes.';
+    const menu = new Menu({
+      title: "fold this board's cards?",
+      sections: [
+        {kind: 'node', node: note},
+        {kind: 'list',
+          items: [{id: 'yes', label: 'yes, fold (y)'}, {id: 'no', label: 'no (n)', autofocus: true}],
+          onPick: item => answerFold(item.id === 'yes', boardId)},
+      ],
+      onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyF') openOverlay = null; },
+    });
+    menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+    menu.el?.classList.add('menu-centered');
+    focusMenuItem(menu, 'no');
+    return menu;
+  });
+}
+
+function answerFold(yes, boardId = currentBoardId) {
+  if (openOverlay && openOverlay.key === 'KeyF') { openOverlay.menu.close(); openOverlay = null; }
+  if (yes && boardId) startFold(boardId);
+}
+
+let foldPoll = null;
+
+// the board writes its progress and the result into mission control, so that is where it shows;
+// the cards re-render once the fold is done
+async function startFold(boardId) {
+  const {ok} = await apiOrError(`/api/boards/${boardId}/fold`, {method: 'POST'});
+  drawerFor('right').open();
+  if (!ok) return; // a 409 is a fold already running, whose messages are already there
+  clearInterval(foldPoll);
+  // unref where it exists, same as followRuns: a browser has none, and a test process must not be
+  // held open for three seconds at a time by a poll nobody is watching
+  foldPoll = setInterval(async () => {
+    const state = await api(`/api/boards/${boardId}/fold`).catch(() => null);
+    if (state && state.running) return;
+    clearInterval(foldPoll);
+    foldPoll = null;
+    if (currentBoardId === boardId) await onBoardEnter(boardId);
+  }, 3000);
+  foldPoll?.unref?.();
 }
 
 // ---- agent roster (a) -----------------------------------------------------------------------
@@ -663,7 +765,7 @@ function profileRow(profileName, window) {
   row.appendChild(textLine(profileName, 'field-label'));
   if (window) {
     const {fraction} = windowMeasure(window);
-    if (fraction != null) row.appendChild(fillBar(fraction, window.status === 'allowed' ? '' : 'warn'));
+    if (fraction != null) row.appendChild(fillBar(fraction, ['allowed', 'ok'].includes(window.status) ? '' : 'warn'));
     row.appendChild(textLine(windowStats(window), 'stat'));
   } else {
     row.appendChild(fillBar(0));
@@ -674,14 +776,14 @@ function profileRow(profileName, window) {
 
 // windows grouped by type, each type a section holding one row per known profile - windows carry
 // no profile of their own before this card, so a window with none reads as the "default" profile
-function windowSections(windows, profileNames) {
+function windowSections(windows, profileNames, lab = '') {
   const byType = new Map();
   windows.forEach(w => {
     if (!byType.has(w.type)) byType.set(w.type, new Map());
     byType.get(w.type).set(w.profile || 'default', w);
   });
   return [...byType.entries()].map(([type, byProfile]) => {
-    const section = usageSection(windowLabel(type), 'usage-window');
+    const section = usageSection(`${lab ? lab + ' - ' : ''}${windowLabel(type)}`, 'usage-window');
     const names = profileNames.length ? profileNames : [...byProfile.keys()];
     names.forEach(name => section.appendChild(profileRow(name, byProfile.get(name))));
     // the section total is the sum of the rows it holds, never a figure computed apart from them
@@ -698,26 +800,31 @@ function windowSections(windows, profileNames) {
 // A CARD'S LANGUAGE: ruled sections with dim labels, and a foot carrying the total - built with
 // createElement so every line is its own element, which is also what the node tests read
 function usageCard(data) {
-  const profileNames = (data.profiles || []).map(p => p.name);
-  const windowParts = windowSections(data.windows || [], profileNames);
+  const labOf = row => row.lab || (row.model?.includes('/') ? row.model.split('/')[0] : 'anthropic');
+  const labs = [...new Set([...(data.profiles || []), ...(data.windows || []), ...(data.models || [])].map(labOf))];
+  const windowParts = labs.flatMap(lab => windowSections(
+    (data.windows || []).filter(w => labOf(w) === lab),
+    (data.profiles || []).filter(p => labOf(p) === lab).map(p => p.name), lab));
   const modelParts = [];
-  const models = data.models || [];
-  if (models.length) {
-    const section = usageSection('spend by model', 'usage-models');
-    const total = data.total_cost_usd || 0;
+  const money = row => row.cost_usd == null ? 'unknown' : `${row.cost_estimated ? '~' : ''}$${row.cost_usd.toFixed(2)}`;
+  labs.forEach(lab => {
+    const models = (data.models || []).filter(m => labOf(m) === lab);
+    if (!models.length) return;
+    const section = usageSection(`${lab} - spend by model`, 'usage-models');
+    const total = data.total_cost_usd;
     models.forEach(m => {
       const row = document.createElement('div');
       row.className = 'usage-model';
-      const share = total > 0 ? (m.cost_usd || 0) / total : null;
+      const share = total > 0 && m.cost_usd != null ? m.cost_usd / total : null;
       const shareNote = share != null ? ` - ${Math.round(share * 100)}% of spend` : '';
-      row.appendChild(textLine(`${m.model} - $${(m.cost_usd || 0).toFixed(2)}${shareNote}`, 'usage-model-name'));
+      row.appendChild(textLine(`${m.model} - ${money(m)}${shareNote}`, 'usage-model-name'));
       if (share != null) row.appendChild(fillBar(share));
       row.appendChild(textLine(`in ${formatTokenCount(m.input_tokens)} - out ${formatTokenCount(m.output_tokens)} - ` +
         `cache ${formatTokenCount((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))}`, 'stat'));
       section.appendChild(row);
     });
     modelParts.push(section);
-  }
+  });
   const card = document.createElement('div');
   card.className = 'usage-card usage-wide';
   // wide, not tall: the rate-limit windows in one column, the spend by model in the other
@@ -736,7 +843,7 @@ function usageCard(data) {
   card.appendChild(textLine('', 'h-divider'));
   const foot = document.createElement('div');
   foot.className = 'card-foot usage-foot';
-  foot.appendChild(textLine(`${data.runs || 0} runs - $${(data.total_cost_usd || 0).toFixed(2)}`, 'stat'));
+  foot.appendChild(textLine(`${data.runs || 0} runs - ${money({cost_usd: data.total_cost_usd, cost_estimated: data.cost_estimated})}`, 'stat'));
   card.appendChild(foot);
   return card;
 }
@@ -834,7 +941,7 @@ function buildPromptEditorDom() {
   // cmd/ctrl+s saves without leaving the field - both stop here so they never reach the board's
   // own keydown handler (which the typing check below already shields from every other key)
   textarea.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closePromptEditor(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(textarea); return; }
     if ((evt.metaKey || evt.ctrlKey) && evt.code === 'KeyS') { evt.preventDefault(); savePromptEditor(); }
   });
   textarea.addEventListener('input', () => { pe.drafts[pe.role] = textarea.value; });
@@ -924,7 +1031,9 @@ function openPromptEditor() {
   highlightPromptRole();
   selectPromptRole(pe.role);
   loadPromptEditor();
-  pe.textarea.focus();
+  // the panel takes focus, not the textarea: / is the way into typing here as everywhere else,
+  // and a panel that opens in typing mode swallows every board key
+  focusPanel(pe.panel);
 }
 
 function closePromptEditor() {
@@ -944,5 +1053,15 @@ function togglePromptEditor() {
 // FOCUS STARTS ON THE BOARD BAR, per the brief. returnToBoardBar was wired only to onExitTop, so
 // nothing ever focused on load and every key was dead until the user clicked - which no test saw
 loadBoards().then(() => { buildDrawers(); returnToBoardBar(); followRuns(); });
-// who the operator is, for their own lines in the chats and comments - "you" until the board answers
-api('/health').then(h => { if (h && h.operator) operatorName = h.operator; }).catch(() => {});
+// whether the pointer affordances are on - shortcuts.js owns the flag, board.js owns api()
+loadMouseSetting();
+loadModelCatalog().catch(() => {});
+const issueButton = buildIssueButton();
+// who the operator is, for their own lines in the chats and comments - "you" until the board
+// answers - and the version the bug form asks for as its first field (version, in bug.yml), which
+// is the only field id prefilled: the rest are the tester's to fill in
+api('/health').then(h => {
+  if (!h) return;
+  if (h.operator) operatorName = h.operator;
+  if (h.version) issueButton.href = `${ISSUE_FORM_URL}&version=${encodeURIComponent(h.version)}`;
+}).catch(() => {});

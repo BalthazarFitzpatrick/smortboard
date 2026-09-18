@@ -137,9 +137,12 @@ await flush(); await flush();
 assert.equal(mod.bp.repoStatusEl.textContent, 'path does not exist: /nope');
 assert.ok(mod.bp.repoStatusEl.className.includes('repo-error'));
 
-// ---- escape from a repo field closes the panel, b again reopens it --------------------------------
+// ---- escape is one level: out of a repo field onto the panel, then out of the panel ---------------
 fireKeydown(mod.bp.repoFields.path, {code: 'Escape', key: 'Escape'});
-assert.equal(mod.bp.backdrop.parentNode, null, 'escape from a repo field closes the panel');
+assert.ok(mod.bp.backdrop.parentNode, 'escape from a field must not close the whole panel');
+assert.equal(document.activeElement, mod.bp.panel, 'escape from a field steps out onto the panel');
+press('Escape');
+assert.equal(mod.bp.backdrop.parentNode, null, 'a second escape closes the panel');
 press('KeyB');
 await flush(); await flush();
 assert.ok(mod.bp.backdrop.parentNode, 'b reopens the panel');

@@ -1,0 +1,8 @@
+codex-seccomp.json derives from the Moby profiles default seccomp policy:
+https://github.com/moby/profiles/blob/main/seccomp/default.json
+Retrieved 2026-09-17. Licensed under Apache-2.0; see LICENSE.seccomp.
+
+Smortboard modification: allow clone, unshare, setns, mount, umount2 and
+pivot_root so Codex can create its workspace-write sandbox inside Docker.
+The default deny policy and other syscall rules remain in place.
+Container capabilities remain dropped and no-new-privileges remains enabled.

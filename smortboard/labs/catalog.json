@@ -1,0 +1,19 @@
+{
+  "anthropic": {
+    "adapter": "claude-code",
+    "models": [
+      {"id": "sonnet", "label": "Sonnet", "tier": "standard", "prefer_for": ["worker", "reviewer"]},
+      {"id": "opus", "label": "Opus", "tier": "deep", "prefer_for": ["orchestrator", "fold"]},
+      {"id": "haiku", "label": "Haiku", "tier": "light"}
+    ]
+  },
+  "openai": {
+    "adapter": "codex",
+    "models": [
+      {"id": "gpt-6-astra", "label": "Astra", "tier": "deep"},
+      {"id": "gpt-5.6-sol", "label": "Sol", "tier": "standard"},
+      {"id": "gpt-5.6-terra", "label": "Terra", "tier": "standard"},
+      {"id": "gpt-5.6-luna", "label": "Luna", "tier": "light"}
+    ]
+  }
+}

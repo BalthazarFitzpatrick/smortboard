@@ -85,6 +85,7 @@ responses.set('/api/costs', stubJson(200, {
     worker_cost_usd: 0.98, reviewer_cost_usd: 0.03,
     spend_by_model: [{model: 'opus', cost_usd: 0.88}, {model: 'claude-sonnet-4', cost_usd: 0.13}],
     cost_per_pr_usd: 1.01,
+    turn_cost_usd: 0,
   },
   orchestrator_turns_counted: false,
   cost_groups: {
@@ -111,10 +112,11 @@ assert.match(text, /board \| share \| spend \| runs \| accepted \| prs \| per pr
 assert.match(text, /pricey board \| \$0\.88 \| 1 \| 0\/1 \| 0 \| - \| \$0\.88/);
 assert.match(text, /cheap board \| \$0\.13 \| 1 \| 1\/1 \| 1 \| \$0\.13 \| -/);
 assert.ok(text.indexOf('pricey board') < text.indexOf('cheap board'), 'costliest board leads');
-assert.match(text, /mission-control turns are not counted/);
+assert.match(text, /mission control and fold turns \$/);
 assert.match(text, /2 boards - 2 cards - 2 runs - \$1\.01/);
 assert.match(text, /\$0\.88 on runs with a permission denial/);
-assert.match(text, /worker \$0\.98 - reviewer \$0\.03 - opus \$0\.88, claude-sonnet-4 \$0\.13/);
+assert.match(text, /worker \$0\.98 - reviewer \$0\.03/);
+assert.match(text, /anthropic - opus \$0\.88, claude-sonnet-4 \$0\.13/);
 
 // ---- clicking a board's name jumps to it: same switch-and-render a tab click does ---------------
 
@@ -136,5 +138,66 @@ assert.equal(mod.overlayRef(), null);
 const emptySections = mod.costsOverviewSections({boards: [], totals: {}});
 assert.equal(emptySections.length, 1);
 assert.match(emptySections[0].node.innerHTML, /no boards yet/);
+
+// ---- the header switches between "cost" and "cost optimisation" via ArrowLeft/ArrowRight and
+// via the two arrow buttons - the optimisation view lazily loads and renders its four sections ---
+
+function press(code) {
+  document._dispatch('keydown', {code, key: code, target: document.body, preventDefault() {}, stopPropagation() {}});
+}
+
+responses.set('/api/costs/optimisation', stubJson(200, {
+  board_id: null,
+  cap_fit: {
+    worker_cap_usd: 5,
+    rows: [
+      {complexity: 1, source: 'rated', runs: 3, within_cap: 2, hit_cap: 1, median_cost_usd: 0.4, max_cost_usd: 5.2},
+    ],
+  },
+  suggested_caps: {
+    worker: {current_cap_usd: 5, runs: 6, p90_cost_usd: 1.8, suggested_cap_usd: 2.0, runs_that_would_be_cut: 1, spend_difference_usd: 0.3},
+    reviewer: {current_cap_usd: 1.5, note: 'not enough runs'},
+    orchestrator: {current_cap_usd: 1.0, note: 'not enough runs'},
+    fold: {current_cap_usd: 2.0, note: 'not enough runs'},
+  },
+  waste: {rows: [{reason: 'hit cap', count: 1, cost_usd: 5.2}], total_cost_usd: 5.2},
+  model_fit: [{model: 'opus', complexity: 3, cards: 2, accepted_cards: 1, cost_per_accepted_card_usd: 0.9, fix_round_share: 0.5}],
+}));
+
+mod.openCostsOverviewPanel();
+await new Promise(r => setTimeout(r, 0));
+const menu2 = mod.overlayRef().menu;
+const findHeaderLabel = () => walk(menu2.sections[0].node).find(n => n.className === 'inbox-scope-label');
+assert.equal(findHeaderLabel().textContent, 'cost', 'the panel opens on the cost view');
+
+// right arrow key switches to optimisation and triggers the lazy load
+press('ArrowRight');
+await new Promise(r => setTimeout(r, 0));
+assert.equal(findHeaderLabel().textContent, 'cost optimisation', 'ArrowRight switches views');
+const optText = flatText({children: [menu2.sections[0].node]}).join(' | ');
+assert.match(optText, /cap fit - worker cap \$5\.00/);
+assert.match(optText, /low \| rated \| 3 \| 2 \| 1 \| \$0\.40 \| \$5\.20/);
+assert.match(optText, /suggested caps/);
+assert.match(optText, /worker \| \$5\.00 \| \$1\.80 \| \$2\.00 \| 1 \| \$0\.30/);
+assert.match(optText, /reviewer \| \$1\.50 \| not enough runs/);
+assert.match(optText, /waste - \$5\.20 total/);
+assert.match(optText, /hit cap \| 1 \| \$5\.20/);
+assert.match(optText, /model fit/);
+assert.match(optText, /opus \| high \| 2 \| 1 \| \$0\.90 \| 50%/);
+
+// left arrow switches back
+press('ArrowLeft');
+assert.equal(findHeaderLabel().textContent, 'cost', 'ArrowLeft switches back to cost');
+
+// the two arrow buttons do the same thing as the keys
+const headerNav = walk(menu2.sections[0].node).filter(n => n.className === 'inbox-nav toggle');
+headerNav[1].onclick();
+assert.equal(findHeaderLabel().textContent, 'cost optimisation', 'the -> button switches views');
+headerNav[0].onclick();
+assert.equal(findHeaderLabel().textContent, 'cost', 'the <- button switches back');
+
+// closing the panel and reopening it starts back on the cost view - no stale optimisation state
+mod.openCostsOverviewPanel();
+assert.equal(mod.overlayRef(), null, 'c again closes the panel');
 
 console.log('ok');

@@ -3,10 +3,10 @@
 // run: node tests/js/profiles.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {installStubDom, element} from './dom_stub.mjs';
+import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
 
 const root = new URL('../../', import.meta.url);
-const uiBase = p => readFileSync(new URL(`../smortui/ui_base/assets/${p}`, root), 'utf8');
+const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 const responses = new Map();
@@ -99,7 +99,7 @@ assert.equal(tokenInput.value, '', 'the token field clears immediately, even on 
 await flush(); await flush();
 const addCall = calls.find(c => c.path === '/api/profiles' && c.opts && c.opts.method === 'POST');
 assert.ok(addCall, 'add posts to /api/profiles');
-assert.deepEqual(JSON.parse(addCall.opts.body), {name: 'work', token: 'x'.repeat(108)});
+assert.deepEqual(JSON.parse(addCall.opts.body), {lab: 'anthropic', kind: 'oauth', name: 'work', token: 'x'.repeat(108)});
 const addStatus = mod.pr.listEl.querySelector('.profile-add-row .profile-status');
 assert.equal(addStatus.textContent, "that doesn't look like a claude setup-token");
 
@@ -118,21 +118,40 @@ responses.set('/api/profiles', stubJson(200, ROWS));
 mod.closeProfilesPanel();
 press('KeyP', document.body, {shiftKey: true}); // reopen fresh to reload rows
 await flush(); await flush();
-responses.set('/api/profiles/alt/activate', stubJson(200, {name: 'alt', active: true, present: true, limited_until: null}));
+responses.set('/api/profiles/anthropic/alt/activate', stubJson(200, {name: 'alt', active: true, present: true, limited_until: null}));
 mod.pr.listEl.querySelectorAll('.profile-row')[1].querySelector('.profile-activate').onclick();
 await flush(); await flush();
-const activateCall = calls.find(c => c.path === '/api/profiles/alt/activate');
+const activateCall = calls.find(c => c.path === '/api/profiles/anthropic/alt/activate');
 assert.ok(activateCall, 'activate posts to /api/profiles/<name>/activate');
 assert.equal(activateCall.opts.method, 'POST');
 
 // ---- remove posts DELETE to the per-name route ---------------------------------------------------
-responses.set('/api/profiles/alt', stubJson(204, null));
+responses.set('/api/profiles/anthropic/alt', stubJson(204, null));
 mod.pr.listEl.querySelectorAll('.profile-row')[1].querySelector('.profile-remove').onclick();
 await flush(); await flush();
-const removeCall = calls.find(c => c.path === '/api/profiles/alt' && c.opts.method === 'DELETE');
+const removeCall = calls.find(c => c.path === '/api/profiles/anthropic/alt' && c.opts.method === 'DELETE');
 assert.ok(removeCall, 'remove sends DELETE to /api/profiles/<name>');
 
 // ---- escape closes the panel -------------------------------------------------------------------
+responses.set('/api/profiles', stubJson(200, [
+  {...ROWS[0], lab: 'anthropic', kind: 'oauth'},
+  {name: 'work', lab: 'openai', kind: 'auth_json', active: true, present: true},
+]));
+mod.closeProfilesPanel();
+mod.openProfilesPanel();
+await flush(); await flush();
+assert.equal(mod.pr.listEl.querySelectorAll('.profile-row').length, 2);
+const labSelect = mod.pr.listEl.querySelector('.profile-add-lab');
+labSelect.value = 'openai';
+labSelect.onchange();
+assert.equal(mod.pr.listEl.querySelector('.profile-add-kind').value, 'auth_json');
+mod.pr.listEl.querySelector('.profile-add-name').value = 'json-profile';
+mod.pr.listEl.querySelector('.profile-add-token').value = '{"tokens":{"access_token":"demo"}}';
+mod.pr.listEl.querySelector('.profile-add-submit').onclick();
+assert.equal(mod.pr.listEl.querySelector('.profile-add-token').value, '');
+await flush();
+assert.equal(JSON.parse(calls.filter(c => c.opts?.method === 'POST').at(-1).opts.body).lab, 'openai');
+assert.equal(JSON.parse(calls.filter(c => c.opts?.method === 'POST').at(-1).opts.body).kind, 'auth_json');
 press('Escape');
 assert.ok(!mod.pr.backdrop.parentNode, 'escape closes the panel');
 

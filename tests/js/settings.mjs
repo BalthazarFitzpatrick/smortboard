@@ -30,6 +30,9 @@ function expandReadPath(raw) {
 }
 function fetchStub(path, opts) {
   calls.push({path, opts});
+  if (path === '/api/catalog') return Promise.resolve(stubJson(200, {
+    openai: {available: true, models: [{id: 'x', label: 'X', tier: 'standard'}]},
+  }));
   if (path === '/api/boards' && (!opts || !opts.method || opts.method === 'GET')) {
     return Promise.resolve(stubJson(200, boardsState.map(b => ({...b}))));
   }
@@ -96,7 +99,8 @@ document.body.appendChild(bucketRow);
 function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
-class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; } refresh() {} close() {} }
+const modelMenus = [];
+class SpyMenu { constructor(opts) { this.opts = opts; modelMenus.push(this); } openAt() { return this; } refresh() {} close() {} }
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
@@ -132,17 +136,50 @@ assert.ok(!boardBar.children.includes(button), 'the button must not live inside 
 button.onclick();
 assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel');
 
-// ---- the panel renders all five sections: credential profiles, mission control can read,
+// ---- the panel renders all six sections: credential profiles, mouse, mission control can read,
 // parallelism, spend caps, mall cam interval (cf90bacc)
 await flush();
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 5,
-  'credential profiles, mission control can read, how many cards run at once, spend caps, mall cam interval');
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 7,
+  'credential profiles, mouse, models by role, mission control can read, parallelism, spend caps, mall cam interval');
+
+const rolePickers = mod.st.listEl.querySelectorAll('.role-model');
+assert.equal(rolePickers.length, 4);
+const reviewerPicker = rolePickers.find(row => row.dataset.role === 'reviewer');
+await reviewerPicker.onclick();
+modelMenus.at(-1).opts.sections[0].onPick({id: 'openai'});
+await modelMenus.at(-1).opts.sections[0].onPick({id: 'x'});
+await flush();
+assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
+  {reviewer_lab: 'openai', reviewer_model: 'x'});
+const fallbackInput = mod.st.listEl.querySelectorAll('.role-fallback').find(row => row.dataset.role === 'fold');
+fallbackInput.value = 'openai/x';
+await fallbackInput.parentNode.children.find(row => row.textContent === 'save fallbacks').onclick();
+assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
+  {fold_cross_lab_fallback: ['openai/x']});
+
+// ---- the mouse is opt-in: unset renders unchecked, and ticking it PATCHes "on" ------------------
+{
+  const mouseBox = mod.st.listEl.querySelector('.settings-enable-mouse-checkbox');
+  assert.ok(mouseBox, 'the panel carries the enable-mouse toggle');
+  assert.equal(mouseBox.checked, false, 'the mouse is off by default');
+  mouseBox.checked = true;
+  mouseBox._listeners.change.forEach(fn => fn());
+  await flush();
+  const patch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+  assert.deepEqual(JSON.parse(patch.opts.body), {enable_mouse: 'on'});
+  mouseBox.checked = false;
+  mouseBox._listeners.change.forEach(fn => fn());
+  await flush();
+  const off = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+  assert.deepEqual(JSON.parse(off.opts.body), {enable_mouse: null}, 'unticking clears it');
+}
 
 // ---- spend caps: blank is the default, a value is PATCHed under its own key ----------------------
 {
   const inputs = mod.st.listEl.querySelectorAll('.settings-spend-input');
-  assert.equal(inputs.length, 4, 'worker, review, mission control and fold each have a cap');
+  assert.equal(inputs.length, 5, 'worker, review, mission control, fold and the card total each have a cap');
   assert.equal(inputs[2].placeholder, '1.00', 'the mission control default shows as the placeholder');
+  assert.equal(inputs[4].placeholder, 'no limit', 'the card total cap has no default - unset means unlimited');
   inputs[2].value = '2.5';
   inputs[2]._listeners.blur.forEach(fn => fn());
   await flush();

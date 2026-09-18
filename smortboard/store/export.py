@@ -26,9 +26,10 @@ _TABLES = (
     "prompts",
     "orchestrator_messages",
     "orchestrator_plans",
+    "board_spend",
 )
 
-_FORMAT_VERSION = 2
+_FORMAT_VERSION = 3
 
 
 def export_bundle(conn: sqlite3.Connection, path: str | Path) -> None:
@@ -66,6 +67,7 @@ def import_bundle(conn: sqlite3.Connection, path: str | Path) -> None:
     _insert_all(conn, "prompts", bundle.get("prompts", []))
     _insert_all(conn, "orchestrator_messages", bundle.get("orchestrator_messages", []))
     _insert_all(conn, "orchestrator_plans", bundle.get("orchestrator_plans", []))
+    _insert_all(conn, "board_spend", bundle.get("board_spend", []))
 
     for record in bundle.get("attachments", []):
         record = dict(record)

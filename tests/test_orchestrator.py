@@ -260,12 +260,12 @@ def test_registry_refuses_a_second_turn_while_thinking(tmp_path):
     gate.set()
 
 
-def test_registry_turns_use_the_active_profile_token(tmp_path, monkeypatch):
-    """a shift+p switch reaches mission control, not only card runs"""
+def test_registry_leaves_credential_selection_to_the_role_runner(tmp_path, monkeypatch):
+    """the role can retry on another lab, so the registry must not pin an active token"""
     import time
     from types import SimpleNamespace
 
-    from smortboard import orchestrator, profiles
+    from smortboard import orchestrator
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     state = tmp_path / "profiles.json"
@@ -288,7 +288,7 @@ def test_registry_turns_use_the_active_profile_token(tmp_path, monkeypatch):
     deadline = time.time() + 5
     while registry.thinking(board["id"]) and time.time() < deadline:
         time.sleep(0.02)
-    assert seen == [profiles.profile_path("second")]
+    assert seen == [None]
 
 
 def test_a_proposed_card_with_no_lease_is_created_but_flagged(store, board):

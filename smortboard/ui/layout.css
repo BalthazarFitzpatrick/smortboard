@@ -39,6 +39,12 @@ body {
   border: 2px solid var(--grey-border);
   border-bottom: 2px solid var(--grey-border);
 }
+/* FOCUS AND ACTIVE ARE DIFFERENT STATES AND MUST READ DIFFERENTLY. focus is the tab the keyboard is
+   on and wears ui_base's .focus-glow-soft (board.js puts the class on every tab); active is the
+   board actually being shown and is this fill, unchanged. the active tab focused wears both, which
+   is why the soft variant's light is a filter over whatever is there rather than a colour of its
+   own - it lifts the accent fill instead of covering it. retune the glow by restating one of its
+   tokens, never by drawing a second one here. */
 .board-bar .nav-tab.active {
   background: var(--accent-on);
   color: var(--accent-on-text);
@@ -239,7 +245,13 @@ body {
 .card-panel .card-section:not([data-section="title"]) > .field-label {
   padding: 2px 0; margin-bottom: 10px; border-bottom: 2px solid var(--grey-border);
 }
-/* with no box of its own, a focused section lights its rule rather than drawing a ring */
+/* A FOCUSED SECTION WEARS THE CARD'S OWN LOOK, QUIETER (operator, 2026-09-17) - ui_base's
+   .focus-glow-soft, put on every section by card_panel.js: the same inset ring, inner glow and
+   coloured light the card itself wears, at a third of the lift and light and half the ring. A
+   section inside a card is a smaller thing than a card on a board, so the loud one read as the
+   whole card jumping. Retune a part by restating that part's token, not the rule.
+   The rule below stays: the label lighting is what a section had before the glow and it still says
+   which section this is once the ring is drawing round several fields' worth of text. */
 .card-panel .card-section:focus-visible { outline: none; }
 .card-panel .card-section:not([data-section="title"]):focus-visible > .field-label {
   color: var(--cream); border-bottom-color: var(--cream);
@@ -396,6 +408,17 @@ body {
 /* ---- keyboard shortcuts (s): one page at a time, wide enough that the longest binding stays on
    one line. left/right swaps the page's section in place, so this only ever sizes a single list */
 .menu-panel.shortcut-overlay { width: min(560px, 94vw); max-height: 90vh; }
+
+/* a paged panel's header: wide arrow buttons either side of a centred label, spaced from the
+   shared tokens - the same row the attention inbox uses to switch scope */
+.pager-header {
+  display: flex;
+  align-items: center;
+  gap: var(--inset-x, 14px);
+  padding: var(--inset, 12px) 0;
+}
+.pager-nav { min-width: calc(var(--row-height, 31px) * 2); justify-content: center; font-weight: 700; }
+.pager-label { flex: 1 1 auto; text-align: center; color: var(--cream); font-weight: 600; }
 /* the whole page at once - ui_base caps a menu section at 60vh, which hid boards 8 and 9 */
 .shortcut-overlay .menu-section { max-height: none; }
 
@@ -495,6 +518,20 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* the beta's bug form (board.js buildIssueButton): FIRST in the corner, left of the board's own
+   numbers. it is an <a> so the keyboard can reach it, which is the only reason it needs rules of
+   its own - a link arrives underlined and inline, and next to the settings button that read as a
+   different kind of thing at a different height */
+.issue-button {
+  order: 0;
+  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size, 13px);
+  text-decoration: none;
 }
 
 /* ---- settings (o): the button in the bar corner and the panel it opens ---------------------- */

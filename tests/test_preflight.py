@@ -377,3 +377,47 @@ def test_never_includes_a_token_value_anywhere(store, tmp_path):
     checks = run_preflight(store, token_path=token_file, runner=_all_ok_runner)
     assert secret not in str(checks)
     assert stat.filemode(token_file.stat().st_mode).endswith("------")
+
+
+def test_openai_profile_checks_use_its_kind_and_do_not_require_anthropic_length():
+    from smortboard.preflight import _profile_checks
+
+    profiles.add_profile("work", "short-but-valid", lab="openai", kind="api_key")
+    row = _by_id(_profile_checks(), "profile-openai-work")
+    assert row["status"] == "ok"
+    assert row["lab"] == "openai"
+    assert row["kind"] == "api_key"
+    assert "short-but-valid" not in str(row)
+    profiles.profile_path("work", "openai").unlink()
+    row = _by_id(_profile_checks(), "profile-openai-work")
+    assert row["status"] == "fail"
+    assert "codex login --with-api-key" in row["fix"]
+    assert "claude" not in row["fix"]
+
+
+def test_empty_openai_token_is_not_reported_healthy():
+    from smortboard.preflight import _profile_checks
+
+    profiles.add_profile("work", "", lab="openai")
+    assert _by_id(_profile_checks(), "profile-openai-work")["status"] == "fail"
+
+
+def test_openai_missing_cli_names_image_and_unknown_prices_warn(monkeypatch, store):
+    from smortboard.preflight import _lab_checks
+
+    profiles.add_profile("work", "key", lab="openai", kind="api_key")
+    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
+    monkeypatch.setattr("smortboard.preflight.card_image", lambda: "test-card:latest")
+    commands = []
+
+    def runner(cmd, timeout=10, cwd=None):
+        commands.append(cmd)
+        return _fail("not installed")
+
+    rows = _lab_checks(store, runner)
+    image = _by_id(rows, "lab-openai-image-0")
+    assert image["status"] == "fail"
+    assert "test-card:latest" in image["detail"] and "codex" in image["detail"]
+    assert _by_id(rows, "lab-openai-pricing")["status"] == "warn"
+    assert commands[0][-2:] == ["test-card:latest", "--version"]
+    assert "key" not in commands[0]

@@ -288,6 +288,34 @@ _MODELS = ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"]
 
 
 def _result_payload(cost: float, turns: int, model: str, denials: list | None = None) -> dict:
+    if model.startswith("openai/"):
+        identity = {"lab": "openai", "model": model.split("/", 1)[1], "profile": "demo"}
+        return {
+            **identity,
+            "neutral": [
+                {
+                    **identity,
+                    "kind": "usage",
+                    "usage": {
+                        "input_tokens": turns * 4200,
+                        "output_tokens": turns * 380,
+                        "cached_tokens": turns * 1000,
+                        "cost_usd": cost,
+                        "cost_estimated": True,
+                    },
+                },
+                {
+                    **identity,
+                    "kind": "result",
+                    "result": {
+                        "ok": True,
+                        "subtype": "success",
+                        "num_turns": turns,
+                        "text": "done",
+                    },
+                },
+            ],
+        }
     return {
         "total_cost_usd": cost,
         "num_turns": turns,
@@ -463,6 +491,24 @@ def _refused_attempt(store: Store, card_id: str, model: str) -> None:
             ],
         ),
     )
+
+
+def _capped_attempt(store: Store, card_id: str, model: str, cost: float) -> None:
+    """a run stopped by its worker's --max-budget-usd cap - what the cost-optimisation view's cap
+    fit and waste sections read off result.subtype == error_max_budget_usd"""
+    store.append_event(card_id, "lifecycle_started", {})
+    _narration(store, card_id, _WALKTHROUGH[:2])
+    result = _result_payload(cost, 22, model)
+    result["subtype"] = "error_max_budget_usd"
+    store.append_event(card_id, "result", result)
+
+
+def _crashed_attempt(store: Store, card_id: str, model: str) -> None:
+    """the container died mid-run - is_error with no other signal reads as CRASH"""
+    store.append_event(card_id, "lifecycle_started", {})
+    result = _result_payload(0.09, 1, model)
+    result["is_error"] = True
+    store.append_event(card_id, "result", result)
 
 
 def _in_flight(store: Store, card_id: str) -> None:
@@ -672,16 +718,27 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
         if i == 0:
             _failed_tests_attempt(store, card["id"], "claude-sonnet-5")
             _refused_attempt(store, card["id"], "claude-sonnet-5")
+        model = _MODELS[i % len(_MODELS)]
+        if i % 2:
+            from smortboard.labs.catalog import load_catalog
+
+            model_id = load_catalog()["openai"]["models"][0]["id"]
+            store.update_card(card["id"], lab="openai", model=model_id)
+            model = f"openai/{model_id}"
         _clean_attempt(
             store,
             card["id"],
-            _MODELS[i % len(_MODELS)],
+            model,
             0.94 + i * 0.31,
             140 + i,
             repo,
             _slug(card["title"]),
         )
     for i, card in enumerate(checking):
+        if i == 0:
+            # this one overran its worker cap before the attempt that finally passed - the cost
+            # optimisation view's cap-fit and waste sections need at least one of these to show
+            _capped_attempt(store, card["id"], "claude-opus-5", 5.85)
         _clean_attempt(
             store,
             card["id"],
@@ -691,8 +748,17 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
             repo,
             _slug(card["title"]),
         )
-    for card in rejected:
+    for i, card in enumerate(rejected):
+        if i == 0:
+            _crashed_attempt(store, card["id"], "claude-sonnet-5")
         _rejected_review_attempt(store, card["id"], "claude-opus-5")
+
+    # a couple of rated cards, one at each end of the scale - the rest stay unrated so the cost
+    # optimisation view's cap-fit table shows both a "rated" and an "estimated" row
+    if todo:
+        store.update_card(todo[0]["id"], complexity=1)
+    if len(accepted) > 1:
+        store.update_card(accepted[1]["id"], complexity=3)
 
     # one fully dressed card per board: a dependency, both comments and the attachment, so there
     # is always a card whose panel shows every section filled in

@@ -66,8 +66,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
-  'KeyG', 'KeyW', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
-  'KeyE', 'KeyJ', 'Delete',
+  'KeyG', 'KeyW', 'KeyF', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
   'KeyT', 'KeyS',
   'KeyP', 'KeyN', 'KeyV', 'KeyQ', 'KeyH', 'KeyO', 'KeyB', 'Slash', 'Comma', 'Period',
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
@@ -126,18 +125,22 @@ const overlay = openedMenus[openedMenus.length - 1];
     .map(b => (b.code === 'Digit1' ? 'boards' : b.code));
   const [firstGroup, secondGroup] = mod.BINDING_GROUPS.map(([group]) => group);
 
-  assert.equal(overlay.menu.sections.length, 1, 'the overlay shows one page at a time, not two columns');
-  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(firstGroup), 's opens on the first BINDINGS group');
+  const listSection = () => overlay.menu.sections.find(sec => sec.kind === 'list');
+  const pagerLabel = () => overlay.menu.sections.find(sec => sec.kind === 'node').node.children[1].textContent;
+  assert.equal(overlay.menu.sections.filter(sec => sec.kind === 'list').length, 1, 'the overlay shows one page at a time, not two columns');
+  assert.equal(pagerLabel(), `${mod.BINDING_GROUPS[0][1]} (1/${mod.BINDING_GROUPS.length})`, 'a pager header names the page');
+  assert.deepEqual(listSection().items.map(i => i.id), pageIds(firstGroup), 's opens on the first BINDINGS group');
 
   press('ArrowRight');
-  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(secondGroup), 'right turns to the next page');
+  assert.deepEqual(listSection().items.map(i => i.id), pageIds(secondGroup), 'right turns to the next page');
+  assert.ok(pagerLabel().startsWith(mod.BINDING_GROUPS[1][1]), 'the pager label follows the page');
   press('ArrowRight');
-  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(firstGroup), 'right wraps back to the first page');
+  assert.deepEqual(listSection().items.map(i => i.id), pageIds(firstGroup), 'right wraps back to the first page');
 
   press('ArrowLeft');
-  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(secondGroup), 'left wraps the other way, to the last page');
+  assert.deepEqual(listSection().items.map(i => i.id), pageIds(secondGroup), 'left wraps the other way, to the last page');
   press('ArrowLeft');
-  assert.deepEqual(overlay.menu.sections[0].items.map(i => i.id), pageIds(firstGroup), 'left steps back to the first page');
+  assert.deepEqual(listSection().items.map(i => i.id), pageIds(firstGroup), 'left steps back to the first page');
 
   // every binding lands on exactly one page - the groups partition the whole table between them
   const allPageIds = mod.BINDING_GROUPS.flatMap(([group]) => mod.BINDINGS.filter(b => b.group === group).map(b => b.code));
@@ -145,7 +148,7 @@ const overlay = openedMenus[openedMenus.length - 1];
     'every binding in BINDINGS appears on exactly one page');
 
   mod.BINDINGS.filter(b => b.group === firstGroup && !folded(b.code)).forEach((b, i) => {
-    assert.ok(overlay.menu.sections[0].items[i].label.startsWith(b.label), `page 1 row ${i} should show binding label "${b.label}"`);
+    assert.ok(listSection().items[i].label.startsWith(b.label), `page 1 row ${i} should show binding label "${b.label}"`);
   });
 }
 
@@ -173,6 +176,22 @@ press('KeyX');
 assert.equal(openedMenus[openedMenus.length - 1].title, 'reject this card?', 'x should confirm before posting');
 openedMenus[openedMenus.length - 1].menu.pick('confirm');
 assert.ok(fetchCalls.includes('/api/cards/c9/reject'), 'confirming should post reject for the focused card');
+
+// ---- f asks before it folds: n and a second f close the question with no run, y posts the fold
+// for the open board, and y answering the question never also accepts the focused card
+{
+  mod.setBoard('b1');
+  const accepts = () => fetchCalls.filter(p => p === '/api/cards/c9/accept').length;
+  const acceptsBefore = accepts();
+  press('KeyF');
+  assert.equal(openedMenus[openedMenus.length - 1].title, "fold this board's cards?");
+  press('KeyN');
+  press('KeyF'); press('KeyF');
+  assert.ok(!fetchCalls.includes('/api/boards/b1/fold'), 'n and a second f close it without a run');
+  press('KeyF'); press('KeyY');
+  assert.ok(fetchCalls.includes('/api/boards/b1/fold'), 'y posts the fold for the open board');
+  assert.equal(accepts(), acceptsBefore, 'y answers the fold question, it never accepts the card');
+}
 
 // ---- p opens the prompt editor (not a Menu, so it never shows up in openedMenus) and p again closes it
 press('KeyP');

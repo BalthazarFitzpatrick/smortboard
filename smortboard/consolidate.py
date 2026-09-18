@@ -16,10 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from smortboard import profiles
 from smortboard.orchestrator import (
     CARD_TEXT_RULES,
-    DEFAULT_ORCHESTRATOR_MODEL,
     OrchestratorRunner,
     _mounts_description,
     _real_runner,
@@ -169,6 +167,7 @@ def _fold(
     # ledger_task], and it is not a writable field. the snapshots above keep every edge to re-point
     for card in fresh:
         store.delete_card(card["id"])
+    model_source = next((card for card in fresh if card["model"]), {})
     merged = store.create_card(
         board_id,
         fresh[0]["repo_id"],
@@ -179,8 +178,12 @@ def _fold(
         position=min(card["position"] for card in fresh),
         tasks=[t["text"] for card in fresh for t in card["tasks"] if not t["done"]],
         criteria=criteria,
-        model=next((card["model"] for card in fresh if card["model"]), None),
+        model=model_source.get("model"),
+        lab=model_source.get("lab"),
         ledger_task=ledger[0] if ledger else None,
+        # a fold merges scope, never shrinks it - the merged card is at least as complex as its
+        # most complex member
+        complexity=max((c["complexity"] for c in fresh if c["complexity"]), default=None),
     )
     store.set_leases(merged["id"], leases)
     for card in fresh:
@@ -279,7 +282,9 @@ def run_fold_turn(
         _say(store, board_id, line)
         return FoldResult(lines=[line])
 
-    model = store.get_settings().get("orchestrator_model") or DEFAULT_ORCHESTRATOR_MODEL
+    from smortboard.labs.routing import command_model, role_ref
+
+    model = command_model(*role_ref(store.get_settings(), "fold"))
     read_paths = store.mission_control_read_paths()
     mounts = _mounts_description(
         [repo["name"] for repo in snapshot["repos"]],
@@ -346,7 +351,7 @@ class FoldRegistry:
             result = run_fold_turn(
                 store,
                 board_id,
-                token_path=profiles.token_path_for_run(self._token_path),
+                token_path=self._token_path,
                 runner=runner,
             )
             with self._lock:

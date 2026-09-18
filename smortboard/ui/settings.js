@@ -52,9 +52,119 @@ async function loadAutoSwitchToggle(box) {
   }
 }
 
+// enable_mouse: the board is driven from the keyboard, and this turns on the pointer half of it -
+// hovering focuses what the arrow keys would (fanning a piled column with it), and right-click
+// opens the card menu m opens. off by default; the clicks that always worked are never gated by it
+const mouseSetting = {box: null};
+
+function buildMouseToggle() {
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.className = 'settings-enable-mouse-checkbox';
+  box.checked = false;
+
+  const row = document.createElement('label');
+  row.className = 'settings-toggle-row';
+  const text = document.createElement('span');
+  text.textContent = 'enable mouse';
+  row.append(box, text);
+
+  const note = document.createElement('div');
+  note.className = 'field-label';
+  note.textContent = 'the keyboard is how the board is driven. with this on, hovering focuses '
+    + 'what the arrows would and right-click opens the card menu.';
+
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    const {ok} = await apiOrError('/api/settings', {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enable_mouse: box.checked ? 'on' : null}),
+    });
+    box.disabled = false;
+    if (!ok) { box.checked = !box.checked; return; } // revert on a failed save
+    setMouseEnabled(box.checked); // live: no reload to start or stop hovering
+  });
+
+  const wrap = document.createElement('div');
+  wrap.className = 'settings-stack';
+  wrap.append(row, note);
+  mouseSetting.box = box;
+  return wrap;
+}
+
+async function loadMouseToggle() {
+  try {
+    const settings = await api('/api/settings');
+    mouseSetting.box.checked = settings.enable_mouse === 'on';
+    setMouseEnabled(mouseSetting.box.checked);
+  } catch {
+    // leave it unchecked - keyboard only is the safe default to fail to
+  }
+}
+
 const SETTINGS_SECTIONS = [
   {label: 'credential profiles', node: buildAutoSwitchToggle()},
+  {label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle},
 ];
+
+const roleModels = {node: document.createElement('div')};
+roleModels.node.className = 'settings-stack';
+
+async function loadRoleModels() {
+  try {
+    const settings = await api('/api/settings');
+    clearChildren(roleModels.node);
+    for (const role of ['worker', 'reviewer', 'orchestrator', 'fold']) {
+      const row = document.createElement('div');
+      row.className = 'board-row';
+      const label = document.createElement('span');
+      label.className = 'field-label';
+      label.textContent = role;
+      const picker = document.createElement('button');
+      picker.className = 'toggle role-model';
+      picker.dataset.role = role;
+      picker.textContent = modelLabel(settings[`${role}_model`], settings[`${role}_lab`]);
+      const status = document.createElement('span');
+      status.className = 'field-label';
+      picker.onclick = async () => {
+        try {
+          await openModelPicker(async (lab, model) => {
+            const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({[`${role}_lab`]: lab, [`${role}_model`]: model})});
+            if (ok) loadRoleModels();
+            else status.textContent = body?.error || 'could not save model';
+          });
+        } catch (err) { status.textContent = err.message; }
+      };
+      const fallback = document.createElement('input');
+      fallback.className = 'text-field role-fallback';
+      fallback.dataset.role = role;
+      fallback.placeholder = 'fallbacks: lab/model, lab/model (optional)';
+      fallback.setAttribute('aria-label', `${role} fallback models in order`);
+      fallback.value = (settings[`${role}_cross_lab_fallback`] || []).join(', ');
+      fallback.addEventListener('keydown', evt => {
+        if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); }
+      });
+      const save = document.createElement('button');
+      save.className = 'toggle';
+      save.textContent = 'save fallbacks';
+      save.onclick = async () => {
+        const refs = fallback.value.split(',').map(value => value.trim()).filter(Boolean);
+        const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({[`${role}_cross_lab_fallback`]: refs})});
+        status.textContent = ok ? 'saved' : body?.error || 'could not save fallbacks';
+      };
+      row.append(label, picker, fallback, save, status);
+      roleModels.node.appendChild(row);
+    }
+  } catch (err) {
+    roleModels.node.textContent = `could not load models: ${err.message}`;
+  }
+}
+SETTINGS_SECTIONS.push({label: 'models by role', node: roleModels.node, onOpen: loadRoleModels});
 
 function settingsHazardPlaceholder(text) {
   const box = document.createElement('div');
@@ -201,7 +311,7 @@ function buildReadPathsSection() {
   const status = document.createElement('span');
   status.className = 'boards-status';
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     addReadPath();
@@ -261,7 +371,7 @@ function buildGlobalParallelRow() {
   }
 
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     save();
@@ -315,7 +425,7 @@ function renderBoardParallelRow(board) {
   }
 
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     save();
@@ -348,7 +458,7 @@ function renderBoardParallelRow(board) {
   }
 
   budgetInput.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     saveBudget();
@@ -412,6 +522,7 @@ const SPEND_CAPS = [
   {key: 'reviewer_budget_usd', label: 'review', fallback: '1.50'},
   {key: 'orchestrator_budget_usd', label: 'mission control turn', fallback: '1.00'},
   {key: 'fold_budget_usd', label: 'fold', fallback: '2.00'},
+  {key: 'card_total_budget_usd', label: 'card total (all runs)', fallback: 'no limit'},
 ];
 const spendCaps = {inputs: new Map(), statusEl: null};
 
@@ -444,7 +555,7 @@ function renderSpendCapRow(cap) {
   }
 
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     save();
@@ -527,7 +638,7 @@ function buildMallCamSection() {
   }
 
   input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); closeSettingsPanel(); return; }
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
     save();
@@ -610,6 +721,8 @@ function openSettingsPanel() {
   document.body.appendChild(st.backdrop);
   document.addEventListener('keydown', onSettingsKey);
   renderSettings();
+  // the panel takes the keyboard; up/down then walk its fields and / types into one
+  focusPanel(st.panel);
 }
 
 function closeSettingsPanel() {

@@ -32,7 +32,7 @@ from typing import Any
 
 from smortboard import profiles, telemetry
 from smortboard.actions import with_next
-from smortboard.exec.runner import _api_unreachable_signal, _session_limit_text_signal
+from smortboard.budgets import spend_refusal
 from smortboard.exec.worktrees import (
     branch_name,
     default_branch,
@@ -40,6 +40,9 @@ from smortboard.exec.worktrees import (
     has_remote,
     worktree_path,
 )
+from smortboard.labs.catalog import resolve_ref
+from smortboard.labs.events import neutral_events
+from smortboard.labs.routing import role_ref, run_ref
 from smortboard.review.merge_request import PullRequestState, pr_view
 from smortboard.review.mergeable import check_mergeable, merge_branch, push_branch
 from smortboard.store.api import Store
@@ -89,11 +92,16 @@ def relabel_stale_crashes(store: Store) -> list[dict[str, str]]:
             if not results:
                 continue
             payload = results[-1]["payload"]
-            if _session_limit_text_signal(payload):
-                new_code = "USAGE_LIMIT"
-            elif _api_unreachable_signal(payload):
-                new_code = "API_UNREACHABLE"
-            else:
+            result = next(
+                (
+                    row.get("result")
+                    for row in neutral_events({"payload": payload, "kind": "result"})
+                    if row["kind"] == "result"
+                ),
+                {},
+            )
+            new_code = result.get("blocked_reason_code")
+            if new_code not in {"USAGE_LIMIT", "API_UNREACHABLE"}:
                 continue
             store.update_card(card["id"], blocked_reason_code=new_code)
             store.append_event(card["id"], "relabeled", {"from": "CRASH", "to": new_code})
@@ -282,7 +290,8 @@ def _budget_exhausted(store: Store, board_id: str) -> bool:
     budget = _board_daily_budget(store, board_id)
     if budget is None:
         return False
-    return telemetry.board_spend_today(store, board_id) >= budget
+    spend = telemetry.board_spend_today(store, board_id)
+    return spend is None or spend >= budget
 
 
 def _dependency_wait(store: Store, card: dict[str, Any], repo_path: str | Path) -> str | None:
@@ -358,10 +367,25 @@ class BoardScheduler:
         self._queue: list[str] = []
         self._running: set[str] = set()
         self._waiting: dict[str, str] = {}
-        self._paused_until: float | None = None
+        self._lab_paused_until: dict[str, float] = {}
+        self._run_profiles: dict[str, tuple[str, str]] = {}
+        self._run_start_seq: dict[str, int] = {}
+        self._limited_roles: dict[str, str] = {}
         # per-card timers for a solo, automatic retry - API_UNREACHABLE backoff and a resumed
         # MERGE_CONFLICT's own once-only attempt, both keyed by card id
         self._card_retry_at: dict[str, float] = {}
+
+    @property
+    def _paused_until(self) -> float | None:
+        """legacy callers see the anthropic pause; new clients use paused_labs"""
+        return self._lab_paused_until.get("anthropic")
+
+    @_paused_until.setter
+    def _paused_until(self, value: float | None) -> None:
+        if value is None:
+            self._lab_paused_until.pop("anthropic", None)
+        else:
+            self._lab_paused_until["anthropic"] = value
 
     # -- reads --------------------------------------------------------------------
 
@@ -372,7 +396,7 @@ class BoardScheduler:
         come due - those are per-card, not the board-wide pause, so nothing else drains them."""
         now = time.time()
         with self._lock:
-            expired = self._paused_until is not None and now >= self._paused_until
+            expired = [lab for lab, at in self._lab_paused_until.items() if now >= at]
             due = [card_id for card_id, at in self._card_retry_at.items() if now >= at]
         if due:
             with self._lock:
@@ -382,7 +406,8 @@ class BoardScheduler:
                         self._queue.append(card_id)
         if expired:
             with self._lock:
-                self._paused_until = None
+                for lab in expired:
+                    self._lab_paused_until.pop(lab, None)
         if expired or due:
             self._tick()
         store = Store(self._db_path)
@@ -396,6 +421,7 @@ class BoardScheduler:
                 "queued": list(self._queue),
                 "waiting": dict(self._waiting),
                 "paused_until": self._paused_until,
+                "paused_labs": dict(self._lab_paused_until),
                 "card_retry_at": dict(self._card_retry_at),
                 "budget_paused": budget_paused,
             }
@@ -437,8 +463,6 @@ class BoardScheduler:
 
     def _tick_locked(self) -> None:
         with self._lock:
-            if self._paused_until is not None and time.time() < self._paused_until:
-                return  # parked for USAGE_LIMIT; schedule_view resumes this once the window rolls
             queue_snapshot = list(self._queue)
             running_ids = set(self._running)
 
@@ -462,10 +486,6 @@ class BoardScheduler:
             board_cap = _board_max_parallel(store, self.board_id)
             if board_cap is not None:
                 slots = min(slots, board_cap - len(running_ids))
-            if _budget_exhausted(store, self.board_id):
-                # today's spend on this board already hit its cap - no new starts, but a card
-                # already running keeps its slot and finishes
-                slots = 0
             # a card started by hand holds its lease too, but not one of this board's slots
             for state in active_states or []:
                 if state.card_id not in running_ids:
@@ -487,6 +507,19 @@ class BoardScheduler:
                     remaining.append(card_id)
                     continue
                 reason = None
+                worker_lab, _ = run_ref(store, "worker", card)
+                limited_lab = worker_lab
+                if card_id in self._limited_roles:
+                    limited_lab, _ = run_ref(store, self._limited_roles[card_id], card)
+                with self._lock:
+                    pauses = [
+                        self._lab_paused_until.get(lab, 0) for lab in {worker_lab, limited_lab}
+                    ]
+                    paused = max(pauses)
+                if paused is not None and paused > time.time():
+                    remaining.append(card_id)
+                    waiting[card_id] = f"{worker_lab} usage limited until {paused}"
+                    continue
                 if card.get("depends_on"):
                     try:
                         repo_path = store.get_repo(card["repo_id"])["path"]
@@ -495,10 +528,17 @@ class BoardScheduler:
                     else:
                         reason = _dependency_wait(store, card, repo_path)
                 reason = reason or _lease_wait(card, pending)
+                reason = reason or spend_refusal(store, card)
                 if reason:
                     waiting[card_id] = reason
                     remaining.append(card_id)
                     continue
+                self._run_profiles[card_id] = (
+                    worker_lab,
+                    profiles.active_profile(worker_lab) or "default",
+                )
+                events = store.list_events(card_id)
+                self._run_start_seq[card_id] = events[-1]["seq"] if events else -1
                 self._runs.start(card_id, on_finish=self._make_on_finish(card_id))
                 pending.append((card["repo_id"], _lease_globs(card), card["id"]))
                 started.append(card_id)
@@ -523,6 +563,7 @@ class BoardScheduler:
             elif reason == "MERGE_CONFLICT":
                 self._handle_merge_conflict(card_id)
             else:
+                self._limited_roles.pop(card_id, None)
                 self._tick()
 
         return _on_finish
@@ -617,20 +658,107 @@ class BoardScheduler:
         """
         store = Store(self._db_path)
         try:
-            resets_at = _latest_reset(store)
+            card = store.get_card(card_id)
+            settings = store.get_settings()
+            lab, _ = role_ref(settings, "worker", card)
+            lab, profile = self._run_profiles.get(
+                card_id, (lab, profiles.active_profile(lab) or "default")
+            )
+            role = "worker"
+            current_events = [
+                event
+                for event in store.list_events(card_id)
+                if event["seq"] > self._run_start_seq.get(card_id, -1)
+            ]
+            for event in reversed(current_events):
+                payload = event["payload"]
+                if payload.get("lab") and payload.get("profile"):
+                    lab, profile = payload["lab"], payload["profile"]
+                    role = payload.get("role") or (
+                        "reviewer" if event["kind"].startswith("reviewer_") else "worker"
+                    )
+                    break
+            resets_at = _latest_reset(store, lab, profile)
+            if resets_at is None:
+                for event in reversed(current_events):
+                    if event["payload"].get("lab") or event["payload"].get("profile"):
+                        continue
+                    resets = [
+                        (row.get("rate_limit") or row.get("result") or {}).get("resets_at")
+                        for row in neutral_events(event)
+                    ]
+                    resets = [value for value in resets if value is not None]
+                    if resets:
+                        resets_at = max(resets)
+                        break
+            resets_at = resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
             auto_switch = store.get_settings().get("auto_switch_profiles") == "on"
             if auto_switch:
-                result = profiles.handle_usage_limit(resets_at)
+                result = profiles.handle_usage_limit(resets_at, lab=lab, name=profile)
             else:
                 # a single-profile board must never write a state file just because a run hit
                 # its limit alone - same invariant handle_usage_limit itself keeps
-                if profiles.has_multiple_profiles():
-                    profiles.mark_limited(profiles.active_profile(), resets_at)
+                if profiles.has_multiple_profiles(lab) or profiles.state_path().exists():
+                    profiles.mark_limited(profile, resets_at, lab=lab)
                 result = {"rotated": False, "next_profile": None, "earliest_reset": None}
+            store.append_event(
+                card_id,
+                "profile_limited",
+                {"lab": lab, "profile": profile, "role": role, "resets_at": resets_at},
+            )
+            self._limited_roles[card_id] = role
+            fallback_selected = False
+            pause_until = (
+                result["earliest_reset"] or resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+            )
+            if result["next_profile"] is None:
+                with self._lock:
+                    self._lab_paused_until[lab] = pause_until
+                for ref in settings.get(f"{role}_cross_lab_fallback") or []:
+                    if profiles.has_multiple_profiles(lab) and profiles.next_available(lab=lab):
+                        break
+                    target = resolve_ref(ref)
+                    if target is None or target[0] == lab:
+                        continue
+                    target_lab, target_model = target
+                    with self._lock:
+                        target_paused = self._lab_paused_until.get(target_lab, 0)
+                    if target_paused > time.time():
+                        continue
+                    target_profile = profiles.next_available(lab=target_lab)
+                    if target_profile is None:
+                        continue
+                    try:
+                        profiles.read_profile_token(target_lab, target_profile)
+                    except profiles.ProfileError:
+                        continue
+                    profiles.set_active(target_profile, lab=target_lab)
+                    store.append_event(
+                        card_id,
+                        "lab_fallback",
+                        {
+                            "role": role,
+                            "lab": target_lab,
+                            "model": target_model,
+                            "profile": target_profile,
+                            "from_lab": lab,
+                            "limited_until": pause_until,
+                        },
+                    )
+                    store.add_comment(
+                        card_id,
+                        author=_BOARD_AUTHOR,
+                        body=(
+                            f"Retrying {role} on {target_lab}/{target_model}; {lab} was limited until "
+                            f"{time.strftime('%H:%M', time.localtime(pause_until))}."
+                        ),
+                    )
+                    fallback_selected = True
+                    break
         finally:
             store.close()
 
-        if result["next_profile"] is not None:
+        if result["next_profile"] is not None or fallback_selected:
             with self._lock:
                 if card_id not in self._queue and card_id not in self._running:
                     self._queue.insert(0, card_id)
@@ -640,25 +768,32 @@ class BoardScheduler:
             # left out of the queue, schedule_view's lapsed-pause check had nothing to start once
             # the window rolled over, and this card sat blocked past its own reset forever
             with self._lock:
-                self._paused_until = fallback or resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+                self._lab_paused_until[lab] = (
+                    fallback or resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+                )
                 if card_id not in self._queue and card_id not in self._running:
                     self._queue.append(card_id)
         self._tick()
 
 
-def _latest_reset(store: Store) -> float | None:
-    """the most recent rate_limit_event, board-wide (a seat is shared across every card the
-    operator runs, not per-repo) - see telemetry.usage_projection, which reads the same events."""
-    events = store.list_events_by_kind(["rate_limit_event"])
-    if not events:
-        return None
-    payload = events[-1]["payload"]
-    info = payload.get("rate_limit_info") or {}
-    unified = info.get("unifiedWindows")
-    if isinstance(unified, dict):
-        resets = [w.get("resetsAt") for w in unified.values() if w.get("resetsAt")]
-        return max(resets) if resets else None
-    return info.get("resetsAt")
+def _latest_reset(store: Store, lab: str = "anthropic", profile: str | None = None) -> float | None:
+    """the latest window belongs to the refused run's lab and credential"""
+    events = store.list_events_by_kind(None)
+    for event in reversed(events):
+        payload = event["payload"]
+        if (payload.get("lab") or "anthropic") != lab:
+            continue
+        if profile is not None and (payload.get("profile") or "default") != profile:
+            continue
+        resets = []
+        for row in neutral_events(event):
+            block = row.get("rate_limit") or row.get("result") or {}
+            reset = block.get("resets_at")
+            if reset is not None:
+                resets.append(reset)
+        if resets:
+            return max(resets)
+    return None
 
 
 class SchedulerRegistry:

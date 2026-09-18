@@ -88,8 +88,8 @@ overflow.onclick({stopPropagation: () => { stopped = true; }});
 assert.equal(menus.length, 1, 'clicking ... should open exactly one menu');
 assert.ok(stopped, 'the click must not bubble to the strip and also open the card behind the menu');
 const overflowItems = menus[0].opts.sections[0].items.map(i => i.id);
-assert.deepEqual(overflowItems, ['edit', 'model', 'status', 'delete'],
-  'the menu should offer edit, change model, move status and delete');
+assert.deepEqual(overflowItems, ['edit', 'model', 'complexity', 'status', 'delete'],
+  'the menu should offer edit, change model, change complexity, move status and delete');
 
 // ---- edit reuses the strip's own open-to-edit, nothing forked for it
 menus[0].pick('edit');
@@ -139,6 +139,33 @@ const moved = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'P
 assert.ok(moved, 'move status should PATCH the card');
 assert.equal(JSON.parse(moved.opts.body).status, 'checking');
 
+// ---- change complexity cycles low -> medium -> high, same confirm-then-patch shape as model
+calls.length = 0;
+setResponse('GET', '/api/cards/c1', 200, {id: 'c1', complexity: null});
+setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', complexity: 1});
+menus = [];
+overflow.onclick({stopPropagation(){}});
+menus[0].pick('complexity');
+await flush();
+assert.equal(menus.length, 2, 'change complexity should open a confirm before it patches anything');
+menus[1].pick('confirm');
+await flush();
+const complexityPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
+assert.ok(complexityPatch, 'change complexity should PATCH the card');
+assert.equal(JSON.parse(complexityPatch.opts.body).complexity, 1, 'unrated cycles to low first');
+
+calls.length = 0;
+setResponse('GET', '/api/cards/c1', 200, {id: 'c1', complexity: 3});
+setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', complexity: 1});
+menus = [];
+overflow.onclick({stopPropagation(){}});
+menus[0].pick('complexity');
+await flush();
+menus[1].pick('confirm');
+await flush();
+const wrapPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
+assert.equal(JSON.parse(wrapPatch.opts.body).complexity, 1, 'high wraps back to low');
+
 // ---- change model reuses cycleCardModel exactly, and acts on the card whose ... was clicked -
 // even while a different card holds keyboard focus
 const strip2 = mod.renderCardStrip({id: 'c2', title: 'card two', status: 'todo', workstream: 'w'});
@@ -146,36 +173,50 @@ todoRows.appendChild(strip2);
 strip2.focus();
 calls.length = 0;
 setResponse('GET', '/api/cards/c1', 200, {id: 'c1', model: null});
-setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', model: 'haiku'});
+setResponse('GET', '/api/catalog', 200, {
+  anthropic: {available: false, unavailable_reason: 'no usable profile', models: [{id: 'haiku', label: 'Haiku', tier: 'light'}]},
+  openai: {available: true, models: [{id: 'x', label: 'X', tier: 'standard'}]},
+});
+setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', lab: 'openai', model: 'x'});
 menus = [];
 overflow.onclick({stopPropagation(){}});
 menus[0].pick('model');
 await flush();
-assert.equal(menus.length, 2, 'change model should open a confirm before it patches anything');
-assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0, 'no write before the confirm is answered');
-menus[1].pick('confirm');
+assert.equal(menus.length, 2, 'change model opens the lab picker');
+assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0, 'no write before a model is selected');
+menus[1].pick('anthropic');
+assert.equal(menus.length, 2, 'a lab without a usable profile cannot be selected');
+menus[1].pick('openai');
+assert.equal(menus.length, 3, 'picking a lab opens its models');
+menus[2].pick('x');
 await flush();
 const modelPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
-assert.ok(modelPatch && JSON.parse(modelPatch.opts.body).model === 'haiku',
-  "the overflow's change model should act on the card it belongs to");
+assert.deepEqual(JSON.parse(modelPatch.opts.body), {lab: 'openai', model: 'x'},
+  "the picker patches both parts of the card's model ref");
 assert.ok(!calls.some(c => c.path.startsWith('/api/cards/c2')), 'and never touch the focused card instead');
 
-// ---- each action also has its own keyboard shortcut, scoped to the focused card
+// ---- e, j and del retired into the menu: m is the only key, and every action is still two
+// presses away through it
 strip.focus();
 menus = [];
 press('KeyE');
-assert.equal(backdrops().length, 1, 'e should edit (open) the focused card');
-document._dispatch('keydown', {key: 'Escape', code: 'Escape', target: document.body});
-
-menus = [];
-press('Delete');
-assert.equal(menus.length, 1, 'the delete key should open the confirm, not delete outright');
-assert.equal(menus[0].opts.title, 'delete this card?');
-menus[0].pick('keep'); // leave the card in place for anything else that runs after this file
-
-menus = [];
 press('KeyJ');
-assert.equal(menus.length, 1, 'j should open the move-status menu for the focused card');
-assert.equal(menus[0].opts.title, 'move to');
+press('Delete');
+assert.equal(menus.length, 0, 'e, j and del are not bindings any more');
+assert.equal(backdrops().length, 0, 'and e no longer opens the focused card');
+
+menus = [];
+press('KeyM');
+assert.equal(menus.length, 1, 'm opens the focused card\'s menu');
+assert.equal(menus[0].opts.title, 'card actions');
+menus[0].pick('delete');
+assert.equal(menus.length, 2, 'delete from the menu still asks first');
+assert.equal(menus[1].opts.title, 'delete this card?');
+menus[1].pick('keep'); // leave the card in place for anything else that runs after this file
+
+menus = [];
+press('KeyM');
+menus[0].pick('status');
+assert.equal(menus[1].opts.title, 'move to', 'move to opens as the menu\'s own submenu');
 
 console.log('ok');

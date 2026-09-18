@@ -35,16 +35,6 @@ jobs:
       - name: sync
         run: uv sync --dev --python ${{ matrix.python }}
 
-      # some js tests read ui_base from a sibling ../smortui checkout; point it at the pinned install
-      - name: link ui_base assets
-        run: |
-          assets=$(uv run python -c "import ui_base, pathlib; print(pathlib.Path(ui_base.__file__).parent / 'assets')")
-          mkdir -p ../smortui/ui_base
-          ln -sfn "$assets" ../smortui/ui_base/assets
-
-      - name: install the playwright browser
-        run: uv run playwright install --with-deps chromium
-
       - name: ruff check
         run: uv run ruff check .
 
@@ -52,4 +42,23 @@ jobs:
         run: uv run ruff format --check .
 
       - name: pytest
-        run: uv run pytest -q
+        run: uv run pytest -q -k 'not test_capture_takes_a_real_screenshot_of_a_faked_server'
+
+      - name: provision screenshot image
+        run: |
+          docker build -f docker/card.Dockerfile -t smortboard-card:ci .
+          docker build -f docker/screenshot.Dockerfile --build-arg CARD_IMAGE=smortboard-card:ci -t smortboard-screenshot:ci .
+
+      - name: screenshot with no external network or unrelated host files
+        run: |
+          mkdir -p .work/screenshot-artifacts
+          chmod 777 .work/screenshot-artifacts
+          docker run --rm --network none --read-only --cap-drop=ALL \
+            --security-opt=no-new-privileges --pids-limit=512 --memory=2g \
+            --tmpfs /tmp:rw,nosuid,size=512m \
+            --mount type=bind,src="$PWD/smortboard",dst=/workspace/smortboard,readonly \
+            --mount type=bind,src="$PWD/tests",dst=/workspace/tests,readonly \
+            --mount type=bind,src="$PWD/tools/check_screenshot_isolation.py",dst=/checks/check_screenshot_isolation.py,readonly \
+            --mount type=bind,src="$PWD/.work/screenshot-artifacts",dst=/artifacts \
+            -e PYTHONDONTWRITEBYTECODE=1 -e UV_CACHE_DIR=/tmp/uv-cache \
+            smortboard-screenshot:ci uv run --no-sync python /checks/check_screenshot_isolation.py

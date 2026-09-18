@@ -1,4 +1,4 @@
-// credential profiles (shift+p): several claude subscriptions, one active at a time, from
+// credential profiles (shift+p): one active credential per lab, from
 // smortboard/profiles.py. lists each profile's state, pastes a token straight into its mode-600
 // file, and lets the operator activate or remove one by hand.
 //
@@ -42,6 +42,7 @@ function buildProfileRow(row) {
   const rowEl = document.createElement('div');
   rowEl.className = 'profile-row';
   rowEl.dataset.name = row.name;
+  rowEl.dataset.lab = row.lab || 'anthropic';
 
   const head = document.createElement('div');
   head.className = 'profile-row-head';
@@ -57,7 +58,7 @@ function buildProfileRow(row) {
 
   const state = document.createElement('span');
   state.className = 'field-label profile-state';
-  state.textContent = profileStateLabel(row);
+  state.textContent = `${row.kind || 'oauth'} - ${profileStateLabel(row)}`;
 
   const status = document.createElement('span');
   status.className = 'profile-status';
@@ -71,7 +72,7 @@ function buildProfileRow(row) {
     const activateBtn = document.createElement('span');
     activateBtn.className = 'profile-activate toggle';
     activateBtn.textContent = 'activate';
-    activateBtn.onclick = () => activateProfile(row.name, activateBtn, status);
+    activateBtn.onclick = () => activateProfile(row.name, activateBtn, status, row.lab || 'anthropic');
     actions.appendChild(activateBtn);
   }
 
@@ -80,7 +81,7 @@ function buildProfileRow(row) {
   const removeBtn = document.createElement('span');
   removeBtn.className = 'profile-remove toggle';
   removeBtn.textContent = 'remove';
-  removeBtn.onclick = () => removeProfile(row.name, removeBtn, status);
+  removeBtn.onclick = () => removeProfile(row.name, removeBtn, status, row.lab || 'anthropic');
   actions.appendChild(removeBtn);
 
   rowEl.append(head, actions);
@@ -90,6 +91,35 @@ function buildProfileRow(row) {
 function buildAddForm() {
   const form = document.createElement('div');
   form.className = 'profile-add-row';
+
+  const labInput = document.createElement('select');
+  labInput.className = 'profile-add-lab text-field';
+  labInput.setAttribute('aria-label', 'lab');
+  for (const lab of ['anthropic', 'openai']) {
+    const option = document.createElement('option');
+    option.value = lab;
+    option.textContent = lab;
+    labInput.appendChild(option);
+  }
+  labInput.value = 'anthropic';
+  const kindInput = document.createElement('select');
+  kindInput.className = 'profile-add-kind text-field';
+  kindInput.setAttribute('aria-label', 'credential kind');
+  const setKinds = () => {
+    clearChildren(kindInput);
+    const choices = labInput.value === 'openai'
+      ? [['auth_json', 'ChatGPT login JSON'], ['api_key', 'API key']]
+      : [['oauth', 'setup token']];
+    choices.forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      kindInput.appendChild(option);
+    });
+    kindInput.value = choices[0][0];
+  };
+  labInput.onchange = setKinds;
+  setKinds();
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
@@ -108,22 +138,22 @@ function buildAddForm() {
   const status = document.createElement('span');
   status.className = 'profile-status';
 
-  const submitAdd = () => addProfile(nameInput, tokenInput, submit, status);
+  const submitAdd = () => addProfile(nameInput, tokenInput, submit, status, labInput.value, kindInput.value);
   submit.onclick = submitAdd;
   [nameInput, tokenInput].forEach(input => {
     input.addEventListener('keydown', evt => {
-      if (evt.code === 'Escape') { evt.stopPropagation(); closeProfilesPanel(); return; }
+      if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
       if (evt.code !== 'Enter') return;
       evt.preventDefault();
       submitAdd();
     });
   });
 
-  form.append(nameInput, tokenInput, submit, status);
+  form.append(labInput, kindInput, nameInput, tokenInput, submit, status);
   return form;
 }
 
-async function addProfile(nameInput, tokenInput, submit, status) {
+async function addProfile(nameInput, tokenInput, submit, status, lab = 'anthropic', kind = 'oauth') {
   const name = nameInput.value.trim();
   const token = tokenInput.value;
   // cleared here, before the request even resolves - a token never survives past this point
@@ -137,7 +167,7 @@ async function addProfile(nameInput, tokenInput, submit, status) {
   status.textContent = 'adding...';
   status.className = 'profile-status';
   const {ok, body} = await apiOrError('/api/profiles', {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, token}),
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({lab, kind, name, token}),
   });
   submit.classList.remove('dim');
   if (!ok) {
@@ -150,11 +180,11 @@ async function addProfile(nameInput, tokenInput, submit, status) {
   loadProfiles();
 }
 
-async function activateProfile(name, button, status) {
+async function activateProfile(name, button, status, lab = 'anthropic') {
   button.classList.add('dim');
   status.textContent = 'activating...';
   status.className = 'profile-status';
-  const {ok, body} = await apiOrError(`/api/profiles/${encodeURIComponent(name)}/activate`, {method: 'POST'});
+  const {ok, body} = await apiOrError(`/api/profiles/${encodeURIComponent(lab)}/${encodeURIComponent(name)}/activate`, {method: 'POST'});
   if (!ok) {
     status.textContent = (body && body.error) || 'could not activate';
     status.className = 'profile-status profile-error';
@@ -164,11 +194,11 @@ async function activateProfile(name, button, status) {
   loadProfiles();
 }
 
-async function removeProfile(name, button, status) {
+async function removeProfile(name, button, status, lab = 'anthropic') {
   button.classList.add('dim');
   status.textContent = 'removing...';
   status.className = 'profile-status';
-  const {ok, body} = await apiOrError(`/api/profiles/${encodeURIComponent(name)}`, {method: 'DELETE'});
+  const {ok, body} = await apiOrError(`/api/profiles/${encodeURIComponent(lab)}/${encodeURIComponent(name)}`, {method: 'DELETE'});
   if (!ok) {
     status.textContent = (body && body.error) || 'could not remove';
     status.className = 'profile-status profile-error';
@@ -183,7 +213,15 @@ function renderProfiles() {
   if (!pr.rows.length) {
     pr.listEl.appendChild(hazardPlaceholder('no profiles yet'));
   } else {
-    pr.rows.forEach(row => pr.listEl.appendChild(buildProfileRow(row)));
+    const labs = [...new Set(pr.rows.map(row => row.lab || 'anthropic'))];
+    labs.forEach(lab => {
+      const heading = document.createElement('div');
+      heading.className = 'field-label';
+      heading.textContent = lab;
+      pr.listEl.appendChild(heading);
+      pr.rows.filter(row => (row.lab || 'anthropic') === lab)
+        .forEach(row => pr.listEl.appendChild(buildProfileRow(row)));
+    });
   }
   pr.listEl.appendChild(buildAddForm());
 }
@@ -233,6 +271,7 @@ function openProfilesPanel() {
   document.body.appendChild(pr.backdrop);
   document.addEventListener('keydown', onProfilesKey);
   loadProfiles();
+  focusPanel(pr.panel);
 }
 
 function closeProfilesPanel() {

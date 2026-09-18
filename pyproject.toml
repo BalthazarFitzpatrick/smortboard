@@ -6,9 +6,12 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
-    "keyring>=25.7.0",
-    # pinned to a sha, not a tag: ui_base and smortboard are co-developed in lockstep
-    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@2f2af664801a4b89c65fd879796b819ff28b1b74",
+    # tags now mean something (smortui #33 fixed version-per-tag); this still moves
+    # to a fresh sha or tag whenever the two repos need to co-develop in lockstep.
+    # A SHA WHILE IT IS UNRELEASED: smortui#34 (the soft focus glow, which the open card's sections
+    # and the board tabs wear) is not merged, so there is no tag to point at and cutting one to
+    # unblock a pin is not a release. back to a tag once the operator releases one
+    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@2eb5e932d4bc9ce2a16e2cade229890c3d9e7a0b",
     # os-correct data dir for the default db location — not the cwd, not a hand-rolled path
     "platformdirs>=4.0",
     # mission control's one screenshot per ask - host-side only, chromium headless. the browser
@@ -36,7 +39,7 @@ build-backend = "hatchling.build"
 # packaging must be told about them explicitly or the wheel installs but serves nothing
 [tool.hatch.build.targets.wheel]
 packages = ["smortboard"]
-artifacts = ["smortboard/ui/**"]
+artifacts = ["smortboard/ui/**", "smortboard/labs/*.json", "smortboard/labs/NOTICE", "smortboard/labs/LICENSE.seccomp"]
 
 # hatchling's sdist default is "every git-tracked file" - none of this is needed to pip install
 # or run the package; docker/ is for users who clone and build the card image themselves

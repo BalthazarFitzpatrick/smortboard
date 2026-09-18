@@ -199,10 +199,36 @@ def test_an_explicit_override_always_wins():
     assert profiles.token_path_for_run("/explicit/path") == "/explicit/path"
 
 
-def test_the_default_profile_resolves_to_none_so_the_keychain_fallback_still_applies():
-    # None is what backends.read_card_token needs to fall back to the OS credential store - an
-    # explicit path (even the same file) would skip that fallback
+def test_the_default_profile_uses_the_default_token_file():
     assert profiles.token_path_for_run(None) is None
+
+
+def test_runtime_accepts_active_named_profile_without_default_file(monkeypatch):
+    from smortboard.exec.backends import ContainerBackend, require_card_runtime
+
+    monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: True)
+    profiles.add_profile("work", "test-credential")
+    profiles.set_active("work")
+    assert not profiles.profile_path("default").exists()
+    assert isinstance(require_card_runtime(), ContainerBackend)
+
+
+def test_runtime_explicit_override_wins_over_named_profile(tmp_path, monkeypatch):
+    from smortboard.exec.backends import (
+        CardRuntimeUnavailable,
+        ContainerBackend,
+        require_card_runtime,
+    )
+
+    monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: True)
+    profiles.add_profile("work", "test-credential")
+    profiles.set_active("work")
+    explicit = tmp_path / "override"
+    with pytest.raises(CardRuntimeUnavailable):
+        require_card_runtime(explicit)
+    profiles.profile_path("work").unlink()
+    profiles.write_token_file(explicit, "test-override")
+    assert isinstance(require_card_runtime(explicit), ContainerBackend)
 
 
 def test_a_named_active_profile_resolves_to_its_own_file():
@@ -348,7 +374,8 @@ def test_save_state_replaces_the_file_rather_than_appending():
     profiles.add_profile("third", token="t")
     # a rename-based write can only ever leave the last full write in place, never a partial one
     data = json.loads(profiles.state_path().read_text())
-    assert data["profiles"] == ["default", "second", "third"]
+    assert data["version"] == 2
+    assert data["labs"]["anthropic"]["profiles"] == ["default", "second", "third"]
 
 
 # -- scheduler integration: USAGE_LIMIT rotates instead of only parking ---------------
@@ -472,3 +499,255 @@ def test_a_single_profile_board_still_parks_and_writes_no_profile_state(store, b
     assert b["id"] not in runs.started
     assert view["paused_until"] == pytest.approx(resets_at)
     assert not profiles.state_path().exists()
+
+
+# -- lab isolation and v1 compatibility -------------------------------------------------
+
+
+def test_v1_read_does_not_rewrite_state_or_move_token(tmp_path):
+    old_state = {"active": "work", "profiles": ["default", "work"], "limits": {}}
+    text = json.dumps(old_state)
+    profiles.state_path().write_text(text)
+    old_token = tmp_path / "smortboard" / "tokens" / "work"
+    profiles.write_token_file(old_token, "legacy-credential")
+    assert profiles.active_profile() == "work"
+    assert profiles.read_profile_token("anthropic", "work") == "legacy-credential"
+    assert profiles.profile_path("work") == old_token
+    assert profiles.state_path().read_text() == text
+    assert not profiles.profiles_dir().exists()
+    profiles.add_profile("work", "new-credential", lab="openai", kind="api_key")
+    assert json.loads(profiles.state_path().read_text())["version"] == 2
+    assert profiles.read_profile_token("anthropic", "work") == "legacy-credential"
+
+
+def test_openai_profile_has_independent_active_kind_and_private_path(tmp_path):
+    path = profiles.add_profile("work", "credential", lab="openai", kind="api_key")
+    assert path == tmp_path / "smortboard" / "tokens" / "openai" / "work"
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+    assert profiles.active_profile("openai") == "work"
+    assert profiles.active_profile() == "default"
+    assert profiles.profile_kind("work", "openai") == "api_key"
+    assert profiles.read_profile_token("openai", "work") == "credential"
+    rows = profiles.list_all_profiles()
+    assert {(row["lab"], row["name"]) for row in rows} == {
+        ("anthropic", "default"),
+        ("openai", "work"),
+    }
+    assert "credential" not in profiles.state_path().read_text()
+
+
+def test_lab_reads_and_noop_default_activation_never_create_state():
+    assert profiles.active_profile("openai") is None
+    assert profiles.list_profiles(lab="openai") == []
+    assert profiles.next_available(lab="openai") is None
+    assert profiles.earliest_reset(lab="openai") is None
+    profiles.set_active("default")
+    assert not profiles.state_path().exists()
+    assert not profiles.profiles_dir("openai").exists()
+
+
+def test_rotation_marks_the_runs_profile_and_never_crosses_labs():
+    profiles.add_profile("work", "a", lab="openai")
+    profiles.add_profile("other", "b", lab="openai")
+    profiles.add_profile("other", "c")
+    result = profiles.handle_usage_limit(200, now=100, lab="openai", name="work")
+    assert result["next_profile"] == "other"
+    assert profiles.is_limited("work", now=100, lab="openai")
+    assert not profiles.is_limited("default", now=100)
+    assert profiles.active_profile() == "default"
+    assert profiles.active_profile("openai") == "other"
+
+
+def test_last_profile_removal_names_dependent_cards_and_keeps_token():
+    path = profiles.add_profile("work", "credential", lab="openai")
+    with pytest.raises(
+        profiles.ProfileError, match="openai.*still referenced.*task title.*card-id"
+    ):
+        profiles.remove_profile(
+            "work", lab="openai", referenced_cards=[{"id": "card-id", "title": "task title"}]
+        )
+    assert path.exists()
+    profiles.remove_profile("work", lab="openai", referenced_cards=[])
+    assert not path.exists()
+    assert profiles.list_profiles(lab="openai") == []
+    assert profiles.active_profile() == "default"
+
+
+@pytest.mark.parametrize(
+    "lab,kind", [("openai", "oauth"), ("anthropic", "api_key"), ("../bad", "api_key")]
+)
+def test_unknown_lab_or_credential_kind_writes_nothing(lab, kind):
+    with pytest.raises(profiles.ProfileError):
+        profiles.add_profile("work", "credential", lab=lab, kind=kind)
+    assert not profiles.state_path().exists()
+
+
+def test_openai_default_has_no_anthropic_file_fallback():
+    profiles.write_token_file(profiles.profile_path("default"), "anthropic-credential")
+    profiles.add_profile("default", lab="openai")
+    with pytest.raises(profiles.ProfileError, match="cannot read openai"):
+        profiles.read_profile_token("openai", "default")
+
+
+def test_parallel_lab_writes_preserve_both_states():
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(profiles.add_profile, "work", "credential", lab=lab)
+            for lab in ("openai", "anthropic")
+        ]
+        for future in futures:
+            future.result()
+    assert profiles.profile_path("work", "openai") != profiles.profile_path("work", "anthropic")
+    assert len(profiles.list_all_profiles()) == 3
+
+
+def test_one_lab_pauses_while_the_other_lab_still_starts(store, board_and_repo):
+    from smortboard.labs.catalog import load_catalog
+
+    board_id, repo_id = board_and_repo
+    store.set_setting("max_parallel", "1")
+    profiles.add_profile("work", "key", lab="openai", kind="api_key")
+    first = store.create_card(board_id, repo_id, "anthropic card")
+    model = load_catalog()["openai"]["models"][0]["id"]
+    second = store.create_card(board_id, repo_id, "openai card", lab="openai", model=model)
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    assert runs.started == [first["id"]]
+    store.append_event(
+        first["id"],
+        "rate_limit_event",
+        {
+            "lab": "anthropic",
+            "profile": "default",
+            "neutral": [
+                {
+                    "kind": "rate_limit",
+                    "lab": "anthropic",
+                    "profile": "default",
+                    "rate_limit": {"status": "refused", "resets_at": time.time() + 100},
+                }
+            ],
+        },
+    )
+    runs.finish(first["id"], "USAGE_LIMIT")
+    assert runs.started == [first["id"], second["id"]]
+    assert set(scheduler.schedule_view()["paused_labs"]) == {"anthropic"}
+
+
+def test_reset_filter_uses_the_runs_lab_and_profile(store, board_and_repo):
+    from smortboard.scheduler import _latest_reset
+
+    board_id, repo_id = board_and_repo
+    card = store.create_card(board_id, repo_id, "a")
+    for lab, profile, reset in [
+        ("anthropic", "work", 100),
+        ("openai", "work", 200),
+        ("anthropic", "other", 300),
+    ]:
+        store.append_event(
+            card["id"],
+            "rate_limit",
+            {
+                "lab": lab,
+                "profile": profile,
+                "neutral": [
+                    {
+                        "kind": "rate_limit",
+                        "lab": lab,
+                        "profile": profile,
+                        "rate_limit": {"status": "refused", "resets_at": reset},
+                    }
+                ],
+            },
+        )
+    assert _latest_reset(store, "anthropic", "work") == 100
+    assert _latest_reset(store, "openai", "work") == 200
+    assert _latest_reset(store, "anthropic", "default") is None
+
+
+def test_midrun_activation_does_not_mark_the_new_active_profile_limited(store, board_and_repo):
+    board_id, repo_id = board_and_repo
+    profiles.add_profile("other", "token")
+    card = store.create_card(board_id, repo_id, "a")
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    profiles.set_active("other")
+    store.append_event(
+        card["id"],
+        "rate_limit_event",
+        {
+            "lab": "anthropic",
+            "profile": "default",
+            "rate_limit_info": {"resetsAt": time.time() + 100},
+        },
+    )
+    runs.finish(card["id"], "USAGE_LIMIT")
+    assert profiles.is_limited("default")
+    assert not profiles.is_limited("other")
+
+
+def test_cross_lab_worker_fallback_is_opt_in_and_does_not_rewrite_the_card(store, board_and_repo):
+    from smortboard.labs.catalog import load_catalog
+    from smortboard.labs.routing import run_ref
+
+    board_id, repo_id = board_and_repo
+    model = load_catalog()["openai"]["models"][0]["id"]
+    profiles.add_profile("work", "key", lab="openai", kind="api_key")
+    store.set_setting("worker_cross_lab_fallback", [f"openai/{model}"])
+    card = store.create_card(board_id, repo_id, "a")
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    runs.finish(card["id"], "USAGE_LIMIT")
+    assert runs.started == [card["id"], card["id"]]
+    current = store.get_card(card["id"])
+    assert current["model"] is None and current["lab"] is None
+    assert run_ref(store, "worker", current) == ("openai", model)
+    events = store.list_events(card["id"])
+    fallback = next(event["payload"] for event in events if event["kind"] == "lab_fallback")
+    assert fallback["profile"] == "work" and fallback["from_lab"] == "anthropic"
+    assert any(f"openai/{model}" in comment["body"] for comment in current["comments"])
+    assert run_ref(store, "worker", current, consume=True) == ("openai", model)
+    assert run_ref(store, "worker", current) == ("anthropic", "sonnet")
+
+
+def test_reviewer_fallback_changes_only_the_failed_role(store, board_and_repo):
+    from smortboard.labs.catalog import load_catalog
+    from smortboard.labs.routing import run_ref
+
+    board_id, repo_id = board_and_repo
+    model = load_catalog()["openai"]["models"][0]["id"]
+    profiles.add_profile("work", "key", lab="openai", kind="api_key")
+    store.set_settings(
+        {
+            "worker_lab": "openai",
+            "worker_model": model,
+            "reviewer_cross_lab_fallback": [f"openai/{model}"],
+        }
+    )
+    card = store.create_card(board_id, repo_id, "a")
+    runs = FakeRuns()
+    scheduler = BoardScheduler(board_id, store.path, runs)
+    scheduler.start_all()
+    store.append_event(
+        card["id"],
+        "result",
+        {
+            "lab": "anthropic",
+            "profile": "default",
+            "role": "reviewer",
+            "neutral": [
+                {"kind": "result", "result": {"ok": False, "blocked_reason_code": "USAGE_LIMIT"}}
+            ],
+        },
+    )
+    runs.finish(card["id"], "USAGE_LIMIT")
+    assert runs.started == [card["id"], card["id"]]
+    assert run_ref(store, "reviewer", card) == ("openai", model)
+    assert run_ref(store, "worker", card) == ("openai", model)
+    assert set(scheduler.schedule_view()["paused_labs"]) == {"anthropic"}

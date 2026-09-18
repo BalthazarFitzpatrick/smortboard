@@ -263,7 +263,15 @@ def test_usage_is_empty_on_a_fresh_board(running_server):
     base_url, _server = running_server
     status, body = _request(f"{base_url}/api/usage")
     assert status == 200
-    assert body == {"windows": [], "models": [], "total_cost_usd": 0.0, "runs": 0}
+    assert body == {
+        "windows": [],
+        "models": [],
+        "total_cost_usd": 0.0,
+        "runs": 0,
+        "known_cost_usd": 0.0,
+        "unknown_costs": 0,
+        "cost_estimated": False,
+    }
 
 
 # -- prompts -----------------------------------------------------------------

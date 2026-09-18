@@ -234,6 +234,9 @@ function buildInboxCard(row, idx, focused) {
   card.append(reasonRow, title, board, action, buildSummary(row));
 
   card.addEventListener('keydown', evt => onCardKey(evt, card));
+  // with the mouse enabled (settings, o), hovering focuses the row the arrows would - the same
+  // focusin path, so the panel's own focus index never disagrees with what is lit
+  card.addEventListener('mouseenter', () => hoverFocus(card, () => card.focus()));
 
   if (!focused) return card;
 

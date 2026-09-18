@@ -37,6 +37,15 @@ def _titles(store, board_id):
     return sorted(card["title"] for card in store.list_cards(board_id))
 
 
+def test_fold_preserves_lab_with_the_selected_model(store, board):
+    board_id, repo_id, _ = board
+    a = _card(store, board_id, repo_id, "a", leases=["x.py"], lab="openai", model="gpt-5.6-sol")
+    b = _card(store, board_id, repo_id, "b", leases=["x.py"])
+    apply_folds(store, board_id, [{"cards": [a["id"], b["id"]], "title": "merged"}])
+    merged = store.list_cards(board_id)[0]
+    assert (merged["lab"], merged["model"]) == ("openai", "gpt-5.6-sol")
+
+
 def test_a_group_becomes_one_card_carrying_every_criterion_lease_and_dependency(store, board):
     board_id, repo_id, _ = board
     base = _card(store, board_id, repo_id, "base", status="accepted")

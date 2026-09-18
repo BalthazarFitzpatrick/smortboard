@@ -50,7 +50,7 @@ def test_boards_overview_with_no_boards(store):
     assert overview["boards"] == []
     assert overview["totals"]["cost_usd"] == 0
     assert overview["totals"]["cost_per_pr_usd"] is None
-    assert overview["orchestrator_turns_counted"] is False
+    assert overview["orchestrator_turns_counted"] is True
 
 
 def test_boards_overview_rolls_up_one_board(store):
@@ -72,7 +72,13 @@ def test_boards_overview_rolls_up_one_board(store):
     assert row["worker_cost_usd"] == pytest.approx(0.10)
     assert row["reviewer_cost_usd"] == pytest.approx(0.03)
     assert row["cost_per_pr_usd"] == pytest.approx(0.13)
-    assert row["spend_by_model"] == [{"model": "claude-sonnet-4", "cost_usd": pytest.approx(0.13)}]
+    assert row["spend_by_model"] == [
+        {
+            "model": "anthropic/claude-sonnet-4",
+            "cost_usd": pytest.approx(0.13),
+            "cost_estimated": False,
+        }
+    ]
 
     totals = overview["totals"]
     assert totals["cost_usd"] == pytest.approx(0.13)
@@ -111,7 +117,7 @@ def test_boards_overview_never_counts_orchestrator_turns(store):
     board = store.create_board("b")
     store.create_card(board["id"], None, "a card")
     overview = boards_overview(store)
-    assert overview["orchestrator_turns_counted"] is False
+    assert overview["orchestrator_turns_counted"] is True
 
 
 # -- the c panel's redesigned 3x3 grid: total / accepted / refused, keyed off card status --------
@@ -122,6 +128,7 @@ def test_cost_groups_are_empty_with_no_cards(store):
     empty = {
         "cards": 0,
         "cost_usd": 0,
+        "cost_estimated": False,
         "prs": 0,
         "cost_per_card_usd": None,
         "cost_per_pr_usd": None,
@@ -160,6 +167,7 @@ def test_cost_groups_count_a_rejected_card_as_refused(store):
     assert groups["refused"] == {
         "cards": 1,
         "cost_usd": pytest.approx(0.05),
+        "cost_estimated": False,
         "prs": 0,
         "cost_per_card_usd": pytest.approx(0.05),
         "cost_per_pr_usd": None,

@@ -60,9 +60,12 @@ function pullsMarker(text, className) {
 
 // built with createElement/appendChild, not innerHTML - the test dom stub does not parse innerHTML
 // strings back into a tree, same reason inbox.js's rows are built this way
-function buildPullsRow(row) {
+function buildPullsRow(row, index) {
   const rowEl = document.createElement('div');
   rowEl.className = 'pulls-row';
+  // this list tracks its selection as pl.activeIndex rather than dom focus (see the file header),
+  // so hovering moves that index - the mouse's half of the up/down keys, off unless enabled
+  rowEl.addEventListener('mouseenter', () => hoverFocus(rowEl, () => setActiveIndex(index)));
 
   rowEl.appendChild(document.createElement('div')).className = 'h-divider';
 
@@ -117,7 +120,7 @@ function renderPulls() {
     return;
   }
   pl.activeIndex = Math.min(pl.activeIndex, pl.rows.length - 1);
-  pl.rows.forEach(row => pl.listEl.appendChild(buildPullsRow(row)));
+  pl.rows.forEach((row, i) => pl.listEl.appendChild(buildPullsRow(row, i)));
   setActiveIndex(pl.activeIndex);
 }
 
@@ -152,8 +155,9 @@ function acceptActivePullsRow() {
   const row = pl.rows[index];
   if (!row) return;
   pl.confirming = true;
+  // accepting is reversible from the card, so the confirm opens on the yes - same as the board's y
   openActionConfirm('accept this pull request?', 'accept', 'cancel',
-    () => doAcceptActivePullsRow(index, row), () => { pl.confirming = false; });
+    () => doAcceptActivePullsRow(index, row), () => { pl.confirming = false; }, 'confirm');
 }
 
 async function doAcceptActivePullsRow(index, row) {
@@ -187,6 +191,7 @@ function openPullsPanel() {
   document.body.appendChild(pl.backdrop);
   document.addEventListener('keydown', onPullsKey);
   loadPulls();
+  focusPanel(pl.panel);
 }
 
 function closePullsPanel() {

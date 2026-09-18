@@ -286,6 +286,62 @@ def test_clone_of_missing_source_raises_worktree_error(tmp_path):
 # -- cleanup on success and on failure -----------------------------------------
 
 
+def test_resumed_run_excludes_base_merge_but_keeps_rejected_changes(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    def git(path, *args):
+        return subprocess.run(
+            ["git", "-C", str(path), *args], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    token = tmp_path / "token"
+    token.write_text("test-token")
+    token.chmod(0o600)
+    edit = {"path": "allowed.py", "text": "first\n"}
+
+    def worker(store, card_id, cmd, cwd=None, **kwargs):
+        if edit:
+            (cwd / edit["path"]).write_text(edit["text"])
+            git(cwd, "add", edit["path"])
+            git(cwd, "commit", "-m", "worker change")
+        return _fake_result()
+
+    monkeypatch.setattr(backends, "run_process", worker)
+    with Store(tmp_path / "board.db") as store:
+        board = store.create_board("b")
+        registered = store.create_repo(board["id"], "repo", str(repo), "main")
+        card = store.create_card(board["id"], registered["id"], "card", leases=["allowed.py"])
+        tree = create_worktree(repo, card["id"])
+        store.append_event(card["id"], "worktree_created", {"base_commit": tree.base_commit})
+
+        def run():
+            return ContainerBackend().run_card(
+                store,
+                card["id"],
+                tree.path,
+                "prompt",
+                tmp_path / "settings.json",
+                repo=registered,
+                token_path=token,
+            )
+
+        assert run().blocked_reason_code is None
+        (repo / "README.md").write_text("unrelated base update\n")
+        git(repo, "commit", "-am", "base update")
+        git(tree.path, "merge", "main", "--no-edit")
+        edit["text"] = "resumed\n"
+        assert run().blocked_reason_code is None
+
+        edit.update(path="README.md", text="unauthorized worker edit\n")
+        assert run().blocked_reason_code == "LEASE_CONFLICT"
+        edit.clear()
+        assert run().blocked_reason_code == "LEASE_CONFLICT"
+        edit.update(path="README.md", text="unrelated base update\n")
+        assert run().blocked_reason_code is None
+
+
 def test_container_run_card_cleans_up_clone_on_success(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -407,7 +463,6 @@ def test_config_base_honours_xdg_config_home(tmp_path, monkeypatch):
 def test_the_default_token_path_is_honoured(tmp_path, monkeypatch):
     """exercises card_token_path()'s default branch, which nothing reached before - ruff caught an
     undefined constant on that line that the whole suite had walked straight past."""
-    monkeypatch.setattr("smortboard.exec.backends._credential_store_token", lambda: None)
     token = tmp_path / "card_token"
     token.write_text("from-the-file\n")
     token.chmod(0o600)
@@ -417,7 +472,6 @@ def test_the_default_token_path_is_honoured(tmp_path, monkeypatch):
 
 
 def test_a_group_readable_default_token_is_refused(tmp_path, monkeypatch):
-    monkeypatch.setattr("smortboard.exec.backends._credential_store_token", lambda: None)
     token = tmp_path / "card_token"
     token.write_text("from-the-file\n")
     token.chmod(0o644)
@@ -426,27 +480,15 @@ def test_a_group_readable_default_token_is_refused(tmp_path, monkeypatch):
         read_card_token()
 
 
-def test_a_file_wins_and_the_credential_store_is_never_asked(tmp_path, monkeypatch):
-    # every macos keychain read raised a prompt, so with a file present it must not happen at all
-    asked = []
-    monkeypatch.setattr(
-        "smortboard.exec.backends._credential_store_token",
-        lambda: asked.append(True) or "from-the-keychain",
-    )
-    token = tmp_path / "card_token"
-    token.write_text("from-the-file\n")
-    token.chmod(0o600)
+@pytest.mark.parametrize("contents", [None, ""])
+def test_missing_or_empty_default_token_is_refused(tmp_path, monkeypatch, contents):
+    token = tmp_path / "token"
+    if contents is not None:
+        token.write_text(contents)
+        token.chmod(0o600)
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(token))
-    assert read_card_token() == "from-the-file"
-    assert asked == []
-
-
-def test_the_credential_store_is_the_fallback_without_a_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "smortboard.exec.backends._credential_store_token", lambda: "from-the-keychain"
-    )
-    monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "absent"))
-    assert read_card_token() == "from-the-keychain"
+    with pytest.raises(CardTokenMissing, match="claude setup-token"):
+        read_card_token()
 
 
 def test_the_instructions_name_the_platform_actually_in_use(tmp_path, monkeypatch):
@@ -460,12 +502,11 @@ def test_the_instructions_name_the_platform_actually_in_use(tmp_path, monkeypatc
 
     monkeypatch.setattr("smortboard.exec.backends.os.name", "nt")
     win = backends._store_instructions(absent)
-    assert "Credential Manager" in win
+    assert "user profile directory" in win
     assert "security add-generic-password" not in win
 
     monkeypatch.setattr("smortboard.exec.backends.os.name", "posix")
-    monkeypatch.setattr("smortboard.exec.backends.sys.platform", "darwin")
-    assert "security add-generic-password" in backends._store_instructions(absent)
+    assert "mode 600" in backends._store_instructions(absent)
 
 
 def test_a_repo_brings_its_own_image_and_a_card_still_gets_its_own_container(tmp_path):

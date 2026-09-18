@@ -6,16 +6,28 @@
 
 // ---- one confirm shape for every "starts or lands work" action -------------------------------
 // same two-item menu openDeleteConfirm/openStopConfirm already use, generalised so every shortcut
-// that spends money or moves a card gets the same gate. y or enter confirms without touching the
-// mouse; escape (Menu's own handler) cancels - neither key ever reaches onConfirm on its own.
-function openActionConfirm(title, confirmLabel, cancelLabel, onConfirm, onDismiss) {
+// that spends money or moves a card gets the same gate. y confirms without touching the mouse;
+// escape (Menu's own handler) cancels - neither key ever reaches onConfirm on its own.
+
+// WHICH BUTTON THE CONFIRM OPENS ON, so a stray enter does the safe thing: a reversible move
+// (accept, reject, stop) opens on yes, anything expensive or destructive (run, model, delete,
+// run the board, fold) opens on no. enter then activates whatever is focused, Menu's own job
+function focusMenuItem(menu, id) {
+  const row = menu?.el?.querySelector?.(`.menu-item[data-id="${id}"]`);
+  if (!row) return;
+  row.tabIndex = -1;
+  row.focus();
+}
+
+function openActionConfirm(title, confirmLabel, cancelLabel, onConfirm, onDismiss, defaultTo = 'cancel') {
+  const returnTo = document.activeElement;
   const menu = new Menu({
     title,
     sections: [{
       kind: 'list',
       items: [
-        {id: 'confirm', label: confirmLabel},
-        {id: 'cancel', label: cancelLabel},
+        {id: 'confirm', label: confirmLabel, autofocus: defaultTo === 'confirm'},
+        {id: 'cancel', label: cancelLabel, autofocus: defaultTo !== 'confirm'},
       ],
       onPick: item => {
         menu.close();
@@ -26,8 +38,12 @@ function openActionConfirm(title, confirmLabel, cancelLabel, onConfirm, onDismis
   });
   menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
   menu.el?.classList.add('menu-centered');
+  focusMenuItem(menu, defaultTo === 'confirm' ? 'confirm' : 'cancel');
+  returnFocusOnDismiss(menu, returnTo);
+  // y is the explicit yes whatever holds focus; enter is deliberately NOT bound here, so it
+  // activates the focused button instead of always confirming
   menu.el?.addEventListener('keydown', evt => {
-    if (evt.key !== 'y' && evt.key !== 'Enter') return;
+    if (evt.key !== 'y') return;
     evt.preventDefault();
     evt.stopPropagation();
     menu.close();
@@ -233,6 +249,8 @@ function renderCardStrip(card) {
   });
   strip.addEventListener('keydown', evt => {
     if (withModifier(evt)) return;
+    // a panel over the board owns space and enter - they used to open this card underneath it
+    if (surfaceOverBoard()) return;
     if (evt.code !== 'Enter' && evt.code !== 'NumpadEnter' && evt.code !== 'Space') return;
     evt.preventDefault();
     // the document handler also closes on space, so a press handled here stops here
@@ -242,11 +260,66 @@ function renderCardStrip(card) {
     if (evt.code === 'Space' && openCard?.expander === expander) expander.close();
     else expander.open();
   });
+  // WITH THE MOUSE ENABLED (settings, o), the pointer does what the arrows do: hovering focuses
+  // this card, which is the same call that lights it and fans its column - one state, not two
+  strip.addEventListener('mouseenter', () => hoverFocus(strip, () => {
+    strip.tabIndex = 0;
+    strip.focus();
+    indicateCardFocus(strip);
+  }));
+  // right-click is m for the mouse: the same menu, anchored where the pointer is. the browser's
+  // own menu is suppressed on a card only, and only while the setting is on
+  strip.addEventListener('contextmenu', evt => {
+    if (!mouseAffordances()) return;
+    evt.preventDefault();
+    // the menu and the keyboard must agree on which card this is, so the click focuses it first
+    strip.tabIndex = 0;
+    strip.focus();
+    indicateCardFocus(strip);
+    openCardOverflowMenu(card.id, {x: evt.clientX, y: evt.clientY});
+  });
   strip._expander = expander;
   return strip;
 }
 
 // ---- card panel: the open card's sections, and the outcome they render -----------------------
+
+// the open card is a surface of its own: its sections are the rows the cursor walks, the way the
+// board's arrows walk cards. the first one takes focus when the panel renders, so up and down have
+// somewhere to move from
+function focusFirstCardSection(panel) {
+  const section = panel.querySelector('.card-section');
+  if (!section) return null;
+  section.tabIndex = 0;
+  section.focus();
+  return section;
+}
+
+// the card's one text entry. escape stops here so the panel's own escape (added by makeExpander)
+// sees a still-open card and only takes the input->card step; the card->closed step is its job
+function wireCommentInput(input, panel, cardId) {
+  if (!input) return;
+  input.addEventListener('keydown', evt => {
+    // ARROWS INSIDE THE BOX BELONG TO THE BOX. makeBuckets listens on the panel and the input sits
+    // inside a .card-section, so without this, down from the caret stepped to the next section
+    if (evt.code === 'ArrowUp' || evt.code === 'ArrowDown') { evt.stopPropagation(); return; }
+    if (evt.code === 'Escape') {
+      evt.stopPropagation();
+      // NOT input.blur(). blur drops focus on <body>, and from there every arrow key is dead - the
+      // card has to take it back so escape steps out of the input rather than out of the app
+      const section = panel.querySelector('.card-section');
+      if (section) section.focus(); else input.blur();
+    }
+    if (evt.code === 'Enter') {
+      evt.preventDefault();
+      const body = input.value.trim();
+      if (body) api(`/api/cards/${cardId}/comments`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({author: 'operator', body}),
+      }).then(() => openCardPanel(panel, cardId));
+    }
+  });
+}
 
 async function openCardPanel(panel, cardId) {
   const [card, outcome] = await Promise.all([
@@ -271,27 +344,14 @@ async function openCardPanel(panel, cardId) {
   // the panel's one .card-sections div is a single-column bucket - reuses the 2D grid nav as a
   // plain vertical list rather than inventing a second focus system for "move between sections"
   const sectionsApi = makeBuckets(panel, {bucketSel: '.card-sections', rowSel: '.card-section'});
+  // THE OPEN CARD TAKES THE KEYBOARD. focus used to stay on the strip behind the panel, so up and
+  // down did nothing here and the sections were only reachable by / and then escape
+  focusFirstCardSection(panel);
 
+  // kept as a const: openCard carries it below, which is what / falls back to when the card is
+  // the only thing open
   const input = panel.querySelector('.comment-input');
-  // stop Escape here so the panel's own Escape (added by makeExpander) sees a still-open card and
-  // only takes the input->panel step - the panel->closed step is makeExpander's own job
-  input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') {
-      evt.stopPropagation();
-      // NOT input.blur(). blur drops focus on <body>, and from there every arrow key is dead - the
-      // panel has to take it back so escape steps out of the input rather than out of the app
-      const section = panel.querySelector('.card-section');
-      if (section) section.focus(); else input.blur();
-    }
-    if (evt.code === 'Enter') {
-      evt.preventDefault();
-      const body = input.value.trim();
-      if (body) api(`/api/cards/${cardId}/comments`, {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({author: 'operator', body}),
-      }).then(() => openCardPanel(panel, cardId));
-    }
-  });
+  wireCommentInput(input, panel, cardId);
 
   // a board note's own primary action, where the CTA does something other than re-open this
   // already-open panel - run/stop reuse the same handlers the strip's CTA does
@@ -358,9 +418,12 @@ function outcomeSectionHtml(outcome, card = {}) {
   return sectionHtml('outcome', 'outcome', parts.join(''));
 }
 
-// one section per field: data-section names it for the layouts, .field-value holds what it says
+// one section per field: data-section names it for the layouts, .field-value holds what it says.
+// focus-glow-soft is the quiet version of the card's own focus treatment (ui_base): a section is a
+// smaller thing than a card, so it wears the same look at a third of the lift and light
+const SECTION_CLASS = 'card-section focus-glow focus-glow-soft';
 function sectionHtml(name, label, value) {
-  return `<div class="card-section" tabindex="0" data-section="${name}"><div class="field-label">${label}</div><div class="section-value">${value}</div></div>`;
+  return `<div class="${SECTION_CLASS}" tabindex="0" data-section="${name}"><div class="field-label">${label}</div><div class="section-value">${value}</div></div>`;
 }
 
 // board-written notes lead with a one-line headline now (lifecycle.py's _note callers write it
@@ -427,14 +490,14 @@ function cardPanelHtml(card, outcome) {
     <div class="card-sections">
       ${sectionHtml('title', 'title', `${escapeHtml(card.title)} <span class="card-id">${escapeHtml(shortId(card.id))}</span>`)}
       ${sectionHtml('workstream', 'workstream', escapeHtml(card.workstream || '') || '<span class="empty">none</span>')}
-      ${sectionHtml('status', 'status', `${next}${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div><div class="card-model">lease: ${lease}</div>`)}
+      ${sectionHtml('status', 'status', `${next}${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model, card.lab))}</div><div class="card-model">complexity: ${escapeHtml(complexityLabel(card))}</div><div class="card-model">lease: ${lease}</div>`)}
       ${outcomeSectionHtml(outcome, card)}
       ${sectionHtml('description', 'description', escapeHtml(card.description || ''))}
       ${sectionHtml('tasks', 'tasks', listHtml(tasks))}
       ${sectionHtml('criteria', 'acceptance criteria', listHtml(criteria))}
       ${sectionHtml('deps', 'dependencies', listHtml(deps))}
       ${sectionHtml('attachments', 'attachments', listHtml(attachments))}
-      <div class="card-section" tabindex="0" data-section="comments"><div class="field-label">comments</div>
+      <div class="${SECTION_CLASS}" tabindex="0" data-section="comments"><div class="field-label">comments</div>
         <div class="section-value">${listHtml(comments)}</div>
         <input class="comment-input text-field" placeholder="add a comment, enter to send">
       </div>
@@ -442,37 +505,121 @@ function cardPanelHtml(card, outcome) {
   `;
 }
 
-// ---- model (m) - which model the focused card's worker runs on --------------------------------
+// ---- complexity - low/medium/high, rated or estimated ------------------------------------------
 
-// null is the board default (the worker_model setting, else sonnet); the rest are claude aliases
-const CARD_MODELS = [null, 'haiku', 'sonnet', 'opus'];
+const COMPLEXITY_LEVELS = [1, 2, 3];
+const COMPLEXITY_LABELS = {1: 'low', 2: 'medium', 3: 'high'};
 
-function modelLabel(model) {
-  return model || 'board default';
+// mirrors telemetry.estimate_complexity - a display-only guess for an unrated card, never sent
+// back to the server. see that function's docstring for the scoring rule
+function estimateComplexity(card) {
+  const globs = (card.leases || []).map(l => l.path_glob || '');
+  let score = (card.criteria || []).length + (card.tasks || []).length;
+  if (globs.some(g => g.includes('**'))) score += 2;
+  else if (globs.length) score += 1;
+  if ((modelCatalog[card.lab || 'anthropic']?.models || []).some(m => m.id === card.model && m.tier === 'deep')) score += 2;
+  if (score <= 3) return 1;
+  if (score <= 6) return 2;
+  return 3;
 }
 
-// cycles default -> haiku -> sonnet -> opus -> default. a model set outside the cycle (a full id)
-// steps back to the default, so the key always lands somewhere the next press can leave
-async function cycleCardModel(cardId = actionableCardId()) {
+function complexityLabel(card) {
+  const level = typeof card === 'object' ? card.complexity : card;
+  if (COMPLEXITY_LEVELS.includes(level)) return COMPLEXITY_LABELS[level];
+  if (typeof card === 'object') return `${COMPLEXITY_LABELS[estimateComplexity(card)]} (estimated)`;
+  return 'unrated';
+}
+
+// cycles low -> medium -> high -> low, same wrap as cycleCardModel
+async function cycleCardComplexity(cardId = actionableCardId()) {
   if (!cardId) return;
   let next;
   try {
     const card = await api(`/api/cards/${cardId}`);
-    next = CARD_MODELS[(CARD_MODELS.indexOf(card.model ?? null) + 1) % CARD_MODELS.length];
+    // unrated lands on low first; otherwise the same wrap as cycleCardModel
+    const currentIndex = COMPLEXITY_LEVELS.indexOf(card.complexity);
+    next = COMPLEXITY_LEVELS[(currentIndex + 1) % COMPLEXITY_LEVELS.length];
   } catch (err) {
-    showRun(cardId, "can't change model", null, err.message);
+    showRun(cardId, "can't change complexity", null, err.message);
     return;
   }
-  openActionConfirm(`switch to ${modelLabel(next)}?`, 'switch model', 'cancel',
-    () => doCycleCardModel(cardId, next));
+  openActionConfirm(`switch to ${COMPLEXITY_LABELS[next]}?`, 'switch complexity', 'cancel',
+    () => doCycleCardComplexity(cardId, next));
 }
 
-async function doCycleCardModel(cardId, next) {
+async function doCycleCardComplexity(cardId, next) {
   try {
     const updated = await api(`/api/cards/${cardId}`, {
-      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: next}),
+      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({complexity: next}),
     });
-    const label = `model: ${modelLabel(updated.model)}`;
+    const label = `complexity: ${complexityLabel(updated)}`;
+    showRun(cardId, label);
+    const shown = document.querySelectorAll('.card-panel [data-section="status"] .card-model');
+    if (shown.length > 1 && openCard && openCard.cardId === cardId) shown[1].textContent = label;
+  } catch (err) {
+    showRun(cardId, "can't change complexity", null, err.message);
+  }
+}
+
+// ---- model (m) - which model the focused card's worker runs on --------------------------------
+
+let modelCatalog = {};
+
+function modelLabel(model, lab) {
+  return model ? (model.includes('/') ? model : `${lab || 'anthropic'}/${model}`) : 'board default';
+}
+
+async function loadModelCatalog() {
+  modelCatalog = await api('/api/catalog');
+  return modelCatalog;
+}
+
+async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200, y: 80}, onBack = null) {
+  const catalog = await loadModelCatalog();
+  const showLabs = () => {
+    let picked = false;
+    const menu = new Menu({title: 'choose lab', sections: [{kind: 'list', items: [
+      {id: 'default', label: 'board default'},
+      ...Object.entries(catalog).map(([lab, entry]) => ({id: lab, label: lab,
+        disabled: entry.available === false, stats: entry.available === false ? entry.unavailable_reason || 'no usable profile' : ''})),
+    ], onPick: item => {
+      if (item.disabled) return;
+      picked = true;
+      menu.close();
+      if (item.id === 'default') onPick(null, null);
+      else showModels(item.id);
+    }}]});
+    menu.openAt(anchor);
+    if (onBack) menu.onDismiss = () => { if (!picked) onBack(); };
+  };
+  const showModels = lab => {
+    let picked = false;
+    const menu = new Menu({title: `${lab} models`, sections: [{kind: 'list',
+      items: catalog[lab].models.map(model => ({id: model.id, label: model.label, stats: model.tier})),
+      onPick: item => { picked = true; menu.close(); onPick(lab, item.id); },
+    }]});
+    menu.openAt(anchor);
+    menu.onDismiss = () => { if (!picked) showLabs(); };
+  };
+  showLabs();
+}
+
+async function cycleCardModel(cardId = actionableCardId()) {
+  if (!cardId) return;
+  try {
+    await openModelPicker((lab, model) => doCycleCardModel(cardId, model, lab), undefined,
+      () => openCardActionsMenu(cardId));
+  } catch (err) {
+    showRun(cardId, "can't change model", null, err.message);
+  }
+}
+
+async function doCycleCardModel(cardId, next, lab = null) {
+  try {
+    const updated = await api(`/api/cards/${cardId}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({lab, model: next}),
+    });
+    const label = `model: ${modelLabel(updated.model, updated.lab)}`;
     showRun(cardId, label);
     const shown = document.querySelector('.card-panel [data-section="status"] .card-model');
     if (shown && openCard && openCard.cardId === cardId) shown.textContent = label;
@@ -481,10 +628,12 @@ async function doCycleCardModel(cardId, next) {
   }
 }
 
-// ---- card overflow menu (...) - edit, delete, change model, move status ---------------------------
-// the four actions any card can take. change model reuses cycleCardModel above as-is; edit reuses
-// the same open-to-edit the strip's own Enter/Space already does - the panel is where every field
-// on a card lives, so there is nothing further to build for it. delete and move-status are new.
+// ---- the card's own menu (m, and the ⋯ trigger) - edit, model, complexity, move to, delete ------
+// THE ONLY ROUTE TO FOUR OF THESE. e, j, del and m-cycles-the-model were each their own binding;
+// they are rows here now, so the menu has to be fully operable from the keyboard: m opens it,
+// arrows move, enter picks, escape closes it and hands the card back.
+// change model reuses cycleCardModel below as-is; edit reuses the same open-to-edit the strip's
+// own Enter/Space already does - the panel is where every field on a card lives.
 
 function editCard(cardId = actionableCardId()) {
   if (!cardId || (openCard && openCard.cardId === cardId)) return;
@@ -509,32 +658,40 @@ async function moveCardStatus(cardId, status) {
   if (strip) { strip.focus(); indicateCardFocus(strip); }
 }
 
-function openMoveStatusMenu(cardId = actionableCardId()) {
+// onBack (optional) is what escape goes back TO: opened from the card menu, one level back is
+// that menu rather than the board - the same one-level rule, applied inside a menu
+function openMoveStatusMenu(cardId = actionableCardId(), onBack = null) {
   if (!cardId) return;
+  const returnTo = document.activeElement;
+  let picked = false;
   const current = document.querySelector(`.card-strip[data-card-id="${cardId}"]`)?.dataset.status;
   const menu = new Menu({
     title: 'move to',
     sections: [{
       kind: 'list',
       items: STATUSES.map(s => ({id: s, label: STATUS_LABELS[s] || s, disabled: s === current})),
-      onPick: item => { menu.close(); moveCardStatus(cardId, item.id); },
+      onPick: item => { picked = true; menu.close(); moveCardStatus(cardId, item.id); },
     }],
   });
   menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
   menu.el?.classList.add('menu-centered');
+  if (onBack) menu.onDismiss = () => { if (!picked) onBack(); };
+  else returnFocusOnDismiss(menu, returnTo);
   return menu;
 }
 
 // same two-item confirm shape as the stop-a-run menu above - a destructive action states the
 // consequence and makes the operator pick "keep it" over actually saying delete
 function openDeleteConfirm(cardId) {
+  const returnTo = document.activeElement;
   const menu = new Menu({
     title: 'delete this card?',
     sections: [{
       kind: 'list',
       items: [
         {id: 'delete', label: 'delete the card'},
-        {id: 'keep', label: 'keep it'},
+        // destructive: "keep it" holds focus, so a stray enter never deletes
+        {id: 'keep', label: 'keep it', autofocus: true},
       ],
       onPick: item => {
         menu.close();
@@ -544,6 +701,8 @@ function openDeleteConfirm(cardId) {
   });
   menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
   menu.el?.classList.add('menu-centered');
+  focusMenuItem(menu, 'keep');
+  returnFocusOnDismiss(menu, returnTo);
 }
 
 async function doDeleteCard(cardId) {
@@ -564,7 +723,9 @@ function deleteCard(cardId = actionableCardId()) {
 }
 
 // the ⋯ trigger on a card strip - always acts on that card, not whatever is focused, so a click
-// on card B's menu never touches card A even while A holds keyboard focus
+// on card B's menu never touches card A even while A holds keyboard focus.
+// `anchor` is the element it hangs under, or a {x, y} point - which is what a right-click and the
+// keyboard's own m both need
 function openCardOverflowMenu(cardId, anchor) {
   const menu = new Menu({
     title: 'card actions',
@@ -573,6 +734,7 @@ function openCardOverflowMenu(cardId, anchor) {
       items: [
         {id: 'edit', label: 'edit'},
         {id: 'model', label: 'change model'},
+        {id: 'complexity', label: 'change complexity'},
         {id: 'status', label: 'move status'},
         {id: 'delete', label: 'delete'},
       ],
@@ -580,12 +742,26 @@ function openCardOverflowMenu(cardId, anchor) {
         menu.close();
         if (item.id === 'edit') editCard(cardId);
         else if (item.id === 'model') cycleCardModel(cardId);
-        else if (item.id === 'status') openMoveStatusMenu(cardId);
+        else if (item.id === 'complexity') cycleCardComplexity(cardId);
+        else if (item.id === 'status') openMoveStatusMenu(cardId, () => openCardActionsMenu(cardId));
         else if (item.id === 'delete') deleteCard(cardId);
       },
     }],
   });
-  const rect = anchor.getBoundingClientRect();
-  menu.openAt({x: rect.left, y: rect.bottom});
+  const rect = anchor?.getBoundingClientRect?.();
+  menu.openAt(rect ? {x: rect.left, y: rect.bottom} : {x: anchor.x, y: anchor.y});
+  // escape closes just this menu and hands the keyboard back to the card it was opened on - and
+  // stands aside where a row's own pick (delete, move to) has just opened a menu of its own
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  returnFocusOnDismiss(menu, openCard ? null : strip);
   return menu;
+}
+
+// the same menu from the keyboard (l) - anchored on the focused card's own strip, since there is
+// no click position to open against
+function openCardActionsMenu(cardId = actionableCardId()) {
+  if (!cardId) return;
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  if (!strip) return;
+  return openCardOverflowMenu(cardId, strip);
 }

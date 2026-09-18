@@ -717,3 +717,44 @@ def test_a_spend_cap_is_a_positive_dollar_amount_or_unset(store, key):
             store.set_setting(key, bad)
     store.set_setting(key, None)
     assert store.spend_cap(key, 4.0) == 4.0
+
+
+def test_migration_18_applies_on_a_fresh_db_and_on_a_v17_database(tmp_path):
+    """board_spend exists fresh, and an old db stuck at 17 gets it without losing a board"""
+    fresh = tmp_path / "fresh.sqlite3"
+    with Store(fresh) as store:
+        board = store.create_board("b")
+        row = store.add_board_spend(board["id"], "orchestrator", 0.42)
+        assert row["cost_usd"] == 0.42
+        assert store.list_board_spend(board["id"])[0]["role"] == "orchestrator"
+
+    from smortboard.store.schema import _MIGRATIONS
+
+    old_db = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(str(old_db))
+    conn.execute("PRAGMA foreign_keys = ON")
+    for script in _MIGRATIONS[:17]:
+        conn.executescript(script)
+    conn.execute("PRAGMA user_version = 17")
+    conn.execute(
+        "INSERT INTO boards (id, name, position, created_at) VALUES ('b1','Phase 1',0,'t')"
+    )
+    conn.commit()
+    conn.close()
+
+    with Store(old_db) as reopened:
+        assert reopened.get_board("b1")["name"] == "Phase 1"
+        assert reopened.list_board_spend("b1") == []
+        row = reopened.add_board_spend("b1", "fold", 1.1)
+        assert row["board_id"] == "b1"
+
+
+def test_board_spend_today_includes_mission_control_and_fold_rows(store):
+    from smortboard.telemetry import board_spend_today
+
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "c")
+    store.append_event(card["id"], "result", {"total_cost_usd": 0.3})
+    store.add_board_spend(board["id"], "orchestrator", 0.2)
+    store.add_board_spend(board["id"], "fold", 0.1)
+    assert board_spend_today(store, board["id"]) == pytest.approx(0.6)
