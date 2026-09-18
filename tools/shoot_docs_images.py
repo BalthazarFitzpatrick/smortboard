@@ -142,6 +142,8 @@ def shoot_board_set(page: Page, out: Path) -> None:
         page.keyboard.press("Escape")
         settle(page, 800)
 
+    shoot_settings_groups(page, out)
+
     # card cost and replay are both per attempt, so they need the card with a history
     for key, name in (("KeyI", "telemetry.jpg"), ("KeyT", "replay.jpg")):
         focus_card(page, dressed)
@@ -150,6 +152,78 @@ def shoot_board_set(page: Page, out: Path) -> None:
         shoot(page, out, name)
         page.keyboard.press("Escape")
         settle(page, 800)
+
+
+# the settings panel is one scrolling column of three groups, and it has grown too tall to read as
+# one image - so it is shot as three, each scrolled to its own group and clipped to the panel
+SETTINGS_GROUPS = (
+    ("general", "settings-general.jpg"),
+    ("labs", "settings-labs.jpg"),
+)
+
+
+def shoot_settings_groups(page: Page, out: Path) -> None:
+    # blur whatever holds focus first: a key binding is dead while a field has it, so pressing `o`
+    # straight after a panel with an input silently does nothing
+    page.evaluate("() => document.activeElement && document.activeElement.blur()")
+    settle(page, 400)
+    page.keyboard.press("KeyO")
+    page.wait_for_selector(".settings-panel", timeout=8000)
+    settle(page, 1500)
+    for group, name in SETTINGS_GROUPS:
+        # scrollIntoView on the group, not a pixel offset: the sections above it change height as
+        # labs and boards are added, and a fixed offset would drift with them
+        page.evaluate(
+            """(group) => {
+              const el = document.querySelector(`.settings-group[data-group="${group}"]`);
+              if (el) el.scrollIntoView({block: 'start'});
+            }""",
+            group,
+        )
+        settle(page, 700)
+        # clip to the group itself, clamped to what the panel actually shows: clipping to the whole
+        # panel caught the tail of the section above and the head of the one below, which is what
+        # makes a set of three read as three arbitrary crops rather than three things
+        box = page.evaluate(
+            """(group) => {
+              const panel = document.querySelector('.settings-panel');
+              const el = document.querySelector(`.settings-group[data-group="${group}"]`);
+              const p = panel.getBoundingClientRect();
+              const g = el.getBoundingClientRect();
+              const top = Math.max(p.y + 1, g.y - 6);
+              const bottom = Math.min(p.y + p.height - 1, g.y + g.height + 6);
+              return {x: Math.round(p.x + 1), y: Math.round(top),
+                      width: Math.round(p.width - 2),
+                      height: Math.round(Math.max(bottom - top, 80))};
+            }""",
+            group,
+        )
+        shoot(page, out, name, clip=box)
+
+    # cost control is two buttons that open their own lists, so the group itself shows nothing worth
+    # a picture - open the per-run caps and shoot that instead
+    page.evaluate(
+        """() => {
+          const wanted = 'spend caps per run';
+          const button = [...document.querySelectorAll('.settings-panel button, .settings-panel .toggle')]
+            .find(el => el.textContent.trim() === wanted);
+          if (button) button.click();
+        }"""
+    )
+    settle(page, 1200)
+    caps = page.evaluate(
+        """() => {
+          const panel = document.querySelector('.menu-panel') || document.querySelector('.settings-panel');
+          const r = panel.getBoundingClientRect();
+          return {x: Math.round(r.x), y: Math.round(r.y),
+                  width: Math.round(r.width), height: Math.round(r.height)};
+        }"""
+    )
+    shoot(page, out, "settings-cost.jpg", clip=caps)
+    page.keyboard.press("Escape")
+    settle(page, 500)
+    page.keyboard.press("Escape")
+    settle(page, 800)
 
 
 def main() -> None:
