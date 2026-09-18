@@ -16,6 +16,19 @@ The UI offers ChatGPT login JSON and API key. The API retains `access_token`
 for credentials compatible with that CLI flag; it is not the recommended
 ChatGPT path. Named board credentials are stored separately with mode 600.
 
-Still required: a revoked-credential probe and a full mixed-lab card run through
-the test gate, reviewer and pull request. The resumed session denied access to
-the Docker socket, so it could not repeat the container proof.
+Rechecked 2026-09-18: an intentionally invalid API key produced a failed run
+whose normalized result had auth_failed=true. No real credential was revoked.
+
+A real OpenAI gpt-5.6-sol worker created and committed greeting.txt in an
+isolated repo. The committed path lease check passed, the network-disabled
+container test gate exited zero, and a named-profile Anthropic Haiku reviewer
+approved the structured review with no findings. Stored event identities
+correctly distinguished the OpenAI worker and Anthropic reviewer. OpenAI cost
+remained unknown because no price was configured. The fixture did not publish
+a throwaway pull request; normal PR behavior remains covered by integration tests.
+
+The first worker attempt exposed Codex's read-only Git metadata default.
+Writable workers now explicitly grant /workspace/.git inside their disposable
+clone; workspace-write remains enabled. A credential-free sandbox probe proved
+git add/commit works while /home/agent/outside-probe and .codex/forbidden remain
+denied. Read-only roles receive no additional writable root.

@@ -32,6 +32,10 @@ class CodexAdapter:
             "--sandbox",
             "read-only" if readonly else "workspace-write",
         ]
+        if req.role == "worker" and not readonly:
+            # codex protects git metadata even inside its writable workspace; workers
+            # must commit in their disposable clone before the board can fetch it back
+            cmd += ["-c", 'sandbox_workspace_write.writable_roots=["/workspace/.git"]']
         if req.system_prompt:
             cmd += ["-c", "developer_instructions=" + json.dumps(req.system_prompt)]
         if req.role in ("orchestrator", "fold", "reviewer"):

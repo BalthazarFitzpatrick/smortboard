@@ -6,7 +6,14 @@ import sys
 import pytest
 
 from smortboard.exec.runner import run_process
-from smortboard.labs.base import BashPolicy, Capabilities, LabEvent, RunRequest, estimate_usage
+from smortboard.labs.base import (
+    BashPolicy,
+    Capabilities,
+    LabEvent,
+    RunRequest,
+    ToolPolicy,
+    estimate_usage,
+)
 from smortboard.labs.claude_code import ClaudeCodeAdapter
 from smortboard.labs.codex import CodexAdapter
 from smortboard.labs.registry import get_adapter
@@ -88,6 +95,27 @@ def test_codex_recorded_success_stream():
     assert events[0].usage["cost_usd"] is None
     assert events[1].result["session_id"] == "thread-1"
     assert adapter.classify(events[1]) is None
+
+
+@pytest.mark.parametrize(
+    ("run_request", "can_commit"),
+    [
+        (RunRequest("brief", model="gpt-5.6-sol"), True),
+        (RunRequest("brief", read_only=True), False),
+        (RunRequest("brief", tool_policy=ToolPolicy(read_only=True)), False),
+        (RunRequest("brief", role="reviewer", read_only=True), False),
+        (RunRequest("brief", role="orchestrator", read_only=True), False),
+        (RunRequest("brief", role="fold", read_only=True), False),
+    ],
+)
+def test_codex_only_writable_workers_can_commit_in_the_container_clone(run_request, can_commit):
+    command = CodexAdapter().build_command(run_request)
+    grant = 'sandbox_workspace_write.writable_roots=["/workspace/.git"]'
+    assert (grant in command) is can_commit
+    assert command[command.index("--sandbox") + 1] == (
+        "workspace-write" if can_commit else "read-only"
+    )
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
 
 
 @pytest.mark.parametrize(
