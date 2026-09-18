@@ -41,6 +41,13 @@ function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
 class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; } refresh() {} close() {} }
+const listMenus = [];
+function spyListMenu(title, items, onPick, extra = {}) {
+  const menu = new SpyMenu({title, items, onPick, extra});
+  menu.pick = id => onPick(items.find(item => item.id === id));
+  listMenus.push(menu);
+  return menu;
+}
 
 const ROWS = [
   {name: 'default', active: true, present: true, limited_until: null},
@@ -51,8 +58,8 @@ responses.set('/api/profiles', stubJson(200, ROWS));
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('profiles.js')].join('\n;\n');
-const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {toggleProfilesPanel, openProfilesPanel, closeProfilesPanel, pr, BINDINGS};`)(SpyMenu, SpyDrawer);
+const mod = new Function('Menu', 'listMenu', 'makeDrawer', `${src}
+;return {toggleProfilesPanel, openProfilesPanel, closeProfilesPanel, pr, BINDINGS};`)(SpyMenu, spyListMenu, SpyDrawer);
 
 const flush = () => new Promise(r => setTimeout(r, 0));
 function press(code, target, extra) {
@@ -141,10 +148,24 @@ mod.closeProfilesPanel();
 mod.openProfilesPanel();
 await flush(); await flush();
 assert.equal(mod.pr.listEl.querySelectorAll('.profile-row').length, 2);
-const labSelect = mod.pr.listEl.querySelector('.profile-add-lab');
-labSelect.value = 'openai';
-labSelect.onchange();
-assert.equal(mod.pr.listEl.querySelector('.profile-add-kind').value, 'auth_json');
+assert.equal(mod.pr.listEl.querySelector('select'), null, 'the add form uses smortui menus, not native selects');
+const labButton = mod.pr.listEl.querySelector('.profile-add-lab');
+assert.ok(labButton.classList.contains('toggle'), 'the lab picker uses the smortui toggle convention');
+assert.equal(mod.pr.listEl.querySelector('.profile-add-kind'), null, 'anthropic has no redundant kind picker');
+labButton.onclick();
+assert.equal(listMenus.at(-1).opts.title, 'choose lab');
+listMenus.at(-1).pick('openai');
+assert.equal(labButton.textContent, 'openai');
+const kindButton = mod.pr.listEl.querySelector('.profile-add-kind');
+assert.equal(kindButton.textContent, 'ChatGPT login JSON');
+assert.ok(kindButton.classList.contains('toggle'), 'the OpenAI credential picker uses the smortui toggle convention');
+kindButton.onclick();
+assert.deepEqual(listMenus.at(-1).opts.items.map(item => item.id), ['auth_json', 'api_key']);
+labButton.onclick();
+listMenus.at(-1).pick('anthropic');
+assert.equal(mod.pr.listEl.querySelector('.profile-add-kind'), null, 'switching back to anthropic removes the kind picker');
+labButton.onclick();
+listMenus.at(-1).pick('openai');
 mod.pr.listEl.querySelector('.profile-add-name').value = 'json-profile';
 mod.pr.listEl.querySelector('.profile-add-token').value = '{"tokens":{"access_token":"demo"}}';
 mod.pr.listEl.querySelector('.profile-add-submit').onclick();

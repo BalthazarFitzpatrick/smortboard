@@ -182,13 +182,21 @@ menus = [];
 overflow.onclick({stopPropagation(){}});
 menus[0].pick('model');
 await flush();
-assert.equal(menus.length, 2, 'change model opens the lab picker');
+assert.equal(menus.length, 2, 'change model opens one model picker');
 assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0, 'no write before a model is selected');
-menus[1].pick('anthropic');
-assert.equal(menus.length, 2, 'a lab without a usable profile cannot be selected');
-menus[1].pick('openai');
-assert.equal(menus.length, 3, 'picking a lab opens its models');
-menus[2].pick('x');
+assert.equal(menus[1].opts.title, 'choose model');
+let modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns').columns;
+assert.equal(modelColumns[0].items.find(item => item.id === 'anthropic').disabled, true,
+  'a lab without a usable profile cannot be selected');
+modelColumns[0].onPick({id: 'openai'});
+assert.equal(menus.length, 2, 'picking a lab updates the same menu');
+modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns').columns;
+modelColumns[1].onPick({id: 'x'});
+assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0,
+  'selecting a model waits for the save action');
+const saveModel = menus[1].opts.sections.find(section => section.kind === 'buttons')
+  .buttons.find(button => button.id === 'save-model');
+saveModel.onClick(menus[1]);
 await flush();
 const modelPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
 assert.deepEqual(JSON.parse(modelPatch.opts.body), {lab: 'openai', model: 'x'},

@@ -576,32 +576,68 @@ async function loadModelCatalog() {
 
 async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200, y: 80}, onBack = null) {
   const catalog = await loadModelCatalog();
-  const showLabs = () => {
-    let picked = false;
-    const menu = new Menu({title: 'choose lab', sections: [{kind: 'list', items: [
-      {id: 'default', label: 'board default'},
-      ...Object.entries(catalog).map(([lab, entry]) => ({id: lab, label: lab,
-        disabled: entry.available === false, stats: entry.available === false ? entry.unavailable_reason || 'no usable profile' : ''})),
-    ], onPick: item => {
-      if (item.disabled) return;
-      picked = true;
-      menu.close();
-      if (item.id === 'default') onPick(null, null);
-      else showModels(item.id);
-    }}]});
-    menu.openAt(anchor);
-    if (onBack) menu.onDismiss = () => { if (!picked) onBack(); };
-  };
-  const showModels = lab => {
-    let picked = false;
-    const menu = new Menu({title: `${lab} models`, sections: [{kind: 'list',
-      items: catalog[lab].models.map(model => ({id: model.id, label: model.label, stats: model.tier})),
-      onPick: item => { picked = true; menu.close(); onPick(lab, item.id); },
-    }]});
-    menu.openAt(anchor);
-    menu.onDismiss = () => { if (!picked) showLabs(); };
-  };
-  showLabs();
+  const labs = Object.keys(catalog);
+  let selectedLab = labs.find(lab => catalog[lab].available !== false) || labs[0];
+  let selectedModel = null;
+  let picked = false;
+  let menu = null;
+
+  const buildSections = () => [{
+    kind: 'columns',
+    columns: [
+      {
+        label: 'lab',
+        multi: false,
+        items: Object.entries(catalog).map(([lab, entry]) => ({
+          id: lab,
+          label: lab,
+          on: lab === selectedLab,
+          disabled: entry.available === false,
+          stats: entry.available === false ? entry.unavailable_reason || 'no usable profile' : '',
+        })),
+        onPick: item => {
+          selectedLab = item.id;
+          selectedModel = null;
+          menu.refresh(buildSections());
+        },
+      },
+      {
+        label: 'model',
+        multi: false,
+        empty: selectedLab ? 'no models available' : 'choose a lab',
+        items: catalog[selectedLab]?.available === false ? []
+          : (catalog[selectedLab]?.models || []).map(model => ({
+            id: model.id, label: model.label, stats: model.tier, on: model.id === selectedModel,
+          })),
+        onPick: item => {
+          selectedModel = item.id;
+          menu.refresh(buildSections());
+        },
+      },
+    ],
+  }, {
+    kind: 'buttons',
+    buttons: [
+      {id: 'save-model', label: 'save', enabled: selectedModel !== null, onClick: openMenu => {
+        picked = true;
+        openMenu.close();
+        onPick(selectedLab, selectedModel);
+      }},
+      {id: 'model-default', label: 'board default', onClick: openMenu => {
+        picked = true;
+        openMenu.close();
+        onPick(null, null);
+      }},
+    ],
+  }];
+
+  menu = new Menu({
+    title: 'choose model',
+    persistent: true,
+    sections: buildSections(),
+    onDismiss: () => { if (!picked && onBack) onBack(); },
+  });
+  menu.openAt(anchor);
 }
 
 async function cycleCardModel(cardId = actionableCardId()) {

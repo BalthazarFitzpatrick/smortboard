@@ -14,7 +14,11 @@ const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 // mission_control_read_paths wholesale - '~' expands server-side, an unknown path is refused by
 // name, exactly like the real store's _check_read_paths.
 const EXPANDS = {'~/Documents/screenshots': '/home/op/Documents/screenshots'};
-const settingsState = {mission_control_read_paths: [], max_parallel: null};
+const settingsState = {
+  mission_control_read_paths: [],
+  max_parallel: null,
+  fold_cross_lab_fallback: ['anthropic/opus', 'openai/gpt-6-astra'],
+};
 const boardsState = [
   {id: 'b1', name: 'alpha', max_parallel: null, daily_budget_usd: null},
   {id: 'b2', name: 'beta', max_parallel: 1, daily_budget_usd: null},
@@ -31,7 +35,18 @@ function expandReadPath(raw) {
 function fetchStub(path, opts) {
   calls.push({path, opts});
   if (path === '/api/catalog') return Promise.resolve(stubJson(200, {
-    openai: {available: true, models: [{id: 'x', label: 'X', tier: 'standard'}]},
+    anthropic: {available: true, models: [
+      {id: 'fable', label: 'Fable', tier: 'deep'},
+      {id: 'opus', label: 'Opus', tier: 'deep'},
+      {id: 'sonnet', label: 'Sonnet', tier: 'standard'},
+      {id: 'haiku', label: 'Haiku', tier: 'light'},
+    ]},
+    openai: {available: true, models: [
+      {id: 'gpt-6-astra', label: 'Astra', tier: 'deep'},
+      {id: 'gpt-5.6-sol', label: 'Sol', tier: 'standard'},
+      {id: 'gpt-5.6-terra', label: 'Terra', tier: 'standard'},
+      {id: 'gpt-5.6-luna', label: 'Luna', tier: 'light'},
+    ]},
   }));
   if (path === '/api/boards' && (!opts || !opts.method || opts.method === 'GET')) {
     return Promise.resolve(stubJson(200, boardsState.map(b => ({...b}))));
@@ -100,13 +115,18 @@ function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
 const modelMenus = [];
-class SpyMenu { constructor(opts) { this.opts = opts; modelMenus.push(this); } openAt() { return this; } refresh() {} close() {} }
+class SpyMenu {
+  constructor(opts) { this.opts = opts; this.closed = false; modelMenus.push(this); }
+  openAt(anchor) { this.anchor = anchor; return this; }
+  refresh(sections) { this.opts.sections = sections; }
+  close() { this.closed = true; }
+}
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, BINDINGS, mc, mallCam, spendCaps,
+;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, dailyBudgets, BINDINGS, mc, mallCam, spendCaps,
   buttonRef: () => document.querySelector('.settings-button'),
   addButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'add'),
   browseButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'browse')};`)(SpyMenu, SpyDrawer);
@@ -136,26 +156,102 @@ assert.ok(!boardBar.children.includes(button), 'the button must not live inside 
 button.onclick();
 assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel');
 
-// ---- the panel renders all six sections: credential profiles, mouse, mission control can read,
-// parallelism, spend caps, mall cam interval (cf90bacc)
+// ---- the panel groups related settings while keeping each setting as its own section ------------
 await flush();
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 7,
-  'credential profiles, mouse, models by role, mission control can read, parallelism, spend caps, mall cam interval');
+const settingsGroups = mod.st.listEl.querySelectorAll('.settings-group');
+assert.deepEqual(settingsGroups.map(group => group.querySelector('.settings-group-title').textContent),
+  ['general board settings', 'labs and models', 'cost control']);
+assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-section')
+  .map(section => section.children[0].textContent)), [
+  ['mouse', 'mission control can read', 'how many cards run at once',
+    'mall cam: seconds per card while auto-cycling the workforce drawer'],
+  ['credential profiles', 'models by role'],
+  ['budgets and spend caps'],
+]);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 7);
+const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
+assert.deepEqual(costTriggers.map(trigger => trigger.textContent),
+  ['daily budgets per board', 'spend caps per run'], 'cost controls have separate compact triggers');
+const dailyTrigger = costTriggers[0];
+dailyTrigger.onclick();
+const dailyMenu = modelMenus.at(-1);
+assert.equal(dailyMenu.opts.title, 'daily budgets per board');
+assert.equal(dailyMenu.opts.persistent, true);
+assert.equal(dailyMenu.anchor, dailyTrigger, 'daily budgets open below their own trigger');
+assert.equal(dailyMenu.opts.sections.filter(section => section.kind === 'node').length, 1,
+  'the daily budget menu contains only the board budget grid');
+const spendTrigger = costTriggers[1];
+spendTrigger.onclick();
+const spendMenu = modelMenus.at(-1);
+assert.equal(spendMenu.opts.title, 'spend caps per run');
+assert.equal(spendMenu.opts.persistent, true);
+assert.equal(spendMenu.anchor, spendTrigger, 'spend caps open below their own trigger');
+assert.equal(spendMenu.opts.sections.filter(section => section.kind === 'node').length, 1,
+  'the spend cap menu contains only the per-run cap grid');
+await flush();
 
 const rolePickers = mod.st.listEl.querySelectorAll('.role-model');
 assert.equal(rolePickers.length, 4);
+const roleBlocks = mod.st.listEl.querySelectorAll('.settings-role-block');
+assert.equal(roleBlocks.length, 4, 'each model role has its own settings block');
+assert.deepEqual(roleBlocks.map(block => block.querySelector('.settings-role-name').textContent),
+  ['worker', 'reviewer', 'orchestrator', 'fold']);
+assert.ok(roleBlocks.every(block => block.querySelectorAll('.settings-role-control').length === 2),
+  'each role separates the primary model from the fallback order');
+assert.ok(roleBlocks.every(block => block.querySelector('.settings-role-status')),
+  'each role keeps save status beside its heading');
 const reviewerPicker = rolePickers.find(row => row.dataset.role === 'reviewer');
 await reviewerPicker.onclick();
-modelMenus.at(-1).opts.sections[0].onPick({id: 'openai'});
-await modelMenus.at(-1).opts.sections[0].onPick({id: 'x'});
+const primaryMenu = modelMenus.at(-1);
+assert.equal(primaryMenu.anchor, reviewerPicker,
+  'the model menu opens at the role picker that launched it');
+assert.equal(primaryMenu.opts.title, 'choose model');
+assert.equal(primaryMenu.opts.persistent, true, 'one menu stays open while choosing a lab and model');
+let primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.equal(primaryColumns[0].multi, false);
+assert.equal(primaryColumns[1].multi, false, 'primary model selection is single-select');
+primaryColumns[0].onPick({id: 'openai'});
+primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
+primaryColumns[1].onPick({id: 'gpt-6-astra'});
+assert.equal(primaryMenu.closed, false, 'selecting a primary model keeps the menu open');
+const primarySave = primaryMenu.opts.sections.find(section => section.kind === 'buttons')
+  .buttons.find(button => button.id === 'save-model');
+assert.equal(primarySave.enabled, true);
+await primarySave.onClick(primaryMenu);
 await flush();
 assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-  {reviewer_lab: 'openai', reviewer_model: 'x'});
-const fallbackInput = mod.st.listEl.querySelectorAll('.role-fallback').find(row => row.dataset.role === 'fold');
-fallbackInput.value = 'openai/x';
-await fallbackInput.parentNode.children.find(row => row.textContent === 'save fallbacks').onclick();
+  {reviewer_lab: 'openai', reviewer_model: 'gpt-6-astra'});
+
+const fallbackTrigger = mod.st.listEl.querySelectorAll('.role-fallback')
+  .find(row => row.dataset.role === 'fold');
+assert.equal(fallbackTrigger.textContent,
+  '2 selected: anthropic/opus → openai/gpt-6-astra', 'the trigger summarizes the saved order');
+await fallbackTrigger.onclick();
+const fallbackMenu = modelMenus.at(-1);
+assert.equal(fallbackMenu.opts.persistent, true, 'fallback selection stays open for multiple picks');
+assert.equal(fallbackMenu.anchor, fallbackTrigger, 'the fallback menu opens at its trigger');
+let columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.deepEqual(columns[0].items.map(item => item.label), ['anthropic', 'openai']);
+assert.deepEqual(columns[1].items.map(item => item.label), ['Fable', 'Opus', 'Sonnet', 'Haiku']);
+assert.equal(columns[1].items.find(item => item.label === 'Opus').on, true,
+  'saved fallbacks start selected');
+
+columns[0].onPick({id: 'openai'});
+columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.deepEqual(columns[1].items.map(item => item.label), ['Astra', 'Sol', 'Terra', 'Luna']);
+columns[1].onPick({id: 'openai/gpt-5.6-sol'}, true);
+columns[0].onPick({id: 'anthropic'});
+columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
+columns[1].onPick({id: 'anthropic/fable'}, true);
+columns[1].onPick({id: 'anthropic/opus'}, false);
+assert.equal(fallbackTrigger.textContent,
+  '3 selected: openai/gpt-6-astra → openai/gpt-5.6-sol → anthropic/fable',
+  'new picks append while deselection removes without reordering the rest');
+const saveFallbacks = fallbackMenu.opts.sections.find(section => section.kind === 'buttons').buttons[0];
+await saveFallbacks.onClick(fallbackMenu);
 assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-  {fold_cross_lab_fallback: ['openai/x']});
+  {fold_cross_lab_fallback: ['openai/gpt-6-astra', 'openai/gpt-5.6-sol', 'anthropic/fable']});
+assert.equal(fallbackMenu.closed, true, 'a successful save closes the picker');
 
 // ---- the mouse is opt-in: unset renders unchecked, and ticking it PATCHes "on" ------------------
 {
@@ -176,7 +272,8 @@ assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1)
 
 // ---- spend caps: blank is the default, a value is PATCHed under its own key ----------------------
 {
-  const inputs = mod.st.listEl.querySelectorAll('.settings-spend-input');
+  const spendNode = spendMenu.opts.sections.find(section => section.kind === 'node').node;
+  const inputs = spendNode.querySelectorAll('.settings-spend-input');
   assert.equal(inputs.length, 5, 'worker, review, mission control, fold and the card total each have a cap');
   assert.equal(inputs[2].placeholder, '1.00', 'the mission control default shows as the placeholder');
   assert.equal(inputs[4].placeholder, 'no limit', 'the card total cap has no default - unset means unlimited');
@@ -207,22 +304,29 @@ await flush();
 switchPatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
 assert.deepEqual(JSON.parse(switchPatch.opts.body), {auto_switch_profiles: null});
 
-// ---- the parallelism section loads the global cap and one row per board, each with its own
-// daily budget input beside the parallel one -------------------------------------------------
+// ---- parallelism stays in general settings; daily budgets have their own cost-control grid -----
 assert.equal(mod.parallelCaps.globalInput.value, '', 'an unset global cap renders as an empty field, not 0');
-const boardRows = mod.parallelCaps.boardsList.querySelectorAll('.board-row');
-assert.equal(boardRows.length, 2, 'one row per board');
-assert.equal(boardRows[0].querySelector('.board-name').textContent, 'alpha');
-assert.equal(boardRows[0].querySelector('input').value, '', 'alpha has no board-specific limit');
-assert.equal(boardRows[0].querySelectorAll('input')[1].value, '', 'alpha has no daily budget');
-assert.equal(boardRows[1].querySelector('.board-name').textContent, 'beta');
-assert.equal(boardRows[1].querySelector('input').value, '1', 'beta already carries its own limit');
+const parallelRows = mod.parallelCaps.boardsList.querySelectorAll('.board-row');
+assert.equal(parallelRows.length, 2, 'one parallel-limit row per board');
+assert.equal(parallelRows[0].querySelector('.board-name').textContent, 'alpha');
+assert.equal(parallelRows[0].querySelectorAll('input').length, 1,
+  'the general grid only contains the parallel limit');
+assert.equal(parallelRows[0].querySelector('input').value, '', 'alpha has no board-specific limit');
+assert.equal(parallelRows[1].querySelector('.board-name').textContent, 'beta');
+assert.equal(parallelRows[1].querySelector('input').value, '1', 'beta already carries its own limit');
+const budgetRows = mod.dailyBudgets.boardsList.querySelectorAll('.board-row');
+assert.equal(budgetRows.length, 2, 'one daily-budget row per board');
+assert.equal(budgetRows[0].querySelectorAll('input').length, 1,
+  'the cost-control grid only contains the daily budget');
+assert.equal(budgetRows[0].querySelector('input').value, '', 'alpha has no daily budget');
 
 // ---- saving a board's daily budget PATCHes /api/boards/<id> ------------------------------------
-boardRows[0].querySelectorAll('input')[1].value = '5.5';
-boardRows[0].querySelectorAll('input')[1]._listeners.blur.forEach(fn => fn());
+budgetRows[0].querySelector('input').value = '5.5';
+budgetRows[0].querySelector('input')._listeners.blur.forEach(fn => fn());
 await flush();
 assert.equal(boardsState[0].daily_budget_usd, 5.5, "alpha now carries its own daily budget");
+let boardPatch = calls.filter(call => call.path === '/api/boards/b1' && call.opts?.method === 'PATCH').at(-1);
+assert.deepEqual(JSON.parse(boardPatch.opts.body), {daily_budget_usd: 5.5});
 
 // ---- browse opens the shared folder picker, and its one action adds the folder it is on --------
 {
@@ -273,12 +377,14 @@ assert.equal(settingsState.max_parallel, 3, 'a zero value never reaches the serv
 assert.ok(mod.parallelCaps.globalStatus.textContent.includes('positive'), 'the field explains why it refused');
 
 // ---- a board's own row PATCHes /api/boards/<id>, and an empty value clears the limit -------------
-boardRows[0].querySelector('input').value = '2';
-boardRows[0].querySelector('input')._listeners.blur.forEach(fn => fn());
+parallelRows[0].querySelector('input').value = '2';
+parallelRows[0].querySelector('input')._listeners.blur.forEach(fn => fn());
 await flush();
 assert.equal(boardsState[0].max_parallel, 2, 'alpha now carries its own limit');
-boardRows[1].querySelector('input').value = '';
-boardRows[1].querySelector('input')._listeners.blur.forEach(fn => fn());
+boardPatch = calls.filter(call => call.path === '/api/boards/b1' && call.opts?.method === 'PATCH').at(-1);
+assert.deepEqual(JSON.parse(boardPatch.opts.body), {max_parallel: 2});
+parallelRows[1].querySelector('input').value = '';
+parallelRows[1].querySelector('input')._listeners.blur.forEach(fn => fn());
 await flush();
 assert.equal(boardsState[1].max_parallel, null, "clearing the field removes beta's limit");
 
