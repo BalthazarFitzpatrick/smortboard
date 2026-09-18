@@ -294,7 +294,11 @@ def test_registry_leaves_credential_selection_to_the_role_runner(tmp_path, monke
     deadline = time.time() + 30
     while registry.thinking(board["id"]) and time.time() < deadline:
         time.sleep(0.02)
-    assert seen == [None]
+    # the contract is that no turn pins a token, not how many turns landed in this window:
+    # run_orchestrator_turn is patched on the module, so a daemon thread outliving an earlier test
+    # appends here too, and asserting a call count makes this test fail for someone else's leak
+    assert seen
+    assert all(token_path is None for token_path in seen)
 
 
 def test_a_proposed_card_with_no_lease_is_created_but_flagged(store, board):
