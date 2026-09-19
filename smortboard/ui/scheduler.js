@@ -61,6 +61,9 @@ function applyScheduleToCards(view) {
     if (waitingIds.has(id)) return;
     setQueueState(id, {kind: 'queued', index: index + 1, total});
   });
+  // stopping the queue is what puts every card back: this view is the whole truth, so a card it no
+  // longer names is dropped rather than left drawn as queued forever
+  retainQueueStates(new Set([...view.running, ...waitingIds, ...view.queued]));
 }
 
 async function pollSchedule() {

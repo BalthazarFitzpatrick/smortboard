@@ -243,17 +243,45 @@ function attachCardShadow(row) {
   row.appendChild(canvas);
 }
 
+// the cards the scheduler has queued but nobody is running yet, id -> 1-based place in the queue.
+// board.js's setQueueState is the only writer, and nothing in here is stored on the card: emptying
+// the queue puts every card back in its own column wearing its own colour
+const pendingCards = new Map();
+
+const cardKey = card => (card && card.id !== undefined ? card.id : card);
+
+// takes a card or a bare id - board.js reads it by id, everything here by card
+function isPendingCard(card) {
+  return pendingCards.has(cardKey(card));
+}
+
+// a pending card's place in the queue, 0 for anything not in it, so two ordinary cards compare equal
+function pendingOrder(card) {
+  return pendingCards.get(cardKey(card)) || 0;
+}
+
+function setPendingCard(cardId, index) {
+  if (index == null) pendingCards.delete(cardId);
+  else pendingCards.set(cardId, index);
+}
+
 function isAttentionCard(card) {
   // the board handling a card itself reads as working, not as waiting on the operator - cardClasses
   // already draws it that way (card-working wins over card-attention), the header count has to
   // agree or it flags a card nobody needs to look at
   if (card.handled_by_board) return false;
+  // a card the queue has picked up is on its way to running, not waiting on the operator - the
+  // header counts, the pile edges and the columns all follow this one answer
+  if (isPendingCard(card)) return false;
   return !!(card.blocked_reason_code || card.review_flag);
 }
 
 // a pile layer's own state edge - the same precedence card_panel.js's cardClasses draws a full
 // card with, so what protrudes from the pile tells you what is actually inside it
 function cardEdgeVar(card) {
+  // queued but not started: grey, whatever the card's own stored status says - blue is reserved
+  // for a card an agent is holding this instant
+  if (isPendingCard(card)) return 'var(--grey-border)';
   if (card.handled_by_board || card.status === 'doing') return 'var(--fill-good)';
   if (card.blocked_reason_code || card.review_flag) return 'var(--fill-attention)';
   if (card.status === 'rejected') return 'var(--fill-warn)';
@@ -272,17 +300,21 @@ const LETTER_ORDER = ['d', 'a', 't', 'c', 'v', 'r'];
 // but nobody is at the wheel for it this instant, so within the doing column it sorts below a card
 // an agent is really running
 function isActiveDoing(card) {
+  // a queued card carries the doing status too (a re-queued blocked card keeps it), but nobody is
+  // running it yet - it sorts and draws as pending, never as an active agent
+  if (isPendingCard(card)) return false;
   return card.status === 'doing' && !isAttentionCard(card) && !card.handled_by_board;
 }
 
-// within the doing column: an active agent first, then a card the board is only retrying, then
-// attention (blocked or flagged) - elsewhere: doing first, then attention, then everything else.
-// stable within each group
+// within the doing column: an active agent first, then the queue in its own order, then a card the
+// board is only retrying, then attention (blocked or flagged) - elsewhere: doing first, then
+// attention, then everything else. stable within each group
 function sortColumnCards(cards) {
   const rank = card => isActiveDoing(card) ? 0
-    : (card.status === 'doing' && !isAttentionCard(card)) ? 1
-    : isAttentionCard(card) ? 2 : 3;
-  return [...cards].sort((a, b) => rank(a) - rank(b));
+    : isPendingCard(card) ? 1
+    : (card.status === 'doing' && !isAttentionCard(card)) ? 2
+    : isAttentionCard(card) ? 3 : 4;
+  return [...cards].sort((a, b) => rank(a) - rank(b) || pendingOrder(a) - pendingOrder(b));
 }
 
 // letter -> count, for a header (every card in the column) or a pile (whatever it holds) alike -
@@ -367,7 +399,9 @@ function availableColumnHeight(bucketRowsEl) {
 function buildPileRow(cards, status, side) {
   const el = document.createElement('div');
   // the pile wears the state edge a card would: attention if it holds one, else doing's own
-  const state = cards.some(isAttentionCard) ? ' card-pile-attention' : status === 'doing' ? ' card-pile-doing' : '';
+  // a pile of nothing but queued cards keeps the grey edge - the blue one says an agent is at work
+  const state = cards.some(c => isAttentionCard(c)) ? ' card-pile-attention'
+    : status === 'doing' && cards.some(c => !isPendingCard(c)) ? ' card-pile-doing' : '';
   el.className = `row card-pile${state}`;
   el.tabIndex = -1;
   el.dataset.pile = 'true';
