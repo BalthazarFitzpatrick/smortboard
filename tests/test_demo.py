@@ -93,6 +93,15 @@ def test_the_demo_has_the_extras_that_make_it_read_as_real_work(demo_db):
             assert len(store.list_orchestrator_messages(board["id"])) >= 2
 
 
+def test_demo_usage_contains_both_labs_and_estimated_spend(demo_db):
+    from smortboard.telemetry import usage_projection
+
+    with Store(demo_db) as store:
+        usage = usage_projection(store)
+        assert {row["lab"] for row in usage["models"]} == {"anthropic", "openai"}
+        assert any(row["cost_estimated"] for row in usage["models"] if row["lab"] == "openai")
+
+
 def test_nothing_in_the_demo_points_at_a_real_path(demo_db):
     with Store(demo_db) as store:
         for board in store.list_boards():

@@ -216,7 +216,9 @@ def test_registry_runs_a_turn_and_clears_thinking(tmp_path):
     assert started
     import time
 
-    deadline = time.time() + 5
+    # generous, not a measurement: the suite runs `-n auto` and a worker thread on a
+    # loaded machine can wait seconds to be scheduled at all
+    deadline = time.time() + 30
     while registry.thinking(board["id"]) and time.time() < deadline:
         time.sleep(0.02)
     assert not registry.thinking(board["id"])
@@ -233,7 +235,9 @@ def test_registry_passes_its_mode_argument_through_to_the_turn(tmp_path):
     assert registry.start(board["id"], "build a and b", runner=_runner(TWO_CARDS), mode="planning")
     import time
 
-    deadline = time.time() + 5
+    # generous, not a measurement: the suite runs `-n auto` and a worker thread on a
+    # loaded machine can wait seconds to be scheduled at all
+    deadline = time.time() + 30
     while registry.thinking(board["id"]) and time.time() < deadline:
         time.sleep(0.02)
     with Store(db) as store:
@@ -260,12 +264,12 @@ def test_registry_refuses_a_second_turn_while_thinking(tmp_path):
     gate.set()
 
 
-def test_registry_turns_use_the_active_profile_token(tmp_path, monkeypatch):
-    """a shift+p switch reaches mission control, not only card runs"""
+def test_registry_leaves_credential_selection_to_the_role_runner(tmp_path, monkeypatch):
+    """the role can retry on another lab, so the registry must not pin an active token"""
     import time
     from types import SimpleNamespace
 
-    from smortboard import orchestrator, profiles
+    from smortboard import orchestrator
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     state = tmp_path / "profiles.json"
@@ -285,10 +289,16 @@ def test_registry_turns_use_the_active_profile_token(tmp_path, monkeypatch):
 
     registry = OrchestratorRegistry(db)
     assert registry.start(board["id"], "hi")
-    deadline = time.time() + 5
+    # generous, not a measurement: the suite runs `-n auto` and a worker thread on a
+    # loaded machine can wait seconds to be scheduled at all
+    deadline = time.time() + 30
     while registry.thinking(board["id"]) and time.time() < deadline:
         time.sleep(0.02)
-    assert seen == [profiles.profile_path("second")]
+    # the contract is that no turn pins a token, not how many turns landed in this window:
+    # run_orchestrator_turn is patched on the module, so a daemon thread outliving an earlier test
+    # appends here too, and asserting a call count makes this test fail for someone else's leak
+    assert seen
+    assert all(token_path is None for token_path in seen)
 
 
 def test_a_proposed_card_with_no_lease_is_created_but_flagged(store, board):

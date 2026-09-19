@@ -58,8 +58,8 @@ def test_card_telemetry_splits_attempts_and_totals_cost(store):
     assert len(telemetry["attempts"]) == 1
     attempt = telemetry["attempts"][0]
     assert attempt["outcome"] == "pull request"
-    assert attempt["worker_model"] == "claude-sonnet-4"
-    assert attempt["reviewer_model"] == "claude-sonnet-4"
+    assert attempt["worker_model"] == "anthropic/claude-sonnet-4"
+    assert attempt["reviewer_model"] == "anthropic/claude-sonnet-4"
     assert attempt["worker_cost_usd"] == pytest.approx(0.10)
     assert attempt["reviewer_cost_usd"] == pytest.approx(0.03)
     assert attempt["cost_usd"] == pytest.approx(0.13)
@@ -83,7 +83,7 @@ def test_card_telemetry_names_the_working_model_not_the_helper(store):
     store.append_event(card["id"], "worker_summary", {"text": "did the thing"})
 
     attempt = card_telemetry(store, card["id"])["attempts"][0]
-    assert attempt["worker_model"] == "claude-sonnet-5"
+    assert attempt["worker_model"] == "anthropic/claude-sonnet-5"
 
 
 def test_card_telemetry_counts_refusals_and_their_cost(store):
@@ -139,6 +139,16 @@ def test_card_telemetry_reads_blocked_and_refused_outcomes(store):
         card_telemetry(store, blocked_tests["id"])["attempts"][0]["outcome"]
         == "blocked: TESTS_FAILED"
     )
+
+    base_red = store.create_card(board["id"], None, "base already red")
+    store.append_event(base_red["id"], "lifecycle_started", {})
+    store.append_event(base_red["id"], "result", _worker_result())
+    store.append_event(base_red["id"], "worker_summary", {"text": "done"})
+    store.append_event(
+        base_red["id"], "test_gate", {"passed": False, "command": "pytest", "exit_code": 1}
+    )
+    store.append_event(base_red["id"], "base_red", {"base": "development", "tests": ["t::a"]})
+    assert card_telemetry(store, base_red["id"])["attempts"][0]["outcome"] == "blocked: BASE_RED"
 
     never_started = store.create_card(board["id"], None, "no repo")
     store.append_event(never_started["id"], "lifecycle_started", {})
@@ -202,6 +212,9 @@ def test_board_costs_includes_a_card_never_run(store):
             "card_id": rows[0]["card_id"],
             "title": "idle card",
             "model": None,
+            "lab": None,
+            "cost_estimated": False,
+            "unknown_costs": 0,
             "cost_usd": 0,
             "attempts": 0,
             "refusal_count": 0,
@@ -251,7 +264,7 @@ def test_board_evidence_scorecard_tracks_clean_pr_rate_and_avg_cost(store):
     store.append_event(messy["id"], "merge_request", {"url": "https://example.test/pr/3"})
 
     evidence = board_evidence(store, board["id"])
-    row = next(r for r in evidence["model_scorecard"] if r["model"] == "claude-sonnet-4")
+    row = next(r for r in evidence["model_scorecard"] if r["model"] == "anthropic/claude-sonnet-4")
     assert row["cards"] == 2
     assert row["clean_pr_rate"] == 0.5  # one of the two reached a pr with zero fix rounds
     assert row["avg_cost_usd"] == pytest.approx((0.13 + 0.25) / 2, rel=1e-3)

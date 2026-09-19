@@ -21,6 +21,7 @@ const REASON_LABELS = {
   AGENT_QUESTION: 'question',
   LEASE_CONFLICT: 'needs a file outside its lease',
   TESTS_FAILED: 'tests failed',
+  BASE_RED: 'base is red',
   REVIEW_REJECTED: 'review rejected',
   USAGE_LIMIT: 'usage limit',
   CRASH: 'crashed',
@@ -219,8 +220,10 @@ function buildInboxCard(row, idx, focused) {
   title.tabIndex = -1;
   title.textContent = row.title;
   title.onclick = () => {
-    closeInboxPanel();
-    jumpToCard(row.card_id, ib.rows.map(r => ({card_id: r.card_id, board_id: r.board_id})));
+    // A GLANCE, NOT A DEPARTURE. the inbox is a queue you work through, so opening a card from it
+    // is a look at one row - closing that card comes back here, at the row you were on, rather
+    // than leaving you on the board with the queue gone
+    glanceAtCard(row.card_id);
   };
 
   const board = document.createElement('div');
@@ -292,8 +295,12 @@ function onCardKey(evt, card) {
   evt.preventDefault();
   evt.stopPropagation();
   if (onControl) { evt.target.onclick?.(); return; }
-  const first = card.querySelector('.inbox-control');
-  if (first) first.focus();
+  // ONE PRESS WHERE THERE IS ONLY ONE THING TO DO. stepping in and then pressing again made sense
+  // when a card had several controls, and reads as "it selected the title" on the common row, whose
+  // only control IS the title. a row with more than one still steps in, where the choice is real
+  const controls = Array.from(card.querySelectorAll('.inbox-control'));
+  if (controls.length === 1) { controls[0].onclick?.(); return; }
+  if (controls.length) controls[0].focus();
 }
 
 // up/down between the controls of the card focus is inside; at either end focus stays put
@@ -364,6 +371,14 @@ function renderInboxList() {
     ib.listEl.appendChild(hazardPlaceholder(`nothing is waiting on you${label}`));
     return;
   }
+  // coming back from a glance: land on the row you went into, wherever it sits now. the card may
+  // have left the inbox entirely while you were in it (you answered it), in which case this finds
+  // nothing and the usual first-row rule takes over
+  if (ib.returnToCardId != null) {
+    const back = rows.findIndex(row => row.card_id === ib.returnToCardId);
+    ib.returnToCardId = null;
+    if (back >= 0) ib.focusIndex = back;
+  }
   // a card is always the one with keyboard focus, from the moment the panel opens - otherwise
   // arrowdown/arrowup have nothing to move from, and no card would ever wear the focus glow
   if (ib.focusIndex == null || ib.focusIndex >= rows.length) ib.focusIndex = 0;
@@ -372,6 +387,32 @@ function renderInboxList() {
     ib.listEl.appendChild(card);
   });
   focusInboxIndex(ib.focusIndex);
+}
+
+// opens one row's card over the board and comes back to this panel when it closes. the card panel
+// is ui_base's expander (card_panel.js), and its close is the only signal we need - no timer, no
+// polling the dom. `once`: a second glance registers its own return
+function glanceAtCard(cardId) {
+  const roster = ib.rows.map(r => ({card_id: r.card_id, board_id: r.board_id}));
+  const returning = {scope: ib.scope, cardId};
+  closeInboxPanel();
+  Promise.resolve(jumpToCard(cardId, roster)).then(() => {
+    // only arm the return once a card really opened: a row whose strip is not on the board (a
+    // deleted card, a board that failed to load) must not leave a watcher to fire on the next
+    // unrelated card you open
+    const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+    if (strip) afterCardCloses(() => reopenInboxAt(returning));
+  // jumpToCard loads the card's board when it is not the open one, so it can fail on the network.
+  // nothing to arm then, and the panel is already closed - come straight back instead of stranding
+  }).catch(() => reopenInboxAt(returning));
+}
+
+// back into the panel on the same scope, with the glanced row focused again
+function reopenInboxAt({scope, cardId}) {
+  if (ib.backdrop?.parentNode) return; // already back, nothing to restore
+  if (scope) ib.scope = scope;
+  ib.returnToCardId = cardId;
+  openInboxPanel();
 }
 
 function focusInboxIndex(idx) {
@@ -438,13 +479,24 @@ async function sendAnswer(cardId, input, status) {
   if (!ok) {
     status.textContent = (body && body.error) || 'could not answer';
     status.className = 'inbox-status inbox-error';
+    // disabling a focused field blurs it there and then, and re-enabling does NOT give the focus
+    // back - so without this the keyboard is on <body> exactly as it was after a success, and the
+    // refusal is the moment the answer is still in the box waiting to be edited and sent again
     input.disabled = false;
+    input.focus();
     return;
   }
   // the row stays put and says "resumed" - it drops out on the panel's next load, same moment the
   // board re-renders and no longer shows the card as blocked
   status.textContent = 'resumed';
   status.className = 'inbox-status inbox-ok';
+  // A DISABLED INPUT DROPS THE KEYBOARD ON THE FLOOR. it was disabled while the answer posted, and
+  // leaving it that way put focus on <body>: the list's arrow keys are bound to the list and never
+  // fired again, and escape found no card above body so it closed the whole panel instead of
+  // stepping back one level. hand the keyboard back to the row, which is where the queue continues
+  input.disabled = false;
+  input.value = '';
+  input.closest?.('.inbox-card')?.focus();
   pollAttentionCount();
   if (currentBoardId) onBoardEnter(currentBoardId);
 }

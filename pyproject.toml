@@ -6,10 +6,9 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
-    "keyring>=25.7.0",
-    # tags now mean something (smortui #33 fixed version-per-tag); this still moves
-    # to a fresh sha or tag whenever the two repos need to co-develop in lockstep
-    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@v0.1.10",
+    # pinned while the shared soft focus glow and ambient pulse await release
+    # return to a tag once both primitives ship
+    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@1e64984b6be7e6f6bef8a0f485e4ca774baf3b3f",
     # os-correct data dir for the default db location — not the cwd, not a hand-rolled path
     "platformdirs>=4.0",
     # mission control's one screenshot per ask - host-side only, chromium headless. the browser
@@ -26,6 +25,10 @@ smortboard-land = "smortboard.land_cli:main"
 dev = [
     "ruff>=0.11.0",
     "pytest>=8.0",
+    # the suite is a thousand small i/o-bound tests, not a few slow ones: measured 2026-09-18 it
+    # ran 129s at 37% cpu on ten cores, and 24s under `-n auto`. that difference is what makes
+    # running the whole thing before every push affordable
+    "pytest-xdist>=3.5",
     "pre-commit>=3.7",
 ]
 
@@ -37,7 +40,7 @@ build-backend = "hatchling.build"
 # packaging must be told about them explicitly or the wheel installs but serves nothing
 [tool.hatch.build.targets.wheel]
 packages = ["smortboard"]
-artifacts = ["smortboard/ui/**"]
+artifacts = ["smortboard/ui/**", "smortboard/labs/*.json", "smortboard/labs/NOTICE", "smortboard/labs/LICENSE.seccomp"]
 
 # hatchling's sdist default is "every git-tracked file" - none of this is needed to pip install
 # or run the package; docker/ is for users who clone and build the card image themselves
@@ -89,3 +92,6 @@ known-first-party = ["smortboard"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+# parallel by default - see the dev dependency note. `-n0` puts it back on one process, which is
+# what you want when reading one test's output or dropping into a debugger
+addopts = "-n auto"

@@ -15,14 +15,14 @@ import os
 import shlex
 import shutil
 import subprocess
-import sys
 import tempfile
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from smortboard.exec.leases import write_lease_settings
+from smortboard.exec.leases import changed_paths_outside_lease, write_lease_settings
 from smortboard.exec.runner import (
     DEFAULT_CARD_BUDGET_USD,
     HEADLESS_RULES,
@@ -30,7 +30,6 @@ from smortboard.exec.runner import (
     ProcessHandle,
     RunResult,
     allowed_tools_for_repo,
-    build_command,
     commands_preamble,
     lease_preamble,
     new_note_marker,
@@ -43,6 +42,9 @@ from smortboard.exec.worktrees import (
     repo_lock,
     repo_root_of_worktree,
 )
+from smortboard.labs.base import BashPolicy, RunRequest
+from smortboard.labs.catalog import parse_ref
+from smortboard.labs.registry import get_adapter
 from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
@@ -55,8 +57,6 @@ CARD_TOKEN_PATH_ENV = "SMORTBOARD_CARD_TOKEN_PATH"
 
 # where the token lands inside the container - read-only, never passed as an env var so it never
 # shows up in `docker inspect`
-_KEYCHAIN_SERVICE = "smortboard-card-token"
-_KEYCHAIN_USER = "smortboard"
 _CONTAINER_WORKDIR = "/workspace"
 # told up front: a real run spent two tool calls looking for its files under /home/user/repo
 WORKSPACE_PREAMBLE = (
@@ -121,11 +121,11 @@ def guard_mount(settings_path: str | Path) -> tuple[list[str], str]:
 
 
 class CardTokenMissing(RuntimeError):
-    """no card credential in the keychain or on disk"""
+    """no usable card credential file"""
 
 
 def card_token_path() -> Path:
-    """where a card token lives when it is a file rather than a keychain entry"""
+    """the configured card credential file"""
     return Path(os.environ.get(CARD_TOKEN_PATH_ENV) or _default_token_file())
 
 
@@ -141,54 +141,19 @@ def config_base() -> Path:
 
 
 def _default_token_file() -> Path:
-    """where the token file lives, per platform - the first place the board looks.
-
-    The OS credential store is only the fallback when this file is absent.
-    """
+    """the default credential file for this platform"""
     return config_base() / "smortboard" / "card_token"
-
-
-def _credential_store_token() -> str | None:
-    """the OS credential store: Keychain on macOS, Credential Manager on Windows, Secret Service on
-    Linux. One API for all three, which is why this is `keyring` rather than shelling out to
-    `security` - that only ever worked on macOS.
-
-    Returns None when there is no usable backend, which is normal on a headless Linux box. Only
-    reached when there is no token file - on macOS every read here raises a keychain prompt.
-    """
-    try:
-        import keyring
-        from keyring.errors import KeyringError
-    except ImportError:
-        return None
-    try:
-        return keyring.get_password(_KEYCHAIN_SERVICE, _KEYCHAIN_USER) or None
-    except KeyringError:
-        return None
 
 
 def _store_instructions(path: Path) -> str:
     """how to save the token on the platform actually in use, rather than on mine"""
     if os.name == "nt":
-        file_note = f"  write it to {path} - your user profile directory already restricts it"
-        store = "or cmdkey, or Windows Credential Manager, under the name above"
-    elif sys.platform == "darwin":
-        file_note = f"  write it to {path} with mode 600 (owner read and write, nobody else)"
-        store = (
-            f"or security add-generic-password -s {_KEYCHAIN_SERVICE} -a {_KEYCHAIN_USER} -w"
-            " - but macOS then prompts on every read"
-        )
-    else:
-        file_note = f"  write it to {path} with mode 600 (owner read and write, nobody else)"
-        store = f"or secret-tool store --label=smortboard service {_KEYCHAIN_SERVICE} username {_KEYCHAIN_USER}"
-    return f"{file_note}\n{store}"
+        return f"  write it to {path} - your user profile directory already restricts it"
+    return f"  write it to {path} with mode 600 (owner read and write, nobody else)"
 
 
 def read_card_token(token_path: str | Path | None = None) -> str:
-    """the card credential, a mode-600 file first, then the OS credential store.
-
-    FILE FIRST since 2026-09-10: on macOS every keyring read raised a keychain prompt, and one
-    ruined a screen recording. With the file present the keychain is never touched.
+    """the card credential from a mode-600 file.
 
     NEVER returned to anywhere it could be logged: the one caller writes it straight to the
     container's stdin. It is not stored on the backend and not put in the environment.
@@ -203,14 +168,8 @@ def read_card_token(token_path: str | Path | None = None) -> str:
         token = resolved.read_text().strip()
         if token:
             return token
-    # an explicit path is the whole answer, so callers that name one never reach the keychain
-    if token_path is None:
-        from_keychain = _credential_store_token()
-        if from_keychain:
-            return from_keychain
     raise CardTokenMissing(
-        "No card credential. Run `claude setup-token`, then either\n"
-        + _store_instructions(resolved)
+        "No card credential. Run `claude setup-token`, then\n" + _store_instructions(resolved)
     )
 
 
@@ -342,12 +301,42 @@ class ContainerBackend:
         # this one method, and an operator's edit to test_command between rounds must scope the
         # very next round's Bash allowlist and brief, not only a card started after the edit
         repo = _current_repo(store, repo)
-        token = read_card_token(token_path)
+        from smortboard import profiles
+
+        lab, model_id = parse_ref(model)
+        adapter = get_adapter(lab)
+        profile = profiles.active_profile(lab=lab)
+        kind = profiles.profile_kind(profile, lab=lab)
+        token = (
+            read_card_token(profiles.token_path_for_profile(profile, token_path))
+            if lab == "anthropic"
+            else profiles.read_profile_token(lab, profile)
+        )
         clone_path = Path(tempfile.mkdtemp(prefix=f"smortboard-card-{uuid.uuid4().hex[:8]}-"))
         repo_root = repo_root_of_worktree(worktree_path)
         branch = current_branch(worktree_path)
         try:
             self._clone(worktree_path, clone_path, branch)
+            if store is not None and repo is not None:
+                # prior work and base merges are already in the clone
+                start_commit = subprocess.run(
+                    ["git", "-C", str(clone_path), "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.strip()
+                previous = next(
+                    (
+                        event
+                        for event in reversed(store.list_events(card_id))
+                        if event["kind"] in {"lease_check_started", "lease_check_finished"}
+                    ),
+                    None,
+                )
+                # retrying must not forgive unchecked or previously rejected changes
+                if previous and not previous["payload"].get("passed"):
+                    start_commit = previous["payload"]["base_commit"]
+                store.append_event(card_id, "lease_check_started", {"base_commit": start_commit})
             # the card image now runs as a non-root uid (docker/card.Dockerfile), which rarely
             # matches the host uid that owns this tempdir - open it up so the container can still
             # write its commits into a mount it does not otherwise share ownership with
@@ -358,6 +347,24 @@ class ContainerBackend:
             # lease_preamble listed python dicts at the agent instead of paths
             lease_rows = store.get_card(card_id).get("leases") if store else None
             leases = [row["path_glob"] for row in lease_rows or []]
+            if not adapter.capabilities.tool_allowlist:
+                bash_allow = tuple(
+                    tool[5:-1] for tool in allowed_tools_for_repo(repo) if tool.startswith("Bash(")
+                )
+                guards = adapter.guard_files(
+                    leases,
+                    BashPolicy(
+                        worktree_path=worktree_path,
+                        python=CONTAINER_PYTHON,
+                        guard_dir=CONTAINER_GUARD_DIR,
+                        root=_CONTAINER_WORKDIR,
+                        bash_allow=bash_allow,
+                        remembered_globs=[
+                            row["path_glob"] for row in (repo or {}).get("remembered_leases", [])
+                        ],
+                    ),
+                )
+                settings_path = guards.settings_path
             brief = WORKSPACE_PREAMBLE + lease_preamble(leases) + commands_preamble(repo) + prompt
             name = container_name("worker", card_id)
             # minted once per run: the same nonce goes into the system prompt (so the agent knows
@@ -365,7 +372,7 @@ class ContainerBackend:
             # carries) - see F4, a fixed marker is guessable from anything the worker reads
             note_marker = new_note_marker()
             cmd = self._docker_command(
-                clone_path, brief, settings_path, model, repo, store, note_marker, name
+                clone_path, brief, settings_path, model, repo, store, note_marker, name, kind
             )
             # the token is a plain first line the container's shell consumes with `read -r`; the
             # brief follows as the first stream-json turn, and stdin stays open for live steering
@@ -374,14 +381,44 @@ class ContainerBackend:
                 card_id,
                 cmd,
                 cwd=clone_path,
-                token_line=token + "\n",
-                stream_prompt=brief,
+                token_line=token + "\n" if adapter.capabilities.live_steering else None,
+                stream_prompt=brief if adapter.capabilities.live_steering else None,
+                stdin_text=None if adapter.capabilities.live_steering else token + "\n",
                 pending_notes=pending_notes,
                 note_marker=note_marker,
                 container_name=name,
                 on_process=on_process,
+                adapter=adapter,
+                lab=lab,
+                model=model_id,
+                profile=profile,
+                budget_usd=store.spend_cap("worker_budget_usd", DEFAULT_CARD_BUDGET_USD)
+                if store
+                else DEFAULT_CARD_BUDGET_USD,
             )
             self._fetch_back(repo_root, clone_path, branch, worktree_path)
+            if store is not None and repo is not None:
+                remembered = [row["path_glob"] for row in repo.get("remembered_leases", [])]
+                outside = changed_paths_outside_lease(
+                    repo_root, start_commit, branch, leases + remembered
+                )
+                store.append_event(
+                    card_id,
+                    "lease_check_finished",
+                    {
+                        "base_commit": start_commit,
+                        "passed": not outside,
+                        "outside": outside,
+                    },
+                )
+                if outside:
+                    result = replace(
+                        result,
+                        subtype="error_lease_conflict",
+                        is_error=True,
+                        blocked_reason_code="LEASE_CONFLICT",
+                        result_text="Committed paths outside the lease:\n" + "\n".join(outside),
+                    )
             return result
         finally:
             shutil.rmtree(clone_path, ignore_errors=True)
@@ -423,22 +460,27 @@ class ContainerBackend:
         store: Store | None = None,
         note_marker: str | None = None,
         name: str | None = None,
+        kind: str | None = None,
     ) -> list[str]:
+        lab, model_id = parse_ref(model)
+        adapter = get_adapter(lab)
         mount, inner_settings = guard_mount(settings_path)
-        claude_cmd = build_command(
-            prompt,
-            inner_settings,
-            model=model,
-            allowed_tools=allowed_tools_for_repo(repo),
-            budget_usd=(
-                store.spend_cap("worker_budget_usd", DEFAULT_CARD_BUDGET_USD)
-                if store is not None
-                else DEFAULT_CARD_BUDGET_USD
-            ),
-            system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT)
-            + HEADLESS_RULES
-            + note_marker_paragraph(note_marker or new_note_marker()),
-            stream_input=True,
+        agent_cmd = adapter.build_command(
+            RunRequest(
+                prompt=prompt,
+                settings_path=inner_settings,
+                model=model_id,
+                allowed_tools=allowed_tools_for_repo(repo),
+                budget_usd=(
+                    store.spend_cap("worker_budget_usd", DEFAULT_CARD_BUDGET_USD)
+                    if store is not None
+                    else DEFAULT_CARD_BUDGET_USD
+                ),
+                system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT)
+                + HEADLESS_RULES
+                + note_marker_paragraph(note_marker or new_note_marker()),
+                stream_input=adapter.capabilities.live_steering,
+            )
         )
         # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK INSIDE THE CONTAINER. the host's token
         # file, if there is one, is never mounted - read from stdin the token exists only in the
@@ -447,10 +489,7 @@ class ContainerBackend:
         # so it passes straight through to `claude` - which is what live steering needs. NO
         # `< /dev/null` HERE ANY MORE: that redirect would close off the stream-json turns that
         # follow the token. still never `-e`/`--env`, so `docker inspect` shows nothing either.
-        inner = (
-            "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN && "
-            + shlex.join(claude_cmd)
-        )
+        inner = adapter.auth_shell({"kind": kind}) + shlex.join(agent_cmd)
         return [
             "docker",
             "run",
@@ -458,9 +497,11 @@ class ContainerBackend:
             "-i",  # stdin stays open exactly long enough to hand the token over
             *(["--name", name] if name else []),
             *CONTAINER_HARDENING_FLAGS,
+            *adapter.container_env(),
             "-v",
             f"{clone_path}:{_CONTAINER_WORKDIR}:rw",
             *mount,
+            *adapter.guard_mounts(settings_path),
             "-w",
             _CONTAINER_WORKDIR,
             self._image_for(repo),
@@ -515,22 +556,25 @@ class CardRuntimeUnavailable(RuntimeError):
     """
 
 
-def require_card_runtime(token_path: str | Path | None = None) -> ContainerBackend:
+def require_card_runtime(
+    token_path: str | Path | None = None, lab: str = "anthropic"
+) -> ContainerBackend:
     """the one way a card runs. raises CardRuntimeUnavailable with instructions if it cannot."""
+    from smortboard import profiles
+
     problems = []
     if not docker_available():
         problems.append(
             "Docker is not running or not installed. smortboard runs every card in its own "
             "container; install Docker Desktop and start it."
         )
-    # card_token_available, not is_file: the credential normally lives in the OS credential store
-    # and never becomes a file at all, so checking for the file refused a board that was ready
-    if not card_token_available(token_path):
-        resolved = Path(token_path or card_token_path())
-        problems.append(
-            "No card credential. Run `claude setup-token`, then either\n"
-            + _store_instructions(resolved)
-        )
+    try:
+        if lab == "anthropic":
+            read_card_token(profiles.token_path_for_run(token_path, lab=lab))
+        else:
+            profiles.read_profile_token(lab, profiles.active_profile(lab=lab))
+    except (CardTokenMissing, profiles.ProfileError) as exc:
+        problems.append(str(exc))
     if problems:
         raise CardRuntimeUnavailable("  " + "\n  ".join(problems))
     return ContainerBackend()

@@ -30,6 +30,7 @@ RESUMABLE_REASONS = frozenset(
     {
         "AGENT_QUESTION",
         "TESTS_FAILED",
+        "BASE_RED",
         "REVIEW_REJECTED",
         "CRASH",
         "LEASE_CONFLICT",
@@ -145,7 +146,7 @@ def answer_card(store: Store, runs: Any, card_id: str, message: str) -> dict[str
     """records the operator's answer as a comment and resumes the card, or refuses and says why.
 
     Resumable reasons are the ones an answer can actually unstick: AGENT_QUESTION (he answers the
-    question), TESTS_FAILED / REVIEW_REJECTED / CRASH (a note the next run reads before trying
+    question), TESTS_FAILED / BASE_RED / REVIEW_REJECTED / CRASH (a note the next run reads before trying
     again), LEASE_CONFLICT (the note says what to do instead - widening the lease itself is
     Store.set_leases, since the guard reads the card's lease rows, never a note). USAGE_LIMIT is
     not resumable here - it clears itself once the rate-limit window resets, and an answer changes

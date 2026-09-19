@@ -9,7 +9,19 @@ permissions:
 on:
   push:
     branches: [main, development]
+    # a documentation-only change cannot break the suite, and waiting four minutes to learn that
+    # is what makes a handover feel slow. code paths still run everything
+    paths-ignore: ["**.md"]
+  # NO paths-ignore ON pull_request, deliberately: `test (3.11)` is a required check, and a run
+  # that never starts never reports, so a documentation-only pull request would sit unmergeable
+  # forever. the job itself skips its heavy steps instead, and still reports - see `changes` below
   pull_request:
+
+# a second push to the same branch supersedes the first, so the older run is cancelled rather than
+# queued behind it - the branch's answer is about its tip, never about a commit already replaced
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -23,33 +35,70 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # the whole history, so a pull request can be diffed against its base below
+          fetch-depth: 0
+
+      # a markdown-only change cannot break the suite. the job still runs and still reports, so the
+      # required check arrives either way; it just skips the four minutes of toolchain and tests
+      - name: what changed
+        id: changes
+        run: |
+          if [ -n "${{ github.base_ref }}" ]; then
+            range="origin/${{ github.base_ref }}...HEAD"
+          else
+            range="${{ github.event.before }}..HEAD"
+          fi
+          if git diff --name-only "$range" | grep -qvE '\.md$'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "documentation only - skipping the toolchain and the suite" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - uses: astral-sh/setup-uv@v5
+        if: steps.changes.outputs.code == 'true'
         with:
           enable-cache: true
 
       - uses: actions/setup-node@v4
+        if: steps.changes.outputs.code == 'true'
         with:
           node-version: "22"
 
       - name: sync
+        if: steps.changes.outputs.code == 'true'
         run: uv sync --dev --python ${{ matrix.python }}
 
-      # some js tests read ui_base from a sibling ../smortui checkout; point it at the pinned install
-      - name: link ui_base assets
-        run: |
-          assets=$(uv run python -c "import ui_base, pathlib; print(pathlib.Path(ui_base.__file__).parent / 'assets')")
-          mkdir -p ../smortui/ui_base
-          ln -sfn "$assets" ../smortui/ui_base/assets
-
-      - name: install the playwright browser
-        run: uv run playwright install --with-deps chromium
-
       - name: ruff check
+        if: steps.changes.outputs.code == 'true'
         run: uv run ruff check .
 
       - name: ruff format --check
+        if: steps.changes.outputs.code == 'true'
         run: uv run ruff format --check .
 
       - name: pytest
-        run: uv run pytest -q
+        if: steps.changes.outputs.code == 'true'
+        run: uv run pytest -q -k 'not test_capture_takes_a_real_screenshot_of_a_faked_server'
+
+      - name: provision screenshot image
+        if: steps.changes.outputs.code == 'true'
+        run: |
+          docker build -f docker/card.Dockerfile -t smortboard-card:ci .
+          docker build -f docker/screenshot.Dockerfile --build-arg CARD_IMAGE=smortboard-card:ci -t smortboard-screenshot:ci .
+
+      - name: screenshot with no external network or unrelated host files
+        if: steps.changes.outputs.code == 'true'
+        run: |
+          mkdir -p .work/screenshot-artifacts
+          chmod 777 .work/screenshot-artifacts
+          docker run --rm --network none --read-only --cap-drop=ALL \
+            --security-opt=no-new-privileges --pids-limit=512 --memory=2g \
+            --tmpfs /tmp:rw,nosuid,size=512m \
+            --mount type=bind,src="$PWD/smortboard",dst=/workspace/smortboard,readonly \
+            --mount type=bind,src="$PWD/tests",dst=/workspace/tests,readonly \
+            --mount type=bind,src="$PWD/tools/check_screenshot_isolation.py",dst=/checks/check_screenshot_isolation.py,readonly \
+            --mount type=bind,src="$PWD/.work/screenshot-artifacts",dst=/artifacts \
+            -e PYTHONDONTWRITEBYTECODE=1 -e UV_CACHE_DIR=/tmp/uv-cache \
+            smortboard-screenshot:ci uv run --no-sync python /checks/check_screenshot_isolation.py

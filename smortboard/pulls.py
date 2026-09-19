@@ -25,7 +25,7 @@ _PR_STATE_TTL_SECONDS = 60
 _pr_state_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 # a card counts as carrying an open pull request from checking onward - accepted keeps it on the
-# list too, since the board never merges and only gh reports when it is safe to drop
+# list too, since protected-base cards may be accepted before their pull request is merged
 _OPEN_STATUSES = ("checking", "accepted")
 
 

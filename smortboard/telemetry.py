@@ -13,8 +13,8 @@ from datetime import UTC, datetime
 from math import ceil
 from typing import Any
 
-from smortboard import profiles
-from smortboard.exec.runner import classify_rate_limit, classify_result
+from smortboard.labs.catalog import tier_of
+from smortboard.labs.events import cost_sum, event_cost, model_ref, neutral_events, result_fields
 from smortboard.store.api import Store
 
 # result subtype set when a run is stopped by --max-budget-usd - see review.reviewer.BUDGET_STOP
@@ -64,7 +64,7 @@ def estimate_complexity(
         score += 2
     elif lease_glob_count:
         score += 1
-    if model and "opus" in model.lower():
+    if tier_of(model) == "deep":
         score += 2
     if score <= 5:
         return 1
@@ -81,7 +81,7 @@ def _estimate_card_complexity(card: dict[str, Any]) -> int:
         task_count=len(card.get("tasks") or []),
         lease_glob_count=len(globs),
         has_broad_lease=any("**" in glob for glob in globs),
-        model=card.get("model"),
+        model=model_ref(card),
     )
 
 
@@ -104,18 +104,23 @@ def _bash_summary(command: str) -> str:
 def _activity_from_event(event: dict[str, Any] | None) -> str:
     if event is None:
         return "starting"
-    content = (event.get("payload") or {}).get("message", {}).get("content") or []
-    if not isinstance(content, list):
-        content = []
-    tool_use = next(
-        (b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"), None
-    )
+    content = neutral_events(event)
+    tool_use = next((b.get("tool") for b in content if b.get("kind") == "tool_use"), None)
     if tool_use is not None:
         name = tool_use.get("name")
+        tool_input = tool_use.get("input")
+        if name == "command_execution":
+            return _bash_summary(str(tool_input or ""))
+        if name == "file_change":
+            changes = tool_input if isinstance(tool_input, list) else []
+            paths = [change.get("path") for change in changes if isinstance(change, dict)]
+            paths = [path for path in paths if isinstance(path, str) and path]
+            return f"editing {_basename(paths[0])}" if len(paths) == 1 else "editing files"
+        tool_input = tool_input if isinstance(tool_input, dict) else {}
         if name == "Bash":
-            command = str((tool_use.get("input") or {}).get("command", ""))
+            command = str(tool_input.get("command", ""))
             return _bash_summary(command)
-        file_path = str((tool_use.get("input") or {}).get("file_path", ""))
+        file_path = str(tool_input.get("file_path", ""))
         template = _TOOL_ACTIVITY.get(name)
         if template:
             return (
@@ -123,14 +128,18 @@ def _activity_from_event(event: dict[str, Any] | None) -> str:
                 if file_path
                 else template.format(name="")
             )
-    text_block = next((b for b in content if isinstance(b, dict) and b.get("type") == "text"), None)
+    text_block = next((b for b in content if b.get("kind") == "assistant_text"), None)
     if text_block is not None:
         return "thinking"
     return "starting"
 
 
 def _latest_assistant_event(store: Store, card_id: str) -> dict[str, Any] | None:
-    events = [e for e in store.list_events(card_id) if e["kind"] == "assistant"]
+    events = [
+        e
+        for e in store.list_events(card_id)
+        if any(item["kind"] in {"assistant_text", "tool_use"} for item in neutral_events(e))
+    ]
     return events[-1] if events else None
 
 
@@ -163,59 +172,42 @@ def roster_rows(store: Store, active_runs: list[dict[str, Any]]) -> list[dict[st
 
 
 def _window_from_rate_limit_event(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """one rate_limit_event -> its window rows, in either shape the CLI has emitted.
-
-    current shape has no utilisation at all: {"rate_limit_info": {"status", "resetsAt",
-    "rateLimitType"}}. older builds nested per-window figures under "unifiedWindows". never invent
-    a number neither shape provided.
-    """
-    # "default" for a run recorded before profile attribution existed (runner.py stamps every new
-    # rate_limit_event with the profile active when it landed) - never invented for an old event
-    profile = payload.get("profile") or profiles.DEFAULT_PROFILE
-    info = payload.get("rate_limit_info") or {}
-    unified = info.get("unifiedWindows")
-    if isinstance(unified, dict):
-        return [
-            {
-                "type": window_type,
-                "profile": profile,
-                "status": window.get("status") or info.get("status"),
-                "resets_at": window.get("resetsAt"),
-                "utilization": window.get("utilization"),
-            }
-            for window_type, window in unified.items()
-        ]
-    window_type = info.get("rateLimitType")
-    if not window_type:
-        return []
+    """neutral windows retain the lab and profile recorded by that run"""
     return [
         {
-            "type": window_type,
-            "profile": profile,
-            "status": info.get("status"),
-            "resets_at": info.get("resetsAt"),
-            "utilization": None,
+            "type": item["rate_limit"]["window"],
+            "lab": item["lab"],
+            "profile": item["profile"],
+            "status": item["rate_limit"]["status"],
+            "resets_at": item["rate_limit"].get("resets_at"),
+            "utilization": item["rate_limit"].get("utilization"),
         }
+        for item in neutral_events({"kind": "rate_limit_event", "payload": payload})
+        if item["kind"] == "rate_limit"
     ]
 
 
 def usage_projection(store: Store) -> dict[str, Any]:
-    rate_events = store.list_events_by_kind(["rate_limit_event"])
-    latest_by_key: dict[tuple[str, str], dict[str, Any]] = {}
-    for event in rate_events:
+    events = store.list_events_by_kind(None)
+    latest_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for event in events:
+        if not any(item["kind"] == "rate_limit" for item in neutral_events(event)):
+            continue
         for window in _window_from_rate_limit_event(event["payload"]):
             # later events overwrite earlier ones per (window type, profile) - list_events_by_kind
             # is oldest first by wall-clock time, so the last write per key is the true latest
-            latest_by_key[(window["type"], window["profile"])] = window
+            latest_by_key[(window["lab"], window["type"], window["profile"])] = window
     windows = list(latest_by_key.values())
 
-    result_events = store.list_events_by_kind(["result"])
-    models: dict[str, dict[str, float]] = {}
-    total_cost = 0.0
-    for event in result_events:
-        payload = event["payload"]
-        total_cost += float(payload.get("total_cost_usd") or 0)
-        for model, usage in (payload.get("modelUsage") or {}).items():
+    result_events = [event for event in events if result_fields(event) is not None]
+    models: dict[str, dict[str, Any]] = {}
+    for event in events:
+        for item in neutral_events(event):
+            if item["kind"] != "usage" or not (model := model_ref(item)):
+                continue
+            usage = item["usage"]
+            if usage.get("accounting_summary"):
+                continue
             row = models.setdefault(
                 model,
                 {
@@ -224,19 +216,29 @@ def usage_projection(store: Store) -> dict[str, Any]:
                     "cache_read_tokens": 0,
                     "cache_creation_tokens": 0,
                     "cost_usd": 0.0,
+                    "lab": item["lab"],
+                    "cost_estimated": False,
+                    "unknown_costs": 0,
+                    "known_cost_usd": 0.0,
                 },
             )
-            row["input_tokens"] += usage.get("inputTokens") or 0
-            row["output_tokens"] += usage.get("outputTokens") or 0
-            row["cache_read_tokens"] += usage.get("cacheReadInputTokens") or 0
-            row["cache_creation_tokens"] += usage.get("cacheCreationInputTokens") or 0
-            row["cost_usd"] += float(usage.get("costUSD") or 0)
+            row["input_tokens"] += usage.get("input_tokens") or 0
+            row["output_tokens"] += usage.get("output_tokens") or 0
+            row["cache_read_tokens"] += usage.get("cached_tokens") or 0
+            row["cache_creation_tokens"] += usage.get("cache_creation_tokens") or 0
+            row["cost_usd"] = cost_sum([row["cost_usd"], usage.get("cost_usd")])
+            row["known_cost_usd"] += usage.get("cost_usd") or 0
+            row["unknown_costs"] += usage.get("cost_usd") is None
+            row["cost_estimated"] |= bool(usage.get("cost_estimated"))
 
     return {
         "windows": windows,
         "models": [{"model": model, **fields} for model, fields in models.items()],
-        "total_cost_usd": round(total_cost, 6),
-        "runs": len(result_events),
+        "total_cost_usd": cost_sum(event_cost(event) for event in result_events),
+        "known_cost_usd": cost_sum(event_cost(event) or 0 for event in result_events),
+        "unknown_costs": sum(event_cost(event) is None for event in result_events),
+        "cost_estimated": any(row["cost_estimated"] for row in models.values()),
+        "runs": sum(result_fields(event).get("counts_run", True) for event in result_events),
     }
 
 
@@ -265,8 +267,11 @@ def _attempts(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
 
 
 def _result_role(segment: list[dict[str, Any]], index: int) -> str | None:
+    recorded = segment[index]["payload"].get("role")
+    if recorded in ("worker", "reviewer"):
+        return recorded
     for event in segment[index + 1 :]:
-        if event["kind"] == "result":
+        if result_fields(event) is not None:
             break  # another result arrived first - read the role off what came before instead
         role = _ROLE_AFTER_RESULT.get(event["kind"])
         if role:
@@ -302,29 +307,32 @@ def _attempt_outcome(segment: list[dict[str, Any]]) -> str:
     if any(event["kind"] == "merge_conflict" for event in segment):
         return "blocked: MERGE_CONFLICT"
     for event in reversed(segment):
-        if event["kind"] == "rate_limit_event":
-            reason = classify_rate_limit(event["payload"])
-            if reason:
-                return f"blocked: {reason}"
+        if any(
+            item["kind"] == "rate_limit" and item["rate_limit"]["status"] == "refused"
+            for item in neutral_events(event)
+        ):
+            return "blocked: USAGE_LIMIT"
     for event in reversed(segment):
-        if event["kind"] == "result":
-            reason = classify_result(event["payload"])
-            if reason:
-                return f"blocked: {reason}"
+        result = result_fields(event)
+        if result and result.get("blocked_reason_code"):
+            return f"blocked: {result['blocked_reason_code']}"
     for event in reversed(segment):
         if event["kind"] == "review_gate" and not event["payload"].get("approved"):
             return "blocked: REVIEW_REJECTED"
     for event in reversed(segment):
         if event["kind"] == "test_gate" and not event["payload"].get("passed"):
+            if any(e["kind"] == "base_red" for e in segment):
+                return "blocked: BASE_RED"
             return "blocked: TESTS_FAILED"
     if not any(event["kind"] == "worker_summary" for event in segment):
         return "refused"  # never reached the worker - no repo, no runtime, no worktree
     return "in progress"
 
 
-def _add_model_spend(spend: dict[str, float], payload: dict[str, Any]) -> None:
-    for model, usage in (payload.get("modelUsage") or {}).items():
-        spend[model] = spend.get(model, 0.0) + float((usage or {}).get("costUSD") or 0)
+def _add_model_spend(spend: dict[str, float], event: dict[str, Any]) -> None:
+    for item in neutral_events(event):
+        if item["kind"] == "usage" and (model := model_ref(item)):
+            spend[model] = spend.get(model, 0.0) + (item["usage"].get("cost_usd") or 0)
 
 
 def _main_model(spend: dict[str, float]) -> str | None:
@@ -340,22 +348,45 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
     reviewer_spend: dict[str, float] = {}
     denials: list[dict[str, str]] = []
     fix_rounds = 0
+    unknown = {"worker": 0, "reviewer": 0}
+    estimates = {"worker": False, "reviewer": False}
+    cost_estimated = False
+    identities = []
 
     for i, event in enumerate(segment):
-        kind, payload = event["kind"], event["payload"]
-        if kind == "result":
+        kind = event["kind"]
+        result = result_fields(event)
+        if result is not None:
             role = _result_role(segment, i)
-            cost = float(payload.get("total_cost_usd") or 0)
-            turns = int(payload.get("num_turns") or 0)
+            cost = event_cost(event)
+            unknown[role] += cost is None
+            turns = int(result.get("num_turns") or 0)
+            items = neutral_events(event)
+            cost_estimated |= any(
+                bool(item.get("usage", {}).get("cost_estimated")) for item in items
+            )
+            estimates[role] |= any(
+                bool(item.get("usage", {}).get("cost_estimated")) for item in items
+            )
+            for item in items:
+                if item["kind"] == "result":
+                    identities.append(
+                        {
+                            "role": role,
+                            "lab": item["lab"],
+                            "model": item.get("model"),
+                            "profile": item["profile"],
+                        }
+                    )
             if role == "reviewer":
-                reviewer_cost += cost
+                reviewer_cost += cost or 0
                 reviewer_turns += turns
-                _add_model_spend(reviewer_spend, payload)
+                _add_model_spend(reviewer_spend, event)
             elif role == "worker":
-                worker_cost += cost
+                worker_cost += cost or 0
                 worker_turns += turns
-                _add_model_spend(worker_spend, payload)
-            for denial in payload.get("permission_denials") or []:
+                _add_model_spend(worker_spend, event)
+            for denial in (item.get("tool", {}) for item in items if item["kind"] == "tool_denied"):
                 denials.append(
                     {"tool": denial.get("tool_name") or "", "target": _denial_target(denial)}
                 )
@@ -367,9 +398,15 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
         "outcome": _attempt_outcome(segment),
         "worker_model": _main_model(worker_spend),
         "reviewer_model": _main_model(reviewer_spend),
-        "worker_cost_usd": round(worker_cost, 6),
-        "reviewer_cost_usd": round(reviewer_cost, 6),
-        "cost_usd": round(worker_cost + reviewer_cost, 6),
+        "worker_cost_usd": None if unknown["worker"] else round(worker_cost, 6),
+        "reviewer_cost_usd": None if unknown["reviewer"] else round(reviewer_cost, 6),
+        "worker_cost_estimated": estimates["worker"],
+        "reviewer_cost_estimated": estimates["reviewer"],
+        "cost_usd": None if any(unknown.values()) else round(worker_cost + reviewer_cost, 6),
+        "known_cost_usd": round(worker_cost + reviewer_cost, 6),
+        "unknown_costs": sum(unknown.values()),
+        "cost_estimated": cost_estimated,
+        "runs": identities,
         "worker_turns": worker_turns,
         "reviewer_turns": reviewer_turns,
         "turns": worker_turns + reviewer_turns,
@@ -390,22 +427,26 @@ def card_telemetry(store: Store, card_id: str) -> dict[str, Any]:
 
 def _telemetry_for(store: Store, card: dict[str, Any]) -> dict[str, Any]:
     attempts = [_summarize_attempt(s) for s in _attempts(store.list_events(card["id"]))]
-    total_cost = sum(a["cost_usd"] for a in attempts)
-    refusal_cost = sum(a["cost_usd"] for a in attempts if a["refusal_count"])
+    total_cost = cost_sum(a["cost_usd"] for a in attempts)
+    refusal_cost = cost_sum(a["cost_usd"] for a in attempts if a["refusal_count"])
     return {
         "card_id": card["id"],
         "title": card["title"],
         "model": card.get("model"),
+        "lab": card.get("lab"),
         "attempts": attempts,
         "totals": {
-            "cost_usd": round(total_cost, 6),
+            "cost_usd": total_cost,
+            "known_cost_usd": cost_sum(a["known_cost_usd"] for a in attempts),
+            "unknown_costs": sum(a["unknown_costs"] for a in attempts),
+            "cost_estimated": any(a["cost_estimated"] for a in attempts),
             "attempts": len(attempts),
             "turns": sum(a["turns"] for a in attempts),
             "fix_rounds": sum(a["fix_rounds"] for a in attempts),
             "refusal_count": sum(a["refusal_count"] for a in attempts),
             # the waste signal: what got spent on a run that also hit a permission denial,
             # whether or not the denial ended up mattering to the outcome
-            "refusal_cost_usd": round(refusal_cost, 6),
+            "refusal_cost_usd": refusal_cost,
         },
     }
 
@@ -424,32 +465,35 @@ def board_costs(store: Store, board_id: str) -> list[dict[str, Any]]:
                 "title": card["title"],
                 "model": card.get("model"),
                 "cost_usd": telemetry["totals"]["cost_usd"],
+                "lab": card.get("lab"),
+                "cost_estimated": telemetry["totals"]["cost_estimated"],
+                "unknown_costs": telemetry["totals"]["unknown_costs"],
                 "attempts": telemetry["totals"]["attempts"],
                 "refusal_count": telemetry["totals"]["refusal_count"],
                 "refusal_cost_usd": telemetry["totals"]["refusal_cost_usd"],
                 "last_outcome": last_outcome,
             }
         )
-    rows.sort(key=lambda r: r["cost_usd"], reverse=True)
+    rows.sort(key=lambda r: r["cost_usd"] or 0, reverse=True)
     return rows
 
 
-def board_spend_today(store: Store, board_id: str, *, today: str | None = None) -> float:
+def board_spend_today(store: Store, board_id: str, *, today: str | None = None) -> float | None:
     """this board's spend so far today (UTC): each card's own `result` events plus mission
     control/fold spend (board_spend, migration 18) - what budgets.spend_refusal and
     scheduler._board_daily_budget compare daily_budget_usd against before starting anything new.
     `today` is a YYYY-MM-DD override, for tests only."""
     day = today or datetime.now(UTC).date().isoformat()
-    total = 0.0
+    costs = []
     for card in store.list_cards(board_id):
         for event in store.list_events(card["id"]):
-            if event["kind"] != "result" or not str(event["created_at"]).startswith(day):
+            if result_fields(event) is None or not str(event["created_at"]).startswith(day):
                 continue
-            total += float(event["payload"].get("total_cost_usd") or 0)
+            costs.append(event_cost(event))
     for row in store.list_board_spend(board_id):
         if str(row["created_at"]).startswith(day):
-            total += float(row["cost_usd"] or 0)
-    return round(total, 6)
+            costs.append(row["cost_usd"])
+    return cost_sum(costs)
 
 
 def _board_overview_row(store: Store, board: dict[str, Any]) -> dict[str, Any]:
@@ -463,55 +507,79 @@ def _board_overview_row(store: Store, board: dict[str, Any]) -> dict[str, Any]:
     worker_cost_usd = 0.0
     reviewer_cost_usd = 0.0
     spend_by_model: dict[str, float] = {}
+    model_estimates: dict[str, bool] = {}
+    role_estimates = {"worker": False, "reviewer": False}
+    cost_estimated = False
 
     cards = store.list_cards(board["id"])
     for card in cards:
         telemetry = _telemetry_for(store, card)
         attempts = telemetry["attempts"]
-        cost_usd += telemetry["totals"]["cost_usd"]
+        cost_estimated |= telemetry["totals"]["cost_estimated"]
+        cost_usd = cost_sum([cost_usd, telemetry["totals"]["cost_usd"]])
         runs += telemetry["totals"]["attempts"]
-        refusal_cost_usd += telemetry["totals"]["refusal_cost_usd"]
+        refusal_cost_usd = cost_sum([refusal_cost_usd, telemetry["totals"]["refusal_cost_usd"]])
         if card.get("status") == "accepted":
             accepted += 1
         for attempt in attempts:
+            for role in role_estimates:
+                estimated = attempt[f"{role}_cost_estimated"]
+                role_estimates[role] |= estimated
+                if model := attempt[f"{role}_model"]:
+                    model_estimates[model] = model_estimates.get(model, False) or estimated
             if attempt["outcome"] == "pull request":
                 prs_opened += 1
-            worker_cost_usd += attempt["worker_cost_usd"]
-            reviewer_cost_usd += attempt["reviewer_cost_usd"]
+            worker_cost_usd = cost_sum([worker_cost_usd, attempt["worker_cost_usd"]])
+            reviewer_cost_usd = cost_sum([reviewer_cost_usd, attempt["reviewer_cost_usd"]])
             if attempt["worker_model"]:
-                spend_by_model[attempt["worker_model"]] = (
-                    spend_by_model.get(attempt["worker_model"], 0.0) + attempt["worker_cost_usd"]
+                spend_by_model[attempt["worker_model"]] = cost_sum(
+                    [spend_by_model.get(attempt["worker_model"], 0.0), attempt["worker_cost_usd"]]
                 )
             if attempt["reviewer_model"]:
-                spend_by_model[attempt["reviewer_model"]] = (
-                    spend_by_model.get(attempt["reviewer_model"], 0.0)
-                    + attempt["reviewer_cost_usd"]
+                spend_by_model[attempt["reviewer_model"]] = cost_sum(
+                    [
+                        spend_by_model.get(attempt["reviewer_model"], 0.0),
+                        attempt["reviewer_cost_usd"],
+                    ]
                 )
 
     return {
         "board_id": board["id"],
         "board_name": board["name"],
-        "cost_usd": round(cost_usd, 6),
+        "cost_usd": cost_usd,
+        "cost_estimated": cost_estimated,
         "runs": runs,
         "cards": len(cards),
         "cards_accepted": accepted,
         "pull_requests_opened": prs_opened,
-        "refusal_cost_usd": round(refusal_cost_usd, 6),
-        "worker_cost_usd": round(worker_cost_usd, 6),
-        "reviewer_cost_usd": round(reviewer_cost_usd, 6),
+        "refusal_cost_usd": refusal_cost_usd,
+        "worker_cost_usd": worker_cost_usd,
+        "reviewer_cost_usd": reviewer_cost_usd,
+        "worker_cost_estimated": role_estimates["worker"],
+        "reviewer_cost_estimated": role_estimates["reviewer"],
         "spend_by_model": [
-            {"model": model, "cost_usd": round(cost, 6)} for model, cost in spend_by_model.items()
+            {"model": model, "cost_usd": cost, "cost_estimated": model_estimates.get(model, False)}
+            for model, cost in spend_by_model.items()
         ],
-        "cost_per_pr_usd": round(cost_usd / prs_opened, 6) if prs_opened else None,
+        "cost_per_pr_usd": round(cost_usd / prs_opened, 6)
+        if prs_opened and cost_usd is not None
+        else None,
     }
 
 
 def _sum_spend_by_model(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     totals: dict[str, float] = {}
+    estimates = {}
     for row in rows:
         for entry in row["spend_by_model"]:
-            totals[entry["model"]] = totals.get(entry["model"], 0.0) + entry["cost_usd"]
-    return [{"model": model, "cost_usd": round(cost, 6)} for model, cost in totals.items()]
+            totals[entry["model"]] = cost_sum([totals.get(entry["model"], 0.0), entry["cost_usd"]])
+            estimates[entry["model"]] = (
+                estimates.get(entry["model"], False) or entry["cost_estimated"]
+            )
+    return [
+        {"model": model, "cost_usd": cost, "cost_estimated": estimates[model]}
+        for model, cost in totals.items()
+    ]
 
 
 def _card_prs_opened(telemetry: dict[str, Any]) -> int:
@@ -524,19 +592,23 @@ def _empty_group() -> dict[str, Any]:
     return {
         "cards": 0,
         "cost_usd": 0.0,
+        "cost_estimated": False,
         "prs": 0,
         "cost_per_card_usd": None,
         "cost_per_pr_usd": None,
     }
 
 
-def _add_to_group(group: dict[str, Any], cost: float, prs: int) -> None:
+def _add_to_group(group: dict[str, Any], cost: float, prs: int, estimated: bool = False) -> None:
     group["cards"] += 1
-    group["cost_usd"] += cost
+    group["cost_usd"] = cost_sum([group["cost_usd"], cost])
     group["prs"] += prs
+    group["cost_estimated"] |= estimated
 
 
 def _finalize_group(group: dict[str, Any]) -> None:
+    if group["cost_usd"] is None:
+        return
     group["cost_usd"] = round(group["cost_usd"], 6)
     if group["cards"]:
         group["cost_per_card_usd"] = round(group["cost_usd"] / group["cards"], 6)
@@ -556,11 +628,12 @@ def _cost_outcome_groups(store: Store) -> dict[str, Any]:
             telemetry = _telemetry_for(store, card)
             cost = telemetry["totals"]["cost_usd"]
             prs = _card_prs_opened(telemetry)
-            _add_to_group(groups["total"], cost, prs)
+            estimated = telemetry["totals"]["cost_estimated"]
+            _add_to_group(groups["total"], cost, prs, estimated)
             if card.get("status") == "accepted":
-                _add_to_group(groups["accepted"], cost, prs)
+                _add_to_group(groups["accepted"], cost, prs, estimated)
             elif card.get("status") == "rejected":
-                _add_to_group(groups["refused"], cost, prs)
+                _add_to_group(groups["refused"], cost, prs, estimated)
     for group in groups.values():
         _finalize_group(group)
     return groups
@@ -571,29 +644,38 @@ def boards_overview(store: Store) -> dict[str, Any]:
     data. card spend and mission control/fold turn spend (board_spend) are kept apart, so the
     per-card and per-pr numbers stay about card work"""
     rows = [_board_overview_row(store, board) for board in store.list_boards()]
-    rows.sort(key=lambda r: r["cost_usd"], reverse=True)
+    rows.sort(key=lambda r: r["cost_usd"] or 0, reverse=True)
 
     totals = {
         "board_id": None,
         "board_name": "all boards",
-        "cost_usd": round(sum(r["cost_usd"] for r in rows), 6),
+        "cost_usd": cost_sum(r["cost_usd"] for r in rows),
+        "cost_estimated": any(r["cost_estimated"] for r in rows),
         "runs": sum(r["runs"] for r in rows),
         "cards": sum(r["cards"] for r in rows),
         "cards_accepted": sum(r["cards_accepted"] for r in rows),
         "pull_requests_opened": sum(r["pull_requests_opened"] for r in rows),
-        "refusal_cost_usd": round(sum(r["refusal_cost_usd"] for r in rows), 6),
-        "worker_cost_usd": round(sum(r["worker_cost_usd"] for r in rows), 6),
-        "reviewer_cost_usd": round(sum(r["reviewer_cost_usd"] for r in rows), 6),
+        "refusal_cost_usd": cost_sum(r["refusal_cost_usd"] for r in rows),
+        "worker_cost_usd": cost_sum(r["worker_cost_usd"] for r in rows),
+        "reviewer_cost_usd": cost_sum(r["reviewer_cost_usd"] for r in rows),
+        "worker_cost_estimated": any(r["worker_cost_estimated"] for r in rows),
+        "reviewer_cost_estimated": any(r["reviewer_cost_estimated"] for r in rows),
         "spend_by_model": _sum_spend_by_model(rows),
-        "turn_cost_usd": round(
-            sum(
-                s["cost_usd"] for b in store.list_boards() for s in store.list_board_spend(b["id"])
-            ),
-            6,
+        "turn_cost_usd": cost_sum(
+            s["cost_usd"] for b in store.list_boards() for s in store.list_board_spend(b["id"])
+        ),
+        "turn_cost_estimated": any(
+            s["cost_estimated"]
+            for b in store.list_boards()
+            for s in store.list_board_spend(b["id"])
         ),
     }
     total_prs = totals["pull_requests_opened"]
-    totals["cost_per_pr_usd"] = round(totals["cost_usd"] / total_prs, 6) if total_prs else None
+    totals["cost_per_pr_usd"] = (
+        round(totals["cost_usd"] / total_prs, 6)
+        if total_prs and totals["cost_usd"] is not None
+        else None
+    )
 
     return {
         "boards": rows,
@@ -606,8 +688,7 @@ def boards_overview(store: Store) -> dict[str, Any]:
 def _attempt_capped(segment: list[dict[str, Any]]) -> bool:
     """whether this attempt was stopped by its worker's --max-budget-usd cap"""
     return any(
-        event["kind"] == "result" and event["payload"].get("subtype") == _BUDGET_STOP_SUBTYPE
-        for event in segment
+        (result_fields(event) or {}).get("subtype") == _BUDGET_STOP_SUBTYPE for event in segment
     )
 
 
@@ -622,7 +703,7 @@ def _cap_fit_rows(store: Store, cards: list[dict[str, Any]]) -> list[dict[str, A
         level, rated = _card_complexity(card)
         for segment in _attempts(store.list_events(card["id"])):
             summary = _summarize_attempt(segment)
-            if summary["worker_cost_usd"] <= 0:
+            if (summary["worker_cost_usd"] or 0) <= 0:
                 continue
             buckets.setdefault((level, rated), []).append(summary["worker_cost_usd"])
     rows = []
@@ -709,14 +790,14 @@ def _waste(store: Store, cards: list[dict[str, Any]]) -> dict[str, Any]:
                 if test(summary["outcome"], capped, card.get("status"), is_last):
                     bucket = totals.setdefault(reason, {"count": 0, "cost_usd": 0.0})
                     bucket["count"] += 1
-                    bucket["cost_usd"] += summary["cost_usd"]
+                    bucket["cost_usd"] = cost_sum([bucket["cost_usd"], summary["cost_usd"]])
                     break
     rows = [
-        {"reason": reason, "count": int(v["count"]), "cost_usd": round(v["cost_usd"], 6)}
+        {"reason": reason, "count": int(v["count"]), "cost_usd": v["cost_usd"]}
         for reason, v in totals.items()
     ]
-    rows.sort(key=lambda r: r["cost_usd"], reverse=True)
-    return {"rows": rows, "total_cost_usd": round(sum(r["cost_usd"] for r in rows), 6)}
+    rows.sort(key=lambda r: r["cost_usd"] or 0, reverse=True)
+    return {"rows": rows, "total_cost_usd": cost_sum(r["cost_usd"] for r in rows)}
 
 
 def _model_fit(cards: list[dict[str, Any]], store: Store) -> list[dict[str, Any]]:
@@ -728,8 +809,8 @@ def _model_fit(cards: list[dict[str, Any]], store: Store) -> list[dict[str, Any]
         attempts = _attempts(store.list_events(card["id"]))
         summaries = [_summarize_attempt(s) for s in attempts]
         model = (
-            card.get("model")
-            or next((s["worker_model"] for s in reversed(summaries) if s["worker_model"]), None)
+            next((s["worker_model"] for s in reversed(summaries) if s["worker_model"]), None)
+            or model_ref(card)
             or "default"
         )
         key = (model, level)
@@ -750,7 +831,9 @@ def _model_fit(cards: list[dict[str, Any]], store: Store) -> list[dict[str, Any]
         group["attempts_needing_fix"] += sum(1 for s in summaries if s["fix_rounds"] > 0)
         if card.get("status") == "accepted":
             group["accepted_cards"] += 1
-            group["accepted_cost_usd"] += sum(s["cost_usd"] for s in summaries)
+            group["accepted_cost_usd"] = cost_sum(
+                [group["accepted_cost_usd"], *[s["cost_usd"] for s in summaries]]
+            )
     rows = []
     for group in groups.values():
         rows.append(
@@ -761,7 +844,7 @@ def _model_fit(cards: list[dict[str, Any]], store: Store) -> list[dict[str, Any]
                 "accepted_cards": group["accepted_cards"],
                 "cost_per_accepted_card_usd": (
                     round(group["accepted_cost_usd"] / group["accepted_cards"], 6)
-                    if group["accepted_cards"]
+                    if group["accepted_cards"] and group["accepted_cost_usd"] is not None
                     else None
                 ),
                 "fix_round_share": (
@@ -790,14 +873,14 @@ def cost_optimisation(store: Store, board_id: str | None = None) -> dict[str, An
     # mission control and fold turns are recorded per board since migration 18
     for board in boards:
         for spend in store.list_board_spend(board["id"]):
-            if spend["role"] in role_costs and spend["cost_usd"] > 0:
+            if spend["role"] in role_costs and (spend["cost_usd"] or 0) > 0:
                 role_costs[spend["role"]].append(spend["cost_usd"])
     for card in cards:
         for segment in _attempts(store.list_events(card["id"])):
             summary = _summarize_attempt(segment)
-            if summary["worker_cost_usd"] > 0:
+            if (summary["worker_cost_usd"] or 0) > 0:
                 role_costs["worker"].append(summary["worker_cost_usd"])
-            if summary["reviewer_cost_usd"] > 0:
+            if (summary["reviewer_cost_usd"] or 0) > 0:
                 role_costs["reviewer"].append(summary["reviewer_cost_usd"])
 
     return {
@@ -820,7 +903,7 @@ def _finished_card_evidence(store: Store, card: dict[str, Any]) -> dict[str, Any
         return None
     return {
         "id": card["id"][:8],
-        "model": summary["worker_model"] or card.get("model"),
+        "model": summary["worker_model"] or model_ref(card),
         "cost_usd": summary["cost_usd"],
         "turns": summary["turns"],
         "fix_rounds": summary["fix_rounds"],
@@ -851,7 +934,11 @@ def board_evidence(store: Store, board_id: str) -> dict[str, Any]:
                 "model": model,
                 "cards": len(rows),
                 "clean_pr_rate": round(clean_prs / len(rows), 2),
-                "avg_cost_usd": round(sum(r["cost_usd"] for r in rows) / len(rows), 4),
+                "avg_cost_usd": (
+                    round(sum(r["cost_usd"] for r in rows) / len(rows), 4)
+                    if all(r["cost_usd"] is not None for r in rows)
+                    else None
+                ),
             }
         )
 

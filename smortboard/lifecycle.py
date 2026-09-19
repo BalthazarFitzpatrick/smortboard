@@ -13,20 +13,22 @@ that do not care what it thinks.
 
 The board never merges into main. On a repo whose base is main, the chain ends with an open pull
 request and a link, which is the point at which a human takes over. On a repo whose base is not
-protected - a development branch - the board lands the card there itself (review/integrate.py), so
-the next card starts on top of it, and merging development into main stays the operator's.
+protected, review mode waits for acceptance before landing; free mode lands automatically.
+Review-mode dependents may stack on one waiting parent, up to three cards deep. Merging
+development into main stays the operator's.
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from smortboard.actions import with_next
-from smortboard.briefing import resume_briefing
+from smortboard.briefing import repeats_failed_attempt, resume_briefing
 from smortboard.exec.backends import (
     CardRuntimeUnavailable,
     require_card_runtime,
@@ -37,19 +39,23 @@ from smortboard.exec.worktrees import (
     WorktreeError,
     add_worktree,
     branch_diff,
+    branch_diverged_from_origin,
     branch_exists,
+    branch_name,
     create_worktree,
     default_branch,
     existing_worktree,
     fetch_base,
     has_remote,
+    rev_parse,
     worktree_path,
 )
+from smortboard.labs.routing import command_model, run_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
-from smortboard.review.decide import accept_card
+from smortboard.repo_image import rebuild_if_stale
+from smortboard.review.base_red import check_base_red
 from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
-from smortboard.review.integrate import integrate, integration_lock, open_release_request
-from smortboard.review.landing import landing_lock, resolve_repo_key
+from smortboard.review.integrate import integrate, open_release_request
 from smortboard.review.merge_request import (
     PROTECTED_BRANCHES,
     MergeRequestUnavailable,
@@ -64,6 +70,13 @@ from smortboard.review.reviewer import (
     run_review,
 )
 from smortboard.review.screenshot import diff_touches_ui, take_screenshot
+from smortboard.review.stacks import (
+    active_stack,
+    dependency_landed,
+    integration_base,
+    stacked_children,
+    stacking_parent,
+)
 from smortboard.store.api import Store
 
 # the phases a card passes through, in order. the last four are terminal
@@ -245,14 +258,48 @@ def _block(store: Store, state: LifecycleResult, reason_code: str, note: str) ->
     return state
 
 
+def _block_on_failed_gate(
+    store: Store,
+    state: LifecycleResult,
+    card_id: str,
+    repo: dict[str, Any],
+    base: str,
+    gate: Any,
+    after_merging: str = "",
+) -> LifecycleResult:
+    """blocks TESTS_FAILED, or BASE_RED when every failing test also fails on a clean checkout of
+    the base - the card did not cause those, and a worker run cannot fix them."""
+    note = _tests_failed_note(gate.command, gate.exit_code, gate.output, after_merging)
+    try:
+        red = check_base_red(repo, base, card_id, gate.output)
+    except (GateUnavailable, OSError, subprocess.SubprocessError):
+        red = None
+    if red is not None:
+        sha, ids = red
+        store.append_event(card_id, "base_red", {"base": base, "sha": sha, "tests": ids})
+        note = (
+            f"BASE IS RED: {len(ids)} failing test(s) also fail on {base} ({sha[:8]}) without any "
+            "of this card's changes, so the card did not cause them. Fix the base or merge a fix "
+            f"into it, then run the card again: {', '.join(t.rsplit('::', 1)[-1] for t in ids[:3])}"
+            f"{' ...' if len(ids) > 3 else ''}\n\n{note}"
+        )
+    return _block(store, state, "TESTS_FAILED" if red is None else "BASE_RED", note)
+
+
 def _base_for_fresh_cut(store: Store, state: LifecycleResult, repo_path: str, base: str) -> str:
     """the ref a fresh worktree is cut from, for a card that depends on another.
 
-    scheduler._dependency_wait only starts such a card once its dependency's pull request is
-    merged on GitHub - but the local `base` branch does not update itself, so a worktree cut from
-    it can still miss that merge. Fetching `origin/<base>` first closes that gap. A card with no
-    dependencies never reaches this function, so its worktree is cut exactly as before.
+    review mode can cut from one ready parent's branch. once dependencies have landed, fetch
+    the default base so the cut contains their commits even when the local branch is stale.
     """
+    card = store.get_card(state.card_id)
+    parent = stacking_parent(store, card)
+    if parent:
+        branch = branch_name(parent["id"])
+        store.append_event(
+            state.card_id, "stacked_on", {"parent_id": parent["id"], "branch": branch}
+        )
+        return branch
     if not has_remote(repo_path):
         return base
     if fetch_base(repo_path, base):
@@ -347,7 +394,14 @@ def _stopped(store: Store, state: LifecycleResult) -> LifecycleResult:
 
 
 def _sync_and_retest(
-    store: Store, state: LifecycleResult, card_id: str, tree: Any, repo: dict[str, Any], base: str
+    store: Store,
+    state: LifecycleResult,
+    card_id: str,
+    tree: Any,
+    repo: dict[str, Any],
+    base: str,
+    *,
+    always_test: bool = False,
 ) -> LifecycleResult | None:
     """merges the base into the card branch: a conflict blocks the card, and anything new from the
     base reruns the tests. None means the branch is current and still passes"""
@@ -370,7 +424,7 @@ def _sync_and_retest(
             f"{', '.join(merge_result.conflicting_files) or 'unknown files'}.\n\n"
             "Resuming this card lets the worker merge the base branch and resolve them.",
         )
-    if merge_result is not None and merge_result.merged:
+    if always_test or (merge_result is not None and merge_result.merged):
         try:
             gate = run_test_gate(store, card_id, tree.path, repo)
         except GateUnavailable as exc:
@@ -382,72 +436,27 @@ def _sync_and_retest(
                 else f"The test gate could not run after merging {base}: {exc}",
             )
         if not gate.passed:
-            return _block(
-                store,
-                state,
-                "TESTS_FAILED",
-                _tests_failed_note(gate.command, gate.exit_code, gate.output, after_merging=base),
+            return _block_on_failed_gate(
+                store, state, card_id, repo, base, gate, after_merging=base
             )
     return None
 
 
-# a base that moves between the sync and the push is synced again and retried, this many times
-INTEGRATE_ATTEMPTS = 3
+def _integrate(store, state, card, tree, repo, base, url):
+    from smortboard.review.land_card import land_card
 
-
-def _integrate(
-    store: Store,
-    state: LifecycleResult,
-    card: dict[str, Any],
-    tree: Any,
-    repo: dict[str, Any],
-    base: str,
-    url: str,
-) -> LifecycleResult:
-    """lands the card on a base that is not protected, then accepts it. a card that cannot land
-    keeps its open pull request and waits for the operator, as on main"""
-    card_id = card["id"]
-    landed, reason = None, "the base kept moving while it was merged"
-    repo_key = resolve_repo_key(repo["path"], store)
-    # the in-process lock is cheap and covers same-process races instantly; the db-backed one is
-    # what keeps another board process or an outside agent's smortboard-land off the same base
-    # while this card's sync+push runs
-    with (
-        integration_lock(repo["path"], base),
-        landing_lock(store, repo_key, card_id, tree.branch, base),
-    ):
-        for _ in range(INTEGRATE_ATTEMPTS):
-            if (blocked := _sync_and_retest(store, state, card_id, tree, repo, base)) is not None:
-                return blocked
-            result = integrate(tree.path, tree.branch, base, card["title"])
-            if result.sha or not result.moved:
-                landed, reason = result.sha, result.reason or reason
-                break
-
-    if landed is None:
-        _note(
-            store,
-            card_id,
-            with_next(
-                f"Tests passed and the reviewer approved, but the board could not merge it into "
-                f"{base}: {reason}\n\nThe pull request is open:\n{url}",
-                "review",
-            ),
-        )
-        store.update_card(card_id, review_flag=True)
-    else:
-        store.append_event(card_id, "integrated", {"base": base, "sha": landed, "url": url})
-        accept_card(store, card_id)
-        release = open_release_request(repo["path"], base)
-        _note(
-            store,
-            card_id,
-            f"Tests passed, the reviewer approved, and the board merged it into {base} as "
-            f"{landed[:10]}:\n{url}\n\nMerging {base} into main is yours"
-            + (f":\n{release}" if release else "."),
-        )
-    state.phase, state.pr_url = "opened", url
-    return state
+    return land_card(
+        store,
+        state,
+        card,
+        tree,
+        repo,
+        base,
+        url,
+        sync=_sync_and_retest,
+        integrate_fn=integrate,
+        release_fn=open_release_request,
+    )
 
 
 def run_card_lifecycle(
@@ -488,6 +497,18 @@ def run_card_lifecycle(
     state = LifecycleResult(card_id=card_id, phase="preparing")
     phase("preparing")
     card = store.get_card(card_id)
+    if any(store.get_card(dep)["status"] == "rejected" for dep in card["depends_on"]):
+        return _refuse(
+            store,
+            state,
+            "A dependency was rejected. Reject this dependent attempt and define fresh work before running it.",
+        )
+    if card["status"] == "rejected" and stacked_children(store, card):
+        return _refuse(
+            store,
+            state,
+            "This rejected branch is still the base of undecided stacked cards. Decide those cards and create fresh work before rerunning it.",
+        )
     # an accepted card keeps its branch for the open pull request - cutting a fresh worktree would
     # fail anyway, and recording lifecycle_started here would bury the real attempt's outcome
     if card["status"] == "accepted":
@@ -508,10 +529,29 @@ def run_card_lifecycle(
     if not _lease_globs(card):
         return _refuse(store, state, NO_LEASE_NOTE)
     repo = store.get_repo(card["repo_id"])
+    rebuild = rebuild_if_stale(repo)
+    if rebuild is not None:
+        if rebuild.ok and rebuild.tag:
+            store.set_repo_image(repo["id"], rebuild.tag)
+            store.append_event(card_id, "repo_image_rebuilt", {"tag": rebuild.tag})
+            repo = store.get_repo(card["repo_id"])
+        else:
+            # do not refuse the card over a failed rebuild - it runs against the stale image,
+            # same as before this existed, and the gate's own failure stays the informative one
+            store.append_event(card_id, "repo_image_rebuild_failed", {"log": rebuild.log[-2000:]})
     base = default_branch(repo)
+    configured = store.get_settings()
+    worker_lab, worker_id = run_ref(store, "worker", card)
+    reviewer_lab, reviewer_id = run_ref(store, "reviewer", card)
+    worker_model = command_model(worker_lab, worker_id)
+    reviewer_model = command_model(reviewer_lab, reviewer_id)
 
     try:
-        runtime = backend or require_card_runtime(token_path)
+        runtime = backend or (
+            require_card_runtime(token_path)
+            if worker_lab == "anthropic"
+            else require_card_runtime(lab=worker_lab)
+        )
     except CardRuntimeUnavailable as exc:
         return _refuse(store, state, f"The card runtime is not ready:\n{exc}")
 
@@ -526,32 +566,95 @@ def run_card_lifecycle(
         elif branch_exists(repo["path"], card_id):
             tree = add_worktree(repo["path"], card_id)
         else:
+            tree = None
+        # someone else pushed to this card's own branch since the board last saw it - the board's
+        # own push at the end of the run is never forced, so waiting until then only burns a full
+        # worker/gate/review turn on work that can never land anyway
+        if (
+            tree is not None
+            and has_remote(repo["path"])
+            and branch_diverged_from_origin(repo["path"], tree.branch)
+        ):
+            return _refuse(
+                store,
+                state,
+                f"{tree.branch} has commits on origin that this worktree does not - someone "
+                "else pushed to this card's own branch. Fetch and rebase or reset the branch "
+                "yourself, or delete the worktree and let the board recut it, then run this "
+                "card again.",
+            )
+        if tree is None:
             worktree_reused = False
             cut_base = base
             if card.get("depends_on"):
                 cut_base = _base_for_fresh_cut(store, state, repo["path"], base)
             tree = create_worktree(repo["path"], card_id, base=cut_base)
-    except WorktreeError as exc:
+            if tree.base_commit:
+                store.append_event(card_id, "worktree_created", {"base_commit": tree.base_commit})
+    except (WorktreeError, ValueError) as exc:
         return _refuse(store, state, f"Could not cut a worktree for this card: {exc}")
     state.branch, state.worktree = tree.branch, str(tree.path)
 
     settings = write_container_guards(tree.path, _lease_globs(card))
     store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
 
+    # a reused branch is brought up to date BEFORE the worker and the gate, not only at handover:
+    # measured 2026-09-19, three cards 28-59 commits behind development failed their gate on tests
+    # a later base commit had already fixed, and every re-run reused the same stale tree
+    conflict_note = None
+    # what "the card's own commits" are counted against: once origin/<base> is merged in, the local
+    # base can lag it, and the merged-in commits would read as the card's work
+    commit_base = base
+    if worktree_reused:
+        synced = sync_with_base(tree.path, base)
+        if synced is not None and synced.clean:
+            commit_base = f"origin/{base}"
+        if synced is not None and not synced.clean:
+            base_ref = f"origin/{base}"
+            store.append_event(
+                card_id,
+                "merge_conflict",
+                {"base_ref": base_ref, "files": synced.conflicting_files},
+            )
+            files = ", ".join(synced.conflicting_files) or "unknown files"
+            conflict_note = (
+                f"Merging {base_ref} into this branch conflicts in: {files}. Merge {base_ref} "
+                "yourself, resolve those files, then commit the merge - the test gate runs "
+                "against this branch, so it has to contain the base first."
+            )
+
+    fingerprint = {
+        "head": rev_parse(tree.path, "HEAD"),
+        "base_head": rev_parse(tree.path, f"origin/{base}"),
+        "notes": sum(1 for c in card.get("comments") or [] if c.get("author") == AUTHOR_KEY),
+    }
+    if worktree_reused and repeats_failed_attempt(store, card_id, fingerprint):
+        return _block(
+            store,
+            state,
+            "TESTS_FAILED",
+            "Nothing has changed since the last attempt: same branch head, same base, no new "
+            "note - and its tests failed. Running the worker again would repeat that failure. "
+            "Change something first (merge the base, fix what the gate names, add a note), then "
+            "run it again.",
+        )
+    store.append_event(card_id, "attempt_fingerprint", fingerprint)
+
     # the card's own model wins, then the board's worker setting, then sonnet. the reviewer has a
     # setting of its own, so a cheap worker never means a cheap review
-    configured = store.get_settings()
-    worker_model = card.get("model") or configured.get("worker_model") or DEFAULT_WORKER_MODEL
-    reviewer_model = configured.get("reviewer_model") or DEFAULT_REVIEWER_MODEL
 
     # the worker's own final message, kept for the screenshot step below - it is where the worker
     # names which view to open, per runner.SYSTEM_PROMPT's SCREENSHOT: instruction
     last_summary: str | None = None
+    worker_started = reviewer_started = False
 
     def work(prompt: str) -> LifecycleResult | None:
-        nonlocal last_summary
+        nonlocal last_summary, worker_started
         """one agent run in the card's worktree; returns the blocked/stopped state if it stopped
         short"""
+        if not worker_started:
+            run_ref(store, "worker", card, consume=True)
+            worker_started = True
         run = runtime.run_card(
             store,
             card_id,
@@ -570,9 +673,15 @@ def run_card_lifecycle(
         if stopped_now():
             return _stopped(store, state)
         if run.auth_failed:
-            return _refuse(store, state, TOKEN_REFUSED_NOTE)
+            from smortboard.labs.registry import get_adapter
+
+            return _refuse(
+                store,
+                state,
+                "The run credential was refused. " + get_adapter(worker_lab).setup_hint(),
+            )
         if run.subtype in BUDGET_CAPPED_SUBTYPES:
-            if branch_has_commits(repo["path"], tree.branch, base):
+            if branch_has_commits(repo["path"], tree.branch, commit_base):
                 store.append_event(card_id, "budget_capped_with_commits", {"subtype": run.subtype})
                 _note(
                     store,
@@ -606,6 +715,8 @@ def run_card_lifecycle(
     briefing = None
     if configured.get("resume_briefing") != "off":
         briefing = resume_briefing(store, card_id, worktree_reused=worktree_reused)
+    if conflict_note:
+        briefing = f"{briefing}\n\n{conflict_note}" if briefing else conflict_note
 
     phase("running")
     if (stopped := work(build_card_prompt(card, briefing))) is not None:
@@ -614,7 +725,7 @@ def run_card_lifecycle(
         return _stopped(store, state)
     # no commit means nothing to test or review - measured, a card that ended its turn early had
     # its unchanged tree run through the full gate and an approved review of an empty diff first
-    if not branch_has_commits(repo["path"], tree.branch, base):
+    if not branch_has_commits(repo["path"], tree.branch, commit_base):
         return _refuse(store, state, NO_COMMITS_NOTE.format(branch=tree.branch, base=base))
 
     # both gates, and on the fix route the findings go back to the worker until the reviewer
@@ -628,16 +739,14 @@ def run_card_lifecycle(
         if stopped_now():
             return _stopped(store, state)
         if not gate.passed:
-            return _block(
-                store,
-                state,
-                "TESTS_FAILED",
-                _tests_failed_note(gate.command, gate.exit_code, gate.output),
-            )
+            return _block_on_failed_gate(store, state, card_id, repo, base, gate)
 
         phase("reviewing")
         diff_text = branch_diff(repo["path"], base, tree.branch)
         try:
+            if not reviewer_started:
+                run_ref(store, "reviewer", card, consume=True)
+                reviewer_started = True
             review = run_review(
                 store,
                 card_id,
@@ -667,7 +776,7 @@ def run_card_lifecycle(
             return _block(
                 store,
                 state,
-                "REVIEW_REJECTED",
+                review.blocked_reason_code or "REVIEW_REJECTED",
                 f"The reviewer did not approve.\n\n{_format_findings(review) or review.error or ''}"
                 + (f"\n\nAfter {state.fix_rounds} fix round(s)." if state.fix_rounds else ""),
             )
@@ -691,21 +800,37 @@ def run_card_lifecycle(
             _note(store, card_id, f"Screenshot not attached: {shot.note}")
 
     # only now is the card work waiting on a human: checking requires both gates, not either
-    store.update_card(card_id, status="checking")
-
     phase("opening")
-    if (blocked := _sync_and_retest(store, state, card_id, tree, repo, base)) is not None:
+    from smortboard.review.land_card import retry_retarget
+
+    target = integration_base(store, card_id, base)
+    stack = active_stack(store, card_id)
+    if stack and dependency_landed(store, store.get_card(stack["parent_id"])):
+        target = base
+    if (blocked := _sync_and_retest(store, state, card_id, tree, repo, target)) is not None:
         return blocked
 
+    store.update_card(card_id, status="checking")
+    retry_retarget(store, store.get_card(card_id))
+    if store.get_card(card_id)["blocked_reason_code"]:
+        state.phase = "blocked"
+        state.blocked_reason_code = store.get_card(card_id)["blocked_reason_code"]
+        return state
+    target = integration_base(store, card_id, base)
+
     try:
-        request = open_merge_request(store, card_id, repo["path"], tree.branch, base=base)
+        request = open_merge_request(store, card_id, repo["path"], tree.branch, base=target)
     except MergeRequestUnavailable as exc:
         return _refuse(store, state, f"Could not open a pull request: {exc}")
 
     if not request.url:
         return _refuse(store, state, f"Both gates passed, but: {request.refusal}")
 
-    if base not in PROTECTED_BRANCHES:
+    if (
+        base not in PROTECTED_BRANCHES
+        and store.board_merges_freely(card["board_id"])
+        and target == base
+    ):
         return _integrate(store, state, card, tree, repo, base, request.url)
 
     _note(
@@ -713,7 +838,11 @@ def run_card_lifecycle(
         card_id,
         with_next(
             f"Tests passed, the reviewer approved, and the pull request is open:\n{request.url}\n\n"
-            "Merging is yours - the board stops here.",
+            + (
+                "Merging into this protected base is yours."
+                if base in PROTECTED_BRANCHES
+                else "Waiting for y to accept and merge this card."
+            ),
             "review",
         ),
     )

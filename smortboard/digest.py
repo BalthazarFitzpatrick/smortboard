@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from smortboard.labs.events import cost_sum, event_cost, result_fields
 from smortboard.review.outcome import card_outcome
 from smortboard.store.api import Store
 
@@ -123,14 +124,14 @@ def _waiting_on_operator(store: Store, cards: list[dict[str, Any]]) -> list[dict
 
 def _runs_and_spend(store: Store, cards: list[dict[str, Any]], since: float) -> dict[str, Any]:
     runs = 0
-    total_cost = 0.0
+    costs = []
     for card in cards:
         for event in _card_events_since(store, card["id"], since):
             if event["kind"] == "lifecycle_started":
                 runs += 1
-            elif event["kind"] == "result":
-                total_cost += float(event["payload"].get("total_cost_usd") or 0)
-    return {"runs": runs, "total_cost_usd": round(total_cost, 6)}
+            elif result_fields(event) is not None:
+                costs.append(event_cost(event))
+    return {"runs": runs, "total_cost_usd": cost_sum(costs)}
 
 
 def board_digest(store: Store, board_id: str, since: float) -> dict[str, Any]:

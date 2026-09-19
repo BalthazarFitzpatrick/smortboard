@@ -135,8 +135,9 @@ def test_usage_reads_the_current_flat_rate_limit_shape_with_no_utilisation(store
     assert usage["windows"] == [
         {
             "type": "five_hour",
+            "lab": "anthropic",
             "profile": "default",
-            "status": "allowed",
+            "status": "ok",
             "resets_at": 1789078800,
             "utilization": None,
         }
@@ -269,7 +270,7 @@ def test_usage_sums_model_usage_and_cost_across_results(store):
     assert usage["runs"] == 2
     assert usage["total_cost_usd"] == pytest.approx(0.07)
     model = usage["models"][0]
-    assert model["model"] == "claude-sonnet"
+    assert model["model"] == "anthropic/claude-sonnet"
     assert model["input_tokens"] == 150
     assert model["output_tokens"] == 30
     assert model["cache_read_tokens"] == 6000
@@ -278,4 +279,12 @@ def test_usage_sums_model_usage_and_cost_across_results(store):
 
 def test_usage_is_empty_with_no_events(store):
     usage = usage_projection(store)
-    assert usage == {"windows": [], "models": [], "total_cost_usd": 0.0, "runs": 0}
+    assert usage == {
+        "windows": [],
+        "models": [],
+        "total_cost_usd": 0.0,
+        "runs": 0,
+        "known_cost_usd": 0,
+        "unknown_costs": 0,
+        "cost_estimated": False,
+    }

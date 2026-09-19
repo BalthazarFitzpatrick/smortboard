@@ -104,9 +104,155 @@ async function loadMouseToggle() {
 }
 
 const SETTINGS_SECTIONS = [
-  {label: 'credential profiles', node: buildAutoSwitchToggle()},
-  {label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle},
+  {group: 'labs', label: 'credential profiles', node: buildAutoSwitchToggle()},
+  {group: 'general', label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle},
 ];
+
+const roleModels = {node: document.createElement('div')};
+roleModels.node.className = 'settings-stack';
+
+function fallbackSummary(refs) {
+  if (!refs.length) return 'no fallbacks selected';
+  return `${refs.length} selected: ${refs.join(' → ')}`;
+}
+
+async function openFallbackPicker(role, initialRefs, anchor, status, onSaved) {
+  const catalog = await loadModelCatalog();
+  const labs = Object.keys(catalog);
+  let selectedLab = initialRefs.map(ref => ref.split('/')[0]).find(lab => catalog[lab])
+    || (catalog.anthropic ? 'anthropic' : labs[0]);
+  let selectedRefs = [...initialRefs];
+  let saved = false;
+  let menu = null;
+
+  const buildSections = () => [{
+    kind: 'columns',
+    columns: [
+      {
+        label: 'lab',
+        multi: false,
+        items: labs.map(lab => ({id: lab, label: lab, on: lab === selectedLab})),
+        onPick: item => {
+          selectedLab = item.id;
+          menu.refresh(buildSections());
+        },
+      },
+      {
+        label: 'models',
+        multi: true,
+        empty: selectedLab ? 'no models' : 'choose a lab',
+        items: (catalog[selectedLab]?.models || []).map(model => {
+          const ref = `${selectedLab}/${model.id}`;
+          return {id: ref, label: model.label, stats: model.tier, on: selectedRefs.includes(ref)};
+        }),
+        onPick: (item, on) => {
+          if (on && !selectedRefs.includes(item.id)) selectedRefs.push(item.id);
+          if (!on) selectedRefs = selectedRefs.filter(ref => ref !== item.id);
+          anchor.textContent = fallbackSummary(selectedRefs);
+          anchor.title = selectedRefs.join('\n');
+        },
+      },
+    ],
+  }, {
+    kind: 'buttons',
+    buttons: [{id: 'save-fallbacks', label: 'save fallbacks', onClick: async openMenu => {
+      const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[`${role}_cross_lab_fallback`]: selectedRefs})});
+      status.textContent = ok ? 'saved' : body?.error || 'could not save fallbacks';
+      if (ok) {
+        saved = true;
+        onSaved([...selectedRefs]);
+        openMenu.close();
+      }
+    }}],
+  }];
+
+  menu = new Menu({
+    title: `${role} fallback order`,
+    persistent: true,
+    sections: buildSections(),
+    onDismiss: () => {
+      if (saved) return;
+      anchor.textContent = fallbackSummary(initialRefs);
+      anchor.title = initialRefs.join('\n');
+    },
+  });
+  menu.openAt(anchor);
+}
+
+async function loadRoleModels() {
+  try {
+    const settings = await api('/api/settings');
+    clearChildren(roleModels.node);
+    const roles = ['worker', 'reviewer', 'orchestrator', 'fold'];
+    roles.forEach((role, index) => {
+      const block = document.createElement('div');
+      block.className = 'settings-role-block';
+      const heading = document.createElement('div');
+      heading.className = 'settings-role-heading';
+      const label = document.createElement('span');
+      label.className = 'field-label settings-role-name';
+      label.textContent = role;
+      const status = document.createElement('span');
+      status.className = 'boards-status settings-role-status';
+      heading.append(label, status);
+
+      const primaryRow = document.createElement('div');
+      primaryRow.className = 'settings-role-control';
+      const primaryLabel = document.createElement('span');
+      primaryLabel.className = 'field-label';
+      primaryLabel.textContent = 'primary model';
+      const picker = document.createElement('button');
+      picker.className = 'toggle role-model';
+      picker.dataset.role = role;
+      picker.textContent = modelLabel(settings[`${role}_model`], settings[`${role}_lab`]);
+      picker.onclick = async () => {
+        try {
+          await openModelPicker(async (lab, model) => {
+            const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({[`${role}_lab`]: lab, [`${role}_model`]: model})});
+            if (ok) loadRoleModels();
+            else status.textContent = body?.error || 'could not save model';
+          }, picker);
+        } catch (err) { status.textContent = err.message; }
+      };
+      primaryRow.append(primaryLabel, picker);
+
+      const fallbackRow = document.createElement('div');
+      fallbackRow.className = 'settings-role-control';
+      const fallbackLabel = document.createElement('span');
+      fallbackLabel.className = 'field-label';
+      fallbackLabel.textContent = 'fallback order';
+      const fallback = document.createElement('button');
+      fallback.className = 'toggle role-fallback settings-role-fallback-trigger';
+      fallback.dataset.role = role;
+      let fallbackRefs = settings[`${role}_cross_lab_fallback`] || [];
+      fallback.textContent = fallbackSummary(fallbackRefs);
+      fallback.title = fallbackRefs.join('\n');
+      fallback.setAttribute('aria-label', `${role} fallback models in order`);
+      fallback.onclick = async () => {
+        try {
+          await openFallbackPicker(role, fallbackRefs, fallback, status, refs => { fallbackRefs = refs; });
+        } catch (err) {
+          status.textContent = err.message;
+        }
+      };
+      fallbackRow.append(fallbackLabel, fallback);
+      block.append(heading, primaryRow, fallbackRow);
+      roleModels.node.appendChild(block);
+      if (index < roles.length - 1) {
+        const divider = document.createElement('div');
+        divider.className = 'h-divider';
+        roleModels.node.appendChild(divider);
+      }
+    });
+  } catch (err) {
+    roleModels.node.textContent = `could not load models: ${err.message}`;
+  }
+}
+SETTINGS_SECTIONS.push({group: 'labs', label: 'models by role', node: roleModels.node, onOpen: loadRoleModels});
 
 function settingsHazardPlaceholder(text) {
   const box = document.createElement('div');
@@ -266,6 +412,7 @@ function buildReadPathsSection() {
 }
 
 SETTINGS_SECTIONS.push({
+  group: 'general',
   label: 'mission control can read',
   node: buildReadPathsSection(),
   onOpen: loadReadPaths,
@@ -374,43 +521,9 @@ function renderBoardParallelRow(board) {
   });
   input.addEventListener('blur', save);
 
-  const budgetInput = document.createElement('input');
-  budgetInput.type = 'text';
-  budgetInput.inputMode = 'decimal';
-  budgetInput.className = 'text-field settings-budget-input';
-  budgetInput.placeholder = 'no budget';
-  budgetInput.value = board.daily_budget_usd == null ? '' : String(board.daily_budget_usd);
-  const budgetStatus = document.createElement('span');
-  budgetStatus.className = 'boards-status';
-
-  async function saveBudget() {
-    const value = budgetParseInput(budgetInput.value);
-    if (value === undefined) {
-      budgetStatus.textContent = 'must be a positive amount, or empty for no cap';
-      budgetStatus.className = 'boards-status boards-error';
-      return;
-    }
-    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({daily_budget_usd: value}),
-    });
-    budgetStatus.textContent = ok ? '' : (body && body.error) || 'could not save';
-    budgetStatus.className = ok ? 'boards-status' : 'boards-status boards-error';
-  }
-
-  budgetInput.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
-    if (evt.code !== 'Enter') return;
-    evt.preventDefault();
-    saveBudget();
-  });
-  budgetInput.addEventListener('blur', saveBudget);
-
-  // statuses span the whole grid row under the fields, and take no room while empty
+  // the status spans the whole grid row and takes no room while empty
   status.classList.add('settings-grid-note');
-  budgetStatus.classList.add('settings-grid-note');
-  row.append(label, input, budgetInput, status, budgetStatus);
+  row.append(label, input, status);
   return row;
 }
 
@@ -426,7 +539,7 @@ async function loadParallelSection() {
   try {
     const boards = await api('/api/boards');
     clearChildren(parallelCaps.boardsList);
-    parallelCaps.boardsList.appendChild(settingsGridHeader(['board', 'cards at once', 'daily $']));
+    parallelCaps.boardsList.appendChild(settingsGridHeader(['board', 'cards at once']));
     boards.forEach(b => parallelCaps.boardsList.appendChild(renderBoardParallelRow(b)));
   } catch (err) {
     clearChildren(parallelCaps.boardsList);
@@ -442,19 +555,86 @@ function buildParallelSection() {
   globalLabel.textContent = 'global (shared across every board)';
   const boardsLabel = document.createElement('div');
   boardsLabel.className = 'field-label';
-  boardsLabel.textContent = 'per board (blank = no board-specific limit or daily budget)';
+  boardsLabel.textContent = 'per board (blank = no board-specific limit)';
   const boardsList = document.createElement('div');
-  boardsList.className = 'settings-grid';
+  boardsList.className = 'settings-grid settings-grid-two';
   Object.assign(parallelCaps, {boardsList});
   box.append(globalLabel, buildGlobalParallelRow(), boardsLabel, boardsList);
   return box;
 }
 
 SETTINGS_SECTIONS.push({
+  group: 'general',
   label: 'how many cards run at once',
   node: buildParallelSection(),
   onOpen: loadParallelSection,
 });
+
+// ---- daily budgets: each board's total spend cap for the current utc day -----------------------
+
+const dailyBudgets = {boardsList: null};
+
+function renderBoardBudgetRow(board) {
+  const row = document.createElement('div');
+  row.className = 'board-row settings-grid-row';
+  const label = document.createElement('span');
+  label.className = 'board-name field-label';
+  label.textContent = board.name;
+  label.title = board.name;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'decimal';
+  input.className = 'text-field settings-budget-input';
+  input.placeholder = 'no budget';
+  input.value = board.daily_budget_usd == null ? '' : String(board.daily_budget_usd);
+  const status = document.createElement('span');
+  status.className = 'boards-status settings-grid-note';
+
+  async function save() {
+    const value = budgetParseInput(input.value);
+    if (value === undefined) {
+      status.textContent = 'must be a positive amount, or empty for no cap';
+      status.className = 'boards-status boards-error settings-grid-note';
+      return;
+    }
+    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({daily_budget_usd: value}),
+    });
+    status.textContent = ok ? '' : (body && body.error) || 'could not save';
+    status.className = ok ? 'boards-status settings-grid-note' : 'boards-status boards-error settings-grid-note';
+  }
+
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    save();
+  });
+  input.addEventListener('blur', save);
+  row.append(label, input, status);
+  return row;
+}
+
+async function loadDailyBudgets() {
+  try {
+    const boards = await api('/api/boards');
+    clearChildren(dailyBudgets.boardsList);
+    dailyBudgets.boardsList.appendChild(settingsGridHeader(['board', 'daily $']));
+    boards.forEach(board => dailyBudgets.boardsList.appendChild(renderBoardBudgetRow(board)));
+  } catch (err) {
+    clearChildren(dailyBudgets.boardsList);
+    dailyBudgets.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
+  }
+}
+
+function buildDailyBudgetsSection() {
+  const grid = document.createElement('div');
+  grid.className = 'settings-grid settings-grid-two';
+  dailyBudgets.boardsList = grid;
+  return grid;
+}
 
 // ---- spend caps: the most one run of each role may spend, in usd --------------------------------
 // blank means the role's own default (the placeholder); a run reads its cap when it starts
@@ -533,10 +713,48 @@ async function loadSpendCaps() {
   }
 }
 
+function buildCostControlsSection() {
+  const dailyNode = buildDailyBudgetsSection();
+  dailyNode.classList.add('settings-cost-grid');
+  const spendNode = buildSpendCapsSection();
+  spendNode.classList.add('settings-cost-grid');
+
+  const dailyTrigger = document.createElement('button');
+  dailyTrigger.className = 'toggle settings-cost-trigger settings-daily-budgets-trigger';
+  dailyTrigger.textContent = 'daily budgets per board';
+  dailyTrigger.onclick = () => {
+    const menu = new Menu({
+      title: 'daily budgets per board',
+      persistent: true,
+      sections: [{kind: 'node', node: dailyNode}],
+    });
+    menu.openAt(dailyTrigger);
+    loadDailyBudgets();
+  };
+
+  const spendTrigger = document.createElement('button');
+  spendTrigger.className = 'toggle settings-cost-trigger settings-spend-caps-trigger';
+  spendTrigger.textContent = 'spend caps per run';
+  spendTrigger.onclick = () => {
+    const menu = new Menu({
+      title: 'spend caps per run',
+      persistent: true,
+      sections: [{kind: 'node', node: spendNode}],
+    });
+    menu.openAt(spendTrigger);
+    loadSpendCaps();
+  };
+
+  const triggers = document.createElement('div');
+  triggers.className = 'settings-cost-triggers';
+  triggers.append(dailyTrigger, spendTrigger);
+  return triggers;
+}
+
 SETTINGS_SECTIONS.push({
-  label: 'spend caps per run (the daily budget per board is set above)',
-  node: buildSpendCapsSection(),
-  onOpen: loadSpendCaps,
+  group: 'cost',
+  label: 'budgets and spend caps',
+  node: buildCostControlsSection(),
 });
 
 // ---- mall cam interval (cf90bacc): how long the workforce drawer holds each active card before -
@@ -604,6 +822,7 @@ async function loadMallCamSection() {
 }
 
 SETTINGS_SECTIONS.push({
+  group: 'general',
   label: 'mall cam: seconds per card while auto-cycling the workforce drawer',
   node: buildMallCamSection(),
   onOpen: loadMallCamSection,
@@ -619,15 +838,37 @@ function buildSettingsSection(section) {
   return box;
 }
 
+const SETTINGS_GROUPS = [
+  {id: 'general', label: 'general board settings'},
+  {id: 'labs', label: 'labs and models'},
+  {id: 'cost', label: 'cost control'},
+];
+
+function buildSettingsGroup(group, sections) {
+  const box = document.createElement('div');
+  box.className = 'settings-group';
+  box.dataset.group = group.id;
+  const label = document.createElement('div');
+  label.className = 'field-label settings-group-title';
+  label.textContent = group.label;
+  const rule = document.createElement('div');
+  rule.className = 'h-divider';
+  box.append(label, rule);
+  sections.forEach(section => box.appendChild(buildSettingsSection(section)));
+  return box;
+}
+
 function renderSettings() {
   clearChildren(st.listEl);
   if (!SETTINGS_SECTIONS.length) {
     st.listEl.appendChild(settingsHazardPlaceholder('no preferences yet'));
     return;
   }
-  SETTINGS_SECTIONS.forEach(section => {
-    st.listEl.appendChild(buildSettingsSection(section));
-    if (section.onOpen) section.onOpen();
+  SETTINGS_GROUPS.forEach(group => {
+    const sections = SETTINGS_SECTIONS.filter(section => section.group === group.id);
+    if (!sections.length) return;
+    st.listEl.appendChild(buildSettingsGroup(group, sections));
+    sections.forEach(section => { if (section.onOpen) section.onOpen(); });
   });
 }
 

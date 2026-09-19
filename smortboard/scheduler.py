@@ -4,8 +4,8 @@
 It does not run a card itself - it decides WHEN a card may start and hands it to RunRegistry.start,
 the same entry point a manual run uses. Three rules gate a start, each documented at its check:
 
-DEPENDENCIES - a card starts only once every card it depends on has a pull request MERGED on
-  GitHub, not merely `accepted` on the board.
+DEPENDENCIES - free mode waits for merged pull requests; review mode allows one checking parent
+  and a stack of at most three cards.
 LEASES - two cards in the same repo whose lease globs could touch the same file never run together.
 USAGE_LIMIT - a run that blocks on it marks the active credential profile limited. Rotation to the
   next configured profile is opt-in (auto_switch_profiles == "on"); by default the board just
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import subprocess
 import threading
 import time
 from collections.abc import Iterable
@@ -33,7 +34,6 @@ from typing import Any
 from smortboard import profiles, telemetry
 from smortboard.actions import with_next
 from smortboard.budgets import spend_refusal
-from smortboard.exec.runner import _api_unreachable_signal, _session_limit_text_signal
 from smortboard.exec.worktrees import (
     branch_name,
     default_branch,
@@ -41,6 +41,10 @@ from smortboard.exec.worktrees import (
     has_remote,
     worktree_path,
 )
+from smortboard.labs.catalog import resolve_ref
+from smortboard.labs.events import neutral_events
+from smortboard.labs.routing import role_ref, run_ref
+from smortboard.review.integrate import integration_lock
 from smortboard.review.merge_request import PullRequestState, pr_view
 from smortboard.review.mergeable import check_mergeable, merge_branch, push_branch
 from smortboard.store.api import Store
@@ -90,11 +94,16 @@ def relabel_stale_crashes(store: Store) -> list[dict[str, str]]:
             if not results:
                 continue
             payload = results[-1]["payload"]
-            if _session_limit_text_signal(payload):
-                new_code = "USAGE_LIMIT"
-            elif _api_unreachable_signal(payload):
-                new_code = "API_UNREACHABLE"
-            else:
+            result = next(
+                (
+                    row.get("result")
+                    for row in neutral_events({"payload": payload, "kind": "result"})
+                    if row["kind"] == "result"
+                ),
+                {},
+            )
+            new_code = result.get("blocked_reason_code")
+            if new_code not in {"USAGE_LIMIT", "API_UNREACHABLE"}:
                 continue
             store.update_card(card["id"], blocked_reason_code=new_code)
             store.append_event(card["id"], "relabeled", {"from": "CRASH", "to": new_code})
@@ -126,15 +135,44 @@ def _latest_merge_request_url(store: Store, card_id: str) -> str | None:
     return url or None
 
 
-# a checking card's branch is re-synced with its base no more often than this, per repo - the
-# board has no push signal for "someone merged a PR on this repo" (only for a specific PR's own
-# state, see _dependency_wait above), so this is the timer fallback the spec allows
+# base changes trigger sweeps; the timer retries unavailable worktrees
 _SWEEP_INTERVAL_SECONDS = 5 * 60
-_last_sweep: dict[str, float] = {}
+_last_sweep: dict[tuple[str, str, str], float] = {}
+_last_base_sha: dict[tuple[str, str, str], str] = {}
 
 
-def _sweep_checking_prs(store: Store, board_id: str) -> None:
-    """keeps every checking card's branch mergeable with its base while its pull request waits.
+def _read_base_sha(repo_path: str, base: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "rev-parse", "--verify", f"origin/{base}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _is_stacked(store: Store, card_id: str) -> bool:
+    for event in reversed(store.list_events(card_id)):
+        if event["kind"] == "stacked_retargeted":
+            return False
+        if event["kind"] == "stacked_on":
+            return True
+    return False
+
+
+def sweep_checking_prs(store: Store, board_id: str, *, repo_path: str | Path | None = None) -> None:
+    """check the fetched base immediately after a board landing"""
+    _sweep_checking_prs(store, board_id, repo_path=repo_path)
+
+
+def _sweep_checking_prs(
+    store: Store, board_id: str, *, repo_path: str | Path | None = None
+) -> None:
+    """sweep every waiting branch when its fetched base changes, with a slow retry backstop.
 
     Measured 2026-09-14 (card 59727ba3, PR #112): a branch cut once at the start of a run and
     never updated drifted 34 commits behind main while its PR waited, and conflicted in four files
@@ -142,33 +180,55 @@ def _sweep_checking_prs(store: Store, board_id: str) -> None:
     stays current. Behind and conflicting: blocks the card MERGE_CONFLICT with the files, same as
     lifecycle.py does at hand-over - never touches the pull request either way.
     """
-    now = time.time()
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for card in store.list_cards(board_id):
         if card["status"] != "checking" or card.get("blocked_reason_code"):
             continue
         if not _latest_merge_request_url(store, card["id"]):
             continue  # opening never finished - nothing open to keep current
+        if _is_stacked(store, card["id"]):
+            from smortboard.review.land_card import retry_retarget
+
+            if retry_retarget(store, card):
+                continue
         try:
             repo = store.get_repo(card["repo_id"])
         except NotFoundError:
             continue
-        repo_path = repo["path"]
-        last = _last_sweep.get(repo_path, 0.0)
-        if now - last < _SWEEP_INTERVAL_SECONDS:
+        if repo_path is not None and str(repo_path) != repo["path"]:
             continue
-        _last_sweep[repo_path] = now
-        if not has_remote(repo_path):
+        key = (board_id, repo["path"], default_branch(repo))
+        groups.setdefault(key, []).append(card)
+
+    now = time.time()
+    for key, cards in groups.items():
+        _, path, base = key
+        # landing tests must observe the same tree that gets integrated
+        with integration_lock(path, base):
+            _sweep_repo(store, key, cards, now)
+
+
+def _sweep_repo(store, key, cards, now):
+    _, path, base = key
+    if not has_remote(path) or not fetch_base(path, base):
+        return
+    sha = _read_base_sha(path, base)
+    if not sha:
+        return
+    if sha == _last_base_sha.get(key) and now - _last_sweep[key] < _SWEEP_INTERVAL_SECONDS:
+        return
+    base_ref = f"origin/{base}"
+    for card in cards:
+        card = store.get_card(card["id"])
+        if card["status"] != "checking" or card.get("blocked_reason_code"):
             continue
-        base = default_branch(repo)
-        if not fetch_base(repo_path, base):
-            continue
-        tree = worktree_path(repo_path, card["id"])
+        tree = worktree_path(path, card["id"])
         if not tree.exists():
-            continue  # worktree cleaned up - nothing here to sync
-        branch, base_ref = branch_name(card["id"]), f"origin/{base}"
+            continue
+        branch = branch_name(card["id"])
         check = check_mergeable(tree, branch, base_ref)
         if not check.behind:
-            continue  # already current
+            continue
         if not check.clean:
             _flag_merge_conflict(store, card["id"], branch, base_ref, check.conflicting_files)
             continue
@@ -177,6 +237,8 @@ def _sweep_checking_prs(store: Store, board_id: str) -> None:
             _flag_merge_conflict(store, card["id"], branch, base_ref, merged.conflicting_files)
         elif merged.merged:
             push_branch(tree, branch)
+    _last_base_sha[key] = sha
+    _last_sweep[key] = now
 
 
 def _flag_merge_conflict(
@@ -283,18 +345,20 @@ def _budget_exhausted(store: Store, board_id: str) -> bool:
     budget = _board_daily_budget(store, board_id)
     if budget is None:
         return False
-    return telemetry.board_spend_today(store, board_id) >= budget
+    spend = telemetry.board_spend_today(store, board_id)
+    return spend is None or spend >= budget
 
 
 def _dependency_wait(store: Store, card: dict[str, Any], repo_path: str | Path) -> str | None:
-    """None once every dependency's pull request is actually MERGED on GitHub.
+    """review mode can stack on ready work; free mode requires proof every dependency landed"""
+    if not store.board_merges_freely(card["board_id"]):
+        from smortboard.review.stacks import stacking_parent
 
-    `accepted` alone used to be enough - it no longer is. THE BOARD NEVER MERGES, so `accepted`
-    only means the operator signed off and a PR is open; a dependent's worktree is cut fresh from the
-    repo's base branch, so it sees the dependency's code only once that PR landed there. `repo_path`
-    is any local checkout with `gh` available - `gh pr view <url>` resolves from the url itself, so
-    it does not need to be the dependency's own repo.
-    """
+        try:
+            stacking_parent(store, card)
+        except ValueError as exc:
+            return str(exc)
+        return None
     for dep_id in card.get("depends_on") or []:
         try:
             dep = store.get_card(dep_id)
@@ -359,10 +423,25 @@ class BoardScheduler:
         self._queue: list[str] = []
         self._running: set[str] = set()
         self._waiting: dict[str, str] = {}
-        self._paused_until: float | None = None
+        self._lab_paused_until: dict[str, float] = {}
+        self._run_profiles: dict[str, tuple[str, str]] = {}
+        self._run_start_seq: dict[str, int] = {}
+        self._limited_roles: dict[str, str] = {}
         # per-card timers for a solo, automatic retry - API_UNREACHABLE backoff and a resumed
         # MERGE_CONFLICT's own once-only attempt, both keyed by card id
         self._card_retry_at: dict[str, float] = {}
+
+    @property
+    def _paused_until(self) -> float | None:
+        """legacy callers see the anthropic pause; new clients use paused_labs"""
+        return self._lab_paused_until.get("anthropic")
+
+    @_paused_until.setter
+    def _paused_until(self, value: float | None) -> None:
+        if value is None:
+            self._lab_paused_until.pop("anthropic", None)
+        else:
+            self._lab_paused_until["anthropic"] = value
 
     # -- reads --------------------------------------------------------------------
 
@@ -373,7 +452,7 @@ class BoardScheduler:
         come due - those are per-card, not the board-wide pause, so nothing else drains them."""
         now = time.time()
         with self._lock:
-            expired = self._paused_until is not None and now >= self._paused_until
+            expired = [lab for lab, at in self._lab_paused_until.items() if now >= at]
             due = [card_id for card_id, at in self._card_retry_at.items() if now >= at]
         if due:
             with self._lock:
@@ -383,7 +462,8 @@ class BoardScheduler:
                         self._queue.append(card_id)
         if expired:
             with self._lock:
-                self._paused_until = None
+                for lab in expired:
+                    self._lab_paused_until.pop(lab, None)
         if expired or due:
             self._tick()
         store = Store(self._db_path)
@@ -397,6 +477,7 @@ class BoardScheduler:
                 "queued": list(self._queue),
                 "waiting": dict(self._waiting),
                 "paused_until": self._paused_until,
+                "paused_labs": dict(self._lab_paused_until),
                 "card_retry_at": dict(self._card_retry_at),
                 "budget_paused": budget_paused,
             }
@@ -438,15 +519,13 @@ class BoardScheduler:
 
     def _tick_locked(self) -> None:
         with self._lock:
-            if self._paused_until is not None and time.time() < self._paused_until:
-                return  # parked for USAGE_LIMIT; schedule_view resumes this once the window rolls
             queue_snapshot = list(self._queue)
             running_ids = set(self._running)
 
         store = Store(self._db_path)
         try:
             # no push signal for "a PR merged on this repo" exists board-wide, so every tick is
-            # the opportunity to notice one - _sweep_checking_prs throttles itself per repo
+            # the opportunity to fetch once per repo and notice a changed base
             _sweep_checking_prs(store, self.board_id)
             running_cards = []
             for card_id in running_ids:
@@ -472,18 +551,33 @@ class BoardScheduler:
 
             started: list[str] = []
             waiting: dict[str, str] = {}
-            remaining: list[str] = []
+            # cards this tick decided no longer belong in the queue at all (gone, started by
+            # hand, or landed); see the writeback below for why only removals get tracked
+            drop: list[str] = []
             for card_id in queue_snapshot:
                 try:
                     card = store.get_card(card_id)
                 except NotFoundError:
-                    continue  # gone - drop it, nothing to wait for
+                    drop.append(card_id)  # gone - drop it, nothing to wait for
+                    continue
                 if card_id in running_ids or not _is_queueable(card):
-                    continue  # started by hand, accepted, rejected - either way not ours to queue
+                    drop.append(card_id)  # started by hand, accepted, rejected - not ours anymore
+                    continue
                 if slots <= 0:
-                    remaining.append(card_id)
                     continue
                 reason = None
+                worker_lab, _ = run_ref(store, "worker", card)
+                limited_lab = worker_lab
+                if card_id in self._limited_roles:
+                    limited_lab, _ = run_ref(store, self._limited_roles[card_id], card)
+                with self._lock:
+                    pauses = [
+                        self._lab_paused_until.get(lab, 0) for lab in {worker_lab, limited_lab}
+                    ]
+                    paused = max(pauses)
+                if paused is not None and paused > time.time():
+                    waiting[card_id] = f"{worker_lab} usage limited until {paused}"
+                    continue
                 if card.get("depends_on"):
                     try:
                         repo_path = store.get_repo(card["repo_id"])["path"]
@@ -495,8 +589,13 @@ class BoardScheduler:
                 reason = reason or spend_refusal(store, card)
                 if reason:
                     waiting[card_id] = reason
-                    remaining.append(card_id)
                     continue
+                self._run_profiles[card_id] = (
+                    worker_lab,
+                    profiles.active_profile(worker_lab) or "default",
+                )
+                events = store.list_events(card_id)
+                self._run_start_seq[card_id] = events[-1]["seq"] if events else -1
                 self._runs.start(card_id, on_finish=self._make_on_finish(card_id))
                 pending.append((card["repo_id"], _lease_globs(card), card["id"]))
                 started.append(card_id)
@@ -506,7 +605,13 @@ class BoardScheduler:
 
         with self._lock:
             self._running |= set(started)
-            self._queue = remaining
+            # this tick read the queue at line ~522 and then did slow, unlocked I/O (a network PR
+            # sweep, per-card store reads) - another thread (a usage-limit retry, a due-retry
+            # requeue) may have inserted into the LIVE self._queue since. filtering the live queue
+            # for what this tick decided to remove, instead of replacing it with the stale
+            # snapshot-derived `remaining`, keeps that insertion instead of silently clobbering it
+            gone = set(started) | set(drop)
+            self._queue = [card_id for card_id in self._queue if card_id not in gone]
             self._waiting = waiting
 
     def _make_on_finish(self, card_id: str):
@@ -521,6 +626,7 @@ class BoardScheduler:
             elif reason == "MERGE_CONFLICT":
                 self._handle_merge_conflict(card_id)
             else:
+                self._limited_roles.pop(card_id, None)
                 self._tick()
 
         return _on_finish
@@ -615,20 +721,107 @@ class BoardScheduler:
         """
         store = Store(self._db_path)
         try:
-            resets_at = _latest_reset(store)
+            card = store.get_card(card_id)
+            settings = store.get_settings()
+            lab, _ = role_ref(settings, "worker", card)
+            lab, profile = self._run_profiles.get(
+                card_id, (lab, profiles.active_profile(lab) or "default")
+            )
+            role = "worker"
+            current_events = [
+                event
+                for event in store.list_events(card_id)
+                if event["seq"] > self._run_start_seq.get(card_id, -1)
+            ]
+            for event in reversed(current_events):
+                payload = event["payload"]
+                if payload.get("lab") and payload.get("profile"):
+                    lab, profile = payload["lab"], payload["profile"]
+                    role = payload.get("role") or (
+                        "reviewer" if event["kind"].startswith("reviewer_") else "worker"
+                    )
+                    break
+            resets_at = _latest_reset(store, lab, profile)
+            if resets_at is None:
+                for event in reversed(current_events):
+                    if event["payload"].get("lab") or event["payload"].get("profile"):
+                        continue
+                    resets = [
+                        (row.get("rate_limit") or row.get("result") or {}).get("resets_at")
+                        for row in neutral_events(event)
+                    ]
+                    resets = [value for value in resets if value is not None]
+                    if resets:
+                        resets_at = max(resets)
+                        break
+            resets_at = resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
             auto_switch = store.get_settings().get("auto_switch_profiles") == "on"
             if auto_switch:
-                result = profiles.handle_usage_limit(resets_at)
+                result = profiles.handle_usage_limit(resets_at, lab=lab, name=profile)
             else:
                 # a single-profile board must never write a state file just because a run hit
                 # its limit alone - same invariant handle_usage_limit itself keeps
-                if profiles.has_multiple_profiles():
-                    profiles.mark_limited(profiles.active_profile(), resets_at)
+                if profiles.has_multiple_profiles(lab) or profiles.state_path().exists():
+                    profiles.mark_limited(profile, resets_at, lab=lab)
                 result = {"rotated": False, "next_profile": None, "earliest_reset": None}
+            store.append_event(
+                card_id,
+                "profile_limited",
+                {"lab": lab, "profile": profile, "role": role, "resets_at": resets_at},
+            )
+            self._limited_roles[card_id] = role
+            fallback_selected = False
+            pause_until = (
+                result["earliest_reset"] or resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+            )
+            if result["next_profile"] is None:
+                with self._lock:
+                    self._lab_paused_until[lab] = pause_until
+                for ref in settings.get(f"{role}_cross_lab_fallback") or []:
+                    if profiles.has_multiple_profiles(lab) and profiles.next_available(lab=lab):
+                        break
+                    target = resolve_ref(ref)
+                    if target is None or target[0] == lab:
+                        continue
+                    target_lab, target_model = target
+                    with self._lock:
+                        target_paused = self._lab_paused_until.get(target_lab, 0)
+                    if target_paused > time.time():
+                        continue
+                    target_profile = profiles.next_available(lab=target_lab)
+                    if target_profile is None:
+                        continue
+                    try:
+                        profiles.read_profile_token(target_lab, target_profile)
+                    except profiles.ProfileError:
+                        continue
+                    profiles.set_active(target_profile, lab=target_lab)
+                    store.append_event(
+                        card_id,
+                        "lab_fallback",
+                        {
+                            "role": role,
+                            "lab": target_lab,
+                            "model": target_model,
+                            "profile": target_profile,
+                            "from_lab": lab,
+                            "limited_until": pause_until,
+                        },
+                    )
+                    store.add_comment(
+                        card_id,
+                        author=_BOARD_AUTHOR,
+                        body=(
+                            f"Retrying {role} on {target_lab}/{target_model}; {lab} was limited until "
+                            f"{time.strftime('%H:%M', time.localtime(pause_until))}."
+                        ),
+                    )
+                    fallback_selected = True
+                    break
         finally:
             store.close()
 
-        if result["next_profile"] is not None:
+        if result["next_profile"] is not None or fallback_selected:
             with self._lock:
                 if card_id not in self._queue and card_id not in self._running:
                     self._queue.insert(0, card_id)
@@ -638,25 +831,32 @@ class BoardScheduler:
             # left out of the queue, schedule_view's lapsed-pause check had nothing to start once
             # the window rolled over, and this card sat blocked past its own reset forever
             with self._lock:
-                self._paused_until = fallback or resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+                self._lab_paused_until[lab] = (
+                    fallback or resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
+                )
                 if card_id not in self._queue and card_id not in self._running:
                     self._queue.append(card_id)
         self._tick()
 
 
-def _latest_reset(store: Store) -> float | None:
-    """the most recent rate_limit_event, board-wide (a seat is shared across every card the
-    operator runs, not per-repo) - see telemetry.usage_projection, which reads the same events."""
-    events = store.list_events_by_kind(["rate_limit_event"])
-    if not events:
-        return None
-    payload = events[-1]["payload"]
-    info = payload.get("rate_limit_info") or {}
-    unified = info.get("unifiedWindows")
-    if isinstance(unified, dict):
-        resets = [w.get("resetsAt") for w in unified.values() if w.get("resetsAt")]
-        return max(resets) if resets else None
-    return info.get("resetsAt")
+def _latest_reset(store: Store, lab: str = "anthropic", profile: str | None = None) -> float | None:
+    """the latest window belongs to the refused run's lab and credential"""
+    events = store.list_events_by_kind(None)
+    for event in reversed(events):
+        payload = event["payload"]
+        if (payload.get("lab") or "anthropic") != lab:
+            continue
+        if profile is not None and (payload.get("profile") or "default") != profile:
+            continue
+        resets = []
+        for row in neutral_events(event):
+            block = row.get("rate_limit") or row.get("result") or {}
+            reset = block.get("resets_at")
+            if reset is not None:
+                resets.append(reset)
+        if resets:
+            return max(resets)
+    return None
 
 
 class SchedulerRegistry:

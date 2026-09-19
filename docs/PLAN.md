@@ -1,5 +1,21 @@
 # smortboard — implementation plan
 
+> **This is the plan as approved on 2026-09-08, kept as the record of what was decided and why.**
+> Two things have since changed the shape of the board, and where this document disagrees with them,
+> they win:
+>
+> - **Multi-lab** (2026-09-18). A run picks a lab and a model per role - Claude Code or Codex - with
+>   credential profiles per lab, a fallback list per role, and one card image carrying both CLIs.
+>   The adapters and the model catalog live in `smortboard/labs/`; `docs/spikes/S4-codex-events.md`
+>   through `S7-codex-auth.md` record what was measured about Codex before any of it was built,
+>   including the two things that changed the design: Codex reports no dollar cost and no rate-limit
+>   window, and a bare ChatGPT access token is refused where the full login JSON works.
+> - **Merge modes** (2026-09-18). This plan says the board never merges. It does, and now per board:
+>   review-required is the default, where accepting a card is what lands it, and free-merge is the
+>   opt-in that lands as soon as both gates pass. Neither ever writes `main`, `master` or `trunk`.
+>   Review mode stacks a dependent card on its unmerged parent's branch, up to three deep, so the
+>   queue keeps moving while nobody is watching.
+
 ## Context
 
 The operator wants to get good at defining work precisely and then leaving it alone. Today that means
@@ -33,7 +49,7 @@ below.
 | Truth | Cards are ground truth. The orchestrator keeps its own plan ledger, derived from and reconciled against them. |
 | Statuses | To do / Doing / Checking / Accepted / Rejected. **Blocked is not a sixth status** — a card keeps its status and raises a nullable reason code, which draws the gold outline. |
 | Gate to Checking | Unit tests pass **and** reviewer approves. |
-| Merge | Board pushes and links the GitHub PR. Board never merges. |
+| Merge | Review-required boards open a PR and land on accept; free-merge boards land after gates pass. Main/master/trunk remain human-only. Review mode stacks one unmerged parent, at most three cards deep. |
 | Rejection | Fresh worktree from base, plus a read-only diff of the failed attempt. |
 | Outputs | Always a git commit — decisions and documents included. |
 | Prompts | Layered by **role** only: orchestrator, worker, reviewer. |

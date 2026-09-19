@@ -136,14 +136,25 @@
 
 /* the lease-approve row and the answer field only appear on the focused card (inbox.js decides
    whether to build them at all) - kept compact here rather than styled as an afterthought */
+/* THE STATUS NEVER EATS THE FIELD. "sending..." and "resumed" sit beside it, but a refusal is a
+   sentence - "its lease overlaps the running card ... answer again once it finishes" - and with
+   both on one unwrapped line the input collapsed to a few characters with the answer still in it.
+   wrapping puts a long message on its own line and leaves the field its width */
 .inbox-answer-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
 }
-.inbox-answer { flex: 1 1 auto; }
+.inbox-answer { flex: 1 1 auto; min-width: 180px; }
 
-.inbox-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.inbox-status {
+  color: var(--text-dim);
+  font-size: calc(var(--font-size, 13px) - 1px);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .inbox-status.inbox-ok { color: var(--lichen-milk); }
 .inbox-status.inbox-error { color: var(--status-warn); }
 

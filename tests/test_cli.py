@@ -23,6 +23,7 @@ def test_default_db_path_is_under_user_data_dir_not_cwd(tmp_path, monkeypatch):
 
 
 def test_db_flag_beats_env_beats_default(monkeypatch, tmp_path):
+    monkeypatch.setattr("smortboard.cli.user_data_dir", lambda _: str(tmp_path / "data"))
     monkeypatch.setenv("SMORTBOARD_DB", str(tmp_path / "env.db"))
     assert _resolve_db(str(tmp_path / "flag.db")) == tmp_path / "flag.db"
     assert _resolve_db(None) == tmp_path / "env.db"

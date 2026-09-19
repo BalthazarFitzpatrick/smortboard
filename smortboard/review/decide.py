@@ -1,9 +1,8 @@
-"""the human's call on a finished card: accept it, or reject it and start clean.
+"""accept or reject a finished card, with an explicit optional landing step.
 
-The board still never merges. Accepting records the decision and releases the worktree; the pull
-request stays open and merging it is the operator's. Rejecting keeps the attempt as a read-only diff on
-the card, closes the pull request without deleting its branch, and destroys the local worktree and
-branch - so the next run cuts fresh from base instead of building on work that was turned down.
+Review mode lands on an unprotected base before acceptance releases the checkout. Free mode
+lands after the gates. Protected bases still need an operator merge. Rejection keeps a parent's
+local branch while undecided cards are stacked on it, and keeps every remote branch.
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ from smortboard.exec.worktrees import (
 )
 from smortboard.review.merge_request import close_merge_request
 from smortboard.review.outcome import card_outcome
+from smortboard.review.stacks import integrated_event, stacked_children
 from smortboard.store.api import Store
 
 BOARD_AUTHOR = "smortboard"
@@ -64,8 +64,12 @@ def _release_dependents(store: Store, card: dict[str, Any]) -> None:
         )
 
 
-def accept_card(store: Store, card_id: str) -> dict[str, Any]:
+def accept_card(
+    store: Store, card_id: str, land: Callable[[], None] | None = None
+) -> dict[str, Any]:
     card = store.get_card(card_id)
+    if card["status"] == "accepted" and integrated_event(store, card_id):
+        return card
     reversing = card["status"] == "rejected"
     if not reversing and (card["status"] != "checking" or card["blocked_reason_code"]):
         raise DecisionRefused(
@@ -73,6 +77,8 @@ def accept_card(store: Store, card_id: str) -> dict[str, Any]:
             f"this one is "
             f"{card['status']}{' / ' + card['blocked_reason_code'] if card['blocked_reason_code'] else ''}"
         )
+    if land is not None and not reversing:
+        land()
     if card.get("repo_id") and not reversing:
         # the branch stays: the open pull request is built on it
         _release_worktree(store.get_repo(card["repo_id"])["path"], card_id)
@@ -102,6 +108,7 @@ def reject_card(
     if card["status"] not in REJECTABLE:
         raise DecisionRefused(f"a card in {card['status']} cannot be rejected")
 
+    preserve_branch = bool(stacked_children(store, card))
     attachment = pr_refusal = None
     pr_url = card_outcome(store, card_id)["pr_url"]
     if card.get("repo_id"):
@@ -119,11 +126,13 @@ def reject_card(
         if pr_url:
             pr_refusal = close_pr(path, pr_url)
         _release_worktree(path, card_id)
-        if branch_exists(path, card_id):
+        if branch_exists(path, card_id) and not preserve_branch:
             delete_branch(path, card_id)
 
     store.update_card(card_id, status="rejected", blocked_reason_code=None, review_flag=False)
     note = "Rejected. The next run cuts a fresh worktree from base."
+    if preserve_branch:
+        note += " Its local branch is kept while undecided cards are stacked on it."
     if card["status"] == "accepted":
         note += (
             "\nIt had been accepted: if its pull request was already merged, that merge stands - "
@@ -137,6 +146,7 @@ def reject_card(
         )
     store.add_comment(card_id, author=BOARD_AUTHOR, body=note)
 
+    # dependents sit on rejected work; manual runs refuse until that work is decided
     for dependent_id in card["depended_on_by"]:
         if store.get_card(dependent_id)["status"] in UNDECIDED:
             store.update_card(
@@ -145,7 +155,9 @@ def reject_card(
             store.add_comment(
                 dependent_id,
                 author=BOARD_AUTHOR,
-                body=f"A card this one depends on was rejected: {card['title']}",
+                body=f"A card this one depends on was rejected: {card['title']}. "
+                "This attempt still contains its work. Reject this attempt and define fresh work; "
+                "the board will not rerun it on top of the rejected branch.",
             )
 
     store.append_event(

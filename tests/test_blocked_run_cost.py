@@ -31,7 +31,7 @@ def test_a_worker_run_that_blocked_still_counts_as_worker_spend(store):
 
     attempt = card_telemetry(store, card["id"])["attempts"][0]
     assert attempt["worker_cost_usd"] == pytest.approx(0.58)
-    assert attempt["worker_model"] == "claude-opus-4-5"
+    assert attempt["worker_model"] == "anthropic/claude-opus-4-5"
     row = board_costs(store, board["id"])[0]
     assert row["cost_usd"] == pytest.approx(0.58)
     assert row["refusal_cost_usd"] == pytest.approx(0.58)

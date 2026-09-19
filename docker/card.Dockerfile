@@ -5,8 +5,8 @@
 # copy of a repo. The clone and the token are bind-mounted at `docker run` time by
 # smortboard/exec/backends.py::ContainerBackend - see docs/PLAN.md "The containment decision".
 #
-# base pinned by digest, resolved via `docker manifest inspect node:20-slim` (2026-09-16)
-FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+# base pinned by digest, resolved 2026-09-17; claude requires node 22
+FROM node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
 
 # git: the card's whole job is a local commit. python3: runs the lease and bash guard hooks -
 # without it they exit 127, which does not block. ca-certificates: TLS for npm/the claude CLI.
@@ -20,11 +20,12 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.15 /uv /uvx /usr/local/bin/
 
 # the claude CLI itself, pinned to the version resolved by `npm view @anthropic-ai/claude-code
 # version` at the time this was written - bump deliberately, never track `latest`
-RUN npm install -g @anthropic-ai/claude-code@2.1.273
+RUN npm install -g @anthropic-ai/claude-code@2.1.273 @openai/codex@0.154.0
 
 # a non-root user for the agent process: the card container has no cap-drop-immune reason to run
 # as root, and F1 asks for it as defense-in-depth on top of --cap-drop=ALL
-RUN useradd --uid 1000 --create-home --shell /bin/bash agent \
+RUN usermod --login agent --home /home/agent --move-home node \
+    && groupmod --new-name agent node \
     && mkdir -p /workspace \
     && chown -R agent:agent /workspace /home/agent
 

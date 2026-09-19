@@ -22,6 +22,7 @@ secrets.*
 # outputs and logs
 output/
 outputs/
+.work/
 *.log
 *.tmp
 *.bak
@@ -50,6 +51,8 @@ __pycache__/
 
 # claude code — settings.local.json is machine-local permission grants, never shared
 .claude/settings.local.json
+# the maintainer's own working notes beside the shared playbook: personal workflow, never published
+CLAUDE.local.md
 # card worktrees - full repo copies the board cuts per card; ruff and git status reached into them
 .claude/worktrees/
 

@@ -1,45 +1,45 @@
-"""headless `claude -p` runner: builds the invocation, streams events into the store, and
-classifies the outcome into the store's blocked_reason_code vocabulary
-
-Proven shapes come from S1/S2/S3 (`docs/spikes/S1-S2-findings.md`, `docs/spikes/S3-findings.md`).
-`< /dev/null` is required or the process waits 3s for stdin on every card - UNLESS stdin is
-carrying live steering (`stream_input`/`stream_prompt`), in which case it must stay open.
-
-LIVE STEERING, proven by two spikes this morning (claude 2.1.197 - both npm's current version and
-a fresh uncached build, so there is no newer CLI to target), not in the S1-S3 docs yet:
-- with `--input-format stream-json`, user turns arrive on stdin as one json line per turn:
-  `{"type":"user","message":{"role":"user","content":"..."}}`
-- a line written AFTER a turn's `result` event is answered in the SAME session, with its memory
-- a SECOND spike, against a turn that ran three sequential Bash tool calls, wrote a line mid-turn
-  and it was injected BETWEEN two tool calls - reaching the model before its next step, inside the
-  same turn, no separate result event. The first spike's "queued" read was an artifact of testing
-  a turn with no tool calls, so it had no boundary to land on.
-- unmarked, that injected text read to the model as a prompt injection - its own next words were
-  "Note on prompt injection attempt" and it ignored the instruction. So a live note MUST carry a
-  marker (`new_note_marker`, a fresh per-run nonce - a fixed string would be guessable from repo
-  content, see F4) and the worker's system prompt must tell it that lines starting with that
-  marker are genuinely from the operator and take priority; anything else claiming authority mid-run
-  is not.
-So a note is written to stdin, marked, within NOTE_POLL_SECONDS of being queued, and the CLI hands
-it to the model at its next step. At every `result` event anything still queued goes as one more
-turn; with nothing queued stdin closes, which is what lets the process exit.
-"""
+"""lab-neutral subprocess streaming, steering and budget enforcement"""
 
 import contextlib
 import json
 import queue
-import re
 import secrets
-import shlex
 import subprocess
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from smortboard.exec.leases import LEASE_CONFLICT_PREFIX
+from smortboard.exec.commands import declares_formatter
+from smortboard.labs.base import LabAdapter, LabEvent, RunRequest, estimate_usage
+from smortboard.labs.claude_code import (
+    DEFAULT_ALLOWED_TOOLS,
+    DEFAULT_CARD_BUDGET_USD,
+    _session_limit_resets_at,
+    allowed_tools_for_repo,
+    classify_result,
+    user_message_line,
+)
+from smortboard.labs.claude_code import (
+    WAITING_TOOLS as WAITING_TOOLS,
+)
+from smortboard.labs.claude_code import (
+    _api_unreachable_signal as _api_unreachable_signal,
+)
+from smortboard.labs.claude_code import (
+    _parse_session_limit_reset as _parse_session_limit_reset,
+)
+from smortboard.labs.claude_code import (
+    _session_limit_text_signal as _session_limit_text_signal,
+)
+from smortboard.labs.claude_code import (
+    _structured_output as _structured_output,
+)
+from smortboard.labs.claude_code import (
+    classify_rate_limit as classify_rate_limit,
+)
+from smortboard.labs.registry import get_adapter
 from smortboard.operator import OPERATOR_NAME
 from smortboard.store.api import Store
 
@@ -48,7 +48,6 @@ from smortboard.store.api import Store
 # that block-main-commit and friends live in — those rules are written for an interactive human who
 # can answer a prompt, and S3 showed a card with nobody to ask just deadlocks on them. Only the
 # repo's own project settings and our card-specific --settings file apply.
-SETTING_SOURCES = "project"
 
 # replaces the ambient personal CLAUDE.md a card would otherwise inherit. it states the two facts
 # that CLAUDE.md would have supplied for an interactive session, so the agent neither re-derives
@@ -153,7 +152,7 @@ def commands_preamble(repo: dict[str, Any] | None) -> str:
         + "\nThese exact commands are the only test and lint invocations permitted; where the "
         "repo's own instructions name others, use these instead.\n"
     )
-    if _declares_formatter(repo):
+    if declares_formatter(repo):
         body += (
             "The lint command's formatter may also be run in its write form: format and commit "
             "the result, not only check it.\n"
@@ -161,90 +160,15 @@ def commands_preamble(repo: dict[str, Any] | None) -> str:
     return body + "\n"
 
 
-def allowed_tools_for_repo(repo: dict[str, Any] | None) -> tuple[str, ...]:
-    """derives a card's Bash allowlist from its repo's test_command.
-
-    a card needs to run tests (Phase 3), but "let it run tests" must not mean "let it run any
-    Bash command" - so the allowlist is scoped to exactly the repo's declared test invocation,
-    plus git. a repo with no test_command declared keeps today's narrower default rather than
-    being granted an unscoped Bash.
-    """
-    test_command = (repo or {}).get("test_command")
-    if not test_command:
-        return DEFAULT_ALLOWED_TOOLS
-    lint_command = (repo or {}).get("lint_command")
-    return (
-        "Read",
-        "Edit",
-        "Write",
-        "Glob",
-        "Grep",
-        "Bash(git *)",
-        *_bash_grants(test_command),
-        *(_bash_grants(lint_command) if lint_command else ()),
-    )
-
-
-def _bash_grants(command: str) -> tuple[str, ...]:
-    """allow rules for one repo command, each `&&` part on its own - a rule must match every
-    subcommand of a compound command. a trailing ` *` also matches the bare part (probed).
-
-    a part that is the repo's formatter run check-only (`ruff format --check ...`) also grants
-    its write form - the same declared tokens with `--check` dropped, so a card can see its own
-    work is misformatted AND fix it. the grant is derived from this exact declared part; nothing
-    admits a bare "ruff format *" or any command the repo did not itself name."""
-    parts = [part.strip() for part in command.split("&&") if part.strip()]
-    grants: list[str] = []
-    for part in parts:
-        grants.append(f"Bash({part} *)")
-        write_form = _formatter_write_form(part)
-        if write_form is not None:
-            grants.append(f"Bash({write_form} *)")
-    return tuple(grants)
-
-
-def _declares_formatter(repo: dict[str, Any] | None) -> bool:
-    """whether `repo`'s test or lint command names the formatter in its check-only form - the
-    signal used to add the write-form line to the card's brief"""
-    repo = repo or {}
-    for command in (repo.get("test_command"), repo.get("lint_command")):
-        if not command:
-            continue
-        if any(_formatter_write_form(part.strip()) for part in command.split("&&")):
-            return True
-    return False
-
-
-def _formatter_write_form(part: str) -> str | None:
-    """the write form of one declared command part, if it runs `ruff format --check` - the same
-    tokens with exactly the `--check` flag dropped, else None.
-
-    tokenised rather than substring-matched, so a command that merely shares a prefix - `ruff
-    formatter --check .`, `unruffled format --check` - is correctly left alone: the grant this
-    feeds must never admit a command the repo did not actually declare."""
-    try:
-        tokens = shlex.split(part)
-    except ValueError:
-        return None
-    if "--check" not in tokens:
-        return None
-    if not any(tokens[i] == "ruff" and tokens[i + 1] == "format" for i in range(len(tokens) - 1)):
-        return None
-    return shlex.join(token for token in tokens if token != "--check")
-
-
 # GLOB AND GREP ARE FREE AND THEIR ABSENCE IS EXPENSIVE. without a search tool an agent reaches for
 # `Bash grep`, which the allowlist refuses - measured, one card spent ten of its thirty-two turns
 # being denied reworded shell commands it was never going to be allowed. both are read-only
-DEFAULT_ALLOWED_TOOLS = ("Bash(git *)", "Edit", "Read", "Write", "Glob", "Grep")
 
 # a ceiling per card, not a target - see build_command
-DEFAULT_CARD_BUDGET_USD = 5.0
 
 # NOTHING RE-INVOKES A HEADLESS RUN. a tool that waits for a later wake-up ends the turn, and the
 # turn ending is the run ending - measured, a card backgrounded pytest, set a Monitor and a
 # ScheduleWakeup, said "pausing here", and lost 12 uncommitted writes
-WAITING_TOOLS = ("Monitor", "ScheduleWakeup", "CronCreate", "TaskOutput")
 
 # appended to every worker prompt, stored or default - a prompt saved in the board replaces the
 # default whole, and must not be able to drop the one fact the run depends on
@@ -264,45 +188,17 @@ def build_command(
     system_prompt: str = SYSTEM_PROMPT,
     stream_input: bool = False,
 ) -> list[str]:
-    """the proven S1 invocation shape, with our lease settings and scoping decision wired in.
-
-    `settings_path` is optional - the orchestrator runs with no lease/hook file at all, so None
-    omits `--settings` rather than passing a path that does not exist.
-
-    `stream_input=True` opts into live steering: the prompt is dropped from argv (it goes as the
-    first stdin message instead, via `run_process(stream_prompt=...)`) and `--input-format
-    stream-json` is added. Reviewer and orchestrator runs keep the old one-shot shape - `prompt` is
-    still required from them but ignored here when streaming.
-    """
-    cmd = ["claude", "-p"]
-    if stream_input:
-        cmd += ["--input-format", "stream-json"]
-    else:
-        cmd.append(prompt)
-    cmd += [
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--permission-mode",
-        "acceptEdits",
-        "--setting-sources",
-        SETTING_SOURCES,
-        "--system-prompt",
-        system_prompt,
-    ]
-    if settings_path is not None:
-        cmd += ["--settings", str(settings_path)]
-    cmd += ["--model", model]
-    # A CEILING, NOT A TARGET. a card that loops burns real money quietly - measured, a single
-    # 13-turn card re-read 209k cached tokens, so a card that thrashes multiplies that. with a
-    # budget the run is refused at the limit rather than found afterwards on the bill
-    if budget_usd is not None:
-        cmd += ["--max-budget-usd", str(budget_usd)]
-    for tool in allowed_tools:
-        cmd += ["--allowedTools", tool]
-    for tool in WAITING_TOOLS:
-        cmd += ["--disallowedTools", tool]
-    return cmd
+    return get_adapter("anthropic").build_command(
+        RunRequest(
+            prompt=prompt,
+            settings_path=settings_path,
+            model=model,
+            allowed_tools=allowed_tools,
+            budget_usd=budget_usd,
+            system_prompt=system_prompt,
+            stream_input=stream_input,
+        )
+    )
 
 
 @dataclass
@@ -355,16 +251,14 @@ class RunResult:
     # blocked_reason_code is USAGE_LIMIT but no rate_limit_event ever carried a resetsAt - None
     # whenever an authoritative rate_limit_event already covers it, or the text had no readable time
     resets_at: float | None = None
-
-
-def _structured_output(event: dict[str, Any]) -> dict[str, Any] | None:
-    """the input of a StructuredOutput tool call in one assistant event, or None"""
-    for block in (event.get("message") or {}).get("content") or []:
-        if not isinstance(block, dict) or block.get("type") != "tool_use":
-            continue
-        if block.get("name") == "StructuredOutput" and isinstance(block.get("input"), dict):
-            return block["input"]
-    return None
+    lab: str = "anthropic"
+    model: str | None = None
+    profile: str = "default"
+    cost_estimated: bool = False
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    role: str = "worker"
 
 
 # a fixed marker would be guessable from the worker prompt, so any file could spoof an operator
@@ -378,154 +272,23 @@ NOTE_POLL_SECONDS = 1.0
 
 # phrases that put a question to the operator. "approval" alone is not one: run 3's summary quoted
 # the denial text "requires approval" while reporting, and the card blocked before its gates
-_ASKING_PHRASES = (
-    "ok to proceed",
-    "should i ",
-    "shall i ",
-    "may i ",
-    "do you want",
-    "would you like",
-)
-
-
-def _agent_question_signal(result_event: dict[str, Any]) -> bool:
-    """S3: a populated permission_denials plus a question in result.result is the AGENT_QUESTION
-    signal — the agent stopped to ask something nobody headless can answer.
-
-    A question is a result that ends asking one, or asks for leave in so many words - not any text
-    that mentions a question mark or the word approval somewhere in a report.
-    """
-    denials = result_event.get("permission_denials") or []
-    text = (result_event.get("result") or "").strip().lower()
-    asked = text.endswith("?") or any(phrase in text for phrase in _ASKING_PHRASES)
-    return bool(denials) and asked
-
-
-def _lease_conflict_signal(result_event: dict[str, Any]) -> bool:
-    """a lease refusal, per S3, is NOT a card failure — it still needs surfacing so the board can
-    decide whether to park the card or extend the lease"""
-    denials = result_event.get("permission_denials") or []
-    if any(d.get("tool_name") in ("Edit", "Write") for d in denials):
-        return True
-    return LEASE_CONFLICT_PREFIX in (result_event.get("result") or "")
 
 
 # the text a session-limit refusal leaves in `result` when no rate_limit_event stream event ever
 # arrives - "You've hit your session limit · resets 3:40pm (UTC)" (a time) or a date variant
 # ("resets Sep 15 (UTC)") when the reset is not today. captures whatever sits between "resets" and
 # the trailing "(UTC)" and leaves parsing it to _parse_session_limit_reset below.
-_SESSION_LIMIT_PATTERN = re.compile(
-    r"session limit.*?resets\s+(?P<when>.+?)\s*\(UTC\)", re.IGNORECASE
-)
 
 # text an unreachable/overloaded api leaves behind - a transient outage, not the card's fault, so
 # this is retried automatically rather than left for a human like CRASH
-_API_UNREACHABLE_PATTERN = re.compile(
-    r"unable to connect to (the )?api|connection\s*refused|connection\s*reset|"
-    r"\b5\d{2}\b.{0,20}\b(error|status)\b|\boverloaded\b",
-    re.IGNORECASE,
-)
 
 
-def _api_unreachable_signal(result_event: dict[str, Any]) -> bool:
-    text = result_event.get("result") or ""
-    return bool(_API_UNREACHABLE_PATTERN.search(text))
-
-
-_SESSION_LIMIT_TIME_FORMATS = ("%I:%M%p", "%I%p")
 # each paired with the current year, appended before parsing - a bare "%b %d" is ambiguous about
 # which year it means and Python 3.15 will start refusing it outright
-_SESSION_LIMIT_DATE_FORMATS = ("%b %d %Y", "%B %d %Y", "%m/%d %Y", "%Y-%m-%d")
-
-
-def _parse_session_limit_reset(when: str, now: datetime | None = None) -> float | None:
-    """turns "3:40pm" or "Sep 15" into an epoch timestamp - the soonest future UTC moment that
-    text could mean, rolling a bare time to tomorrow and a bare date to next year once it has
-    already passed. Unrecognised text returns None rather than raising: a caller with no readable
-    reset falls back the same way an absent rate_limit_event always has."""
-    now = now or datetime.now(UTC)
-    when = when.strip()
-    # %p wants an upper-case AM/PM marker; the text arrives lower-case ("3:40pm")
-    compact = when.upper().replace(" ", "")
-    for fmt in _SESSION_LIMIT_TIME_FORMATS:
-        try:
-            parsed = datetime.strptime(compact, fmt)
-        except ValueError:
-            continue
-        candidate = now.replace(hour=parsed.hour, minute=parsed.minute, second=0, microsecond=0)
-        if candidate <= now:
-            candidate += timedelta(days=1)
-        return candidate.timestamp()
-    dated = f"{when} {now.year}"
-    for fmt in _SESSION_LIMIT_DATE_FORMATS:
-        text = when if fmt == "%Y-%m-%d" else dated
-        try:
-            parsed = datetime.strptime(text, fmt)
-        except ValueError:
-            continue
-        candidate = now.replace(
-            year=parsed.year,
-            month=parsed.month,
-            day=parsed.day,
-            hour=0,
-            minute=0,
-            second=0,
-            microsecond=0,
-        )
-        if candidate <= now:
-            candidate = candidate.replace(year=candidate.year + 1)
-        return candidate.timestamp()
-    return None
-
-
-def _session_limit_resets_at(result_event: dict[str, Any]) -> float | None:
-    """the reset time parsed from a session-limit refusal's own text, or None if this result
-    carries no such text - distinct from "text matched but the time itself was unreadable", which
-    also returns None and just leaves resets_at unset for the caller."""
-    text = result_event.get("result") or ""
-    match = _SESSION_LIMIT_PATTERN.search(text)
-    if not match:
-        return None
-    return _parse_session_limit_reset(match.group("when"))
-
-
-def _session_limit_text_signal(result_event: dict[str, Any]) -> bool:
-    """true for a session-limit refusal's OWN text, whether or not the reset time inside it could
-    be parsed - the classification does not depend on a readable time, only resets_at does."""
-    text = result_event.get("result") or ""
-    return bool(_SESSION_LIMIT_PATTERN.search(text))
-
-
-def classify_result(result_event: dict[str, Any]) -> str | None:
-    """maps one `result` stream event onto the store's blocked_reason_code vocabulary, or None
-    for a clean run. Order matters: a lease conflict is checked before is_error, since S3 showed
-    the run still completes `subtype: success` when it hits one. The session-limit text is checked
-    before is_error too - a run whose only output is that refusal text was seen classified CRASH
-    instead of USAGE_LIMIT, so nothing rotated."""
-    if _lease_conflict_signal(result_event):
-        return "LEASE_CONFLICT"
-    if _agent_question_signal(result_event):
-        return "AGENT_QUESTION"
-    if _session_limit_text_signal(result_event):
-        return "USAGE_LIMIT"
-    if _api_unreachable_signal(result_event):
-        return "API_UNREACHABLE"
-    if result_event.get("is_error"):
-        return "CRASH"
-    return None
 
 
 # "allowed_warning" only says a threshold was crossed (0.75 of the week, 0.9 of five hours) and the
 # run goes on; blocking on it stopped cards and mission control at 76% with nothing refused
-_RATE_LIMIT_OK = frozenset({"allowed", "allowed_warning"})
-
-
-def classify_rate_limit(rate_limit_event: dict[str, Any]) -> str | None:
-    """S2: a refused status in either window maps to USAGE_LIMIT; a warning is not a refusal"""
-    info = rate_limit_event.get("rate_limit_info", {})
-    if info.get("status") not in _RATE_LIMIT_OK:
-        return "USAGE_LIMIT"
-    return None
 
 
 def parse_line(line: str) -> dict[str, Any] | None:
@@ -534,14 +297,10 @@ def parse_line(line: str) -> dict[str, Any] | None:
     if not line:
         return None
     try:
-        return json.loads(line)
+        value = json.loads(line)
+        return value if isinstance(value, dict) else None
     except json.JSONDecodeError:
         return None
-
-
-def user_message_line(text: str) -> str:
-    """one `--input-format stream-json` input line: a user turn"""
-    return json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n"
 
 
 def result_to_run_result(result_event: dict[str, Any]) -> RunResult:
@@ -571,7 +330,9 @@ class _NoteFeeder:
         pending_notes: Callable[[], list[dict[str, Any]]] | None,
         poll_seconds: float,
         note_marker: str,
+        steering_line: Callable[[str], str | None] = user_message_line,
     ) -> None:
+        self._steering_line = steering_line
         self._stdin = stdin
         self._pending = pending_notes
         self._marker = note_marker
@@ -594,7 +355,10 @@ class _NoteFeeder:
                 return False
             text = "\n".join(f"{self._marker}{note['body']}" for note in notes)
             try:
-                self._stdin.write(user_message_line(text))
+                line = self._steering_line(text)
+                if line is None:
+                    return False
+                self._stdin.write(line)
                 self._stdin.flush()
             except (BrokenPipeError, ValueError):
                 # the process already exited - the comments still reach its next run's brief
@@ -633,145 +397,256 @@ def run_process(
     note_marker: str | None = None,
     container_name: str | None = None,
     on_process: Callable[[ProcessHandle], None] | None = None,
+    *,
+    adapter: LabAdapter | None = None,
+    lab: str = "anthropic",
+    model: str | None = None,
+    profile: str | None = None,
+    budget_usd: float | None = None,
+    role: str = "worker",
 ) -> RunResult:
-    """launches `cmd`, recording every stream-json line into the store as it arrives
+    """record raw and neutral events, preserving the identity selected before launch"""
+    adapter = adapter or get_adapter(lab)
+    lab = adapter.lab
+    if profile is None:
+        from smortboard import profiles
 
-    `on_process`, if given, is handed a `ProcessHandle` the moment the process starts - this is how
-    RunRegistry.stop() finds the exact process (and container, via `container_name`) a running card
-    is inside right now.
-
-    shared by the card runtime and by tests: the container runtime runs `docker run` with the
-    worktree; a `ContainerBackend` runs `docker run ...` wrapping the same `claude` invocation, and
-    the container's stdout is exactly the same stream, so classification does not change per
-    backend - only how the process is launched does.
-
-    subprocess is managed directly rather than via `claude --bg` + `claude stop`: we need to record
-    each line into the event log as it streams, and a plain Popen gives us that plus a straightforward
-    kill path without a second process to poll for logs.
-
-    TWO STDIN SHAPES. `stdin_text` is the old one-shot handoff (reviewer, orchestrator): write it,
-    close stdin, `claude` reads the prompt from argv. `stream_prompt` is live steering (worker
-    cards): `token_line` (plain text, if there is a credential) then the brief as the first
-    stream-json user turn, stdin left OPEN. A feeder thread writes each note the moment
-    `pending_notes()` returns it; at every `result` event anything still queued goes as one more
-    turn, and nothing queued closes stdin - only then can the process exit. The two are mutually
-    exclusive.
-    """
-    live = stream_prompt is not None
+        profile = profiles.active_profile(lab=lab) or "default"
+    live = stream_prompt is not None and adapter.capabilities.live_steering
     process = subprocess.Popen(
         cmd,
         cwd=str(cwd) if cwd is not None else None,
         env=env,
-        # PIPE whenever something is written to stdin at all; DEVNULL otherwise, because `claude
-        # -p` waits three seconds for input it will never get (S1)
-        stdin=subprocess.PIPE if (stdin_text is not None or live) else subprocess.DEVNULL,
+        stdin=subprocess.PIPE
+        if (stdin_text is not None or live or token_line is not None)
+        else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+    handle = ProcessHandle(process, container_name=container_name)
     if on_process is not None:
-        on_process(ProcessHandle(process, container_name=container_name))
-
+        on_process(handle)
     feeder: _NoteFeeder | None = None
     if live and process.stdin is not None:
         if token_line is not None:
             process.stdin.write(token_line)
-        process.stdin.write(user_message_line(stream_prompt))
+        process.stdin.write(adapter.steering_line(stream_prompt))
         process.stdin.flush()
-        # the caller (worker system prompt) must already know this exact marker, so default only
-        # covers a caller that has no notes-explaining prompt to match against (tests, the reviewer)
         feeder = _NoteFeeder(
-            process.stdin, pending_notes, NOTE_POLL_SECONDS, note_marker or new_note_marker()
+            process.stdin,
+            pending_notes,
+            NOTE_POLL_SECONDS,
+            note_marker or new_note_marker(),
+            adapter.steering_line,
         )
-    elif stdin_text is not None and process.stdin is not None:
-        process.stdin.write(stdin_text)
+    elif process.stdin is not None:
+        if stdin_text is not None or token_line is not None:
+            process.stdin.write(stdin_text if stdin_text is not None else token_line)
         process.stdin.close()
 
-    result_events: list[dict[str, Any]] = []
-    blocked_reason_code: str | None = None
+    # drain stderr concurrently so a verbose cli cannot fill its pipe and deadlock stdout
+    stderr_parts: list[str] = []
+
+    def drain_stderr() -> None:
+        if process.stderr is not None:
+            stderr_parts.append(process.stderr.read())
+
+    stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+    stderr_thread.start()
+    finals: list[LabEvent] = []
+    usage_events: list[dict[str, Any]] = []
+    pending_usage: list[LabEvent] = []
     structured_output: dict[str, Any] | None = None
+    blocked_reason_code: str | None = None
+    partial_text: str | None = None
+    budget_exceeded = False
+    spend = 0.0
+
+    def attribute(event: LabEvent) -> LabEvent:
+        event = replace(event, lab=lab, model=event.model or model, profile=profile, role=role)
+        if event.usage is not None:
+            event = replace(event, usage=estimate_usage(event.usage, lab, event.model))
+        return event
+
+    def record(raw: dict[str, Any], neutral: list[LabEvent], kind: str | None = None) -> None:
+        if store is not None:
+            store.append_event(
+                card_id,
+                kind or raw.get("type", "unknown"),
+                {
+                    **raw,
+                    "lab": lab,
+                    "model": model,
+                    "profile": profile,
+                    "role": role,
+                    "neutral": [event.to_dict() for event in neutral],
+                },
+            )
+
     assert process.stdout is not None
     for raw_line in process.stdout:
-        event = parse_line(raw_line)
-        if event is None:
+        raw = parse_line(raw_line)
+        if raw is None:
             continue
-        # the orchestrator passes no store: it has no card of its own, only a board-wide turn
-        if store is not None:
-            # attribute the window figure to whichever credential earned it - telemetry has no
-            # other record of which profile a past run used (see usage_projection)
-            if event.get("type") == "rate_limit_event":
-                # imported here, not at module level - profiles.py imports smortboard.exec.backends,
-                # which imports this module, so a top-level import would be circular
-                from smortboard import profiles
-
-                event = {**event, "profile": profiles.active_profile()}
-            store.append_event(card_id, event.get("type", "unknown"), event)
-
-        if event.get("type") == "result":
-            result_events.append(event)
-            # anything still queued becomes one more turn; nothing queued lets the process exit
-            if feeder is not None and not feeder.deliver():
-                feeder.close()
-        elif event.get("type") == "rate_limit_event":
-            reason = classify_rate_limit(event)
-            if reason:
-                blocked_reason_code = reason
-        elif event.get("type") == "assistant":
-            # measured: a reviewer submitted its findings, then hit its budget, and the result
-            # event carried none of them - so the answer is taken from the call itself
-            structured_output = _structured_output(event) or structured_output
+        neutral = [attribute(event) for event in adapter.normalize(raw)]
+        record(raw, neutral)
+        for event in neutral:
+            if event.kind == "usage":
+                usage = event.usage or {}
+                usage_events.append(usage)
+                pending_usage.append(event)
+                if usage.get("cost_usd") is not None:
+                    spend += float(usage["cost_usd"])
+            elif event.kind == "result":
+                finals.append(event)
+                pending_usage.clear()
+                structured_output = (event.result or {}).get(
+                    "structured_output"
+                ) or structured_output
+                if feeder is not None and not feeder.deliver():
+                    feeder.close()
+            elif event.kind == "rate_limit" and (event.rate_limit or {}).get("status") == "refused":
+                blocked_reason_code = "USAGE_LIMIT"
+            elif event.kind == "tool_use":
+                structured_output = (event.tool or {}).get("structured_output") or structured_output
+            elif event.kind == "assistant_text":
+                partial_text = event.text or partial_text
         _record_deliveries(store, card_id, feeder)
+        if (
+            not budget_exceeded
+            and not adapter.capabilities.native_budget
+            and budget_usd is not None
+            and spend > budget_usd
+        ):
+            budget_exceeded = True
+            handle.terminate()
 
     if feeder is not None:
         feeder.close()
         _record_deliveries(store, card_id, feeder)
-
     process.wait()
-
-    if not result_events:
-        # the process exited without ever emitting a result event - a crash, not a graceful stop
+    stderr_thread.join(timeout=2)
+    if budget_exceeded:
+        previous = finals[-1].result if finals else {}
+        unaccounted = [event.usage.get("cost_usd") for event in pending_usage]
+        remaining_cost = sum(unaccounted) if all(cost is not None for cost in unaccounted) else None
+        final = attribute(
+            LabEvent(
+                "result",
+                result={
+                    **(previous or {}),
+                    "ok": False,
+                    "subtype": "error_max_budget_usd",
+                    "text": (previous or {}).get("text") or partial_text,
+                    "structured_output": structured_output,
+                    "blocked_reason_code": "CRASH",
+                    "cost_usd": remaining_cost,
+                    "num_turns": 0 if finals else 1,
+                    "synthetic": True,
+                    "counts_run": not bool(finals),
+                },
+            )
+        )
+        finals.append(final)
+        summaries = [
+            replace(event, usage={**event.usage, "accounting_summary": True})
+            for event in pending_usage
+        ]
+        record(
+            {"type": "result", "subtype": "error_max_budget_usd", "is_error": True},
+            [*summaries, final],
+        )
+    identity = {"lab": lab, "model": model, "profile": profile, "role": role}
+    if not finals:
+        partial_cost = (
+            spend
+            if usage_events and all(u.get("cost_usd") is not None for u in usage_events)
+            else None
+        )
+        summaries = [
+            replace(event, usage={**event.usage, "accounting_summary": True})
+            for event in pending_usage
+        ]
+        failed = attribute(
+            LabEvent(
+                "result",
+                result={
+                    "ok": False,
+                    "blocked_reason_code": blocked_reason_code or "CRASH",
+                    "cost_usd": partial_cost,
+                    "text": "".join(stderr_parts) or partial_text,
+                    "synthetic": True,
+                },
+            )
+        )
+        record({"type": "run_failed"}, [*summaries, failed])
         return RunResult(
-            subtype=None,
-            is_error=True,
-            blocked_reason_code=blocked_reason_code or "CRASH",
-            session_id=None,
-            total_cost_usd=None,
-            num_turns=None,
-            result_text=process.stderr.read() if process.stderr else None,
+            None,
+            True,
+            blocked_reason_code or "CRASH",
+            None,
+            partial_cost,
+            None,
+            "".join(stderr_parts) or partial_text,
             structured_output=structured_output,
+            cost_estimated=any(u.get("cost_estimated") for u in usage_events),
+            input_tokens=sum(int(u.get("input_tokens") or 0) for u in usage_events),
+            output_tokens=sum(int(u.get("output_tokens") or 0) for u in usage_events),
+            cached_tokens=sum(int(u.get("cached_tokens") or 0) for u in usage_events),
+            **identity,
         )
-
-    # cost and turns are PER TURN, so a session with a note turn is the sum. measured 2026-09-11 on
-    # 2.1.197: one session, two results - $0.0087 then $0.0129, each reporting num_turns 1
-    last = result_to_run_result(result_events[-1])
-    run_result = RunResult(
-        **{
-            **last.__dict__,
-            "total_cost_usd": sum(float(e.get("total_cost_usd") or 0) for e in result_events),
-            "num_turns": sum(int(e.get("num_turns") or 0) for e in result_events),
-            "structured_output": structured_output,
-        }
+    final = finals[-1]
+    last = final.result or {}
+    reason = adapter.classify(final) or blocked_reason_code
+    if budget_exceeded:
+        reason = "CRASH"
+    costs = [u.get("cost_usd") for u in usage_events]
+    total_cost = sum(costs) if costs and all(cost is not None for cost in costs) else None
+    # reported totals take precedence over rounded per-model subtotals
+    result_costs = [(event.result or {}).get("cost_usd") for event in finals]
+    if not budget_exceeded and result_costs and all(cost is not None for cost in result_costs):
+        total_cost = sum(result_costs)
+    result = RunResult(
+        subtype=last.get("subtype"),
+        is_error=not last.get("ok", False),
+        blocked_reason_code=reason,
+        session_id=last.get("session_id"),
+        total_cost_usd=total_cost,
+        num_turns=sum(int((event.result or {}).get("num_turns") or 0) for event in finals),
+        result_text=last.get("text") or partial_text,
+        auth_failed=bool(last.get("auth_failed")),
+        structured_output=structured_output,
+        resets_at=last.get("resets_at"),
+        cost_estimated=any(u.get("cost_estimated") for u in usage_events),
+        input_tokens=sum(int(u.get("input_tokens") or 0) for u in usage_events),
+        output_tokens=sum(int(u.get("output_tokens") or 0) for u in usage_events),
+        cached_tokens=sum(int(u.get("cached_tokens") or 0) for u in usage_events),
+        **identity,
     )
-    # a rate-limit block takes priority over whatever the result event alone would classify
-    if blocked_reason_code and run_result.blocked_reason_code is None:
-        run_result = RunResult(
-            **{**run_result.__dict__, "blocked_reason_code": blocked_reason_code}
+    if reason == "USAGE_LIMIT" and not blocked_reason_code and result.resets_at is not None:
+        event = attribute(
+            LabEvent(
+                "rate_limit",
+                rate_limit={
+                    "window": "unknown",
+                    "status": "refused",
+                    "resets_at": result.resets_at,
+                    "utilization": None,
+                },
+            )
         )
-    # a real rate_limit_event already arrived on the stream (blocked_reason_code local var) and
-    # was recorded as its own event above - that authoritative resetsAt must win, so a synthetic
-    # one is appended only when the session-limit TEXT is all there was to go on
-    if (
-        store is not None
-        and run_result.blocked_reason_code == "USAGE_LIMIT"
-        and not blocked_reason_code
-        and run_result.resets_at is not None
-    ):
-        store.append_event(
-            card_id,
-            "rate_limit_event",
-            {"rate_limit_info": {"status": "refused", "resetsAt": run_result.resets_at}},
+        record(
+            {
+                "type": "rate_limit_event",
+                "rate_limit_info": {
+                    "status": "refused",
+                    "resetsAt": result.resets_at,
+                },
+            },
+            [event],
         )
-    return run_result
+    return result
 
 
 def run_card(

@@ -31,7 +31,7 @@ const BINDINGS = [
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
   {code: 'KeyI', label: 'i', action: 'cost telemetry: card attempts, or the board cost table', group: 'panels'},
   {code: 'KeyC', label: 'c', action: 'cost overview: spend across every board', group: 'panels'},
-  {code: 'KeyA', label: 'a', action: 'agent roster: jump to a card an agent is working on', group: 'panels'},
+  {code: 'KeyA', label: 'a / shift+a', action: 'agent roster / change board merge mode, with confirmation', group: 'panels'},
   {code: 'KeyD', label: 'd', action: 'morning digest: pull requests and open questions', group: 'panels'},
   {code: 'KeyS', label: 's', action: 'this shortcut overlay', group: 'panels'},
   // one binding row for both: the letter acts on a card elsewhere in this table, shift on the
@@ -333,6 +333,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyU') { openUsagePanel(); return; }
   if (evt.code === 'KeyI') { openTelemetryPanel(); return; }
   if (evt.code === 'KeyC') { openCostsOverviewPanel(); return; }
+  if (evt.code === 'KeyA' && evt.shiftKey) { evt.preventDefault(); toggleBoardMergeMode(); return; }
   if (evt.code === 'KeyA') { openRosterPanel(); return; }
   if (evt.code === 'KeyD') { openDigestPanel(); return; }
   if (evt.code === 'KeyR') { runFocusedCard(); return; }

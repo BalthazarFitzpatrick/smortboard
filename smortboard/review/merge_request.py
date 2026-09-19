@@ -1,15 +1,8 @@
-"""the last step of a card: push its branch and open a pull request. never merge it.
+"""push a card branch and open, inspect, close or retarget its pull request.
 
-THIS RUNS ON THE HOST, AND IT IS THE ONLY PART OF THE CARD PATH THAT TOUCHES GITHUB. A card has no
-GitHub credential and no way to reach GitHub - that is what actually protects `main`, because the
-operator's rules about main live in their own settings, which a card never sees. So the card commits
-locally, the board fetches those commits back, and the push happens out here where those rules
-apply.
-
-"Never merges" is structural rather than careful. Every `gh` invocation goes through `_gh`, which
-refuses any subcommand not on a three-entry allowlist, and every push goes through `_push`, which
-refuses a refspec whose destination is a protected branch. Neither can be talked into merging by a
-caller passing something unexpected, because neither takes the verb from the caller at all.
+The board lands on unprotected bases after acceptance in review mode or automatically in free
+mode. This module cannot merge a pull request: gh pr merge is absent from the allowlist, and
+pushes to protected branches are refused. Retargeting only changes the review base.
 """
 
 from __future__ import annotations
@@ -33,7 +26,10 @@ PROTECTED_BRANCHES = frozenset({"main", "master", "trunk"})
 # the only gh subcommands this module may run. `merge` is not on it, and cannot be added by a
 # caller - see _gh, which matches the first two words of the invocation against this set.
 # `close` is for a rejected card, and close_merge_request never passes --delete-branch
-ALLOWED_GH_COMMANDS = frozenset({("pr", "create"), ("pr", "list"), ("pr", "view"), ("pr", "close")})
+# pr edit --base retargets a review and lands nothing; pr merge remains absent
+ALLOWED_GH_COMMANDS = frozenset(
+    {("pr", "create"), ("pr", "list"), ("pr", "view"), ("pr", "close"), ("pr", "edit")}
+)
 
 # a push or a pr create that has not answered in two minutes is a network problem, not slow work
 GH_TIMEOUT_SECONDS = 120
@@ -246,7 +242,7 @@ def _body(card: dict[str, Any], evidence: _CardEvidence, branch: str) -> str:
     if evidence.tasks:
         lines += ["", "## Tasks", ""]
         lines += [
-            f"- [{'x' if task.get('done') else ' '}] {task.get('text', '')}"
+            f"- {task.get('text', '')}{' (done)' if task.get('done') else ''}"
             for task in evidence.tasks
         ]
 
@@ -257,7 +253,7 @@ def _body(card: dict[str, Any], evidence: _CardEvidence, branch: str) -> str:
         "",
         f"Branch `{branch}`, opened by smortboard. Cost ${cost} over "
         f"{evidence.turns if evidence.turns is not None else '?'} turns.",
-        "The board never merges - this is waiting for you.",
+        "Review mode waits for acceptance; free mode lands on unprotected bases automatically.",
     ]
     return "\n".join(lines)
 
@@ -382,6 +378,7 @@ class PullRequestState:
     """
 
     merged: bool
+    base: str | None = None
     state: str | None = None  # "OPEN", "CLOSED", "MERGED"
     error: str | None = None
 
@@ -391,14 +388,16 @@ def pr_view(repo_path: str | Path, url: str) -> PullRequestState:
     the result so a scheduler can wait rather than crash when GitHub is unreachable."""
     if shutil.which("gh") is None:
         return PullRequestState(merged=False, error="gh is not installed")
-    result = _gh(["pr", "view", url, "--json", "state,mergedAt"], cwd=repo_path)
+    result = _gh(["pr", "view", url, "--json", "state,mergedAt,baseRefName"], cwd=repo_path)
     if result.returncode != 0:
         return PullRequestState(merged=False, error=result.stderr.strip() or "gh pr view failed")
     try:
         data = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
         return PullRequestState(merged=False, error="gh pr view returned unreadable json")
-    return PullRequestState(merged=bool(data.get("mergedAt")), state=data.get("state"))
+    return PullRequestState(
+        merged=bool(data.get("mergedAt")), state=data.get("state"), base=data.get("baseRefName")
+    )
 
 
 def close_merge_request(repo_path: str | Path, url: str) -> str | None:
@@ -421,3 +420,15 @@ def merge_request_is_configured(repo_path: str | Path) -> bool:
     except MergeRequestUnavailable:
         return False
     return True
+
+
+def retarget_merge_request(repo, url, base):
+    """pr edit --base changes only the review target; pr merge remains forbidden"""
+    from smortboard.exec.worktrees import default_branch
+
+    if base != default_branch(repo):
+        raise ValueError("a stacked pull request can only retarget to the repo default")
+    if shutil.which("gh") is None:
+        return "gh is not installed"
+    result = _gh(["pr", "edit", url, "--base", base], cwd=repo["path"])
+    return None if result.returncode == 0 else result.stderr.strip() or "pr retarget failed"

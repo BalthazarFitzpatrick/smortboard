@@ -158,6 +158,18 @@ responses.set('/api/roster', stubJson(200, []));
 
 // no usage at all says so instead of three empty sections
 {
+  const sections = mod.usageSections({windows: [], total_cost_usd: null, runs: 2, models: [
+    {lab: 'anthropic', model: 'anthropic/sonnet', cost_usd: 0.2},
+    {lab: 'openai', model: 'openai/x', cost_usd: 0.3, cost_estimated: true},
+    {lab: 'openai', model: 'openai/y', cost_usd: null},
+  ]});
+  assert.equal(sections[0].node.querySelectorAll('.usage-models').length, 2);
+  const labels = sections[0].node.querySelectorAll('.usage-model-name').map(row => row.textContent).join(' ');
+  assert.match(labels, /openai\/x - ~\$0.30/);
+  assert.match(labels, /openai\/y - unknown/);
+  assert.equal(sections[0].node.querySelectorAll('.usage-window').length, 0);
+}
+{
   const sections = mod.usageSections({windows: [], models: [], total_cost_usd: 0, runs: 0});
   assert.equal(sections.length, 1, 'no usage renders a single placeholder section');
   assert.equal(sections[0].kind, 'node');
