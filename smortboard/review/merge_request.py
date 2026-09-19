@@ -240,11 +240,9 @@ def _body(card: dict[str, Any], evidence: _CardEvidence, branch: str) -> str:
         lines += [f"- {text}" for text in evidence.criteria]
 
     if evidence.tasks:
+        # plain list, no box, no done mark. nothing here ticks a task
         lines += ["", "## Tasks", ""]
-        lines += [
-            f"- {task.get('text', '')}{' (done)' if task.get('done') else ''}"
-            for task in evidence.tasks
-        ]
+        lines += [f"- {task.get('text', '')}" for task in evidence.tasks]
 
     cost = f"{evidence.cost_usd:.2f}" if evidence.cost_usd is not None else "unknown"
     lines += [
