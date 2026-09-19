@@ -267,9 +267,8 @@ def _block_on_failed_gate(
     gate: Any,
     after_merging: str = "",
 ) -> LifecycleResult:
-    """blocks TESTS_FAILED, leading with "base is red" when every failing test also fails on a
-    clean checkout of the base - the card did not cause those. The reason code stays TESTS_FAILED:
-    the card still cannot pass its gate, and a new code would need a schema migration."""
+    """blocks TESTS_FAILED, or BASE_RED when every failing test also fails on a clean checkout of
+    the base - the card did not cause those, and a worker run cannot fix them."""
     note = _tests_failed_note(gate.command, gate.exit_code, gate.output, after_merging)
     try:
         red = check_base_red(repo, base, card_id, gate.output)
@@ -284,7 +283,7 @@ def _block_on_failed_gate(
             f"into it, then run the card again: {', '.join(t.rsplit('::', 1)[-1] for t in ids[:3])}"
             f"{' ...' if len(ids) > 3 else ''}\n\n{note}"
         )
-    return _block(store, state, "TESTS_FAILED", note)
+    return _block(store, state, "TESTS_FAILED" if red is None else "BASE_RED", note)
 
 
 def _base_for_fresh_cut(store: Store, state: LifecycleResult, repo_path: str, base: str) -> str:

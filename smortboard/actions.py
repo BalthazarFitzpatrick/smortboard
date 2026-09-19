@@ -17,6 +17,11 @@ _ACTIONS = {
         "answer it",
         "Read the failing output, then answer in the inbox (n) with a hint - that re-runs it.",
     ),
+    "BASE_RED": (
+        "fix the base, then r",
+        "The base branch already fails these tests, so this card did not cause it. Fix the base "
+        "or merge a fix into it, then press r to run the card again.",
+    ),
     "REVIEW_REJECTED": (
         "answer it",
         "Read the findings, then answer in the inbox (n) with what to change - that re-runs it.",

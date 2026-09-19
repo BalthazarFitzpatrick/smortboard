@@ -321,6 +321,8 @@ def _attempt_outcome(segment: list[dict[str, Any]]) -> str:
             return "blocked: REVIEW_REJECTED"
     for event in reversed(segment):
         if event["kind"] == "test_gate" and not event["payload"].get("passed"):
+            if any(e["kind"] == "base_red" for e in segment):
+                return "blocked: BASE_RED"
             return "blocked: TESTS_FAILED"
     if not any(event["kind"] == "worker_summary" for event in segment):
         return "refused"  # never reached the worker - no repo, no runtime, no worktree

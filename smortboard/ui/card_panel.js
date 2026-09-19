@@ -137,6 +137,7 @@ const CTA_BLOCKED_LABELS = new Map([
   ['LEASE_CONFLICT', 'Fix leases'],
   ['AGENT_QUESTION', 'Answer question'],
   ['TESTS_FAILED', 'Review failure'],
+  ['BASE_RED', 'Fix the base'],
   ['REVIEW_REJECTED', 'Review findings'],
   ['DEPENDENCY_REJECTED', 'Review dependency'],
   ['MERGE_CONFLICT', 'Resolve conflicts'],
@@ -385,7 +386,7 @@ async function openCardPanel(panel, cardId) {
 // worker summary, test gate, reviewer verdict, PR link and the fix-round count - all of it null
 // until a run has actually landed on this card, in which case the section says so plainly
 // reason codes that stop a card on the operator rather than on a fault in the work
-const ATTENTION_CODES = new Set(['AGENT_QUESTION', 'LEASE_CONFLICT', 'USAGE_LIMIT', 'DEPENDENCY_REJECTED']);
+const ATTENTION_CODES = new Set(['AGENT_QUESTION', 'LEASE_CONFLICT', 'USAGE_LIMIT', 'DEPENDENCY_REJECTED', 'BASE_RED']);
 
 // ---- card timeline entries: header over small dash-led paragraphs, the review verdict's own
 // shape - deriveEntryHeader/splitEntryParagraphs come from ui_base's entrytext.js (board-agnostic
