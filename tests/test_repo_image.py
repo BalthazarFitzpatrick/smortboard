@@ -19,6 +19,16 @@ def store(tmp_path):
     s.close()
 
 
+# a fake `run` never shells out, so a real docker on PATH is not what any of these tests are
+# proving - without this, they only passed on a machine that happened to have docker installed,
+# and failed the gate itself (no docker binary in the sandboxed test container). the one test that
+# wants shutil.which to report "missing" overrides this with its own monkeypatch, which wins since
+# it runs after fixture setup
+@pytest.fixture(autouse=True)
+def _docker_on_path(monkeypatch):
+    monkeypatch.setattr("smortboard.repo_image.shutil.which", lambda name: "/usr/bin/docker")
+
+
 def _fake_run(returncode=0, stdout="build ok", stderr=""):
     def run(cmd, cwd, capture_output, text, timeout, check):
         return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
