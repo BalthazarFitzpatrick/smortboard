@@ -133,7 +133,9 @@ def build_repo_image(repo: dict[str, Any], run: Any = subprocess.run) -> BuildRe
     tag = f"{repo['name']}-repo:latest"
     try:
         result = _run(
-            ["docker", "build", "-f", str(dockerfile_path), "-t", tag, "."], repo_path, run
+            ["docker", "build", "-f", str(dockerfile_path), "-t", tag, "."],
+            repo_path,
+            run,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return BuildResult(
