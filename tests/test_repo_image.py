@@ -208,6 +208,33 @@ def test_rebuild_if_stale_skips_a_fresh_image(tmp_path, store):
     assert called == []
 
 
+def test_rebuild_if_stale_rebuilds_when_the_base_image_is_newer(tmp_path, store):
+    """uv.lock untouched, but the base image (smortboard-card:latest) was rebuilt more recently -
+    must still trigger, since a base-only change previously never reached an already-built repo
+    image on its own"""
+    from smortboard.repo_image import _BASE_CARD_IMAGE
+
+    _init_git_repo(tmp_path)
+    _commit_uv_lock(tmp_path, "2026-01-01T00:00:00+00:00")
+    board = store.create_board("b")
+    repo = store.create_repo(board["id"], "myrepo", str(tmp_path), "main")
+    repo = {**repo, "image": "myrepo-repo:latest"}
+
+    def probe(cmd, timeout=10, cwd=None):
+        if cmd[:4] == ["docker", "image", "inspect", "-f"]:
+            image = cmd[5]
+            created = (
+                "2026-09-19T00:00:00Z" if image == _BASE_CARD_IMAGE else "2026-09-01T00:00:00Z"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"{created}\n", stderr="")
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+
+    result = rebuild_if_stale(repo, run=_fake_run(), probe=probe)
+    assert result is not None
+    assert result.ok
+    assert result.tag == "myrepo-repo:latest"
+
+
 def test_rebuild_if_stale_never_touches_a_hand_set_custom_image(tmp_path, store):
     _init_git_repo(tmp_path)
     _commit_uv_lock(tmp_path, "2026-09-19T12:00:00+00:00")
