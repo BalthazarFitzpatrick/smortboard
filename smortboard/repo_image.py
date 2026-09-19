@@ -166,20 +166,24 @@ def rebuild_if_stale(
     run: Any = subprocess.run,
     probe: CommandRunner = default_runner,
 ) -> BuildResult | None:
-    """rebuilds a repo's own image at card run-start when uv.lock changed since it was built.
+    """rebuilds a repo's own image at card run-start when uv.lock changed, or its base image
+    (`_BASE_CARD_IMAGE`) was rebuilt, since this image was last built.
 
-    A dependency added on the base branch after the image was last built otherwise fails the
-    card's own gate for a reason that has nothing to do with the card's work - costing a whole
-    review turn before someone rebuilds by hand anyway. Only ever touches an image this module
-    itself would have tagged (`<repo-name>-repo:latest`); an operator's hand-set custom image is
-    left alone even if it looks stale, since nothing here knows how that one is meant to be built.
-    Returns None when no rebuild was attempted (fresh, no uv.lock, or a custom image).
+    A dependency added on the base branch, or a base-image change (e.g. `agent` user added by
+    multi-lab, replacing `:latest` without retagging it), otherwise fails the card's own gate for
+    a reason that has nothing to do with the card's work - costing a whole review turn before
+    someone rebuilds by hand anyway. Only ever touches an image this module itself would have
+    tagged (`<repo-name>-repo:latest`); an operator's hand-set custom image is left alone even if
+    it looks stale, since nothing here knows how that one is meant to be built. Returns None when
+    no rebuild was attempted (fresh, nothing to compare against, or a custom image).
     """
     image = repo.get("image")
     if not image or image != f"{repo['name']}-repo:latest":
         return None
     with _lock_for(repo["id"]):
-        staleness = check_image_staleness(image, Path(repo["path"]), probe)
+        staleness = check_image_staleness(
+            image, Path(repo["path"]), probe, base_image=_BASE_CARD_IMAGE
+        )
         if not staleness.stale:
             return None
         return build_repo_image(repo, run=run)
