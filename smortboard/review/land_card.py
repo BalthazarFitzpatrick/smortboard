@@ -20,17 +20,40 @@ from smortboard.review.stacks import active_stack, dependency_landed, integrated
 INTEGRATE_ATTEMPTS = 3
 
 
+def _pr_reached_base(store, card, repo, base, state) -> bool:
+    """the merged PR's target counts as reaching `base` - by exact match, or (for an unstacked
+    card) by checking whether `base` has since absorbed wherever it actually merged"""
+    if state.base == base:
+        return True
+    if state.base is None:
+        return not active_stack(store, card["id"])
+    if active_stack(store, card["id"]):
+        return False
+    if not (fetch_base(repo["path"], state.base) and fetch_base(repo["path"], base)):
+        return False
+    result = _git(
+        repo["path"], "merge-base", "--is-ancestor", f"origin/{state.base}", f"origin/{base}"
+    )
+    return result.returncode == 0
+
+
 def already_landed(store, card, repo, base, url):
+    """proof this card's work already reached `base`, without landing it again.
+
+    A person can retarget or merge a PR by hand outside the board - not the board's own flow, but
+    not something to stay stuck over either. GitHub's own record of a merged PR's base never
+    changes once it merges, so a card whose PR was retargeted before merging (say, to `main`
+    instead of `development`) can never satisfy a plain base-string match again. If the PR's actual
+    base has since reached `base` on its own (someone merged main back into development, or always
+    keeps them in lockstep), that is just as good a proof - checked with git, not by trusting the
+    string.
+    """
     if integrated_event(store, card["id"], base):
         return True
     proof = None
     if url:
         state = pr_view(repo["path"], url)
-        if (
-            not state.error
-            and state.merged
-            and (state.base == base or (state.base is None and not active_stack(store, card["id"])))
-        ):
+        if not state.error and state.merged and _pr_reached_base(store, card, repo, base, state):
             proof = "github"
     if proof is None and fetch_base(repo["path"], base):
         result = _git(
