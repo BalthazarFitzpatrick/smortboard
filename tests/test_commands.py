@@ -1,6 +1,5 @@
 from smortboard.exec.commands import declares_formatter, formatter_write_form
 
-
 # -- formatter_write_form: the write form of a declared check-only command part ----------
 
 
