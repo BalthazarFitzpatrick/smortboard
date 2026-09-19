@@ -2,7 +2,11 @@
 # gate can run the suite with --network none. set it as the repo's `image` on the board.
 #
 # WHY IT EXISTS: the stock card image has no python, and the gate has no network, so `uv run pytest`
-# died fetching cpython (measured: `dns error`). rebuild whenever uv.lock changes:
+# died fetching cpython (measured: `dns error`). rebuild whenever uv.lock OR docker/card.Dockerfile
+# changes - smortboard.preflight.check_image_staleness compares this image's own build time against
+# uv.lock's last commit and against smortboard-card:latest's build time, and warns in preflight
+# before a card ever starts, rather than failing the gate for a reason that has nothing to do with
+# the card's work:
 #   docker build -f docker/card.Dockerfile -t smortboard-card:latest .
 #   docker build -f docker/repo.Dockerfile -t smortboard-repo:latest .
 FROM smortboard-card:latest
