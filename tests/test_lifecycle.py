@@ -127,6 +127,50 @@ def test_the_pull_request_url_lands_where_a_human_will_see_it(board, monkeypatch
     assert store.get_card(card_id)["review_flag"] == 1
 
 
+def test_a_stale_repo_image_is_rebuilt_before_the_card_runs(board, monkeypatch):
+    """the run-start hook: a stale image is rebuilt and the fresh tag reaches the backend, so a
+    dependency added since the image was last built does not fail this card's own gate"""
+    from smortboard.repo_image import BuildResult
+
+    store, card_id = board
+    store.set_repo_image(store.get_card(card_id)["repo_id"], "repo-repo:latest")
+    _stub_gates(monkeypatch)
+    seen = []
+    monkeypatch.setattr(
+        lifecycle,
+        "rebuild_if_stale",
+        lambda repo, **k: (
+            seen.append(repo["image"])
+            or BuildResult(ok=True, tag="repo-repo:latest", log="build ok")
+        ),
+    )
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert seen == ["repo-repo:latest"]
+    assert result.phase == "opened"
+    events = [e["kind"] for e in store.list_events(card_id)]
+    assert "repo_image_rebuilt" in events
+
+
+def test_a_failed_rebuild_does_not_block_the_card(board, monkeypatch):
+    """a rebuild failure is recorded, not fatal - the card still runs against the stale image, and
+    the gate's own failure (if any) stays the informative one"""
+    from smortboard.repo_image import BuildResult
+
+    store, card_id = board
+    store.set_repo_image(store.get_card(card_id)["repo_id"], "repo-repo:latest")
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(
+        lifecycle,
+        "rebuild_if_stale",
+        lambda repo, **k: BuildResult(ok=False, tag=None, log="boom"),
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.phase == "opened"
+    events = [e["kind"] for e in store.list_events(card_id)]
+    assert "repo_image_rebuild_failed" in events
+
+
 def test_a_failing_test_gate_stops_the_card_before_the_reviewer(board, monkeypatch):
     store, card_id = board
     _stub_gates(monkeypatch, passed=False)

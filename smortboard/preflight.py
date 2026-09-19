@@ -9,6 +9,8 @@ row with a fix. /api/runtime's response is untouched.
 import re
 import shutil
 import subprocess
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -475,6 +477,7 @@ def _repo_checks(repo: dict[str, Any], run: CommandRunner) -> list[dict[str, Any
         inspect = run(["docker", "image", "inspect", image])
         if inspect.returncode == 0:
             checks.append(row("image", "repo image", "ok", f"{image} is present."))
+            checks.append(_image_staleness_check(row, image, path, run))
         else:
             checks.append(
                 row(
@@ -488,6 +491,72 @@ def _repo_checks(repo: dict[str, Any], run: CommandRunner) -> list[dict[str, Any
             )
 
     return checks
+
+
+@dataclass
+class ImageStaleness:
+    stale: bool | None  # None: cannot be determined (no uv.lock, or a git/docker call failed)
+    lock_time: datetime | None = None
+    built_time: datetime | None = None
+
+
+def check_image_staleness(image: str, path: Path, run: CommandRunner) -> ImageStaleness:
+    """true if uv.lock's last commit, in the repo's own history, postdates the image's build time.
+
+    Reused by both the preflight row below and lifecycle.py's run-start rebuild - one source of
+    truth for what "stale" means. `.stale` is None, not False, when staleness cannot be determined -
+    a caller that would rebuild on False must check for None first, since None is "unknown", not
+    "known fresh". Uses uv.lock's last commit time, not its mtime, because a fresh checkout/worktree
+    resets file mtimes to checkout time regardless of when the lockfile changed.
+    """
+    lock_path = path / "uv.lock"
+    if not lock_path.is_file():
+        return ImageStaleness(stale=None)
+
+    lock_log = run(["git", "log", "-1", "--format=%cI", "--", "uv.lock"], cwd=str(path))
+    created = run(["docker", "image", "inspect", "-f", "{{.Created}}", image])
+    if lock_log.returncode != 0 or not lock_log.stdout.strip() or created.returncode != 0:
+        return ImageStaleness(stale=None)
+
+    try:
+        lock_time = datetime.fromisoformat(lock_log.stdout.strip())
+        built_time = datetime.fromisoformat(created.stdout.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return ImageStaleness(stale=None)
+
+    stale = lock_time.astimezone(UTC) > built_time.astimezone(UTC)
+    return ImageStaleness(stale=stale, lock_time=lock_time, built_time=built_time)
+
+
+def _image_staleness_check(row: Any, image: str, path: Path, run: CommandRunner) -> dict[str, Any]:
+    """warns when uv.lock changed, in the repo's own history, after the image was built.
+
+    A card's gate runs offline (`--no-sync`), so a dependency a card adds - or one landed on the
+    base branch after the image was last built - fails the gate for a reason that has nothing to
+    do with the card's own work.
+    """
+    freshness = check_image_staleness(image, path, run)
+    if freshness.stale is None:
+        detail = (
+            "repo has no uv.lock to compare."
+            if not (path / "uv.lock").is_file()
+            else "could not determine uv.lock's last commit time or the image's build time."
+        )
+        return row("image-stale", "repo image freshness", "ok", detail)
+
+    if freshness.stale:
+        return row(
+            "image-stale",
+            "repo image freshness",
+            "warn",
+            f"{image} was built {freshness.built_time.date()} but uv.lock last changed "
+            f"{freshness.lock_time.date()} - a card's gate runs offline and will fail on any "
+            "dependency added since.",
+            f"docker build -t {image} . (or the board's rebuild-image action) to pick up uv.lock.",
+        )
+    return row(
+        "image-stale", "repo image freshness", "ok", f"{image} postdates uv.lock's last change."
+    )
 
 
 def run_preflight(

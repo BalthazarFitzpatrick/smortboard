@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from smortboard.preflight import CommandRunner, check_image_staleness, default_runner
 
 _DOCKERFILE_PATH = "docker/smortboard-repo.Dockerfile"
 _BUILD_TIMEOUT_SECONDS = 900
@@ -144,3 +147,39 @@ def build_repo_image(repo: dict[str, Any], run: Any = subprocess.run) -> BuildRe
         tail = "\n".join(log.strip().splitlines()[-40:])
         return BuildResult(ok=False, tag=None, log=tail, stack=stack)
     return BuildResult(ok=True, tag=tag, log=log, stack=stack)
+
+
+# one lock per repo id, so two cards starting on the same repo at once don't both kick off a
+# `docker build` for the same tag - the second waits, then sees the freshly-built image as fresh
+# and skips its own build
+_rebuild_locks: dict[str, threading.Lock] = {}
+_rebuild_locks_guard = threading.Lock()
+
+
+def _lock_for(repo_id: str) -> threading.Lock:
+    with _rebuild_locks_guard:
+        return _rebuild_locks.setdefault(repo_id, threading.Lock())
+
+
+def rebuild_if_stale(
+    repo: dict[str, Any],
+    run: Any = subprocess.run,
+    probe: CommandRunner = default_runner,
+) -> BuildResult | None:
+    """rebuilds a repo's own image at card run-start when uv.lock changed since it was built.
+
+    A dependency added on the base branch after the image was last built otherwise fails the
+    card's own gate for a reason that has nothing to do with the card's work - costing a whole
+    review turn before someone rebuilds by hand anyway. Only ever touches an image this module
+    itself would have tagged (`<repo-name>-repo:latest`); an operator's hand-set custom image is
+    left alone even if it looks stale, since nothing here knows how that one is meant to be built.
+    Returns None when no rebuild was attempted (fresh, no uv.lock, or a custom image).
+    """
+    image = repo.get("image")
+    if not image or image != f"{repo['name']}-repo:latest":
+        return None
+    with _lock_for(repo["id"]):
+        staleness = check_image_staleness(image, Path(repo["path"]), probe)
+        if not staleness.stale:
+            return None
+        return build_repo_image(repo, run=run)
