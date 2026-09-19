@@ -84,6 +84,55 @@ def test_operator_accept_retests_a_branch_already_synced_by_sweep(setup, monkeyp
     assert fresh["blocked_reason_code"] == "TESTS_FAILED"
 
 
+def test_a_retargeted_but_merged_pr_is_proof_once_its_base_reaches_our_base(setup, monkeypatch):
+    """the exact bug: a card's PR was retargeted to main and merged there before the board saw it.
+    github's own record of that PR's base is fixed at main forever - if main has since reached
+    development on its own, that is just as good a proof as a base string match"""
+    store, card, repo = setup
+    monkeypatch.setattr(landing, "pr_view", lambda *a: PullRequestState(True, base="main"))
+    monkeypatch.setattr(landing, "fetch_base", lambda *a: True)
+    monkeypatch.setattr(landing, "_git", lambda *a: SimpleNamespace(returncode=0))
+    assert landing.already_landed(store, card, repo, "development", "url")
+    assert store.list_events(card["id"])[-1]["payload"]["via"] == "github"
+
+
+def test_a_retargeted_pr_whose_base_never_reached_ours_is_not_proof(setup, monkeypatch):
+    store, card, repo = setup
+    monkeypatch.setattr(landing, "pr_view", lambda *a: PullRequestState(True, base="main"))
+    monkeypatch.setattr(landing, "fetch_base", lambda *a: True)
+    monkeypatch.setattr(landing, "_git", lambda *a: SimpleNamespace(returncode=1))
+    assert not landing.already_landed(store, card, repo, "development", "url")
+
+
+def test_a_retargeted_pr_is_not_proof_when_the_base_cannot_be_fetched(setup, monkeypatch):
+    store, card, repo = setup
+    monkeypatch.setattr(landing, "pr_view", lambda *a: PullRequestState(True, base="main"))
+    monkeypatch.setattr(landing, "fetch_base", lambda *a: False)
+    monkeypatch.setattr(
+        landing, "_git", lambda *a: pytest.fail("must not check ancestry without both fetches")
+    )
+    assert not landing.already_landed(store, card, repo, "development", "url")
+
+
+def test_a_stacked_cards_retargeted_pr_still_does_not_widen(setup, monkeypatch):
+    """the widened check must not swallow the existing stacked-card boundary: a card stacked on an
+    unmerged parent's branch is not landed just because that branch happens to reach base"""
+    store, card, repo = setup
+    store.append_event(card["id"], "stacked_on", {"parent_id": "parent", "branch": "card/parent"})
+    monkeypatch.setattr(landing, "pr_view", lambda *a: PullRequestState(True, base="card/parent"))
+    monkeypatch.setattr(landing, "fetch_base", lambda *a: True)
+    seen = []
+
+    def _git(_repo, *args):
+        seen.append(args)
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(landing, "_git", _git)
+    assert not landing.already_landed(store, card, repo, "development", "url")
+    widened = ("merge-base", "--is-ancestor", "origin/card/parent", "origin/development")
+    assert widened not in seen, "a stacked card must not use the widened github check"
+
+
 def test_merged_parent_target_pr_is_not_default_base_proof(setup, monkeypatch):
     store, card, repo = setup
     store.append_event(card["id"], "stacked_on", {"parent_id": "parent", "branch": "card/parent"})
