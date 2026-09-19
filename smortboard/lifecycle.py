@@ -49,6 +49,7 @@ from smortboard.exec.worktrees import (
 )
 from smortboard.labs.routing import command_model, run_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
+from smortboard.repo_image import rebuild_if_stale
 from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.integrate import integrate, open_release_request
 from smortboard.review.merge_request import (
@@ -499,6 +500,16 @@ def run_card_lifecycle(
     if not _lease_globs(card):
         return _refuse(store, state, NO_LEASE_NOTE)
     repo = store.get_repo(card["repo_id"])
+    rebuild = rebuild_if_stale(repo)
+    if rebuild is not None:
+        if rebuild.ok and rebuild.tag:
+            store.set_repo_image(repo["id"], rebuild.tag)
+            store.append_event(card_id, "repo_image_rebuilt", {"tag": rebuild.tag})
+            repo = store.get_repo(card["repo_id"])
+        else:
+            # do not refuse the card over a failed rebuild - it runs against the stale image,
+            # same as before this existed, and the gate's own failure stays the informative one
+            store.append_event(card_id, "repo_image_rebuild_failed", {"log": rebuild.log[-2000:]})
     base = default_branch(repo)
     configured = store.get_settings()
     worker_lab, worker_id = run_ref(store, "worker", card)
