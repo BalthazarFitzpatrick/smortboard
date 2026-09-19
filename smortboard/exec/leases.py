@@ -52,31 +52,43 @@ def lease_allows(rel: str, globs: list[str]) -> bool:
     return any(re.match(lease_glob_regex(glob), rel) for glob in globs)
 
 
-def changed_paths_outside_lease(
-    repo_path: str | Path, base: str, branch: str, globs: list[str]
-) -> list[str]:
-    """check committed paths independently of the agent's tool hooks"""
+def _diff_paths(repo_path: str | Path, spec: str) -> list[str] | None:
     result = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo_path),
-            "diff",
-            "--name-only",
-            "--no-renames",
-            "-z",
-            f"{base}..{branch}",
-            "--",
-        ],
+        ["git", "-C", str(repo_path), "diff", "--name-only", "--no-renames", "-z", spec, "--"],
         capture_output=True,
         check=False,
     )
     if result.returncode:
+        return None
+    paths = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+    return [path for path in paths if path]
+
+
+def changed_paths_outside_lease(
+    repo_path: str | Path,
+    base: str,
+    branch: str,
+    globs: list[str],
+    base_ref: str | None = None,
+) -> list[str]:
+    """check committed paths independently of the agent's tool hooks.
+
+    `base_ref` is the branch the card started from (e.g. origin/development). Once the card merges
+    it in, everything that branch brought comes along in `base..branch`, and none of it is the
+    card's own edit - measured 2026-09-19, two cards blocked LEASE_CONFLICT over CLAUDE.md, the
+    docs images and CI config after merging development. Only paths that ALSO differ from the merge
+    base with `base_ref` count, so this can drop a false positive but never adds a new flag.
+    """
+    changed = _diff_paths(repo_path, f"{base}..{branch}")
+    if changed is None:
         from smortboard.exec.worktrees import WorktreeError
 
         raise WorktreeError("could not verify the card's committed path lease")
-    paths = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
-    return sorted(path for path in paths if path and not lease_allows(path, globs))
+    if base_ref:
+        own = _diff_paths(repo_path, f"{base_ref}...{branch}")
+        if own is not None:
+            changed = [path for path in changed if path in set(own)]
+    return sorted(path for path in changed if not lease_allows(path, globs))
 
 
 # the hook runs inside the card's container with no smortboard installed, so it carries the two

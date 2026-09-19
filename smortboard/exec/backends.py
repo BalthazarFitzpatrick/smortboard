@@ -39,8 +39,10 @@ from smortboard.exec.runner import (
 from smortboard.exec.worktrees import (
     WorktreeError,
     current_branch,
+    default_branch,
     repo_lock,
     repo_root_of_worktree,
+    rev_parse,
 )
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import parse_ref
@@ -399,8 +401,17 @@ class ContainerBackend:
             self._fetch_back(repo_root, clone_path, branch, worktree_path)
             if store is not None and repo is not None:
                 remembered = [row["path_glob"] for row in repo.get("remembered_leases", [])]
+                base_name = default_branch(repo)
+                base_ref = next(
+                    (
+                        ref
+                        for ref in (f"origin/{base_name}", base_name)
+                        if rev_parse(repo_root, ref)
+                    ),
+                    None,
+                )
                 outside = changed_paths_outside_lease(
-                    repo_root, start_commit, branch, leases + remembered
+                    repo_root, start_commit, branch, leases + remembered, base_ref=base_ref
                 )
                 store.append_event(
                     card_id,

@@ -158,6 +158,43 @@ def test_the_body_carries_what_the_tests_and_the_reviewer_said(tmp_path, monkeyp
     store.close()
 
 
+def test_the_body_lists_tasks_as_plain_text_not_checkboxes(tmp_path, monkeypatch):
+    bodies = []
+    _fake(monkeypatch)
+    store = Store(tmp_path / "board.db")
+    board = store.create_board("b")
+    card = store.create_card(
+        board["id"],
+        None,
+        "added the thing",
+        description="the card asked for a thing",
+        criteria=["the thing exists"],
+        tasks=["do the first thing", "do the second thing"],
+    )
+    card_id = card["id"]
+    real_run = mr._run
+
+    def _capture(cmd, cwd=None):
+        if cmd[:3] == ["gh", "pr", "create"]:
+            bodies.append(Path(cmd[cmd.index("--body-file") + 1]).read_text())
+        return real_run(cmd, cwd=cwd)
+
+    monkeypatch.setattr(mr, "_run", _capture)
+    mr.open_merge_request(store, card_id, tmp_path, BRANCH)
+
+    body = bodies[0]
+    assert "- [x]" not in body
+    assert "- [ ]" not in body
+    assert "## Tasks" in body
+    assert "(done)" not in body
+    first = body.index("do the first thing")
+    second = body.index("do the second thing")
+    assert first < second
+    assert "- do the first thing" in body
+    assert "- do the second thing" in body
+    store.close()
+
+
 def test_an_empty_branch_refuses_rather_than_opening_an_empty_pr(tmp_path, monkeypatch):
     seen = _fake(monkeypatch, commits="0")
     store, card_id = _store(tmp_path)
