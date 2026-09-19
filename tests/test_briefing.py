@@ -173,3 +173,59 @@ def test_build_card_prompt_includes_the_briefing_under_its_own_heading(store, ca
     prompt = build_card_prompt(card, "attempt 1 of 1 (most recent that ran):\nEnded: refused")
     assert "What already happened" in prompt
     assert "Ended: refused" in prompt
+
+
+# -- repeats_failed_attempt --------------------------------------------------------------------
+
+
+def _attempt(store, card_id, fingerprint, gate_passed):
+    store.append_event(card_id, "lifecycle_started", {})
+    store.append_event(card_id, "attempt_fingerprint", fingerprint)
+    store.append_event(card_id, "worker_summary", {"text": "done"})
+    store.append_event(
+        card_id, "test_gate", {"passed": gate_passed, "exit_code": 0 if gate_passed else 1}
+    )
+
+
+def _card(tmp_path):
+    from smortboard.store.api import Store
+
+    store = Store(tmp_path / "b.db")
+    board = store.create_board("b")
+    return store, store.create_card(board["id"], None, "c")["id"]
+
+
+def test_the_same_fingerprint_after_a_failed_gate_is_a_repeat(tmp_path):
+    from smortboard.briefing import repeats_failed_attempt
+
+    store, card_id = _card(tmp_path)
+    fp = {"head": "h", "base_head": "b", "notes": 0}
+    _attempt(store, card_id, fp, gate_passed=False)
+    store.append_event(card_id, "lifecycle_started", {})  # the attempt being asked about
+    assert repeats_failed_attempt(store, card_id, fp)
+    store.close()
+
+
+def test_a_changed_head_base_or_note_count_is_not_a_repeat(tmp_path):
+    from smortboard.briefing import repeats_failed_attempt
+
+    store, card_id = _card(tmp_path)
+    fp = {"head": "h", "base_head": "b", "notes": 0}
+    _attempt(store, card_id, fp, gate_passed=False)
+    store.append_event(card_id, "lifecycle_started", {})
+    for changed in ({"head": "x"}, {"base_head": "x"}, {"notes": 1}):
+        assert not repeats_failed_attempt(store, card_id, {**fp, **changed})
+    store.close()
+
+
+def test_a_passed_gate_or_a_first_attempt_is_not_a_repeat(tmp_path):
+    from smortboard.briefing import repeats_failed_attempt
+
+    store, card_id = _card(tmp_path)
+    fp = {"head": "h", "base_head": "b", "notes": 0}
+    store.append_event(card_id, "lifecycle_started", {})
+    assert not repeats_failed_attempt(store, card_id, fp)  # nothing before it
+    _attempt(store, card_id, fp, gate_passed=True)
+    store.append_event(card_id, "lifecycle_started", {})
+    assert not repeats_failed_attempt(store, card_id, fp)
+    store.close()

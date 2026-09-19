@@ -197,7 +197,8 @@ def test_oldest_first(store, repo):
 
 
 @pytest.mark.parametrize(
-    "reason", ["AGENT_QUESTION", "TESTS_FAILED", "REVIEW_REJECTED", "CRASH", "LEASE_CONFLICT"]
+    "reason",
+    ["AGENT_QUESTION", "TESTS_FAILED", "BASE_RED", "REVIEW_REJECTED", "CRASH", "LEASE_CONFLICT"],
 )
 def test_answer_resumes_a_resumable_reason(store, repo, reason):
     _, card = _board_and_card(store, repo)

@@ -127,6 +127,50 @@ def test_the_pull_request_url_lands_where_a_human_will_see_it(board, monkeypatch
     assert store.get_card(card_id)["review_flag"] == 1
 
 
+def test_a_stale_repo_image_is_rebuilt_before_the_card_runs(board, monkeypatch):
+    """the run-start hook: a stale image is rebuilt and the fresh tag reaches the backend, so a
+    dependency added since the image was last built does not fail this card's own gate"""
+    from smortboard.repo_image import BuildResult
+
+    store, card_id = board
+    store.set_repo_image(store.get_card(card_id)["repo_id"], "repo-repo:latest")
+    _stub_gates(monkeypatch)
+    seen = []
+    monkeypatch.setattr(
+        lifecycle,
+        "rebuild_if_stale",
+        lambda repo, **k: (
+            seen.append(repo["image"])
+            or BuildResult(ok=True, tag="repo-repo:latest", log="build ok")
+        ),
+    )
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert seen == ["repo-repo:latest"]
+    assert result.phase == "opened"
+    events = [e["kind"] for e in store.list_events(card_id)]
+    assert "repo_image_rebuilt" in events
+
+
+def test_a_failed_rebuild_does_not_block_the_card(board, monkeypatch):
+    """a rebuild failure is recorded, not fatal - the card still runs against the stale image, and
+    the gate's own failure (if any) stays the informative one"""
+    from smortboard.repo_image import BuildResult
+
+    store, card_id = board
+    store.set_repo_image(store.get_card(card_id)["repo_id"], "repo-repo:latest")
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(
+        lifecycle,
+        "rebuild_if_stale",
+        lambda repo, **k: BuildResult(ok=False, tag=None, log="boom"),
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.phase == "opened"
+    events = [e["kind"] for e in store.list_events(card_id)]
+    assert "repo_image_rebuild_failed" in events
+
+
 def test_a_failing_test_gate_stops_the_card_before_the_reviewer(board, monkeypatch):
     store, card_id = board
     _stub_gates(monkeypatch, passed=False)
@@ -191,6 +235,232 @@ def lifecycle_statuses():
     from smortboard.store.schema import STATUSES
 
     return STATUSES
+
+
+def test_a_reused_worktree_whose_branch_diverged_from_origin_is_refused(
+    board, tmp_path, monkeypatch
+):
+    """found for real: a worktree held one commit while origin had two newer ones, and the board
+    only discovered it when its own push failed at the very end of the run - refuse up front"""
+    from smortboard.exec.worktrees import WorktreeInfo
+
+    store, card_id = board
+    monkeypatch.setattr(lifecycle, "worktree_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        lifecycle,
+        "existing_worktree",
+        lambda *a, **k: WorktreeInfo(card_id=card_id, path=tmp_path, branch=f"card/{card_id}"),
+    )
+    monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: True)
+    monkeypatch.setattr(lifecycle, "branch_diverged_from_origin", lambda *a, **k: True)
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "refused"
+    assert "someone else pushed" in result.refusal
+    assert backend.calls == []  # never reached the worker
+
+
+def test_a_reused_worktree_in_sync_with_origin_runs_as_before(board, tmp_path, monkeypatch):
+    from smortboard.exec.worktrees import WorktreeInfo
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "worktree_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        lifecycle,
+        "existing_worktree",
+        lambda *a, **k: WorktreeInfo(card_id=card_id, path=tmp_path, branch=f"card/{card_id}"),
+    )
+    monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: True)
+    monkeypatch.setattr(lifecycle, "branch_diverged_from_origin", lambda *a, **k: False)
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "opened"
+    assert backend.calls
+
+
+def test_a_reused_worktree_with_no_remote_skips_the_divergence_check(board, tmp_path, monkeypatch):
+    """a local-only repo has nowhere to fetch from - never even call the check"""
+    from smortboard.exec.worktrees import WorktreeInfo
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "worktree_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        lifecycle,
+        "existing_worktree",
+        lambda *a, **k: WorktreeInfo(card_id=card_id, path=tmp_path, branch=f"card/{card_id}"),
+    )
+    monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: False)
+    called = []
+    monkeypatch.setattr(
+        lifecycle, "branch_diverged_from_origin", lambda *a, **k: called.append(1) or True
+    )
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "opened"
+    assert called == []
+
+
+def _reuse_worktree(monkeypatch, tmp_path, card_id):
+    """makes the lifecycle see an on-disk worktree for the card, with no remote"""
+    from smortboard.exec.worktrees import WorktreeInfo
+
+    monkeypatch.setattr(lifecycle, "worktree_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        lifecycle,
+        "existing_worktree",
+        lambda *a, **k: WorktreeInfo(card_id=card_id, path=tmp_path, branch=f"card/{card_id}"),
+    )
+    monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: False)
+
+
+def test_a_reused_branch_is_synced_with_base_before_the_worker(board, tmp_path, monkeypatch):
+    """measured 2026-09-19: three cards 28-59 commits behind development failed a gate on tests the
+    base had already fixed - the sync used to run only at handover, after the first gate"""
+    from smortboard.review.mergeable import MergeSyncResult
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _reuse_worktree(monkeypatch, tmp_path, card_id)
+    order = []
+    monkeypatch.setattr(
+        lifecycle,
+        "sync_with_base",
+        lambda *a, **k: (
+            order.append("sync") or MergeSyncResult(clean=True, behind=True, merged=True)
+        ),
+    )
+
+    class _Ordered(_Backend):
+        def run_card(self, *a, **k):
+            order.append("worker")
+            return super().run_card(*a, **k)
+
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Ordered())
+    assert order[:2] == ["sync", "worker"]
+
+
+def test_a_conflicting_pre_sync_reaches_the_worker_as_a_note(board, tmp_path, monkeypatch):
+    from smortboard.review.mergeable import MergeSyncResult
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _reuse_worktree(monkeypatch, tmp_path, card_id)
+    results = iter(
+        [
+            MergeSyncResult(clean=False, behind=True, conflicting_files=["a.py"]),
+            MergeSyncResult(clean=True),  # the handover sync, once the worker resolved it
+        ]
+    )
+    monkeypatch.setattr(lifecycle, "sync_with_base", lambda *a, **k: next(results))
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "opened"
+    prompt = backend.calls[0]["prompt"]
+    assert "a.py" in prompt and "Merge origin/main yourself" in prompt
+    assert "merge_conflict" in [e["kind"] for e in store.list_events(card_id)]
+
+
+def test_a_fresh_cut_is_not_synced_before_the_worker(board, monkeypatch):
+    """a fresh cut is already at base - only the handover sync (after the worker) runs"""
+    from smortboard.review.mergeable import MergeSyncResult
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    order = []
+    monkeypatch.setattr(
+        lifecycle,
+        "sync_with_base",
+        lambda *a, **k: order.append("sync") or MergeSyncResult(clean=True),
+    )
+
+    class _Ordered(_Backend):
+        def run_card(self, *a, **k):
+            order.append("worker")
+            return super().run_card(*a, **k)
+
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Ordered())
+    assert order[0] == "worker"
+
+
+def _failing_gate_that_records(monkeypatch):
+    def _gate(store, card_id, *a, **k):
+        store.append_event(card_id, "test_gate", {"passed": False, "command": "x", "exit_code": 1})
+        return GateResult(passed=False, command="x", exit_code=1, output="boom")
+
+    monkeypatch.setattr(lifecycle, "run_test_gate", _gate)
+
+
+def test_a_rerun_with_nothing_changed_since_a_failed_gate_skips_the_worker(
+    board, tmp_path, monkeypatch
+):
+    """measured 2026-09-19: workers said 'all work already committed' at ~$0.25 a run into the same
+    gate failure, three cards, every re-run"""
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _failing_gate_that_records(monkeypatch)
+    _reuse_worktree(monkeypatch, tmp_path, card_id)
+    monkeypatch.setattr(lifecycle, "sync_with_base", lambda *a, **k: None)
+    monkeypatch.setattr(lifecycle, "rev_parse", lambda *a, **k: "same")
+    backend = _Backend()
+    first = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert first.blocked_reason_code == "TESTS_FAILED" and len(backend.calls) == 1
+    second = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert second.blocked_reason_code == "TESTS_FAILED"
+    assert len(backend.calls) == 1  # the worker was not run again
+    assert any("Nothing has changed" in c["body"] for c in store.list_comments(card_id))
+
+
+def test_a_gate_failure_the_base_already_has_is_reported_as_base_red(board, monkeypatch):
+    """measured 2026-09-19: three cards failed tests a later base commit had fixed"""
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _failing_gate_that_records(monkeypatch)
+    monkeypatch.setattr(
+        lifecycle, "check_base_red", lambda *a, **k: ("abcdef1234", ["tests/a.py::test_one"])
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.blocked_reason_code == "BASE_RED"
+    assert store.get_card(card_id)["blocked_reason_code"] == "BASE_RED"
+    assert any("BASE IS RED" in c["body"] for c in store.list_comments(card_id))
+    assert "base_red" in [e["kind"] for e in store.list_events(card_id)]
+
+
+def test_an_ordinary_gate_failure_is_not_called_base_red(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _failing_gate_that_records(monkeypatch)
+    monkeypatch.setattr(lifecycle, "check_base_red", lambda *a, **k: None)
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert not any("BASE IS RED" in c["body"] for c in store.list_comments(card_id))
+
+
+def test_a_base_check_that_cannot_run_falls_back_to_the_ordinary_block(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _failing_gate_that_records(monkeypatch)
+
+    def _down(*a, **k):
+        raise GateUnavailable("docker is not running")
+
+    monkeypatch.setattr(lifecycle, "check_base_red", _down)
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.blocked_reason_code == "TESTS_FAILED"
+
+
+def test_a_rerun_after_the_tree_changed_runs_the_worker_again(board, tmp_path, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _failing_gate_that_records(monkeypatch)
+    _reuse_worktree(monkeypatch, tmp_path, card_id)
+    monkeypatch.setattr(lifecycle, "sync_with_base", lambda *a, **k: None)
+    heads = iter(["a", "a", "b", "b"])
+    monkeypatch.setattr(lifecycle, "rev_parse", lambda *a, **k: next(heads))
+    backend = _Backend()
+    lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert len(backend.calls) == 2
 
 
 def test_a_card_with_no_repo_is_refused_with_a_reason(tmp_path, monkeypatch):

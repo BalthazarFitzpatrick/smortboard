@@ -150,7 +150,11 @@ def run_test_gate(
         _image_for(repo),
         "sh",
         "-c",
-        str(command),
+        # /workspace is read-only, so ruff/pytest must not try to cache into it. exported, not
+        # prefixed, so both sides of a `cmd1 && cmd2` test_command see them - a prefix would only
+        # scope to the first command in the chain
+        "export RUFF_CACHE_DIR=/tmp/.ruff_cache PYTEST_ADDOPTS='-p no:cacheprovider'; "
+        + str(command),
     ]
     try:
         completed = subprocess.run(

@@ -231,8 +231,13 @@ def test_gh_not_authenticated(store, tmp_path, monkeypatch):
 # ---- per-repo checks -----------------------------------------------------------------------
 
 
-def _git(repo_path, *args):
-    subprocess.run(["git", "-C", str(repo_path), *args], check=True, capture_output=True)
+def _git(repo_path, *args, date=None):
+    import os
+
+    env = None
+    if date is not None:
+        env = {**os.environ, "GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date}
+    subprocess.run(["git", "-C", str(repo_path), *args], check=True, capture_output=True, env=env)
 
 
 def _init_repo(tmp_path, name="widgets"):
@@ -355,6 +360,115 @@ def test_missing_repo_image_gives_a_build_fix(monkeypatch, store, tmp_path):
     row = next(c for c in checks if c["group"] == "widgets" and c["label"] == "repo image")
     assert row["status"] == "fail"
     assert "widgets:dev" in row["fix"]
+
+
+def test_stale_image_warns_when_uv_lock_committed_after_the_image_was_built(
+    monkeypatch, store, tmp_path
+):
+    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
+    repo_path = _init_repo(tmp_path)
+    (repo_path / "uv.lock").write_text("version = 1\n")
+    _git(repo_path, "add", "uv.lock")
+    _git(repo_path, "commit", "-m", "add uv.lock", date="2026-09-19T12:00:00+00:00")
+
+    def runner(cmd, timeout=10, cwd=None):
+        if cmd[:4] == ["docker", "image", "inspect", "-f"]:
+            return _ok("2026-09-01T00:00:00Z\n")
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return _ok()
+        if cmd[:2] == ["git", "log"]:
+            return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+        return _all_ok_runner(cmd, timeout, cwd)
+
+    board = store.create_board("b")
+    store.create_repo(
+        board["id"],
+        name="widgets",
+        path=str(repo_path),
+        default_branch="main",
+        test_command="pytest",
+        image="widgets:dev",
+    )
+    checks = run_preflight(store, runner=runner)
+    row = next(
+        c for c in checks if c["group"] == "widgets" and c["label"] == "repo image freshness"
+    )
+    assert row["status"] == "warn"
+    assert "uv.lock" in row["detail"]
+    assert "docker build" in row["fix"]
+
+
+def test_stale_image_warns_when_the_base_image_was_rebuilt_since(monkeypatch, store, tmp_path):
+    """found for real: smortboard-card:multi-lab replaced :latest's agent user without retagging
+    it, and a repo image built from the old base started failing chown agent:agent on rebuild -
+    nothing about uv.lock caught that"""
+    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
+    monkeypatch.setattr("smortboard.preflight.card_image", lambda: "smortboard-card:latest")
+    repo_path = _init_repo(tmp_path)
+    (repo_path / "uv.lock").write_text("version = 1\n")
+    _git(repo_path, "add", "uv.lock")
+    _git(repo_path, "commit", "-m", "add uv.lock", date="2026-01-01T00:00:00+00:00")
+
+    def runner(cmd, timeout=10, cwd=None):
+        if cmd[:5] == ["docker", "image", "inspect", "-f", "{{.Created}}"]:
+            image = cmd[5]
+            if image == "smortboard-card:latest":
+                return _ok("2026-09-19T00:00:00Z\n")  # base rebuilt recently
+            return _ok("2026-09-01T00:00:00Z\n")  # the repo image itself, built earlier
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return _ok()
+        if cmd[:2] == ["git", "log"]:
+            return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+        return _all_ok_runner(cmd, timeout, cwd)
+
+    board = store.create_board("b")
+    store.create_repo(
+        board["id"],
+        name="widgets",
+        path=str(repo_path),
+        default_branch="main",
+        test_command="pytest",
+        image="widgets:dev",
+    )
+    checks = run_preflight(store, runner=runner)
+    row = next(
+        c for c in checks if c["group"] == "widgets" and c["label"] == "repo image freshness"
+    )
+    assert row["status"] == "warn"
+    assert "base image" in row["detail"]
+    assert "smortboard-card:latest" in row["detail"]
+
+
+def test_fresh_image_does_not_warn_about_uv_lock(monkeypatch, store, tmp_path):
+    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
+    repo_path = _init_repo(tmp_path)
+    (repo_path / "uv.lock").write_text("version = 1\n")
+    _git(repo_path, "add", "uv.lock")
+    _git(repo_path, "commit", "-m", "add uv.lock", date="2026-01-01T00:00:00+00:00")
+
+    def runner(cmd, timeout=10, cwd=None):
+        if cmd[:4] == ["docker", "image", "inspect", "-f"]:
+            return _ok("2026-09-19T00:00:00Z\n")
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return _ok()
+        if cmd[:2] == ["git", "log"]:
+            return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+        return _all_ok_runner(cmd, timeout, cwd)
+
+    board = store.create_board("b")
+    store.create_repo(
+        board["id"],
+        name="widgets",
+        path=str(repo_path),
+        default_branch="main",
+        test_command="pytest",
+        image="widgets:dev",
+    )
+    checks = run_preflight(store, runner=runner)
+    row = next(
+        c for c in checks if c["group"] == "widgets" and c["label"] == "repo image freshness"
+    )
+    assert row["status"] == "ok"
 
 
 def test_repos_across_every_board_are_included(monkeypatch, store, tmp_path):
