@@ -1,5 +1,5 @@
 // overnight throughput: run-all scheduling and the morning digest, on top of board.js.
-// loaded after board.js in index.html and relies on its globals: api, escapeHtml, showRun,
+// loaded after board.js in index.html and relies on its globals: api, escapeHtml, setQueueState,
 // onBoardEnter, currentBoardId, toggleOverlay, Menu. nothing here is redefined from board.js -
 // see the brief's list of what is safe to assume is already global.
 
@@ -49,27 +49,26 @@ function renderScheduleStatus(view) {
 
 // running/queued/waiting cards each carry their state on the strip's foot, the same place a
 // manual run's phase shows (board.js's showRun) - a card started by run-all looks no different
-// from one started by hand, which is the point
+// from one started by hand, which is the point. every write goes through board.js's setQueueState,
+// the same resolver pollRun feeds, so the two never race for the same corner
 function applyScheduleToCards(view) {
-  view.running.forEach(id => {
-    showRun(id, 'running');
-    // whatever the CTA named before this run started (a blocked reason, a stale queue note) is
-    // stale the moment the queue actually starts the card - the run itself is now the story
-    const note = actionNote(id);
-    if (note) note.textContent = 'Running…';
-  });
+  view.running.forEach(id => setQueueState(id, {kind: 'running'}));
   const waitingIds = new Set(Object.keys(view.waiting));
-  Object.entries(view.waiting).forEach(([id, reason]) => showRun(id, 'waiting', null, reason));
   // position is 1-based so "queued, 1 of 3" reads as the front of the line, not the back
   const total = view.queued.length;
+  // a waiting card is still in the queue - held back by a lease clash, an unmet dependency, a
+  // usage limit or a spend limit, and it runs the moment that clears - so it carries its place
+  // too, and shows as pending with the reason on its foot
+  const place = new Map(view.queued.map((id, index) => [id, index + 1]));
+  Object.entries(view.waiting).forEach(([id, reason]) =>
+    setQueueState(id, {kind: 'waiting', reason, index: place.get(id) ?? null, total}));
   view.queued.forEach((id, index) => {
     if (waitingIds.has(id)) return;
-    showRun(id, `queued, ${index + 1} of ${total}`);
-    // a card re-queued while blocked kept its 'doing' status, so the compact note still reads
-    // 'Running…' - it hasn't actually started again yet, the queue has
-    const note = actionNote(id);
-    if (note && note.textContent === 'Running…') note.textContent = 'Queued';
+    setQueueState(id, {kind: 'queued', index: index + 1, total});
   });
+  // stopping the queue is what puts every card back: this view is the whole truth, so a card it no
+  // longer names is dropped rather than left drawn as queued forever
+  retainQueueStates(new Set([...view.running, ...waitingIds, ...view.queued]));
 }
 
 async function pollSchedule() {

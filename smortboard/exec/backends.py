@@ -39,8 +39,10 @@ from smortboard.exec.runner import (
 from smortboard.exec.worktrees import (
     WorktreeError,
     current_branch,
+    default_branch,
     repo_lock,
     repo_root_of_worktree,
+    rev_parse,
 )
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import parse_ref
@@ -317,6 +319,7 @@ class ContainerBackend:
         branch = current_branch(worktree_path)
         try:
             self._clone(worktree_path, clone_path, branch)
+            self._expose_upstream_base(clone_path, default_branch(repo or {}))
             if store is not None and repo is not None:
                 # prior work and base merges are already in the clone
                 start_commit = subprocess.run(
@@ -399,8 +402,17 @@ class ContainerBackend:
             self._fetch_back(repo_root, clone_path, branch, worktree_path)
             if store is not None and repo is not None:
                 remembered = [row["path_glob"] for row in repo.get("remembered_leases", [])]
+                base_name = default_branch(repo)
+                base_ref = next(
+                    (
+                        ref
+                        for ref in (f"origin/{base_name}", base_name)
+                        if rev_parse(repo_root, ref)
+                    ),
+                    None,
+                )
                 outside = changed_paths_outside_lease(
-                    repo_root, start_commit, branch, leases + remembered
+                    repo_root, start_commit, branch, leases + remembered, base_ref=base_ref
                 )
                 store.append_event(
                     card_id,
@@ -438,6 +450,28 @@ class ContainerBackend:
         # one - the board chooses it instead, in the clone the container mounts
         for key, value in (("user.name", CARD_GIT_NAME), ("user.email", CARD_GIT_EMAIL)):
             subprocess.run(["git", "-C", str(clone_path), "config", key, value], check=True)
+
+    def _expose_upstream_base(self, clone_path: Path, base: str) -> None:
+        """makes `origin/<base>` inside the clone the repo's fetched upstream, not its local branch.
+
+        The clone's origin is the worktree, so a plain clone maps origin/<base> to the repo's LOCAL
+        <base> - which is behind whenever nobody pulled. A worker told to "merge origin/<base>"
+        then got "Already up to date", resolved nothing, and the card blocked MERGE_CONFLICT again
+        at handover, forever. Best effort: no upstream ref (a local-only repo) leaves it as is.
+        """
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(clone_path),
+                "fetch",
+                "-q",
+                "origin",
+                f"+refs/remotes/origin/{base}:refs/remotes/origin/{base}",
+            ],
+            capture_output=True,
+            check=False,
+        )
 
     def _image_for(self, repo: dict[str, Any] | None) -> str:
         """the repo's own image if it declares one, else the default.

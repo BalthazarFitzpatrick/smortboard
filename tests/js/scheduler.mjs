@@ -82,7 +82,7 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {
   toggleRunAll, openDigestPanel, renderScheduleStatus, applyScheduleToCards,
-  digestSinceDefault, rememberDigestOpened,
+  digestSinceDefault, rememberDigestOpened, isPendingCard, cardClasses,
   setCurrentBoardId: id => { currentBoardId = id; },
 };`)(SpyMenu, SpyDrawer);
 
@@ -124,6 +124,16 @@ function actionText(cardId) {
 assert.equal(actionText('c2'), 'Queued', 'a queued card says so on its own note, not Running…');
 assert.equal(actionText('c1'), 'Running…', 'a card actually running keeps its own label');
 
+// ---- what the queue knows is what the board draws: queued means pending, running does not -------
+// only the ids in the queued list, so the board can put them in doing as grey strips (card_pending.mjs)
+
+assert.ok(mod.isPendingCard('c2'), 'a queued card is pending');
+assert.ok(!mod.isPendingCard('c1'), 'a card an agent is running is not');
+assert.ok(mod.cardClasses({id: 'c2', status: 'doing'}).includes('card-pending'),
+  'and it is drawn as pending whatever its stored status says');
+assert.ok(mod.cardClasses({id: 'c1', status: 'doing'}).includes('card-working'),
+  'while the running one keeps the working edge');
+
 // ---- a queue of two shows each card's own position, front to back -----------------------------
 
 mod.applyScheduleToCards({running: [], queued: ['c1', 'c2'], waiting: {}, paused_until: null});
@@ -138,6 +148,10 @@ const stopCall = fetchCalls.find(c => c.path === '/api/boards/b1/run-all/stop');
 assert.ok(stopCall, 'pressing w again should stop the queue');
 assert.equal(stopCall.method, 'POST');
 assert.equal(badgeText('c1'), 'running', 'a card already running keeps going after stop');
+// the view is the whole truth: a card it no longer names has left the queue, so nothing is drawn
+// as pending any more and every card goes back to its own column
+assert.ok(!mod.isPendingCard('c2'), 'stopping the queue drops what it knew about a queued card');
+assert.ok(!mod.isPendingCard('c1'), 'and a running card was never pending to begin with');
 
 // ---- a waiting card shows its reason, and the status line reports a pause ----------------------
 
@@ -160,6 +174,7 @@ mod.applyScheduleToCards({
   paused_until: Math.floor(Date.now() / 1000) + 3600,
 });
 assert.equal(badgeText('c2'), 'waiting', 'a card the scheduler is holding back shows it on its foot');
+assert.ok(mod.isPendingCard('c2'), 'a waiting card is still in the queue, so it is pending with its reason on the foot');
 assert.match(statusEl.textContent, /paused til \d{2}:\d{2}/);
 
 // ---- an idle schedule hides the status line entirely --------------------------------------------

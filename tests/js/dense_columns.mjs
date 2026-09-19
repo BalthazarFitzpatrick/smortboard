@@ -31,7 +31,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
   PILE_GAP_ABOVE, PILE_GAP_BELOW, CARD_GAP, flipDelta, planPileMotion, PILE_MOTION_MS,
   PILE_SETTLE_MS, PILE_EASING, ROW_MOTION_MS, ROW_EASING, CLIP_REACH,
   foldFrames, cardFlipFrames, PILE_HANDOVER_IN, PILE_HANDOVER_OUT,
-  GROW_FRAME, REST_FRAME, leaveColumn};`)(SpyMenu, SpyDrawer);
+  GROW_FRAME, REST_FRAME, leaveColumn, setPendingCard, isActiveDoing};`)(SpyMenu, SpyDrawer);
 
 // fixture heights below are derived from the module's own tuning constants, not typed pixel
 // counts, so a future gap-tuning pass moves the fixtures with it instead of breaking them
@@ -82,6 +82,36 @@ function card(id, status, extra = {}) {
   const sorted = mod.sortColumnCards([held, live1, live2]);
   assert.deepEqual(sorted.map(c => c.id), ['l1', 'l2', 'h1'],
     'a card a live agent holds sorts above one the board is only retrying automatically');
+}
+
+// ---- and below both of those: the cards the queue has picked up but nobody is running yet, in
+// queue order. presentation only - setPendingCard is what board.js's setQueueState writes ---------
+
+{
+  const running = card('run', 'doing');
+  const held = card('held', 'doing', {handled_by_board: true});
+  const blocked = card('pend2', 'todo', {blocked_reason_code: 'AGENT_QUESTION'});
+  const plain = card('pend1', 'todo');
+  const waiting = card('wait', 'todo', {blocked_reason_code: 'USAGE_LIMIT'});
+  // the queue's own order, deliberately not the order the column already held them in
+  mod.setPendingCard('pend1', 1);
+  mod.setPendingCard('pend2', 2);
+
+  const sorted = mod.sortColumnCards([held, blocked, waiting, plain, running]);
+  assert.deepEqual(sorted.map(c => c.id), ['run', 'pend1', 'pend2', 'held', 'wait'],
+    'the running card first, then the queue in its own order, then the retried and the waiting');
+  assert.equal(mod.isActiveDoing({...running, id: 'pend1'}), false,
+    'a queued card carrying the doing status is not a card an agent is holding');
+  assert.equal(mod.cardEdgeVar(plain), 'var(--grey-border)', 'a pending pile layer is grey');
+  assert.equal(mod.cardEdgeVar(blocked), 'var(--grey-border)', 'even one with a reason code of its own');
+  assert.deepEqual(mod.letterCounts([running, plain, blocked], 'doing'), {d: 3},
+    'pending counts under doing, so the header agrees with the strips');
+
+  mod.setPendingCard('pend1', null);
+  mod.setPendingCard('pend2', null);
+  assert.deepEqual(mod.sortColumnCards([held, blocked, plain, running]).map(c => c.id),
+    ['run', 'held', 'pend2', 'pend1'],
+    'the queue emptying puts every card back under its own state - nothing stored ever changed');
 }
 
 // ---- buildColumn: a bucket element (label + rows), the height buildColumn's caller wants --------
@@ -671,6 +701,18 @@ globalThis.window.innerHeight = 800;
   const {bucketRows} = buildColumn(600, cards);
   const cls = piles(bucketRows)[0].className;
   assert.ok(!cls.includes('card-pile-doing') && !cls.includes('card-pile-attention'), 'a quiet pile keeps the grey edge');
+}
+{
+  // a pile in doing holding nothing but queued cards is not work in progress - grey, like the
+  // strips it folded away, until one of them is actually being run
+  const cards = Array.from({length: 10}, (_, i) => card(`pp${i}`, 'doing'));
+  cards.forEach((c, i) => mod.setPendingCard(c.id, i + 1));
+  const {bucketRows} = buildColumn(600, cards, 'doing');
+  assert.ok(!piles(bucketRows)[0].className.includes('card-pile-doing'), 'a pile of queued cards keeps the grey edge');
+  // the same cards with the queue emptied are the doing pile the case above already draws blue
+  cards.forEach(c => mod.setPendingCard(c.id, null));
+  const {bucketRows: running} = buildColumn(600, cards, 'doing');
+  assert.ok(piles(running)[0].className.includes('card-pile-doing'), 'and the blue edge is back once they are running');
 }
 
 // ---- pile jitter: seeded by card id alone, so the same ids always draw the same pile ------------
