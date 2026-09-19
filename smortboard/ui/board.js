@@ -338,6 +338,10 @@ async function doRunFocusedCard(cardId) {
   const runtime = await api('/api/runtime');
   if (!runtime.ready) { reportNotReady(runtime.missing); return; }
 
+  // a manual retry means whatever the CTA named ("fix leases", "answer question") is either
+  // done or moot - the run itself is now the story, so the stale reason-code label goes
+  const note = actionNote(cardId);
+  if (note) note.textContent = 'Running…';
   showRun(cardId, 'starting');
   const state = await api(`/api/cards/${cardId}/run`, {method: 'POST'});
   if (!state.running) { finishRun(cardId, state); return; }

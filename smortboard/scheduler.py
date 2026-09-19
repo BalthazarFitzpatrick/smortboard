@@ -551,16 +551,19 @@ class BoardScheduler:
 
             started: list[str] = []
             waiting: dict[str, str] = {}
-            remaining: list[str] = []
+            # cards this tick decided no longer belong in the queue at all (gone, started by
+            # hand, or landed); see the writeback below for why only removals get tracked
+            drop: list[str] = []
             for card_id in queue_snapshot:
                 try:
                     card = store.get_card(card_id)
                 except NotFoundError:
-                    continue  # gone - drop it, nothing to wait for
+                    drop.append(card_id)  # gone - drop it, nothing to wait for
+                    continue
                 if card_id in running_ids or not _is_queueable(card):
-                    continue  # started by hand, accepted, rejected - either way not ours to queue
+                    drop.append(card_id)  # started by hand, accepted, rejected - not ours anymore
+                    continue
                 if slots <= 0:
-                    remaining.append(card_id)
                     continue
                 reason = None
                 worker_lab, _ = run_ref(store, "worker", card)
@@ -573,7 +576,6 @@ class BoardScheduler:
                     ]
                     paused = max(pauses)
                 if paused is not None and paused > time.time():
-                    remaining.append(card_id)
                     waiting[card_id] = f"{worker_lab} usage limited until {paused}"
                     continue
                 if card.get("depends_on"):
@@ -587,7 +589,6 @@ class BoardScheduler:
                 reason = reason or spend_refusal(store, card)
                 if reason:
                     waiting[card_id] = reason
-                    remaining.append(card_id)
                     continue
                 self._run_profiles[card_id] = (
                     worker_lab,
@@ -604,7 +605,13 @@ class BoardScheduler:
 
         with self._lock:
             self._running |= set(started)
-            self._queue = remaining
+            # this tick read the queue at line ~522 and then did slow, unlocked I/O (a network PR
+            # sweep, per-card store reads) - another thread (a usage-limit retry, a due-retry
+            # requeue) may have inserted into the LIVE self._queue since. filtering the live queue
+            # for what this tick decided to remove, instead of replacing it with the stale
+            # snapshot-derived `remaining`, keeps that insertion instead of silently clobbering it
+            gone = set(started) | set(drop)
+            self._queue = [card_id for card_id in self._queue if card_id not in gone]
             self._waiting = waiting
 
     def _make_on_finish(self, card_id: str):
