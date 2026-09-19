@@ -3,14 +3,12 @@
 #
 # WHY IT EXISTS: the stock card image has no python, and the gate has no network, so `uv run pytest`
 # died fetching cpython (measured: `dns error`). rebuild whenever uv.lock OR docker/card.Dockerfile
-# changes - both `--label`s below are what smortboard.repo_image.check_image_freshness compares
-# against on every gate run, so a rebuild that skips them looks stale even though it is not:
+# changes - smortboard.preflight.check_image_staleness compares this image's own build time against
+# uv.lock's last commit and against smortboard-card:latest's build time, and warns in preflight
+# before a card ever starts, rather than failing the gate for a reason that has nothing to do with
+# the card's work:
 #   docker build -f docker/card.Dockerfile -t smortboard-card:latest .
-#   docker build -f docker/repo.Dockerfile -t smortboard-repo:latest \
-#     --label smortboard.lock_hash=$(uv run --no-sync python -c \
-#       "from smortboard.repo_image import lock_hash; print(lock_hash('.', 'python'))") \
-#     --label smortboard.base_image_id=$(docker image inspect smortboard-card:latest \
-#       --format '{{.Id}}') .
+#   docker build -f docker/repo.Dockerfile -t smortboard-repo:latest .
 FROM smortboard-card:latest
 
 # root for the build steps below (/opt is root-owned) - card.Dockerfile already dropped to the
@@ -29,6 +27,7 @@ WORKDIR /workspace
 COPY --chown=agent:agent pyproject.toml uv.lock ./
 COPY --chown=agent:agent smortboard ./smortboard
 RUN uv sync --frozen && rm -rf /workspace/* \
-    && chown -R agent:agent /opt/venv /opt/python
+    && mkdir -p /opt/python \
+    && chown -R agent:agent /opt/venv /opt/python /home/agent/.cache
 
 USER agent

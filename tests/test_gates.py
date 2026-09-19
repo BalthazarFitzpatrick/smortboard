@@ -5,12 +5,10 @@ import json
 
 import pytest
 
-from smortboard.repo_image import ImageFreshness
 from smortboard.review.gates import (
     GATE_TIMEOUT_SECONDS,
     GateResult,
     GateUnavailable,
-    StaleRepoImage,
     gate_is_configured,
     run_test_gate,
 )
@@ -20,9 +18,8 @@ REPO = {"test_command": "uv run pytest", "image": "card-python:latest"}
 
 
 def _fake_docker(monkeypatch, returncode=0, stdout="", stderr="", capture=None):
-    """fakes both the container run and the freshness check - the two are orthogonal, and a test
-    exercising the suite run should not have to also fabricate a valid `docker image inspect`
-    response just to reach it. tests of staleness itself override check_image_freshness."""
+    """fakes the container run - staleness is checked upstream of the gate (rebuild_if_stale,
+    the preflight check), so the gate itself only ever sees whichever image it is handed."""
     import subprocess as sp
 
     class _Completed:
@@ -38,10 +35,6 @@ def _fake_docker(monkeypatch, returncode=0, stdout="", stderr="", capture=None):
 
     monkeypatch.setattr(sp, "run", _run)
     monkeypatch.setattr("smortboard.review.gates.docker_available", lambda: True)
-    monkeypatch.setattr(
-        "smortboard.review.gates.check_image_freshness",
-        lambda repo, **kwargs: ImageFreshness(True, None, "fresh"),
-    )
 
 
 def test_a_passing_suite_is_a_passing_gate(tmp_path, monkeypatch):
@@ -69,6 +62,18 @@ def test_the_gate_needs_no_credential_and_no_network(tmp_path, monkeypatch):
     assert "--network" in cmd and cmd[cmd.index("--network") + 1] == "none"
     assert "-e" not in cmd
     assert not any("token" in str(part).lower() for part in cmd)
+
+
+def test_the_gate_exports_writable_cache_dirs_for_the_readonly_mount(tmp_path, monkeypatch):
+    """/workspace is read-only, so ruff/pytest must not try to cache into it (regression for the
+    'Failed to initialize cache: Read-only file system' failure)."""
+    seen = []
+    _fake_docker(monkeypatch, capture=seen)
+    run_test_gate(None, "card", tmp_path, REPO)
+    shell_command = seen[0][-1]
+    assert "RUFF_CACHE_DIR=/tmp/.ruff_cache" in shell_command
+    assert "PYTEST_ADDOPTS='-p no:cacheprovider'" in shell_command
+    assert REPO["test_command"] in shell_command
 
 
 def test_the_gate_cannot_change_what_it_is_judging(tmp_path, monkeypatch):
@@ -108,10 +113,6 @@ def test_a_suite_that_never_finishes_is_a_failure_not_a_hang(tmp_path, monkeypat
 
     monkeypatch.setattr(sp, "run", _run)
     monkeypatch.setattr("smortboard.review.gates.docker_available", lambda: True)
-    monkeypatch.setattr(
-        "smortboard.review.gates.check_image_freshness",
-        lambda repo, **kwargs: ImageFreshness(True, None, "fresh"),
-    )
     result = run_test_gate(None, "card", tmp_path, REPO)
     assert not result.passed
     assert "did not finish" in result.output
@@ -143,31 +144,13 @@ def test_gate_result_reports_its_own_reason_code():
     assert GateResult(False, "c", 1, "").blocked_reason_code == "TESTS_FAILED"
 
 
-def test_a_stale_repo_image_blocks_before_the_suite_ever_runs(tmp_path, monkeypatch):
-    """measured 2026-09-18: a stale image failed cards TESTS_FAILED for reasons that had nothing
-    to do with the card's work. the check must run, and block, before the suite does."""
-    seen = []
-    _fake_docker(monkeypatch, capture=seen)
-    monkeypatch.setattr(
-        "smortboard.review.gates.check_image_freshness",
-        lambda repo, **kwargs: ImageFreshness(
-            False, "lock", "a dependency moved. rebuild it - docker build -t x ."
-        ),
-    )
-    with pytest.raises(StaleRepoImage, match="dependency moved"):
-        run_test_gate(None, "card", tmp_path, REPO)
-    assert seen == []  # the suite never ran
-
-
-def test_a_stale_repo_image_is_never_reported_as_tests_failed(tmp_path, monkeypatch):
-    _fake_docker(monkeypatch, returncode=0, stdout="12 passed")
-    monkeypatch.setattr(
-        "smortboard.review.gates.check_image_freshness",
-        lambda repo, **kwargs: ImageFreshness(False, "base", "the base image moved."),
-    )
-    with pytest.raises(StaleRepoImage) as excinfo:
-        run_test_gate(None, "card", tmp_path, REPO)
-    assert excinfo.value.reason_code == "STALE_IMAGE"
+# a stale repo image (uv.lock or the base image moved since the last build) is no longer a
+# gate-level concern: rebuild_if_stale (smortboard/repo_image.py) rebuilds it at card run-start,
+# before the worker or the gate ever touch it, and the same staleness check is surfaced in
+# preflight so it is visible before a card starts - see tests/test_repo_image.py and
+# tests/test_preflight.py. measured 2026-09-18: a stale image failed cards TESTS_FAILED for
+# reasons that had nothing to do with the card's work; fixing it before the gate runs means the
+# gate itself never needs to know an image can be stale.
 
 
 def test_a_fresh_image_still_runs_the_suite(tmp_path, monkeypatch):

@@ -4,20 +4,16 @@
 availability is exercised only implicitly, through shutil.which, which a monkeypatch controls too.
 """
 
-import json
 import subprocess
 
 import pytest
 
 from smortboard.repo_image import (
-    BASE_IMAGE_ID_LABEL,
-    LOCK_HASH_LABEL,
     BuildResult,
     build_repo_image,
-    check_image_freshness,
     detect_stack,
     dockerfile_for,
-    lock_hash,
+    rebuild_if_stale,
 )
 from smortboard.store.api import Store
 
@@ -29,11 +25,13 @@ def store(tmp_path):
     s.close()
 
 
+# a fake `run` never shells out, so a real docker on PATH is not what any of these tests are
+# proving - without this, they only passed on a machine that happened to have docker installed,
+# and failed the gate itself (no docker binary in the sandboxed test container). the one test that
+# wants shutil.which to report "missing" overrides this with its own monkeypatch, which wins since
+# it runs after fixture setup
 @pytest.fixture(autouse=True)
 def _docker_on_path(monkeypatch):
-    """build_repo_image asks shutil.which whether docker exists before ever touching the
-    injected `run` - fake its presence so these tests do not depend on the host actually having
-    a docker binary installed (the one test that cares about its absence overrides this itself)."""
     monkeypatch.setattr("smortboard.repo_image.shutil.which", lambda name: "/usr/bin/docker")
 
 
@@ -148,173 +146,107 @@ def test_build_result_is_a_plain_dataclass():
     assert r.ok and r.tag == "x:latest"
 
 
-# ---- lock_hash --------------------------------------------------------------------------------
+# ---- rebuild_if_stale -----------------------------------------------------------------------
 
 
-def test_lock_hash_changes_when_a_dependency_moves(tmp_path):
-    (tmp_path / "uv.lock").write_text("a")
-    (tmp_path / "pyproject.toml").write_text("b")
-    before = lock_hash(tmp_path, "python")
-    (tmp_path / "uv.lock").write_text("a-changed")
-    assert lock_hash(tmp_path, "python") != before
+def _init_git_repo(path):
+    _run_git = ["git", "-C", str(path)]
+    subprocess.run([*_run_git, "init", "-b", "main"], check=True, capture_output=True)
+    subprocess.run([*_run_git, "config", "user.email", "a@b.c"], check=True, capture_output=True)
+    subprocess.run([*_run_git, "config", "user.name", "a"], check=True, capture_output=True)
 
 
-def test_lock_hash_is_stable_for_the_same_files(tmp_path):
-    (tmp_path / "uv.lock").write_text("a")
-    (tmp_path / "pyproject.toml").write_text("b")
-    assert lock_hash(tmp_path, "python") == lock_hash(tmp_path, "python")
-
-
-def test_build_repo_image_stamps_the_build_with_its_lock_and_base(tmp_path, store):
-    (tmp_path / "uv.lock").write_text("locked")
-    board = store.create_board("b")
-    repo = store.create_repo(board["id"], "myrepo", str(tmp_path), "main")
-
-    seen = []
-
-    def run(cmd, cwd, capture_output, text, timeout, check):
-        seen.append(cmd)
-        if cmd[:3] == ["docker", "image", "inspect"]:
-            return subprocess.CompletedProcess(cmd, 0, "sha256:base123\n", "")
-        return subprocess.CompletedProcess(cmd, 0, "build ok", "")
-
-    result = build_repo_image(repo, run=run)
-    assert result.ok
-    build_cmd = seen[-1]
-    expected_lock = lock_hash(tmp_path, "python")
-    assert f"--label={LOCK_HASH_LABEL}={expected_lock}" in build_cmd
-    assert f"--label={BASE_IMAGE_ID_LABEL}=sha256:base123" in build_cmd
-
-
-def test_a_build_stamps_no_base_label_when_the_base_has_never_been_built(tmp_path, store):
-    (tmp_path / "uv.lock").write_text("locked")
-    board = store.create_board("b")
-    repo = store.create_repo(board["id"], "myrepo", str(tmp_path), "main")
-
-    seen = []
-
-    def run(cmd, cwd, capture_output, text, timeout, check):
-        seen.append(cmd)
-        if cmd[:3] == ["docker", "image", "inspect"]:
-            return subprocess.CompletedProcess(cmd, 1, "", "no such image")
-        return subprocess.CompletedProcess(cmd, 0, "build ok", "")
-
-    result = build_repo_image(repo, run=run)
-    assert result.ok
-    build_cmd = seen[-1]
-    assert not any(part.startswith(f"--label={BASE_IMAGE_ID_LABEL}=") for part in build_cmd)
-
-
-# ---- check_image_freshness ---------------------------------------------------------------------
-
-
-def _inspect_response(*entries):
-    def run(cmd):
-        return subprocess.CompletedProcess(cmd, 0, json.dumps(list(entries)), "")
-
-    return run
-
-
-def _entry(tag, labels=None):
-    return {"RepoTags": [tag], "Id": f"sha256:{tag}", "Config": {"Labels": labels or {}}}
-
-
-def test_freshness_skips_repos_with_no_custom_image(tmp_path):
-    repo = {"path": str(tmp_path), "name": "r"}
-    result = check_image_freshness(repo, run=lambda cmd: (_ for _ in ()).throw(AssertionError))
-    assert result.fresh
-
-
-def test_freshness_reports_missing_when_the_image_was_never_built(tmp_path):
-    (tmp_path / "uv.lock").write_text("a")
-    repo = {"path": str(tmp_path), "name": "r", "image": "r-repo:latest"}
-    result = check_image_freshness(repo, run=_inspect_response())
-    assert not result.fresh
-    assert result.reason == "missing"
-    assert "never been built" in result.detail
-
-
-def test_freshness_reports_missing_for_an_image_that_predates_stamping(tmp_path):
-    (tmp_path / "uv.lock").write_text("a")
-    repo = {"path": str(tmp_path), "name": "r", "image": "r-repo:latest"}
-    result = check_image_freshness(repo, run=_inspect_response(_entry("r-repo:latest")))
-    assert not result.fresh
-    assert result.reason == "missing"
-    assert "predates image stamping" in result.detail
-
-
-def test_freshness_reports_a_moved_dependency(tmp_path):
-    (tmp_path / "uv.lock").write_text("a")
-    repo = {"path": str(tmp_path), "name": "r", "image": "r-repo:latest"}
-    stale_labels = {LOCK_HASH_LABEL: "not-the-current-hash"}
-    result = check_image_freshness(
-        repo, run=_inspect_response(_entry("r-repo:latest", stale_labels))
+def _commit_uv_lock(path, when):
+    (path / "uv.lock").write_text("version = 1\n")
+    env = {**__import__("os").environ, "GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when}
+    subprocess.run(["git", "-C", str(path), "add", "uv.lock"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "-m", "uv.lock"],
+        check=True,
+        capture_output=True,
+        env=env,
     )
-    assert not result.fresh
-    assert result.reason == "lock"
-    assert "dependency moved" in result.detail
 
 
-def test_freshness_reports_a_moved_base_image(tmp_path):
-    (tmp_path / "uv.lock").write_text("a")
-    repo = {"path": str(tmp_path), "name": "r", "image": "r-repo:latest"}
-    current_lock = lock_hash(tmp_path, "python")
-    repo_labels = {LOCK_HASH_LABEL: current_lock, BASE_IMAGE_ID_LABEL: "sha256:old-base"}
-    result = check_image_freshness(
+def _probe(created_at, cmd, timeout=10, cwd=None):
+    if cmd[:4] == ["docker", "image", "inspect", "-f"]:
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"{created_at}\n", stderr="")
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+
+
+def test_rebuild_if_stale_rebuilds_when_uv_lock_postdates_the_image(tmp_path, store):
+    _init_git_repo(tmp_path)
+    _commit_uv_lock(tmp_path, "2026-09-19T12:00:00+00:00")
+    board = store.create_board("b")
+    repo = store.create_repo(board["id"], "myrepo", str(tmp_path), "main")
+    repo = {**repo, "image": "myrepo-repo:latest"}
+
+    result = rebuild_if_stale(
         repo,
-        run=_inspect_response(
-            _entry("r-repo:latest", repo_labels),
-            {"RepoTags": ["smortboard-card:latest"], "Id": "sha256:new-base", "Config": {}},
-        ),
+        run=_fake_run(),
+        probe=lambda cmd, timeout=10, cwd=None: _probe("2026-09-01T00:00:00Z", cmd, timeout, cwd),
     )
-    assert not result.fresh
-    assert result.reason == "base"
-    assert "moved underneath it" in result.detail
+    assert result is not None
+    assert result.ok
+    assert result.tag == "myrepo-repo:latest"
 
 
-def test_freshness_passes_when_the_stamp_matches_lock_and_base(tmp_path):
-    (tmp_path / "uv.lock").write_text("a")
-    repo = {"path": str(tmp_path), "name": "r", "image": "r-repo:latest"}
-    current_lock = lock_hash(tmp_path, "python")
-    repo_labels = {LOCK_HASH_LABEL: current_lock, BASE_IMAGE_ID_LABEL: "sha256:same-base"}
-    result = check_image_freshness(
-        repo,
-        run=_inspect_response(
-            _entry("r-repo:latest", repo_labels),
-            {"RepoTags": ["smortboard-card:latest"], "Id": "sha256:same-base", "Config": {}},
-        ),
-    )
-    assert result.fresh
-    assert result.reason is None
-
-
-def test_a_rebuild_from_the_current_lock_passes_the_check(tmp_path, store):
-    """the acceptance case end to end: build_repo_image stamps the image, and the very same
-    stamp is what check_image_freshness reads back as fresh - no rebuild loop needed."""
-    (tmp_path / "uv.lock").write_text("locked")
+def test_rebuild_if_stale_skips_a_fresh_image(tmp_path, store):
+    _init_git_repo(tmp_path)
+    _commit_uv_lock(tmp_path, "2026-01-01T00:00:00+00:00")
     board = store.create_board("b")
     repo = store.create_repo(board["id"], "myrepo", str(tmp_path), "main")
-    repo = dict(repo, image="myrepo-repo:latest")
+    repo = {**repo, "image": "myrepo-repo:latest"}
 
-    built = {}
+    called = []
+    result = rebuild_if_stale(
+        repo,
+        run=lambda *a, **k: called.append(1),
+        probe=lambda cmd, timeout=10, cwd=None: _probe("2026-09-19T00:00:00Z", cmd, timeout, cwd),
+    )
+    assert result is None
+    assert called == []
 
-    def build_run(cmd, cwd, capture_output, text, timeout, check):
-        if cmd[:3] == ["docker", "image", "inspect"]:
-            return subprocess.CompletedProcess(cmd, 1, "", "no such image")
-        if cmd[0:2] == ["docker", "build"]:
-            for part in cmd:
-                if part.startswith(f"--label={LOCK_HASH_LABEL}="):
-                    built[LOCK_HASH_LABEL] = part.split("=", 2)[2]
-            return subprocess.CompletedProcess(cmd, 0, "build ok", "")
-        return subprocess.CompletedProcess(cmd, 0, "build ok", "")
 
-    result = build_repo_image(repo, run=build_run)
+def test_rebuild_if_stale_rebuilds_when_the_base_image_is_newer(tmp_path, store):
+    """uv.lock untouched, but the base image (smortboard-card:latest) was rebuilt more recently -
+    must still trigger, since a base-only change previously never reached an already-built repo
+    image on its own"""
+    from smortboard.repo_image import _BASE_CARD_IMAGE
+
+    _init_git_repo(tmp_path)
+    _commit_uv_lock(tmp_path, "2026-01-01T00:00:00+00:00")
+    board = store.create_board("b")
+    repo = store.create_repo(board["id"], "myrepo", str(tmp_path), "main")
+    repo = {**repo, "image": "myrepo-repo:latest"}
+
+    def probe(cmd, timeout=10, cwd=None):
+        if cmd[:4] == ["docker", "image", "inspect", "-f"]:
+            image = cmd[5]
+            created = (
+                "2026-09-19T00:00:00Z" if image == _BASE_CARD_IMAGE else "2026-09-01T00:00:00Z"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"{created}\n", stderr="")
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+
+    result = rebuild_if_stale(repo, run=_fake_run(), probe=probe)
+    assert result is not None
     assert result.ok
+    assert result.tag == "myrepo-repo:latest"
 
-    def inspect_run(cmd):
-        return subprocess.CompletedProcess(
-            cmd, 0, json.dumps([_entry("myrepo-repo:latest", built)]), ""
-        )
 
-    freshness = check_image_freshness(repo, run=inspect_run)
-    assert freshness.fresh
+def test_rebuild_if_stale_never_touches_a_hand_set_custom_image(tmp_path, store):
+    _init_git_repo(tmp_path)
+    _commit_uv_lock(tmp_path, "2026-09-19T12:00:00+00:00")
+    board = store.create_board("b")
+    repo = store.create_repo(board["id"], "myrepo", str(tmp_path), "main")
+    repo = {**repo, "image": "some-custom-image:v3"}
+
+    called = []
+    result = rebuild_if_stale(
+        repo,
+        run=lambda *a, **k: called.append(1),
+        probe=lambda cmd, timeout=10, cwd=None: _probe("2026-09-01T00:00:00Z", cmd, timeout, cwd),
+    )
+    assert result is None
+    assert called == []

@@ -264,6 +264,7 @@ _LEASES = {
 _ATTENTION_RECIPE = [
     ("doing", "AGENT_QUESTION"),
     ("doing", "TESTS_FAILED"),
+    ("doing", "BASE_RED"),
     ("doing", "REVIEW_REJECTED"),
     ("checking", None),
     ("doing", "LEASE_CONFLICT"),
@@ -608,6 +609,7 @@ def _seed_board(store: Store, spec: dict[str, Any], attention: Iterator) -> dict
 # the board's own note on a blocked card - what the inbox shows for every reason but a question
 _BLOCK_NOTES = {
     "TESTS_FAILED": "The test gate failed: tests/test_settlement.py::test_totals_per_acquirer.",
+    "BASE_RED": "BASE IS RED: 2 failing tests also fail on development without this card's changes.",
     "REVIEW_REJECTED": "The reviewer stopped this: retries every decline, not only soft declines.",
     "LEASE_CONFLICT": "The agent asked to edit src/core/db.py, which is outside this card's lease.",
     "USAGE_LIMIT": "The five-hour window is spent. New runs resume when it resets.",
@@ -663,7 +665,7 @@ def _attention_card(store: Store, card: dict[str, Any], position: int, repo: str
         store.append_event(card_id, "result", result)
         store.append_event(card_id, "worker_summary", {"text": _AGENT_QUESTION})
         return
-    if reason == "TESTS_FAILED":
+    if reason in ("TESTS_FAILED", "BASE_RED"):
         _failed_tests_attempt(store, card_id, "claude-opus-5")
     elif reason == "LEASE_CONFLICT":
         _refused_attempt(store, card_id, "claude-sonnet-5")

@@ -21,13 +21,14 @@ development into main stays the operator's.
 from __future__ import annotations
 
 import re
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from smortboard.actions import with_next
-from smortboard.briefing import resume_briefing
+from smortboard.briefing import repeats_failed_attempt, resume_briefing
 from smortboard.exec.backends import (
     CardRuntimeUnavailable,
     require_card_runtime,
@@ -38,6 +39,7 @@ from smortboard.exec.worktrees import (
     WorktreeError,
     add_worktree,
     branch_diff,
+    branch_diverged_from_origin,
     branch_exists,
     branch_name,
     create_worktree,
@@ -45,10 +47,13 @@ from smortboard.exec.worktrees import (
     existing_worktree,
     fetch_base,
     has_remote,
+    rev_parse,
     worktree_path,
 )
 from smortboard.labs.routing import command_model, run_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
+from smortboard.repo_image import rebuild_if_stale
+from smortboard.review.base_red import check_base_red
 from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.integrate import integrate, open_release_request
 from smortboard.review.merge_request import (
@@ -253,6 +258,34 @@ def _block(store: Store, state: LifecycleResult, reason_code: str, note: str) ->
     return state
 
 
+def _block_on_failed_gate(
+    store: Store,
+    state: LifecycleResult,
+    card_id: str,
+    repo: dict[str, Any],
+    base: str,
+    gate: Any,
+    after_merging: str = "",
+) -> LifecycleResult:
+    """blocks TESTS_FAILED, or BASE_RED when every failing test also fails on a clean checkout of
+    the base - the card did not cause those, and a worker run cannot fix them."""
+    note = _tests_failed_note(gate.command, gate.exit_code, gate.output, after_merging)
+    try:
+        red = check_base_red(repo, base, card_id, gate.output)
+    except (GateUnavailable, OSError, subprocess.SubprocessError):
+        red = None
+    if red is not None:
+        sha, ids = red
+        store.append_event(card_id, "base_red", {"base": base, "sha": sha, "tests": ids})
+        note = (
+            f"BASE IS RED: {len(ids)} failing test(s) also fail on {base} ({sha[:8]}) without any "
+            "of this card's changes, so the card did not cause them. Fix the base or merge a fix "
+            f"into it, then run the card again: {', '.join(t.rsplit('::', 1)[-1] for t in ids[:3])}"
+            f"{' ...' if len(ids) > 3 else ''}\n\n{note}"
+        )
+    return _block(store, state, "TESTS_FAILED" if red is None else "BASE_RED", note)
+
+
 def _base_for_fresh_cut(store: Store, state: LifecycleResult, repo_path: str, base: str) -> str:
     """the ref a fresh worktree is cut from, for a card that depends on another.
 
@@ -403,11 +436,8 @@ def _sync_and_retest(
                 else f"The test gate could not run after merging {base}: {exc}",
             )
         if not gate.passed:
-            return _block(
-                store,
-                state,
-                "TESTS_FAILED",
-                _tests_failed_note(gate.command, gate.exit_code, gate.output, after_merging=base),
+            return _block_on_failed_gate(
+                store, state, card_id, repo, base, gate, after_merging=base
             )
     return None
 
@@ -499,6 +529,16 @@ def run_card_lifecycle(
     if not _lease_globs(card):
         return _refuse(store, state, NO_LEASE_NOTE)
     repo = store.get_repo(card["repo_id"])
+    rebuild = rebuild_if_stale(repo)
+    if rebuild is not None:
+        if rebuild.ok and rebuild.tag:
+            store.set_repo_image(repo["id"], rebuild.tag)
+            store.append_event(card_id, "repo_image_rebuilt", {"tag": rebuild.tag})
+            repo = store.get_repo(card["repo_id"])
+        else:
+            # do not refuse the card over a failed rebuild - it runs against the stale image,
+            # same as before this existed, and the gate's own failure stays the informative one
+            store.append_event(card_id, "repo_image_rebuild_failed", {"log": rebuild.log[-2000:]})
     base = default_branch(repo)
     configured = store.get_settings()
     worker_lab, worker_id = run_ref(store, "worker", card)
@@ -526,6 +566,24 @@ def run_card_lifecycle(
         elif branch_exists(repo["path"], card_id):
             tree = add_worktree(repo["path"], card_id)
         else:
+            tree = None
+        # someone else pushed to this card's own branch since the board last saw it - the board's
+        # own push at the end of the run is never forced, so waiting until then only burns a full
+        # worker/gate/review turn on work that can never land anyway
+        if (
+            tree is not None
+            and has_remote(repo["path"])
+            and branch_diverged_from_origin(repo["path"], tree.branch)
+        ):
+            return _refuse(
+                store,
+                state,
+                f"{tree.branch} has commits on origin that this worktree does not - someone "
+                "else pushed to this card's own branch. Fetch and rebase or reset the branch "
+                "yourself, or delete the worktree and let the board recut it, then run this "
+                "card again.",
+            )
+        if tree is None:
             worktree_reused = False
             cut_base = base
             if card.get("depends_on"):
@@ -539,6 +597,48 @@ def run_card_lifecycle(
 
     settings = write_container_guards(tree.path, _lease_globs(card))
     store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
+
+    # a reused branch is brought up to date BEFORE the worker and the gate, not only at handover:
+    # measured 2026-09-19, three cards 28-59 commits behind development failed their gate on tests
+    # a later base commit had already fixed, and every re-run reused the same stale tree
+    conflict_note = None
+    # what "the card's own commits" are counted against: once origin/<base> is merged in, the local
+    # base can lag it, and the merged-in commits would read as the card's work
+    commit_base = base
+    if worktree_reused:
+        synced = sync_with_base(tree.path, base)
+        if synced is not None and synced.clean:
+            commit_base = f"origin/{base}"
+        if synced is not None and not synced.clean:
+            base_ref = f"origin/{base}"
+            store.append_event(
+                card_id,
+                "merge_conflict",
+                {"base_ref": base_ref, "files": synced.conflicting_files},
+            )
+            files = ", ".join(synced.conflicting_files) or "unknown files"
+            conflict_note = (
+                f"Merging {base_ref} into this branch conflicts in: {files}. Merge {base_ref} "
+                "yourself, resolve those files, then commit the merge - the test gate runs "
+                "against this branch, so it has to contain the base first."
+            )
+
+    fingerprint = {
+        "head": rev_parse(tree.path, "HEAD"),
+        "base_head": rev_parse(tree.path, f"origin/{base}"),
+        "notes": sum(1 for c in card.get("comments") or [] if c.get("author") == AUTHOR_KEY),
+    }
+    if worktree_reused and repeats_failed_attempt(store, card_id, fingerprint):
+        return _block(
+            store,
+            state,
+            "TESTS_FAILED",
+            "Nothing has changed since the last attempt: same branch head, same base, no new "
+            "note - and its tests failed. Running the worker again would repeat that failure. "
+            "Change something first (merge the base, fix what the gate names, add a note), then "
+            "run it again.",
+        )
+    store.append_event(card_id, "attempt_fingerprint", fingerprint)
 
     # the card's own model wins, then the board's worker setting, then sonnet. the reviewer has a
     # setting of its own, so a cheap worker never means a cheap review
@@ -581,7 +681,7 @@ def run_card_lifecycle(
                 "The run credential was refused. " + get_adapter(worker_lab).setup_hint(),
             )
         if run.subtype in BUDGET_CAPPED_SUBTYPES:
-            if branch_has_commits(repo["path"], tree.branch, base):
+            if branch_has_commits(repo["path"], tree.branch, commit_base):
                 store.append_event(card_id, "budget_capped_with_commits", {"subtype": run.subtype})
                 _note(
                     store,
@@ -615,6 +715,8 @@ def run_card_lifecycle(
     briefing = None
     if configured.get("resume_briefing") != "off":
         briefing = resume_briefing(store, card_id, worktree_reused=worktree_reused)
+    if conflict_note:
+        briefing = f"{briefing}\n\n{conflict_note}" if briefing else conflict_note
 
     phase("running")
     if (stopped := work(build_card_prompt(card, briefing))) is not None:
@@ -623,7 +725,7 @@ def run_card_lifecycle(
         return _stopped(store, state)
     # no commit means nothing to test or review - measured, a card that ended its turn early had
     # its unchanged tree run through the full gate and an approved review of an empty diff first
-    if not branch_has_commits(repo["path"], tree.branch, base):
+    if not branch_has_commits(repo["path"], tree.branch, commit_base):
         return _refuse(store, state, NO_COMMITS_NOTE.format(branch=tree.branch, base=base))
 
     # both gates, and on the fix route the findings go back to the worker until the reviewer
@@ -637,12 +739,7 @@ def run_card_lifecycle(
         if stopped_now():
             return _stopped(store, state)
         if not gate.passed:
-            return _block(
-                store,
-                state,
-                "TESTS_FAILED",
-                _tests_failed_note(gate.command, gate.exit_code, gate.output),
-            )
+            return _block_on_failed_gate(store, state, card_id, repo, base, gate)
 
         phase("reviewing")
         diff_text = branch_diff(repo["path"], base, tree.branch)

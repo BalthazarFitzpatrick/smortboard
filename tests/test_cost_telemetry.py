@@ -140,6 +140,16 @@ def test_card_telemetry_reads_blocked_and_refused_outcomes(store):
         == "blocked: TESTS_FAILED"
     )
 
+    base_red = store.create_card(board["id"], None, "base already red")
+    store.append_event(base_red["id"], "lifecycle_started", {})
+    store.append_event(base_red["id"], "result", _worker_result())
+    store.append_event(base_red["id"], "worker_summary", {"text": "done"})
+    store.append_event(
+        base_red["id"], "test_gate", {"passed": False, "command": "pytest", "exit_code": 1}
+    )
+    store.append_event(base_red["id"], "base_red", {"base": "development", "tests": ["t::a"]})
+    assert card_telemetry(store, base_red["id"])["attempts"][0]["outcome"] == "blocked: BASE_RED"
+
     never_started = store.create_card(board["id"], None, "no repo")
     store.append_event(never_started["id"], "lifecycle_started", {})
     assert card_telemetry(store, never_started["id"])["attempts"][0]["outcome"] == "refused"

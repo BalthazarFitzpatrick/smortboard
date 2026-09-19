@@ -27,7 +27,6 @@ from smortboard.exec.backends import (
     container_name,
     docker_available,
 )
-from smortboard.repo_image import check_image_freshness
 from smortboard.store.errors import NotFoundError
 
 # a test suite that has not finished in ten minutes is not going to; the card is stuck rather than
@@ -49,18 +48,6 @@ class NoTestCommand(GateUnavailable):
     its own subclass so the caller can show a one-line pointer at the repo setting instead of
     the boilerplate explanation, which the pre-flight checklist already carries once per repo.
     """
-
-
-class StaleRepoImage(GateUnavailable):
-    """the repo image predates the commit's own dependencies or its base image.
-
-    Re-running the suite against it fails for a reason that has nothing to do with the card's
-    work (see this module's docstring) - measured 2026-09-18, a missing pytest-xdist plugin and
-    a stale ui_base pin both blocked cards TESTS_FAILED before a single test ran. Its own
-    subclass so the block names what moved instead of reading as the card's fault.
-    """
-
-    reason_code = "STALE_IMAGE"
 
 
 @dataclass
@@ -144,10 +131,6 @@ def run_test_gate(
     if not docker_available():
         raise GateUnavailable("Docker is not running, and the gate runs the suite in a container.")
 
-    freshness = check_image_freshness(repo or {})
-    if not freshness.fresh:
-        raise StaleRepoImage(freshness.detail)
-
     work_path = Path(work_path)
     name = container_name("gate", card_id)
     timeout = _timeout_seconds(store)
@@ -167,7 +150,11 @@ def run_test_gate(
         _image_for(repo),
         "sh",
         "-c",
-        str(command),
+        # /workspace is read-only, so ruff/pytest must not try to cache into it. exported, not
+        # prefixed, so both sides of a `cmd1 && cmd2` test_command see them - a prefix would only
+        # scope to the first command in the chain
+        "export RUFF_CACHE_DIR=/tmp/.ruff_cache PYTEST_ADDOPTS='-p no:cacheprovider'; "
+        + str(command),
     ]
     try:
         completed = subprocess.run(

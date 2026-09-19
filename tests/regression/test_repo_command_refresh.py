@@ -63,7 +63,7 @@ def test_the_gate_re_reads_test_command_rather_than_trusting_a_stale_repo_dict(
         store.set_repo_test_command(repo["id"], "new cmd")
         result = run_test_gate(store, card["id"], tmp_path, stale)
     assert result.command == "new cmd"
-    assert seen[0][-1] == "new cmd"
+    assert seen[0][-1].endswith("new cmd")
 
 
 def test_a_fresh_run_still_reads_the_current_repo_directly(tmp_path, monkeypatch):
