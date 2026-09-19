@@ -21,6 +21,7 @@ const REASON_LABELS = {
   AGENT_QUESTION: 'question',
   LEASE_CONFLICT: 'needs a file outside its lease',
   TESTS_FAILED: 'tests failed',
+  BASE_RED: 'base is red',
   REVIEW_REJECTED: 'review rejected',
   USAGE_LIMIT: 'usage limit',
   CRASH: 'crashed',

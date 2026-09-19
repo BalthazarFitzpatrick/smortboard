@@ -36,7 +36,7 @@ board, kanban or agent in class names, ids, storage keys or comments.
 
 Card lifecycle: To do -> Doing -> Checking -> Accepted / Rejected, plus **Blocked** with a reason
 code (`CRASH`, `USAGE_LIMIT`, `LEASE_CONFLICT`, `AGENT_QUESTION`, `TESTS_FAILED`,
-`REVIEW_REJECTED`, `DEPENDENCY_REJECTED`, `MERGE_CONFLICT`, `API_UNREACHABLE`). Blocked is a flag,
+`REVIEW_REJECTED`, `DEPENDENCY_REJECTED`, `MERGE_CONFLICT`, `API_UNREACHABLE`, `BASE_RED`). Blocked is a flag,
 not a column: the card keeps the status it was in and the board renders it in **attention**, a
 presentation column between doing and checking. Reaching Checking requires unit tests passing AND the
 reviewer approving. Boards default to review-required: they open a PR and wait for accept before

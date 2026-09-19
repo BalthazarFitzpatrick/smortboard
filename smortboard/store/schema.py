@@ -16,6 +16,7 @@ BLOCKED_REASON_CODES = (
     "DEPENDENCY_REJECTED",
     "MERGE_CONFLICT",
     "API_UNREACHABLE",
+    "BASE_RED",
 )
 # where reviewer findings go. attention is the default: a card fixing its own findings unattended
 # spends a run's worth of tokens that nobody asked for
@@ -423,6 +424,51 @@ _MIGRATIONS: list[str] = [
     """,
     # 21: only free opts into automatic landing; existing boards require review
     """ALTER TABLE boards ADD COLUMN merge_mode TEXT;""",
+    # 22: BASE_RED joins the blocked reasons - a card whose gate failed only on tests the base
+    # already fails, so the card did not cause it. same recreate-the-table dance as 11 and 12, with
+    # every column cards has by now (complexity from 19, lab from 20)
+    """
+    PRAGMA foreign_keys = OFF;
+
+    CREATE TABLE cards_new (
+        id TEXT PRIMARY KEY,
+        board_id TEXT NOT NULL REFERENCES boards(id),
+        repo_id TEXT REFERENCES repos(id),
+        title TEXT NOT NULL,
+        workstream TEXT,
+        status TEXT NOT NULL CHECK (status IN
+            ('todo', 'doing', 'checking', 'accepted', 'rejected')),
+        blocked_reason_code TEXT CHECK (blocked_reason_code IN
+            ('CRASH', 'USAGE_LIMIT', 'LEASE_CONFLICT', 'AGENT_QUESTION',
+             'TESTS_FAILED', 'REVIEW_REJECTED', 'DEPENDENCY_REJECTED', 'MERGE_CONFLICT',
+             'API_UNREACHABLE', 'BASE_RED')),
+        description TEXT,
+        position INTEGER NOT NULL,
+        review_flag INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        findings_route TEXT CHECK (findings_route IN ('fix', 'attention')),
+        model TEXT,
+        ledger_task TEXT,
+        complexity INTEGER,
+        lab TEXT
+    );
+
+    INSERT INTO cards_new SELECT
+        id, board_id, repo_id, title, workstream, status, blocked_reason_code, description,
+        position, review_flag, created_at, updated_at, findings_route, model, ledger_task,
+        complexity, lab
+    FROM cards;
+
+    DROP TABLE cards;
+    ALTER TABLE cards_new RENAME TO cards;
+
+    CREATE INDEX IF NOT EXISTS idx_cards_board ON cards (board_id, position);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_repo_ledger_task
+        ON cards (repo_id, ledger_task) WHERE ledger_task IS NOT NULL;
+
+    PRAGMA foreign_keys = ON;
+    """,
 ]
 
 

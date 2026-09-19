@@ -172,12 +172,13 @@ Five statuses are stored, and only five: **`todo`, `doing`, `checking`, `accepte
 **The surprising part: "blocked" is not one of them.** A blocked card keeps whatever status it was
 already in and raises a separate `blocked_reason_code` alongside it. That is deliberate - a sixth
 status would throw away what the card was doing, which is exactly what the resume briefing needs to
-restart it. The nine reason codes:
+restart it. The ten reason codes:
 
 | Code | What happened |
 |---|---|
 | `AGENT_QUESTION` | the agent stopped to ask you something |
 | `TESTS_FAILED` | the board re-ran the repo's tests and they failed |
+| `BASE_RED` | the tests fail, but they fail the same way on the base without the card's changes |
 | `REVIEW_REJECTED` | the reviewer refused the diff |
 | `LEASE_CONFLICT` | the agent tried to write outside its lease |
 | `MERGE_CONFLICT` | its branch no longer merges cleanly with the base |
@@ -602,6 +603,7 @@ inbox. In short:
 |---|---|
 | `AGENT_QUESTION` | the brief had a hole. Answer it, then consider whether the answer belonged in the card. |
 | `TESTS_FAILED` | read the failing output before answering. A hint resumes it; a wrong hint costs another run. |
+| `BASE_RED` | not the card's fault. Fix the base or merge a fix into it, then run the card again. |
 | `REVIEW_REJECTED` | read the findings. Real ones mean a fix; a wrong one means the card needed more context. |
 | `LEASE_CONFLICT` | almost always a lease written for a repo layout that does not exist. Approve the paths, or tell it to leave them alone. |
 | `MERGE_CONFLICT` | another card landed first. Resuming makes the worker merge the base and resolve it. |
