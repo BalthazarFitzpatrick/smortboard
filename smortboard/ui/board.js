@@ -322,7 +322,10 @@ function setQueueState(cardId, queueState) {
   // joining or leaving the queue changes which column the card belongs in and what colour it wears;
   // moving up the queue changes neither, so a poll that only advances positions redraws nothing
   const wasPending = isPendingCard(cardId);
-  setPendingCard(cardId, queueState?.kind === 'queued' ? queueState.index : null);
+  // pending is being in the queue: waiting on a lease, a dependency or a limit still counts, since
+  // the scheduler runs the card as soon as that clears. a waiting entry with no place is not in it
+  const inQueue = queueState?.kind === 'queued' || (queueState?.kind === 'waiting' && queueState.index != null);
+  setPendingCard(cardId, inQueue ? queueState.index : null);
   if (wasPending !== isPendingCard(cardId)) markQueueMove(cardId);
   renderRunFoot(cardId);
 }

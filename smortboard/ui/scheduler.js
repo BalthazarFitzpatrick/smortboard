@@ -54,9 +54,14 @@ function renderScheduleStatus(view) {
 function applyScheduleToCards(view) {
   view.running.forEach(id => setQueueState(id, {kind: 'running'}));
   const waitingIds = new Set(Object.keys(view.waiting));
-  Object.entries(view.waiting).forEach(([id, reason]) => setQueueState(id, {kind: 'waiting', reason}));
   // position is 1-based so "queued, 1 of 3" reads as the front of the line, not the back
   const total = view.queued.length;
+  // a waiting card is still in the queue - held back by a lease clash, an unmet dependency, a
+  // usage limit or a spend limit, and it runs the moment that clears - so it carries its place
+  // too, and shows as pending with the reason on its foot
+  const place = new Map(view.queued.map((id, index) => [id, index + 1]));
+  Object.entries(view.waiting).forEach(([id, reason]) =>
+    setQueueState(id, {kind: 'waiting', reason, index: place.get(id) ?? null, total}));
   view.queued.forEach((id, index) => {
     if (waitingIds.has(id)) return;
     setQueueState(id, {kind: 'queued', index: index + 1, total});

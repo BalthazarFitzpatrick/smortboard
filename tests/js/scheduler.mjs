@@ -174,7 +174,7 @@ mod.applyScheduleToCards({
   paused_until: Math.floor(Date.now() / 1000) + 3600,
 });
 assert.equal(badgeText('c2'), 'waiting', 'a card the scheduler is holding back shows it on its foot');
-assert.ok(!mod.isPendingCard('c2'), 'a card paused on a limit is not pending - it stays where it is');
+assert.ok(mod.isPendingCard('c2'), 'a waiting card is still in the queue, so it is pending with its reason on the foot');
 assert.match(statusEl.textContent, /paused til \d{2}:\d{2}/);
 
 // ---- an idle schedule hides the status line entirely --------------------------------------------
