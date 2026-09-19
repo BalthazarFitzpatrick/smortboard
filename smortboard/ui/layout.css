@@ -471,9 +471,10 @@ body {
 /* ---- the run badge -------------------------------------------------------------------------
    A card that is running says so where its status already is, rather than somewhere new. The
    workstream takes the slack so status and run sit together on the right and the status does not
-   shift sideways the moment a run starts. */
+   shift sideways the moment a run starts. Both foot corners carry the same weight and alignment -
+   the left names the action, the right names the run phase, one resolver (board.js) decides both. */
 .card-foot .card-workstream { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.card-foot .card-run { flex: 0 0 auto; color: var(--text-dim); white-space: nowrap; }
+.card-foot .card-run { flex: 0 0 auto; color: var(--text-dim); white-space: nowrap; font-weight: 700; text-align: right; }
 
 /* ---- PR references, wherever they show up: a card's outcome, a comment, a chat line ---------
    one accent colour and one hover affordance for every PR link on the board, so a link reads as
