@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from smortboard.exec.commands import declares_formatter
 from smortboard.labs.base import LabAdapter, LabEvent, RunRequest, estimate_usage
 from smortboard.labs.claude_code import (
     DEFAULT_ALLOWED_TOOLS,
@@ -146,11 +147,17 @@ def commands_preamble(repo: dict[str, Any] | None) -> str:
     ]
     if not lines:
         return ""
-    return (
+    body = (
         "\n".join(lines)
         + "\nThese exact commands are the only test and lint invocations permitted; where the "
-        "repo's own instructions name others, use these instead.\n\n"
+        "repo's own instructions name others, use these instead.\n"
     )
+    if declares_formatter(repo):
+        body += (
+            "The lint command's formatter may also be run in its write form: format and commit "
+            "the result, not only check it.\n"
+        )
+    return body + "\n"
 
 
 # GLOB AND GREP ARE FREE AND THEIR ABSENCE IS EXPENSIVE. without a search tool an agent reaches for

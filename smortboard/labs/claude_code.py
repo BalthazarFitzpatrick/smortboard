@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from smortboard.exec.commands import formatter_write_form
 from smortboard.exec.leases import LEASE_CONFLICT_PREFIX, write_lease_settings
 from smortboard.labs.base import (
     BashPolicy,
@@ -45,9 +46,20 @@ def allowed_tools_for_repo(repo: dict[str, Any] | None) -> tuple[str, ...]:
 
 def _bash_grants(command: str) -> tuple[str, ...]:
     """allow rules for one repo command, each `&&` part on its own - a rule must match every
-    subcommand of a compound command. a trailing ` *` also matches the bare part (probed)"""
+    subcommand of a compound command. a trailing ` *` also matches the bare part (probed).
+
+    a part that is the repo's formatter run check-only (`ruff format --check ...`) also grants
+    its write form - the same declared tokens with `--check` dropped, so a card can see its own
+    work is misformatted AND fix it. the grant is derived from this exact declared part; nothing
+    admits a bare "ruff format *" or any command the repo did not itself name."""
     parts = [part.strip() for part in command.split("&&") if part.strip()]
-    return tuple(f"Bash({part} *)" for part in parts)
+    grants: list[str] = []
+    for part in parts:
+        grants.append(f"Bash({part} *)")
+        write_form = formatter_write_form(part)
+        if write_form is not None:
+            grants.append(f"Bash({write_form} *)")
+    return tuple(grants)
 
 
 DEFAULT_ALLOWED_TOOLS = ("Bash(git *)", "Edit", "Read", "Write", "Glob", "Grep")

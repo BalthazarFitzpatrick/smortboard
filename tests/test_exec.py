@@ -491,6 +491,96 @@ def test_the_brief_names_the_exact_test_and_lint_commands():
     assert commands_preamble({}) == ""
 
 
+# -- the declared formatter's write form is admitted, scoped to what was declared -------
+
+
+def test_allowed_tools_admits_the_declared_formatters_write_form():
+    tools = allowed_tools_for_repo(
+        {
+            "test_command": "uv run pytest",
+            "lint_command": "uv run ruff check . && uv run ruff format --check .",
+        }
+    )
+    # the check form stays granted (still how a card sees it is misformatted)...
+    assert "Bash(uv run ruff format --check . *)" in tools
+    # ...and the write form is now granted too, so a card can also fix it
+    assert "Bash(uv run ruff format . *)" in tools
+
+
+def test_allowed_tools_formatter_write_form_keeps_the_repos_other_flags():
+    # the write form must be the declared command with only --check dropped, not a rebuilt one
+    tools = allowed_tools_for_repo(
+        {
+            "test_command": (
+                "uv run --no-sync ruff format --check --no-cache --extend-exclude .claude . "
+                "&& uv run --no-sync pytest -q"
+            )
+        }
+    )
+    assert "Bash(uv run --no-sync ruff format --no-cache --extend-exclude .claude . *)" in tools
+
+
+def test_allowed_tools_formatter_write_form_absent_without_a_declared_check():
+    # a repo that never declares "ruff format --check" grants no write form - a command the repo
+    # never named is still refused, not admitted because it shares a word with something granted
+    tools = allowed_tools_for_repo(
+        {"test_command": "uv run pytest", "lint_command": "uv run ruff check ."}
+    )
+    assert not any("ruff format" in tool for tool in tools)
+
+
+def test_allowed_tools_formatter_write_form_does_not_match_a_shared_prefix():
+    # tokenised, not substring-matched: "formatter" is not "format", so this stays refused
+    tools = allowed_tools_for_repo(
+        {"test_command": "uv run pytest", "lint_command": "uv run ruff formatter --check ."}
+    )
+    assert not any("ruff format ." in tool for tool in tools)
+    assert "Bash(uv run ruff formatter --check . *)" in tools
+
+
+def test_allowed_tools_never_grants_a_blanket_bash():
+    tools = allowed_tools_for_repo(
+        {
+            "test_command": "uv run pytest",
+            "lint_command": "uv run ruff check . && uv run ruff format --check .",
+        }
+    )
+    assert "Bash" not in tools
+    assert "Bash(*)" not in tools
+    assert not any(tool.startswith("Bash(ruff format") for tool in tools)
+
+
+def test_the_brief_says_the_card_may_format_not_only_check():
+    repo = {
+        "test_command": "uv run pytest",
+        "lint_command": "uv run ruff check . && uv run ruff format --check .",
+    }
+    brief = commands_preamble(repo)
+    assert "write form" in brief
+    assert "format and commit" in brief
+    # a repo with no formatter declared gets no such promise
+    plain = commands_preamble({"test_command": "uv run pytest"})
+    assert "write form" not in plain
+
+
+def test_a_bash_written_reformat_outside_the_lease_still_classifies_lease_conflict():
+    """the write-form grant lets a formatter touch paths the Edit/Write hook never sees, so
+    permission_denials alone cannot carry this one - exec/backends.py's fetch-back path is the
+    other half of this contract (it flags an out-of-lease diff by putting LEASE_CONFLICT_PREFIX in
+    the result text), and this is the runner-side half: classify_result must still catch it with
+    no Edit/Write denial at all, the same as if the hook itself had refused it."""
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "permission_denials": [],
+        "result": f"{LEASE_CONFLICT_PREFIX} billing.py was reformatted outside the lease",
+    }
+    run_result = result_to_run_result(result_event)
+    assert run_result.is_error is False
+    assert run_result.blocked_reason_code == "LEASE_CONFLICT"
+
+
 # -- bash guard: refuses a command that reaches outside the worktree ----------
 
 
