@@ -201,6 +201,11 @@ A card the board is already retrying on its own (an `API_UNREACHABLE` backoff, a
 auto-resume) stays out of the column until those automatic attempts are spent, so the column never
 fills with things nobody needs to touch yet.
 
+Pressing `w` shows a fourth state: a card the run-all queue is holding, whether it is next in line
+or waiting on a lease clash, an unmet dependency or a limit, draws in `doing` with a grey edge -
+pending, not blocked - under the cards an agent is actually running. It goes back to its own column
+the moment the run stops. Nothing about the card is written; this is presentation only.
+
 ### Leases
 
 A lease is the list of files a card may change: gitignore-style globs relative to the repo root.
@@ -219,8 +224,12 @@ Three rules that catch people:
   message - so no amount of arguing with the agent changes what it may write. Approving a lease from
   the inbox can also *remember* those paths for the whole repo, so later cards are not asked again.
 
-Leases guard writes only. Reads are not limited, and shell commands go through a separate allowlist.
-The real boundary is the container.
+Leases guard writes only. Reads are not limited, and shell commands go through a separate allowlist
+scoped to exactly the repo's declared `test_command` (and `lint_command`, if set) plus git - never a
+bare `Bash`. If the declared command runs a formatter in check-only form (`ruff format --check ...`),
+the card is also granted that formatter's write form, so it can fix what it finds rather than only
+report it; an out-of-lease path it reformats is still refused by the post-run lease check. The real
+boundary is the container.
 
 ### Runs, attempts, and the event log
 
@@ -900,16 +909,21 @@ A repo must already exist on GitHub with its default branch pushed; the board re
 not create it. Set the default branch to `development` (pushed to the remote) and the board lands
 cards there itself.
 
-The test command is the gate, so give it everything your CI checks. The gate mounts the worktree
-read-only, so tools must not write caches into it:
+The test command is the gate, so give it everything your CI checks - if CI runs `ruff check` and the
+gate does not, a card can pass its own gate and still fail CI once it lands. The gate mounts the
+worktree read-only; it exports `RUFF_CACHE_DIR` and `PYTEST_ADDOPTS=-p no:cacheprovider` itself, so
+a plain command does not need `--no-cache` for those two, but any other tool with its own cache still
+does:
 
 ```bash
-uv run --no-sync ruff format --check --no-cache --extend-exclude .claude . && uv run --no-sync pytest -q -p no:cacheprovider
+uv run --no-sync ruff format --check --no-cache --extend-exclude .claude . && uv run --no-sync ruff check --no-cache --extend-exclude .claude . && uv run --no-sync pytest -q -p no:cacheprovider
 ```
 
 A repo whose tests need more than git, uv and Python gets its own image with its toolchain already
-installed, since the gate is offline; `docker/repo.Dockerfile` is the template. Give Docker Desktop a
-memory limit (Settings -> Resources) and lower `max_parallel` if it is tight.
+installed, since the gate is offline; `docker/repo.Dockerfile` is the template. The preflight check
+(`h`) flags an image that predates the repo's `uv.lock` or its own base image, and the board rebuilds
+it itself before the next card runs on that repo. Give Docker Desktop a memory limit (Settings ->
+Resources) and lower `max_parallel` if it is tight.
 
 ### Keep main for people
 
@@ -949,7 +963,8 @@ curl -s -X PATCH -H "$K" -H 'content-type: application/json' 127.0.0.1:8000/api/
 | `this tab has no api key` at the top of the page | Open the link the board printed on start. |
 | `.../card_token is not mode 600 - refusing to read it` | `chmod 600 ~/.config/smortboard/card_token` |
 | An expired or revoked token (HTTP 401) | The card says how to renew it: `claude setup-token` again. |
-| The gate fails on `Read-only file system` | Add `--no-cache` and `-p no:cacheprovider` to the test command. |
+| The gate fails on `Read-only file system` for a tool other than ruff or pytest | Give that tool its own cache flag - `--no-cache`, `-p no:cacheprovider`, or whatever it takes. |
+| A card fails a test its own diff never touches | Preflight (`h`) may show its repo image predates `uv.lock`; the next run rebuilds it, or rebuild it by hand from the repo's row. |
 | A card waits with `lease conflict with card <id>` | Two leases overlap; it starts when the other card finishes. |
 | No new runs start | Check the usage window (`u`) and the board's daily budget (`o`). |
 | Cards were `CRASH`ed on start-up | The board was stopped mid-run; they are waiting in the inbox to be resumed. |

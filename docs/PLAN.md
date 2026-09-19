@@ -116,8 +116,9 @@ flowchart TD
 ### Blocked reason codes
 
 `CRASH`, `USAGE_LIMIT`, `LEASE_CONFLICT`, `AGENT_QUESTION`, `TESTS_FAILED`, `REVIEW_REJECTED`,
-`DEPENDENCY_REJECTED`. The code drives what the attention entry says and whether a retry is
-automatic. Mirrors the `blocked_reason_code` convention already in `TASKS.jsonl`.
+`DEPENDENCY_REJECTED`, `MERGE_CONFLICT`, `API_UNREACHABLE`, `BASE_RED`. The code drives what the
+attention entry says and whether a retry is automatic. Mirrors the `blocked_reason_code` convention
+already in `TASKS.jsonl`.
 
 It is a **flag, not a column**. Corrected during Phase 1: this plan originally made `blocked` a
 sixth status, which left a blocked card with no bucket to render in and discarded the status it
