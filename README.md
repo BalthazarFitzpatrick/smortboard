@@ -817,7 +817,8 @@ faster it is fixed:
 
 **Never paste your card token, your API key, or the contents of `~/.config/smortboard/`.** If a
 transcript is worth attaching, read it first - a card's event log contains whatever the agent saw in
-your repo.
+your repo. `smortboard export` (see [Backup](#backup-export-and-import)) is a reproducible way to
+attach your whole board - it never carries credential material, so nothing there needs redacting.
 
 ---
 
@@ -902,6 +903,30 @@ token pulled out of that JSON is refused, which is measured in
 
 Neither `claude setup-token` nor `codex login` hands its credential to the board. That is why the
 board stores its own copy, and why it is a model-only token rather than your login.
+
+### Backup: export and import
+
+```bash
+uv run smortboard export backup.json   # writes the board to a file
+uv run smortboard import backup.json   # reads it back into an empty database
+```
+
+Both run with no server started - the whole point is a way to get your board out (or back in) when
+the UI will not start. Each respects `--db` and `SMORTBOARD_DB` exactly like the server does, so a
+bundle round-trips through whichever database you point it at. `--demo` is refused for both: a demo
+database is a fresh throwaway made and discarded every run, never a board worth backing up.
+`import` refuses a database that already has a board in it, rather than half-overwriting one -
+point `--db` at a fresh path for a restore.
+
+**What a bundle contains:** every board, repo registration, card and its tasks, criteria, leases,
+dependencies and comments, attachments, the event log, board-wide settings, saved prompts and
+mission control's messages and plans - everything a board's own database holds, as one plain-text
+JSON file (attachment contents included, base64-encoded).
+
+**What a bundle never contains:** your card token, your API key, any Claude credential profile
+name or token, or anything else under `~/.config/smortboard/`. None of that is ever written to the
+database a bundle is built from, so there is nothing to strip on export - a bundle is safe to
+attach to a public bug report as it stands.
 
 ### Repos and their test command
 
