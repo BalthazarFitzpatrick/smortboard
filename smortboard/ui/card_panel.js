@@ -117,7 +117,10 @@ function cardClasses(card) {
   // but sits in the inbox, and without this the board drew it plain
   // handled_by_board: the board is already retrying this itself, so it reads as working, not as
   // a thing waiting on the operator - the glow is reserved for a card that actually needs him
-  if (card.handled_by_board) classes.push('card-working');
+  // the queue holds it but no agent does: grey, ahead of every other state, so neither the blue of
+  // working nor the yellow of attention claims a card that has not started yet
+  if (isPendingCard(card)) classes.push('card-pending');
+  else if (card.handled_by_board) classes.push('card-working');
   else if (card.blocked_reason_code || card.review_flag) classes.push('card-attention');
   else if (card.status === 'doing') classes.push('card-working');
   else if (card.status === 'rejected') classes.push('card-rejected');

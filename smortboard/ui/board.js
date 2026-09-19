@@ -14,9 +14,11 @@ const STATUSES = ['todo', 'doing', 'checking', 'accepted', 'rejected'];
 // out by isAttentionCard (columns.js) rather than driven by card.status
 const COLUMNS = ['todo', 'doing', 'attention', 'checking', 'accepted', 'rejected'];
 
-// which column a card actually renders in: attention wins over its own real status - excluding a
+// which column a card actually renders in: a card the queue is holding shows in doing as pending
+// whatever its stored status says, then attention wins over its own real status - excluding a
 // card the board is already retrying itself (isAttentionCard already reads handled_by_board)
 function columnFor(card) {
+  if (isPendingCard(card)) return 'doing';
   return isAttentionCard(card) ? 'attention' : card.status;
 }
 
@@ -317,13 +319,68 @@ function setLiveRunPhase(cardId, phase) {
 function setQueueState(cardId, queueState) {
   if (queueState) queuePositions.set(cardId, queueState);
   else queuePositions.delete(cardId);
+  // joining or leaving the queue changes which column the card belongs in and what colour it wears;
+  // moving up the queue changes neither, so a poll that only advances positions redraws nothing
+  const wasPending = isPendingCard(cardId);
+  setPendingCard(cardId, queueState?.kind === 'queued' ? queueState.index : null);
+  if (wasPending !== isPendingCard(cardId)) markQueueMove(cardId);
   renderRunFoot(cardId);
+}
+
+// every id the scheduler's last view named - anything else the queue used to know about has left it
+// (stopped, finished, skipped) and goes back to its own column, since nothing about it was stored
+function retainQueueStates(ids) {
+  [...queuePositions.keys()].forEach(id => { if (!ids.has(id)) setQueueState(id, null); });
 }
 
 // a run that ended (finished, stopped, failed) leaves nothing behind for either poller to relitigate
 function clearRunState(cardId) {
   liveRunPhases.delete(cardId);
-  queuePositions.delete(cardId);
+  setQueueState(cardId, null);
+}
+
+// ---- the queue moving a card between columns ---------------------------------------------------
+// PRESENTATION ONLY: nothing here writes status, blocked_reason_code or review_flag, so a queue
+// that empties puts every card back where it was. the ids are collected and drawn in one pass, so a
+// poll that queues ten cards costs one redraw rather than ten
+const queueMoved = new Set();
+let queueRedrawTimer = null;
+
+function markQueueMove(cardId) {
+  queueMoved.add(cardId);
+  if (queueRedrawTimer) return;
+  // unref where it exists: a test process must not be held open by a redraw nobody is watching
+  queueRedrawTimer = setTimeout(redrawQueueMoves, 0);
+  queueRedrawTimer?.unref?.();
+}
+
+// the card objects the columns are already holding - the queue only changes how a card is drawn,
+// never what the server said about it, so there is nothing to refetch
+function cardsInColumns(ids) {
+  const found = [];
+  document.querySelectorAll('#bucket-row .bucket-rows').forEach(rows => {
+    (rows._pile?.sorted || []).forEach(card => { if (ids.has(card.id)) found.push(card); });
+  });
+  return found;
+}
+
+function redrawQueueMoves() {
+  queueRedrawTimer = null;
+  const ids = new Set(queueMoved);
+  queueMoved.clear();
+  // a column holding the open card is never rebuilt under its panel, the same rule followRunsOnce
+  // follows - the next queue change redraws it once the card is closed
+  const openBucket = openCard ? bucketHolding(openCard.cardId) : null;
+  const cards = cardsInColumns(ids).filter(card => {
+    if (openCard && openCard.cardId === card.id) return false;
+    const to = document.querySelector(`.bucket[data-status="${columnFor(card)}"]`);
+    return !openBucket || (bucketHolding(card.id) !== openBucket && to !== openBucket);
+  });
+  if (!cards.length) return;
+  redrawColumns(cards);
+  refreshBucketNav();
+  // the redraw built fresh strips, so the feet lost what the queue had just written on them
+  ids.forEach(renderRunFoot);
 }
 
 // attention already has its own CTA label (a reason code, "needs attention") - a poller learning

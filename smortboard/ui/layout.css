@@ -180,6 +180,10 @@ body {
 /* A COVERED CARD IS A WHOLE CARD WITH THE NEXT ONE OVER IT (operator, 2026-09-16) - not a short
    box, and never clipped down to its band. it keeps its full height and paints under its
    neighbour, which is what leaves exactly --stack-peek of it showing */
+/* QUEUED, NOT RUNNING: the scheduler is holding this card and no agent has it yet, so it wears the
+   plain grey edge - stated rather than left to the default, so no later state class colours it */
+.card-strip.card-pending, .expand-panel.card-pending { border-color: var(--grey-border); }
+.card-panel.card-pending [data-section="title"] { border-left-color: var(--grey-border); }
 .card-strip.card-working { border-color: var(--fill-good); }
 .card-strip.card-rejected { border-color: var(--fill-warn); }
 /* vanilla is the palest edge, so attention is also the only one that glows: rings stepping down to
