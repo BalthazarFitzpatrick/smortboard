@@ -297,6 +297,70 @@ function actionNote(cardId) {
   return strip ? strip.querySelector('.card-action') : null;
 }
 
+// ---- one run-state resolver for the card foot ---------------------------------------------------
+// pollRun (a run this tab itself started) and the run-all scheduler each learn a card's run state on
+// their own clock. both used to write the foot's corners directly, which let the two race: a card
+// polled by both wrote whichever poller's timer fired last, flickering between the two vocabularies.
+// every writer now reports what it knows here instead, and this is the only place that turns state
+// into words - so scheduler.js and pollRun never touch the foot except through it
+const liveRunPhases = new Map();  // cardId -> phase text, this tab's own run only
+const queuePositions = new Map(); // cardId -> {kind: 'running'|'waiting'|'queued', reason, index, total}
+
+// a card already reporting how it's running is not still waiting for a turn - live phase always
+// outranks a stale queue position for the same card
+function setLiveRunPhase(cardId, phase) {
+  if (phase) liveRunPhases.set(cardId, phase);
+  else liveRunPhases.delete(cardId);
+  renderRunFoot(cardId);
+}
+
+function setQueueState(cardId, queueState) {
+  if (queueState) queuePositions.set(cardId, queueState);
+  else queuePositions.delete(cardId);
+  renderRunFoot(cardId);
+}
+
+// a run that ended (finished, stopped, failed) leaves nothing behind for either poller to relitigate
+function clearRunState(cardId) {
+  liveRunPhases.delete(cardId);
+  queuePositions.delete(cardId);
+}
+
+// attention already has its own CTA label (a reason code, "needs attention") - a poller learning
+// about a run mid-transition must never clobber that with "Running…" on one corner while the other
+// still names the phase, which is what an attention card showing running left and starting right was
+function footIsAttention(cardId) {
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  return !!strip && strip.classList.contains('card-attention');
+}
+
+// the one place that decides both corners together, so they always change in the same call and
+// never independently - left names the action, right names the run phase, same vocabulary either
+// poller uses
+function renderRunFoot(cardId) {
+  const note = actionNote(cardId);
+  const attention = footIsAttention(cardId);
+  const phase = liveRunPhases.get(cardId);
+  if (phase) {
+    if (note && !attention) note.textContent = 'Running…';
+    showRun(cardId, phase);
+    return;
+  }
+  const queue = queuePositions.get(cardId);
+  if (!queue) return;
+  if (queue.kind === 'running') {
+    if (note && !attention) note.textContent = 'Running…';
+    showRun(cardId, 'running');
+  } else if (queue.kind === 'waiting') {
+    showRun(cardId, 'waiting', null, queue.reason);
+  } else if (queue.kind === 'queued') {
+    // a card re-queued while blocked kept its 'doing' status, so the note still read 'Running…' -
+    // it hasn't actually started again yet, the queue has
+    if (note && !attention && note.textContent === 'Running…') note.textContent = 'Queued';
+    showRun(cardId, `queued, ${queue.index} of ${queue.total}`);
+  }
+}
+
 function showRun(cardId, text, href, detail) {
   const badge = runBadge(cardId);
   if (!badge) return;
@@ -340,9 +404,7 @@ async function doRunFocusedCard(cardId) {
 
   // a manual retry means whatever the CTA named ("fix leases", "answer question") is either
   // done or moot - the run itself is now the story, so the stale reason-code label goes
-  const note = actionNote(cardId);
-  if (note) note.textContent = 'Running…';
-  showRun(cardId, 'starting');
+  setLiveRunPhase(cardId, 'starting');
   const state = await api(`/api/cards/${cardId}/run`, {method: 'POST'});
   if (!state.running) { finishRun(cardId, state); return; }
   pollRun(cardId);
@@ -352,7 +414,7 @@ function pollRun(cardId) {
   setTimeout(async () => {
     const state = await api(`/api/cards/${cardId}/run`);
     if (state.running) {
-      showRun(cardId, state.phase);
+      setLiveRunPhase(cardId, state.phase);
       pollRun(cardId);
       return;
     }
@@ -482,6 +544,9 @@ async function doStopCard(cardId) {
 // ORDER MATTERS AND IT BIT ONCE. Setting the badge first and reloading after threw the badge away
 // with the strip it was on - the whole chain fired correctly and the result was invisible.
 async function finishRun(cardId, state) {
+  // the run is over - neither poller has anything left to say about it, and the terminal label
+  // below is the last word until a new run starts
+  clearRunState(cardId);
   if (currentBoardId) await onBoardEnter(currentBoardId);
   // the reload built new strips, so put focus back on the card that ran. without this the user
   // loses their place after every run AND the result is invisible: only the focused card's foot
