@@ -23,14 +23,19 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.exec.backends import (
+    CONTAINER_GUARD_DIR,
     CONTAINER_HARDENING_FLAGS,
+    CONTAINER_PYTHON,
     card_image,
     container_name,
     docker_available,
     guard_mount,
     read_card_token,
 )
-from smortboard.exec.runner import ProcessHandle, RunResult, build_command, run_process
+from smortboard.exec.runner import ProcessHandle, RunResult, run_process
+from smortboard.labs.base import BashPolicy, RunRequest
+from smortboard.labs.catalog import parse_ref
+from smortboard.labs.registry import get_adapter
 from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
 
@@ -124,10 +129,11 @@ class ReviewResult:
     # crashed, an empty result. distinct from a finding: it is not a claim about the code, it is
     # the reviewer failing to deliver a verdict, and that also blocks rather than passing quietly
     error: str | None = None
+    runtime_reason: str | None = None
 
     @property
     def blocked_reason_code(self) -> str | None:
-        return None if self.approved else "REVIEW_REJECTED"
+        return None if self.approved else self.runtime_reason or "REVIEW_REJECTED"
 
 
 def _compute_approved(findings: list[ReviewFinding]) -> bool:
@@ -158,23 +164,30 @@ def _docker_command(
     repo: dict[str, Any] | None,
     budget_usd: float | None,
     name: str | None = None,
+    kind: str | None = None,
 ) -> list[str]:
+    lab, model_id = parse_ref(model)
+    adapter = get_adapter(lab)
     mount, inner_settings = guard_mount(settings_path)
-    claude_cmd = build_command(
-        prompt,
-        inner_settings,
-        model=model,
-        allowed_tools=REVIEWER_ALLOWED_TOOLS,
-        budget_usd=budget_usd,
+    schema_path = Path(settings_path).parent / "review-schema.json"
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
+    schema_path.write_text(json.dumps(REVIEW_JSON_SCHEMA))
+    agent_cmd = adapter.build_command(
+        RunRequest(
+            prompt=prompt,
+            settings_path=inner_settings,
+            model=model_id,
+            allowed_tools=REVIEWER_ALLOWED_TOOLS,
+            budget_usd=budget_usd,
+            json_schema=REVIEW_JSON_SCHEMA,
+            schema_path="/smortboard/review-schema.json",
+            read_only=True,
+            role="reviewer",
+        )
     )
-    claude_cmd += ["--json-schema", json.dumps(REVIEW_JSON_SCHEMA)]
     # same stdin handoff as ContainerBackend: the token touches no disk and no env var, so
     # `docker inspect` shows nothing
-    inner = (
-        "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN && "
-        + shlex.join(claude_cmd)
-        + " < /dev/null"
-    )
+    inner = adapter.auth_shell({"kind": kind}) + shlex.join(agent_cmd) + " < /dev/null"
     return [
         "docker",
         "run",
@@ -182,9 +195,11 @@ def _docker_command(
         "-i",
         *(["--name", name] if name else []),
         *CONTAINER_HARDENING_FLAGS,
+        *adapter.container_env(),
         "-v",
         f"{Path(work_path)}:/workspace:ro",  # the reviewer inspects, it never writes
         *mount,
+        *adapter.guard_mounts(settings_path),
         "-w",
         "/workspace",
         _image_for(repo),
@@ -195,6 +210,12 @@ def _docker_command(
 
 
 def _parse(run_result: RunResult) -> ReviewResult:
+    if run_result.blocked_reason_code == "USAGE_LIMIT":
+        return ReviewResult(
+            approved=False,
+            error="the reviewer credential reached its usage limit",
+            runtime_reason="USAGE_LIMIT",
+        )
     if run_result.structured_output is not None:
         # the answer the reviewer submitted is its verdict - a budget stop right after it does
         # not unmake it
@@ -299,7 +320,17 @@ def run_review(
     """
     if not docker_available():
         raise ReviewUnavailable("Docker is not running, and the reviewer runs in a container.")
-    token = read_card_token(token_path)  # raises CardTokenMissing if there is none
+    from smortboard import profiles
+
+    lab, model_id = parse_ref(model)
+    adapter = get_adapter(lab)
+    profile = profiles.active_profile(lab=lab)
+    kind = profiles.profile_kind(profile, lab=lab)
+    token = (
+        read_card_token(profiles.token_path_for_profile(profile, token_path))
+        if lab == "anthropic"
+        else profiles.read_profile_token(lab, profile)
+    )
 
     if not diff.strip():
         result = ReviewResult(approved=True, findings=[])
@@ -307,8 +338,21 @@ def run_review(
         return result
 
     name = container_name("reviewer", card_id)
+    if not adapter.capabilities.tool_allowlist:
+        guards = adapter.guard_files(
+            [],
+            BashPolicy(
+                worktree_path=Path(settings_path).parent.parent,
+                python=CONTAINER_PYTHON,
+                guard_dir=CONTAINER_GUARD_DIR,
+                root="/workspace",
+                bash_allow=(),
+                read_only=True,
+            ),
+        )
+        settings_path = guards.settings_path
     cmd = _docker_command(
-        work_path, _build_prompt(store, diff), settings_path, model, repo, budget_usd, name
+        work_path, _build_prompt(store, diff), settings_path, model, repo, budget_usd, name, kind
     )
     run_result = run_process(
         store,
@@ -318,6 +362,12 @@ def run_review(
         stdin_text=token + "\n",
         container_name=name,
         on_process=on_process,
+        role="reviewer",
+        adapter=adapter,
+        lab=lab,
+        model=model_id,
+        profile=profile,
+        budget_usd=budget_usd,
     )
     result = _parse(run_result)
     _record(store, card_id, result)

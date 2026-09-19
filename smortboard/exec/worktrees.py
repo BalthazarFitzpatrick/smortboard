@@ -38,6 +38,7 @@ class WorktreeInfo:
     card_id: str
     path: Path
     branch: str
+    base_commit: str | None = None
 
 
 def _worktree_root(repo_path: Path) -> Path:
@@ -83,7 +84,8 @@ def create_worktree(repo_path: str | Path, card_id: str, base: str = "main") -> 
     # card branch cut from origin/<base> would otherwise track the base; its push sets its own
     with repo_lock(repo_path):
         _run_git(repo_path, "worktree", "add", "--no-track", "-b", branch, str(path), base)
-    return WorktreeInfo(card_id=card_id, path=path, branch=branch)
+        base_commit = _run_git(path, "rev-parse", "HEAD").stdout.strip()
+    return WorktreeInfo(card_id=card_id, path=path, branch=branch, base_commit=base_commit)
 
 
 def existing_worktree(repo_path: str | Path, card_id: str) -> WorktreeInfo:
@@ -152,6 +154,48 @@ def branch_exists(repo_path: str | Path, card_id: str) -> bool:
         check=False,
     )
     return result.returncode == 0
+
+
+def branch_diverged_from_origin(
+    repo_path: str | Path, branch: str, remote: str = "origin"
+) -> bool | None:
+    """true if `origin/<branch>` holds a commit the local branch does not - someone else pushed to
+    this card's branch since the board's own worktree last saw it.
+
+    Found for real: a worktree held one commit while origin had two newer ones, and the board only
+    discovered it when its own (deliberately never-forced) push failed at the very end of a run -
+    after the worker, the gates and the reviewer had already spent their turn on work that could
+    never land. This lets a caller check before reusing an on-disk worktree instead.
+
+    None when nothing to compare: no remote, the branch was never pushed (normal for a card whose
+    first run has not reached a push yet), or the fetch itself failed - never blocks resuming
+    because a compare could not be made, only because one WAS made and found a real divergence.
+    """
+    with repo_lock(repo_path):
+        fetch = subprocess.run(
+            ["git", "-C", str(Path(repo_path).resolve()), "fetch", remote, branch],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if fetch.returncode != 0:
+        return None
+    is_ancestor = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(Path(repo_path).resolve()),
+            "merge-base",
+            "--is-ancestor",
+            f"{remote}/{branch}",
+            branch,
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if is_ancestor.returncode not in (0, 1):
+        return None
+    return is_ancestor.returncode != 0
 
 
 def delete_branch(repo_path: str | Path, card_id: str) -> None:

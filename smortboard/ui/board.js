@@ -49,7 +49,7 @@ async function apiOrError(path, opts) {
   const res = await fetch(path, opts);
   noteMissingKey(res);
   const body = res.status === 204 ? null : await res.json().catch(() => null);
-  return {ok: res.ok, body};
+  return {ok: res.ok, status: res.status, body};
 }
 
 // ---- board bar ------------------------------------------------------------------
@@ -97,7 +97,10 @@ function renderBoardBar() {
   bar.innerHTML = '';
   boards.forEach(board => {
     const btn = document.createElement('div');
-    btn.className = 'nav-tab toggle';
+    // focus-glow-soft is the quiet focus treatment (ui_base), the same one a card's sections wear.
+    // FOCUS AND ACTIVE SAY DIFFERENT THINGS: the glow is the tab the keyboard is on, the accent
+    // fill (.board-bar .nav-tab.active) is the board being shown - the active tab focused wears both
+    btn.className = 'nav-tab toggle focus-glow focus-glow-soft';
     btn.dataset.tab = board.id;
     btn.textContent = board.name;
     bar.appendChild(btn);
@@ -108,7 +111,11 @@ async function loadBoards() {
   boards = await api('/api/boards');
   renderBoardBar();
   renderEmptyState(boards.length === 0);
-  if (boards.length === 0) return;
+  if (boards.length === 0) {
+    currentBoardId = null;
+    renderBoardMergeMode();
+    return;
+  }
   initShell({onEnter: onBoardEnter, fallback: boards[0]?.id || ''});
 }
 
@@ -129,11 +136,12 @@ function renderEmptyState(empty) {
 
 async function onBoardEnter(boardId) {
   currentBoardId = boardId;
-  // a fresh board has its own cards under these ids - forget the old board's snapshot so
-  // followRunsOnce learns this one before it starts diffing against it
+  renderBoardMergeMode();
+  // forget the old board and seed polling from what we actually draw
   followedCardStates = null;
   const cards = await api(`/api/boards/${boardId}/cards`);
   renderBuckets(cards);
+  followedCardStates = new Map(cards.map(c => [c.id, `${c.status}|${c.updated_at}`]));
   // resumes this board's send queue (a reload landed here with something still unsent) whether or
   // not mission control is open - a message keeps retrying in the background either way.
   // guarded: messageQueue.js is a separate script (see index.html's load order) and some isolated
@@ -149,6 +157,43 @@ async function onBoardEnter(boardId) {
   // into - without forcing the drawer open itself, which would fight its own toggle key
   resetWorkforceTarget();
   if (drawers.left && drawers.left.isOpen()) await loadWorkforce();
+}
+
+function renderBoardMergeMode() {
+  const board = boards.find(b => b.id === currentBoardId);
+  const free = board?.merge_mode === 'free';
+  document.getElementById('bucket-row')?.classList.toggle('edge-pulse', free);
+  let label = document.getElementById('merge-mode-label');
+  if (!label) {
+    label = document.createElement('span');
+    label.id = 'merge-mode-label';
+    label.className = 'hazard-note';
+    barCorner().appendChild(label);
+  }
+  label.hidden = !board;
+  label.textContent = free ? 'free merge' : 'review required';
+  label.title = 'shift+a: change merge mode';
+}
+
+function toggleBoardMergeMode() {
+  const board = boards.find(b => b.id === currentBoardId);
+  if (!board) return;
+  const mode = board.merge_mode === 'free' ? 'review' : 'free';
+  const title = mode === 'free'
+    ? 'merge cards into their base branch without asking? main stays protected'
+    : 'stop at a pull request for review?';
+  openActionConfirm(title, 'confirm', 'cancel', async () => {
+    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({merge_mode: mode}),
+    });
+    if (!ok) {
+      openActionConfirm(body?.error || 'could not change merge mode', 'close', 'cancel', () => {});
+      return;
+    }
+    board.merge_mode = mode;
+    renderBoardMergeMode();
+  });
 }
 
 // ---- buckets of card strips -------------------------------------------------------
@@ -293,6 +338,10 @@ async function doRunFocusedCard(cardId) {
   const runtime = await api('/api/runtime');
   if (!runtime.ready) { reportNotReady(runtime.missing); return; }
 
+  // a manual retry means whatever the CTA named ("fix leases", "answer question") is either
+  // done or moot - the run itself is now the story, so the stale reason-code label goes
+  const note = actionNote(cardId);
+  if (note) note.textContent = 'Running…';
   showRun(cardId, 'starting');
   const state = await api(`/api/cards/${cardId}/run`, {method: 'POST'});
   if (!state.running) { finishRun(cardId, state); return; }
@@ -501,10 +550,14 @@ async function doAcceptOrRejectCard(action, cardId) {
   const aboveCardId = strip?.previousElementSibling?.dataset.cardId || null;
   const oldStatus = strip?.closest('.bucket')?.dataset.status || null;
 
-  const {ok, body} = await apiOrError(`/api/cards/${cardId}/${action}`, {method: 'POST'});
+  const {ok, status, body} = await apiOrError(`/api/cards/${cardId}/${action}`, {method: 'POST'});
   // NAME THE ACTION THAT WAS REFUSED. a bare "refused" beside the card's own "accepted" read as
   // the two labels swapped
   if (!ok) { showRun(cardId, `can't ${action}`, null, (body && body.error) || ''); return; }
+  if (status === 202) {
+    showRun(cardId, 'landing');
+    return;
+  }
 
   // same order finishRun uses and for the same reason: reload first, THEN focus, THEN badge, or
   // the reload's fresh strips throw the badge and the focus away with the old ones
@@ -762,7 +815,7 @@ function profileRow(profileName, window) {
   row.appendChild(textLine(profileName, 'field-label'));
   if (window) {
     const {fraction} = windowMeasure(window);
-    if (fraction != null) row.appendChild(fillBar(fraction, window.status === 'allowed' ? '' : 'warn'));
+    if (fraction != null) row.appendChild(fillBar(fraction, ['allowed', 'ok'].includes(window.status) ? '' : 'warn'));
     row.appendChild(textLine(windowStats(window), 'stat'));
   } else {
     row.appendChild(fillBar(0));
@@ -773,14 +826,14 @@ function profileRow(profileName, window) {
 
 // windows grouped by type, each type a section holding one row per known profile - windows carry
 // no profile of their own before this card, so a window with none reads as the "default" profile
-function windowSections(windows, profileNames) {
+function windowSections(windows, profileNames, lab = '') {
   const byType = new Map();
   windows.forEach(w => {
     if (!byType.has(w.type)) byType.set(w.type, new Map());
     byType.get(w.type).set(w.profile || 'default', w);
   });
   return [...byType.entries()].map(([type, byProfile]) => {
-    const section = usageSection(windowLabel(type), 'usage-window');
+    const section = usageSection(`${lab ? lab + ' - ' : ''}${windowLabel(type)}`, 'usage-window');
     const names = profileNames.length ? profileNames : [...byProfile.keys()];
     names.forEach(name => section.appendChild(profileRow(name, byProfile.get(name))));
     // the section total is the sum of the rows it holds, never a figure computed apart from them
@@ -797,26 +850,31 @@ function windowSections(windows, profileNames) {
 // A CARD'S LANGUAGE: ruled sections with dim labels, and a foot carrying the total - built with
 // createElement so every line is its own element, which is also what the node tests read
 function usageCard(data) {
-  const profileNames = (data.profiles || []).map(p => p.name);
-  const windowParts = windowSections(data.windows || [], profileNames);
+  const labOf = row => row.lab || (row.model?.includes('/') ? row.model.split('/')[0] : 'anthropic');
+  const labs = [...new Set([...(data.profiles || []), ...(data.windows || []), ...(data.models || [])].map(labOf))];
+  const windowParts = labs.flatMap(lab => windowSections(
+    (data.windows || []).filter(w => labOf(w) === lab),
+    (data.profiles || []).filter(p => labOf(p) === lab).map(p => p.name), lab));
   const modelParts = [];
-  const models = data.models || [];
-  if (models.length) {
-    const section = usageSection('spend by model', 'usage-models');
-    const total = data.total_cost_usd || 0;
+  const money = row => row.cost_usd == null ? 'unknown' : `${row.cost_estimated ? '~' : ''}$${row.cost_usd.toFixed(2)}`;
+  labs.forEach(lab => {
+    const models = (data.models || []).filter(m => labOf(m) === lab);
+    if (!models.length) return;
+    const section = usageSection(`${lab} - spend by model`, 'usage-models');
+    const total = data.total_cost_usd;
     models.forEach(m => {
       const row = document.createElement('div');
       row.className = 'usage-model';
-      const share = total > 0 ? (m.cost_usd || 0) / total : null;
+      const share = total > 0 && m.cost_usd != null ? m.cost_usd / total : null;
       const shareNote = share != null ? ` - ${Math.round(share * 100)}% of spend` : '';
-      row.appendChild(textLine(`${m.model} - $${(m.cost_usd || 0).toFixed(2)}${shareNote}`, 'usage-model-name'));
+      row.appendChild(textLine(`${m.model} - ${money(m)}${shareNote}`, 'usage-model-name'));
       if (share != null) row.appendChild(fillBar(share));
       row.appendChild(textLine(`in ${formatTokenCount(m.input_tokens)} - out ${formatTokenCount(m.output_tokens)} - ` +
         `cache ${formatTokenCount((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))}`, 'stat'));
       section.appendChild(row);
     });
     modelParts.push(section);
-  }
+  });
   const card = document.createElement('div');
   card.className = 'usage-card usage-wide';
   // wide, not tall: the rate-limit windows in one column, the spend by model in the other
@@ -835,7 +893,7 @@ function usageCard(data) {
   card.appendChild(textLine('', 'h-divider'));
   const foot = document.createElement('div');
   foot.className = 'card-foot usage-foot';
-  foot.appendChild(textLine(`${data.runs || 0} runs - $${(data.total_cost_usd || 0).toFixed(2)}`, 'stat'));
+  foot.appendChild(textLine(`${data.runs || 0} runs - ${money({cost_usd: data.total_cost_usd, cost_estimated: data.cost_estimated})}`, 'stat'));
   card.appendChild(foot);
   return card;
 }
@@ -1047,6 +1105,7 @@ function togglePromptEditor() {
 loadBoards().then(() => { buildDrawers(); returnToBoardBar(); followRuns(); });
 // whether the pointer affordances are on - shortcuts.js owns the flag, board.js owns api()
 loadMouseSetting();
+loadModelCatalog().catch(() => {});
 const issueButton = buildIssueButton();
 // who the operator is, for their own lines in the chats and comments - "you" until the board
 // answers - and the version the bug form asks for as its first field (version, in bug.yml), which

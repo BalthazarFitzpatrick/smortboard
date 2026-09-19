@@ -8,6 +8,39 @@ import pytest
 from smortboard.exec.leases import lease_allows, write_lease_settings
 
 
+def test_post_run_lease_uses_card_cut_and_reports_both_sides_of_rename(tmp_path):
+    from smortboard.exec.leases import changed_paths_outside_lease
+    from smortboard.exec.worktrees import create_worktree
+
+    def git(path, *args):
+        return subprocess.run(
+            ["git", "-C", str(path), *args], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    git(tmp_path, "init", "-b", "main")
+    git(tmp_path, "config", "user.name", "test")
+    git(tmp_path, "config", "user.email", "test@example.test")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/a.py").write_text("x = 1\n")
+    git(tmp_path, "add", "src")
+    git(tmp_path, "commit", "-m", "initial")
+    git(tmp_path, "checkout", "-b", "dependency")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/inherited.md").write_text("dependency\n")
+    git(tmp_path, "add", "docs")
+    git(tmp_path, "commit", "-m", "dependency")
+    tree = create_worktree(tmp_path, "child", base="dependency")
+    (tree.path / "src/a.py").write_text("x = 2\n")
+    git(tree.path, "add", "src")
+    git(tree.path, "commit", "-m", "allowed")
+    assert changed_paths_outside_lease(tmp_path, tree.base_commit, tree.branch, ["src/**"]) == []
+    git(tree.path, "mv", "src/a.py", "docs/moved.py")
+    git(tree.path, "commit", "-m", "outside")
+    assert changed_paths_outside_lease(tmp_path, tree.base_commit, tree.branch, ["src/**"]) == [
+        "docs/moved.py"
+    ]
+
+
 @pytest.mark.parametrize(
     ("glob", "path", "allowed"),
     [

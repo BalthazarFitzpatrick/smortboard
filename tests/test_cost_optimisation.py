@@ -142,7 +142,7 @@ def test_model_fit_per_model_and_complexity(store):
     store.update_card(card["id"], status="accepted")
 
     rows = cost_optimisation(store)["model_fit"]
-    row = next(r for r in rows if r["model"] == "opus" and r["complexity"] == 3)
+    row = next(r for r in rows if r["model"] == "anthropic/opus" and r["complexity"] == 3)
     assert row["cards"] == 1
     assert row["accepted_cards"] == 1
     assert row["cost_per_accepted_card_usd"] > 0

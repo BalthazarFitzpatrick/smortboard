@@ -252,7 +252,22 @@ def test_docker_command_s_system_prompt_names_the_marker_it_was_given():
 # -- RunRegistry: notes only queue while a card's run is actually going -----------------------
 
 
-def test_queue_note_only_accepted_while_the_run_is_going(tmp_path):
+@pytest.mark.parametrize("lab,live", [("anthropic", True), ("openai", False)])
+def test_queue_note_only_accepted_while_the_run_is_going(tmp_path, lab, live):
+    if lab == "openai":
+        from smortboard import profiles
+
+        profiles.add_profile("work", "test-key", lab="openai", kind="api_key")
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("b")
+        card = store.create_card(
+            board["id"],
+            None,
+            "card",
+            lab=lab,
+            model="sonnet" if lab == "anthropic" else "gpt-5.6-sol",
+        )
+    card_id = card["id"]
     registry = RunRegistry(tmp_path / "b.db")
     assert registry.queue_note("nope", {"id": "c1", "body": "hi"}) is False
 
@@ -260,6 +275,7 @@ def test_queue_note_only_accepted_while_the_run_is_going(tmp_path):
     started = threading.Event()
 
     def _runner(store, card_id, **kwargs):
+        assert kwargs["token_path"] is None
         started.set()
         release.wait(timeout=5)
 
@@ -271,21 +287,21 @@ def test_queue_note_only_accepted_while_the_run_is_going(tmp_path):
 
         return _Result()
 
-    state = registry.start("card-1", runner=_runner)
+    state = registry.start(card_id, runner=_runner)
     started.wait(timeout=5)
     assert state.running
 
-    assert registry.queue_note("card-1", {"id": "c1", "body": "hold on"}) is True
-    assert registry.pop_pending("card-1") == [{"id": "c1", "body": "hold on"}]
+    assert registry.queue_note(card_id, {"id": "c1", "body": "hold on"}) is live
+    assert registry.pop_pending(card_id) == ([{"id": "c1", "body": "hold on"}] if live else [])
     # drained - a second pop before anything new is queued finds nothing
-    assert registry.pop_pending("card-1") == []
+    assert registry.pop_pending(card_id) == []
 
     release.set()
     for _ in range(50):
         if not state.running:
             break
         threading.Event().wait(0.05)
-    assert registry.queue_note("card-1", {"id": "c2", "body": "too late"}) is False
+    assert registry.queue_note(card_id, {"id": "c2", "body": "too late"}) is False
 
 
 # -- lifecycle: pending_notes reaches every worker turn, including a fix round ----------------

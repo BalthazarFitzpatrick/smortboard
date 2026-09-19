@@ -153,7 +153,7 @@ def test_the_body_carries_what_the_tests_and_the_reviewer_said(tmp_path, monkeyp
     assert "reads the file twice" in body and "a.py:4" in body
     assert "the thing exists" in body  # the acceptance criteria
     assert "$0.42" in body and "9 turns" in body
-    assert "never merges" in body
+    assert "Review mode waits for acceptance" in body
     assert seen  # the fake was in use throughout
     store.close()
 
@@ -185,7 +185,8 @@ def test_the_body_lists_tasks_as_plain_text_not_checkboxes(tmp_path, monkeypatch
     body = bodies[0]
     assert "- [x]" not in body
     assert "- [ ]" not in body
-    assert "## Tasks the card was given" in body
+    assert "## Tasks" in body
+    assert "(done)" not in body
     first = body.index("do the first thing")
     second = body.index("do the second thing")
     assert first < second

@@ -4,6 +4,22 @@
 // back into board.js globals (openCard, currentBoardId, api, showRun, actionableCardId,
 // returnToBoardBar, onBoardEnter, escapeHtml) the same way every other split file does.
 
+// ---- coming back to whatever opened a card ----------------------------------------------------
+// a surface that sends you into a card (the inbox's glance) registers here, and is called once the
+// card panel closes however it closed - escape, space, a decision. one-shot: each watcher fires
+// once and is dropped, so a surface that is no longer there cannot be called twice
+let cardClosedWatchers = [];
+
+function afterCardCloses(watcher) {
+  cardClosedWatchers.push(watcher);
+}
+
+function runCardClosedWatchers() {
+  const watchers = cardClosedWatchers;
+  cardClosedWatchers = [];
+  watchers.forEach(watcher => watcher());
+}
+
 // ---- one confirm shape for every "starts or lands work" action -------------------------------
 // same two-item menu openDeleteConfirm/openStopConfirm already use, generalised so every shortcut
 // that spends money or moves a card gets the same gate. y confirms without touching the mouse;
@@ -245,7 +261,7 @@ function renderCardStrip(card) {
       openCard = {cardId: card.id, expander};
       openCardPanel(panel, card.id);
     },
-    onClose: () => { openCard = null; },
+    onClose: () => { openCard = null; runCardClosedWatchers(); },
   });
   strip.addEventListener('keydown', evt => {
     if (withModifier(evt)) return;
@@ -418,9 +434,12 @@ function outcomeSectionHtml(outcome, card = {}) {
   return sectionHtml('outcome', 'outcome', parts.join(''));
 }
 
-// one section per field: data-section names it for the layouts, .field-value holds what it says
+// one section per field: data-section names it for the layouts, .field-value holds what it says.
+// focus-glow-soft is the quiet version of the card's own focus treatment (ui_base): a section is a
+// smaller thing than a card, so it wears the same look at a third of the lift and light
+const SECTION_CLASS = 'card-section focus-glow focus-glow-soft';
 function sectionHtml(name, label, value) {
-  return `<div class="card-section" tabindex="0" data-section="${name}"><div class="field-label">${label}</div><div class="section-value">${value}</div></div>`;
+  return `<div class="${SECTION_CLASS}" tabindex="0" data-section="${name}"><div class="field-label">${label}</div><div class="section-value">${value}</div></div>`;
 }
 
 // board-written notes lead with a one-line headline now (lifecycle.py's _note callers write it
@@ -487,14 +506,14 @@ function cardPanelHtml(card, outcome) {
     <div class="card-sections">
       ${sectionHtml('title', 'title', `${escapeHtml(card.title)} <span class="card-id">${escapeHtml(shortId(card.id))}</span>`)}
       ${sectionHtml('workstream', 'workstream', escapeHtml(card.workstream || '') || '<span class="empty">none</span>')}
-      ${sectionHtml('status', 'status', `${next}${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model))}</div><div class="card-model">complexity: ${escapeHtml(complexityLabel(card))}</div><div class="card-model">lease: ${lease}</div>`)}
+      ${sectionHtml('status', 'status', `${next}${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model, card.lab))}</div><div class="card-model">complexity: ${escapeHtml(complexityLabel(card))}</div><div class="card-model">lease: ${lease}</div>`)}
       ${outcomeSectionHtml(outcome, card)}
       ${sectionHtml('description', 'description', escapeHtml(card.description || ''))}
       ${sectionHtml('tasks', 'tasks', listHtml(tasks))}
       ${sectionHtml('criteria', 'acceptance criteria', listHtml(criteria))}
       ${sectionHtml('deps', 'dependencies', listHtml(deps))}
       ${sectionHtml('attachments', 'attachments', listHtml(attachments))}
-      <div class="card-section" tabindex="0" data-section="comments"><div class="field-label">comments</div>
+      <div class="${SECTION_CLASS}" tabindex="0" data-section="comments"><div class="field-label">comments</div>
         <div class="section-value">${listHtml(comments)}</div>
         <input class="comment-input text-field" placeholder="add a comment, enter to send">
       </div>
@@ -514,7 +533,7 @@ function estimateComplexity(card) {
   let score = (card.criteria || []).length + (card.tasks || []).length;
   if (globs.some(g => g.includes('**'))) score += 2;
   else if (globs.length) score += 1;
-  if (card.model && card.model.toLowerCase().includes('opus')) score += 2;
+  if ((modelCatalog[card.lab || 'anthropic']?.models || []).some(m => m.id === card.model && m.tier === 'deep')) score += 2;
   if (score <= 3) return 1;
   if (score <= 6) return 2;
   return 3;
@@ -560,35 +579,99 @@ async function doCycleCardComplexity(cardId, next) {
 
 // ---- model (m) - which model the focused card's worker runs on --------------------------------
 
-// null is the board default (the worker_model setting, else sonnet); the rest are claude aliases
-const CARD_MODELS = [null, 'haiku', 'sonnet', 'opus'];
+let modelCatalog = {};
 
-function modelLabel(model) {
-  return model || 'board default';
+function modelLabel(model, lab) {
+  return model ? (model.includes('/') ? model : `${lab || 'anthropic'}/${model}`) : 'board default';
 }
 
-// cycles default -> haiku -> sonnet -> opus -> default. a model set outside the cycle (a full id)
-// steps back to the default, so the key always lands somewhere the next press can leave
+async function loadModelCatalog() {
+  modelCatalog = await api('/api/catalog');
+  return modelCatalog;
+}
+
+async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200, y: 80}, onBack = null) {
+  const catalog = await loadModelCatalog();
+  const labs = Object.keys(catalog);
+  let selectedLab = labs.find(lab => catalog[lab].available !== false) || labs[0];
+  let selectedModel = null;
+  let picked = false;
+  let menu = null;
+
+  const buildSections = () => [{
+    kind: 'columns',
+    columns: [
+      {
+        label: 'lab',
+        multi: false,
+        items: Object.entries(catalog).map(([lab, entry]) => ({
+          id: lab,
+          label: lab,
+          on: lab === selectedLab,
+          disabled: entry.available === false,
+          stats: entry.available === false ? entry.unavailable_reason || 'no usable profile' : '',
+        })),
+        onPick: item => {
+          selectedLab = item.id;
+          selectedModel = null;
+          menu.refresh(buildSections());
+        },
+      },
+      {
+        label: 'model',
+        multi: false,
+        empty: selectedLab ? 'no models available' : 'choose a lab',
+        items: catalog[selectedLab]?.available === false ? []
+          : (catalog[selectedLab]?.models || []).map(model => ({
+            id: model.id, label: model.label, stats: model.tier, on: model.id === selectedModel,
+          })),
+        onPick: item => {
+          selectedModel = item.id;
+          menu.refresh(buildSections());
+        },
+      },
+    ],
+  }, {
+    kind: 'buttons',
+    buttons: [
+      {id: 'save-model', label: 'save', enabled: selectedModel !== null, onClick: openMenu => {
+        picked = true;
+        openMenu.close();
+        onPick(selectedLab, selectedModel);
+      }},
+      {id: 'model-default', label: 'board default', onClick: openMenu => {
+        picked = true;
+        openMenu.close();
+        onPick(null, null);
+      }},
+    ],
+  }];
+
+  menu = new Menu({
+    title: 'choose model',
+    persistent: true,
+    sections: buildSections(),
+    onDismiss: () => { if (!picked && onBack) onBack(); },
+  });
+  menu.openAt(anchor);
+}
+
 async function cycleCardModel(cardId = actionableCardId()) {
   if (!cardId) return;
-  let next;
   try {
-    const card = await api(`/api/cards/${cardId}`);
-    next = CARD_MODELS[(CARD_MODELS.indexOf(card.model ?? null) + 1) % CARD_MODELS.length];
+    await openModelPicker((lab, model) => doCycleCardModel(cardId, model, lab), undefined,
+      () => openCardActionsMenu(cardId));
   } catch (err) {
     showRun(cardId, "can't change model", null, err.message);
-    return;
   }
-  openActionConfirm(`switch to ${modelLabel(next)}?`, 'switch model', 'cancel',
-    () => doCycleCardModel(cardId, next));
 }
 
-async function doCycleCardModel(cardId, next) {
+async function doCycleCardModel(cardId, next, lab = null) {
   try {
     const updated = await api(`/api/cards/${cardId}`, {
-      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: next}),
+      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({lab, model: next}),
     });
-    const label = `model: ${modelLabel(updated.model)}`;
+    const label = `model: ${modelLabel(updated.model, updated.lab)}`;
     showRun(cardId, label);
     const shown = document.querySelector('.card-panel [data-section="status"] .card-model');
     if (shown && openCard && openCard.cardId === cardId) shown.textContent = label;

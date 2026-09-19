@@ -123,8 +123,52 @@ def test_the_pull_request_url_lands_where_a_human_will_see_it(board, monkeypatch
     lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
     bodies = [c["body"] for c in store.list_comments(card_id)]
     assert any("https://x/pull/1" in b for b in bodies)
-    assert any("Merging is yours" in b for b in bodies)
+    assert any("protected base is yours" in b for b in bodies)
     assert store.get_card(card_id)["review_flag"] == 1
+
+
+def test_a_stale_repo_image_is_rebuilt_before_the_card_runs(board, monkeypatch):
+    """the run-start hook: a stale image is rebuilt and the fresh tag reaches the backend, so a
+    dependency added since the image was last built does not fail this card's own gate"""
+    from smortboard.repo_image import BuildResult
+
+    store, card_id = board
+    store.set_repo_image(store.get_card(card_id)["repo_id"], "repo-repo:latest")
+    _stub_gates(monkeypatch)
+    seen = []
+    monkeypatch.setattr(
+        lifecycle,
+        "rebuild_if_stale",
+        lambda repo, **k: (
+            seen.append(repo["image"])
+            or BuildResult(ok=True, tag="repo-repo:latest", log="build ok")
+        ),
+    )
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert seen == ["repo-repo:latest"]
+    assert result.phase == "opened"
+    events = [e["kind"] for e in store.list_events(card_id)]
+    assert "repo_image_rebuilt" in events
+
+
+def test_a_failed_rebuild_does_not_block_the_card(board, monkeypatch):
+    """a rebuild failure is recorded, not fatal - the card still runs against the stale image, and
+    the gate's own failure (if any) stays the informative one"""
+    from smortboard.repo_image import BuildResult
+
+    store, card_id = board
+    store.set_repo_image(store.get_card(card_id)["repo_id"], "repo-repo:latest")
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(
+        lifecycle,
+        "rebuild_if_stale",
+        lambda repo, **k: BuildResult(ok=False, tag=None, log="boom"),
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.phase == "opened"
+    events = [e["kind"] for e in store.list_events(card_id)]
+    assert "repo_image_rebuild_failed" in events
 
 
 def test_a_failing_test_gate_stops_the_card_before_the_reviewer(board, monkeypatch):
@@ -191,6 +235,71 @@ def lifecycle_statuses():
     from smortboard.store.schema import STATUSES
 
     return STATUSES
+
+
+def test_a_reused_worktree_whose_branch_diverged_from_origin_is_refused(
+    board, tmp_path, monkeypatch
+):
+    """found for real: a worktree held one commit while origin had two newer ones, and the board
+    only discovered it when its own push failed at the very end of the run - refuse up front"""
+    from smortboard.exec.worktrees import WorktreeInfo
+
+    store, card_id = board
+    monkeypatch.setattr(lifecycle, "worktree_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        lifecycle,
+        "existing_worktree",
+        lambda *a, **k: WorktreeInfo(card_id=card_id, path=tmp_path, branch=f"card/{card_id}"),
+    )
+    monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: True)
+    monkeypatch.setattr(lifecycle, "branch_diverged_from_origin", lambda *a, **k: True)
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "refused"
+    assert "someone else pushed" in result.refusal
+    assert backend.calls == []  # never reached the worker
+
+
+def test_a_reused_worktree_in_sync_with_origin_runs_as_before(board, tmp_path, monkeypatch):
+    from smortboard.exec.worktrees import WorktreeInfo
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "worktree_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        lifecycle,
+        "existing_worktree",
+        lambda *a, **k: WorktreeInfo(card_id=card_id, path=tmp_path, branch=f"card/{card_id}"),
+    )
+    monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: True)
+    monkeypatch.setattr(lifecycle, "branch_diverged_from_origin", lambda *a, **k: False)
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "opened"
+    assert backend.calls
+
+
+def test_a_reused_worktree_with_no_remote_skips_the_divergence_check(board, tmp_path, monkeypatch):
+    """a local-only repo has nowhere to fetch from - never even call the check"""
+    from smortboard.exec.worktrees import WorktreeInfo
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "worktree_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        lifecycle,
+        "existing_worktree",
+        lambda *a, **k: WorktreeInfo(card_id=card_id, path=tmp_path, branch=f"card/{card_id}"),
+    )
+    monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: False)
+    called = []
+    monkeypatch.setattr(
+        lifecycle, "branch_diverged_from_origin", lambda *a, **k: called.append(1) or True
+    )
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "opened"
+    assert called == []
 
 
 def test_a_card_with_no_repo_is_refused_with_a_reason(tmp_path, monkeypatch):
@@ -346,6 +455,7 @@ def test_a_dependent_cards_worktree_is_cut_from_a_freshly_fetched_origin(
     board_id = store.get_card(card_id)["board_id"]
     repo_path = store.get_repo(repo_id)["path"]
     _with_origin(repo_path, tmp_path)
+    store.set_board_merge_mode(board_id, "free")
     dep = store.create_card(board_id, None, "dep card")
     store.add_dependency(card_id, dep["id"])
     _stub_gates(monkeypatch)
@@ -357,6 +467,7 @@ def test_a_dependent_cards_worktree_is_cut_from_a_freshly_fetched_origin(
 def test_a_dependent_card_falls_back_to_the_local_base_with_no_origin(board, tmp_path, monkeypatch):
     store, card_id = board
     board_id = store.get_card(card_id)["board_id"]
+    store.set_board_merge_mode(board_id, "free")
     dep = store.create_card(board_id, None, "dep card")
     store.add_dependency(card_id, dep["id"])
     _stub_gates(monkeypatch)
@@ -374,6 +485,7 @@ def test_a_failed_fetch_falls_back_and_leaves_a_comment(board, tmp_path, monkeyp
     board_id = store.get_card(card_id)["board_id"]
     repo_path = store.get_repo(repo_id)["path"]
     _with_origin(repo_path, tmp_path)
+    store.set_board_merge_mode(board_id, "free")
     dep = store.create_card(board_id, None, "dep card")
     store.add_dependency(card_id, dep["id"])
     _stub_gates(monkeypatch)
@@ -806,3 +918,30 @@ def test_the_reviewer_budget_setting_reaches_the_review(board, monkeypatch):
     store.set_setting("reviewer_budget_usd", 0.75)
     lifecycle.run_card_lifecycle(store, card_id, backend=_ModelBackend())
     assert budgets == [0.75]
+
+
+def test_reviewer_fallback_is_kept_when_worker_never_reaches_review(board, monkeypatch):
+    from dataclasses import replace
+
+    from smortboard.labs.routing import run_ref
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    store.append_event(
+        card_id,
+        "lab_fallback",
+        {
+            "role": "reviewer",
+            "lab": "openai",
+            "model": "gpt-5.6-sol",
+        },
+    )
+    backend = _Backend()
+    backend.result = replace(backend.result, is_error=True, blocked_reason_code="CRASH")
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.blocked_reason_code == "CRASH"
+    assert run_ref(store, "reviewer", store.get_card(card_id)) == ("openai", "gpt-5.6-sol")
+    assert not any(
+        event["kind"] == "fallback_consumed" and event["payload"]["role"] == "reviewer"
+        for event in store.list_events(card_id)
+    )

@@ -105,7 +105,9 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
     assert body["thinking"] is True
     assert [m["author"] for m in body["messages"]] == ["operator"]
 
-    deadline = time.time() + 5
+    # generous, not a measurement: the suite runs `-n auto` and a worker thread on a
+    # loaded machine can wait seconds to be scheduled at all
+    deadline = time.time() + 30
     while time.time() < deadline:
         status, body = _request(f"{base_url}/api/boards/{board['id']}/orchestrator")
         if not body["thinking"]:
@@ -170,7 +172,9 @@ def test_the_same_message_id_is_accepted_once(running_server):
     status, view = _request(url, "POST", body)
     assert status == 200
     gate.set()
-    deadline = time.time() + 5
+    # generous, not a measurement: the suite runs `-n auto` and a worker thread on a
+    # loaded machine can wait seconds to be scheduled at all
+    deadline = time.time() + 30
     while time.time() < deadline and _request(url)[1]["thinking"]:
         time.sleep(0.02)
     # and once more after the turn is over
@@ -263,7 +267,15 @@ def test_usage_is_empty_on_a_fresh_board(running_server):
     base_url, _server = running_server
     status, body = _request(f"{base_url}/api/usage")
     assert status == 200
-    assert body == {"windows": [], "models": [], "total_cost_usd": 0.0, "runs": 0}
+    assert body == {
+        "windows": [],
+        "models": [],
+        "total_cost_usd": 0.0,
+        "runs": 0,
+        "known_cost_usd": 0.0,
+        "unknown_costs": 0,
+        "cost_estimated": False,
+    }
 
 
 # -- prompts -----------------------------------------------------------------

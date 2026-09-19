@@ -52,7 +52,7 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {followRunsOnce, onBoardEnter, setOpenCard: v => { openCard = v; }};`)(SpyMenu, SpyDrawer);
+;return {followRunsOnce, onBoardEnter, doAcceptOrRejectCard, setOpenCard: v => { openCard = v; }};`)(SpyMenu, SpyDrawer);
 
 const flush = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setTimeout(r, 0)); };
 await flush();
@@ -115,5 +115,15 @@ assert.ok(inColumn('accepted', 'c1') && !inColumn('checking', 'c1'), 'c1 is fina
 // ---- a full reload always lands every card in the column of its stored status
 await mod.onBoardEnter('b1');
 assert.ok(inColumn('accepted', 'c1') && inColumn('rejected', 'c2'), 'a full reload matches stored status too');
+
+// a landing can finish before the first poll after a board render
+stub('/api/boards/b1/cards', [card('c1', 'checking'), card('c2', 'rejected')]);
+await mod.onBoardEnter('b1');
+responses.set('/api/cards/c1/accept', {ok: true, status: 202, json: async () => ({state: 'landing'})});
+await mod.doAcceptOrRejectCard('accept', 'c1');
+assert.ok(inColumn('checking', 'c1'));
+stub('/api/boards/b1/cards', [card('c1', 'accepted'), card('c2', 'rejected')]);
+assert.equal(await mod.followRunsOnce(), true);
+assert.ok(inColumn('accepted', 'c1'));
 
 console.log('ok');

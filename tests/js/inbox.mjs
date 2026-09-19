@@ -153,7 +153,12 @@ assert.deepEqual(JSON.parse(answerCall.opts.body), {message: 'go ahead'});
 const status0 = cards[0].querySelector('.inbox-status');
 assert.equal(status0.textContent, 'resumed');
 assert.ok(status0.className.includes('inbox-ok'));
-assert.ok(input0.disabled, 'the input is disabled once answered');
+// THE KEYBOARD COMES BACK TO THE ROW. this used to assert the input stayed disabled, which is what
+// dropped focus on <body>: the list's arrows are bound to the list and never fired again, and
+// escape found no card above body so it closed the panel instead of stepping back
+assert.equal(input0.disabled, false, 'the input is usable again once the answer landed');
+assert.equal(input0.value, '', 'and it is cleared, so the next answer starts empty');
+assert.ok(cards[0].focused, 'focus is handed back to the row, where the queue continues');
 
 // ---- a refusal renders inline and leaves the input usable to try again ---------------------------
 mod.ib.focusIndex = 1;
@@ -169,6 +174,10 @@ const status1 = cards[1].querySelector('.inbox-status');
 assert.equal(status1.textContent, 'this card is still running');
 assert.ok(status1.className.includes('inbox-error'));
 assert.ok(!input1.disabled, 'a refusal leaves the input open to retry');
+assert.equal(input1.value, 'try again', 'and keeps what was typed, to edit rather than retype');
+// re-enabling is not enough: disabling a focused field blurred it, and focus has to be put back
+// or the keyboard sits on <body> - arrows dead, escape closing the panel instead of stepping back
+assert.ok(input1.focused, 'the keyboard goes back into the field a refusal asks you to fix');
 
 // ---- a LEASE_CONFLICT card, once focused, shows the wanted paths and an approve control -----------
 mod.ib.focusIndex = 2;
@@ -264,5 +273,40 @@ assert.equal(mod.resolveScope(scopes, 'b2'), 'b2', 'a scope that still has cards
 assert.equal(mod.resolveScope(scopes, 'gone'), 'all', 'an unknown/emptied scope falls back to all boards');
 const noB2 = mod.computeScopes(ROWS); // b2 has nothing waiting any more
 assert.equal(mod.resolveScope(noB2, 'b2'), 'all', 'a scope that emptied out falls back to all boards');
+
+// ---- one press where a row has one thing to do, step-in where it has more ------------------------
+// the lease-conflict card above keeps its two-step walk (title, then approve) because the choice is
+// real. a row whose only control IS its title opens on the first press instead of reading as "it
+// selected the title" - the complaint that started this
+responses.set('/api/attention', stubJson(200, ROWS));
+responses.set('/api/boards/b1/cards', stubJson(200, []));
+mod.openInboxPanel();
+await flush(); await flush();
+// a row is only a control once it holds focus, so arrow onto the tests-failed row first
+fireKeydown(mod.ib.listEl, {code: 'ArrowDown', key: 'ArrowDown',
+  target: Array.from(mod.ib.listEl.children)[0]});
+const singleControl = Array.from(mod.ib.listEl.children)[1];
+assert.equal(singleControl.querySelectorAll('.inbox-control').length, 1,
+  'a tests-failed row offers only its title');
+fireKeydown(singleControl, {code: 'Space', key: ' '});
+assert.equal(mod.ib.backdrop.parentNode, null,
+  'one space on a single-control row acts on it, closing the panel behind the card');
+
+// ---- coming back from a glance lands on the row you went into -------------------------------------
+// the card panel's close calls back into the inbox (card_panel.js afterCardCloses), which reopens
+// the panel with returnToCardId set; the list then focuses that row wherever it now sits
+mod.ib.focusIndex = null;
+mod.ib.returnToCardId = 'c3';
+mod.openInboxPanel();
+await flush(); await flush();
+assert.equal(mod.ib.focusIndex, 2, 'the glanced row is focused again, not the first one');
+assert.equal(mod.ib.returnToCardId, null, 'the return is consumed, so the next open starts fresh');
+
+// a card that left the inbox while you were in it (you answered it) falls back to the first row
+mod.ib.focusIndex = null;
+mod.ib.returnToCardId = 'gone';
+mod.openInboxPanel();
+await flush(); await flush();
+assert.equal(mod.ib.focusIndex, 0, 'a row that is no longer waiting falls back to the top');
 
 console.log('ok');

@@ -19,7 +19,8 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -32,7 +33,11 @@ from smortboard.exec.backends import (
     read_card_token,
 )
 from smortboard.exec.repo_snapshot import MOUNT_PARENT, build_repo_snapshot
-from smortboard.exec.runner import RunResult, build_command, run_process
+from smortboard.exec.runner import RunResult, run_process
+from smortboard.labs.base import BashPolicy, RunRequest
+from smortboard.labs.catalog import load_catalog, parse_ref, resolve_ref
+from smortboard.labs.registry import get_adapter
+from smortboard.labs.routing import command_model, role_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.prompts import active_prompt
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
@@ -60,11 +65,10 @@ ORCHESTRATOR_PROMPT = (
     "- see 'a card is a feature, not an edit' in the plan. Return an updated `plan`: your own ledger "
     "of what the board is working toward, reconciled against the cards that exist, not a copy of "
     "them.\n\n"
-    "Give each card a `model` for its worker: `sonnet` for ordinary work, `opus` only where the card "
-    "needs real design judgement, `haiku` for mechanical edits, or null to use the board's default. "
+    "Give each card a `lab` and `model` from the available catalog, or null for the board default. "
     f"{OPERATOR_NAME} can change it on the card. The snapshot's `evidence` shows this board's own run history "
     "- prefer the cheapest model that has been reaching pull requests cleanly (no fix rounds) on "
-    "cards like this one; if you pick opus, say in your reply why this card needs it.\n\n"
+    "cards like this one; if you pick a deep-tier model, say why this card needs it.\n\n"
     "Give every card a `leases` list: the path globs, relative to the repo root, its worker may "
     "Edit or Write. A guard refuses every write outside them, so an empty list means the card can "
     "change nothing and the board will not run it. Cover every file the card must touch - its "
@@ -103,6 +107,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "leases": {"type": "array", "items": {"type": "string"}},
                     "depends_on": {"type": "array", "items": {"type": "string"}},
                     "model": {"type": ["string", "null"]},
+                    "lab": {"type": ["string", "null"]},
                     "task_id": {"type": ["string", "null"]},
                     "complexity": {"type": "string", "enum": ["low", "medium", "high"]},
                 },
@@ -115,6 +120,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "leases",
                     "depends_on",
                     "model",
+                    "lab",
                     "task_id",
                     "complexity",
                 ],
@@ -150,7 +156,7 @@ def _clean_model(raw: Any) -> tuple[str | None, str | None]:
     if raw is None or raw == "":
         return None, None
     name = str(raw).strip().lower()
-    if _MODEL_NAME.match(name):
+    if resolve_ref(name):
         return name, None
     return None, f'model "{raw}" is not a model name, so that card uses the board default'
 
@@ -196,32 +202,59 @@ def _real_runner(
     Fake runners used by tests bypass this entirely, since they never call `_real_runner`.
     """
 
-    def run(prompt: str, model: str, budget_usd: float, screenshot_path: Path | None = None) -> str:
+    def run_once(
+        prompt: str, model: str, budget_usd: float, screenshot_path: Path | None
+    ) -> RunResult:
         if not docker_available():
             raise RuntimeError("Docker is not running, and the orchestrator runs in a container.")
-        token = read_card_token(token_path)
+        lab, model_id = parse_ref(model)
+        adapter = get_adapter(lab)
+        profile = profiles.active_profile(lab=lab)
+        kind = profiles.profile_kind(profile, lab=lab)
+        token = (
+            read_card_token(profiles.token_path_for_profile(profile, token_path))
+            if lab == "anthropic"
+            else profiles.read_profile_token(lab, profile)
+        )
         snapshot = build_repo_snapshot(store.list_repos(board_id), read_paths)
+        schema_dir = tempfile.TemporaryDirectory(prefix="smortboard-schema-")
         try:
             for warning in snapshot.warnings:
                 store.add_orchestrator_message(board_id, _BOARD_AUTHOR, warning)
-            claude_cmd = build_command(
-                prompt,
-                None,
-                model=model,
-                allowed_tools=ORCHESTRATOR_ALLOWED_TOOLS,
-                budget_usd=budget_usd,
-                system_prompt=system_prompt,
+            Path(schema_dir.name, "schema.json").write_text(json.dumps(schema))
+            guard_path = None
+            guard_mounts = []
+            if not adapter.capabilities.tool_allowlist:
+                guards = adapter.guard_files(
+                    [],
+                    BashPolicy(
+                        worktree_path=schema_dir.name,
+                        python="python3",
+                        guard_dir="/smortboard-schema/.claude",
+                        root=MOUNT_PARENT,
+                        bash_allow=(),
+                        read_only=True,
+                    ),
+                )
+                guard_path = "/smortboard-schema/.claude/" + guards.settings_path.name
+                guard_mounts = adapter.guard_mounts(guards.settings_path)
+            agent_cmd = adapter.build_command(
+                RunRequest(
+                    prompt=prompt,
+                    settings_path=guard_path,
+                    model=model_id,
+                    allowed_tools=ORCHESTRATOR_ALLOWED_TOOLS,
+                    budget_usd=budget_usd,
+                    system_prompt=system_prompt,
+                    json_schema=schema,
+                    schema_path="/smortboard-schema/schema.json",
+                    read_only=True,
+                    role=role,
+                )
             )
-            claude_cmd += ["--json-schema", json.dumps(schema)]
             # read-only by allowlist as well as by mount: nothing that could write, shell out or
             # reach the network is admitted
-            for tool in ORCHESTRATOR_DISALLOWED_TOOLS:
-                claude_cmd += ["--disallowedTools", tool]
-            inner = (
-                "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN && "
-                + shlex.join(claude_cmd)
-                + " < /dev/null"
-            )
+            inner = adapter.auth_shell({"kind": kind}) + shlex.join(agent_cmd) + " < /dev/null"
             # the screenshot re-run mounts exactly this turn's shots dir read-only, next to the
             # repo clones and extra paths; the Read tool the turn already has makes it readable
             shot_mount = []
@@ -238,6 +271,10 @@ def _real_runner(
                 "--name",
                 name,
                 *CONTAINER_HARDENING_FLAGS,
+                *adapter.container_env(),
+                *guard_mounts,
+                "-v",
+                f"{schema_dir.name}:/smortboard-schema:ro",
                 *snapshot.mount_args,
                 *shot_mount,
                 "-w",
@@ -248,13 +285,78 @@ def _real_runner(
                 inner,
             ]
             result = run_process(
-                None, "orchestrator", cmd, stdin_text=token + "\n", container_name=name
+                None,
+                "orchestrator",
+                cmd,
+                stdin_text=token + "\n",
+                container_name=name,
+                adapter=adapter,
+                lab=lab,
+                model=model_id,
+                profile=profile,
+                budget_usd=budget_usd,
+                role=role,
             )
         finally:
             snapshot.cleanup()
+            schema_dir.cleanup()
         # record whatever it cost even on failure or a cap - a capped run still spent real money
-        if result.total_cost_usd is not None:
-            store.add_board_spend(board_id, role, result.total_cost_usd)
+        store.add_board_spend(
+            board_id,
+            role,
+            result.total_cost_usd,
+            lab=lab,
+            model=model_id,
+            cost_estimated=result.cost_estimated,
+        )
+        return replace(result, lab=lab, model=model_id, profile=profile, role=role)
+
+    def run(prompt: str, model: str, budget_usd: float, screenshot_path: Path | None = None) -> str:
+        settings = store.get_settings()
+        tried = set()
+        while True:
+            result = run_once(prompt, model, budget_usd, screenshot_path)
+            if result.blocked_reason_code != "USAGE_LIMIT":
+                break
+            lab, profile = result.lab, result.profile
+            tried.add((lab, profile))
+            resets_at = result.resets_at or time.time() + 300
+            if profiles.state_path().exists() or profiles.has_multiple_profiles(lab):
+                profiles.mark_limited(profile, resets_at, lab=lab)
+            available = [
+                row
+                for row in profiles.list_profiles(lab=lab)
+                if not row["limited_now"] and (lab, row["name"]) not in tried
+            ]
+            if available:
+                if settings.get("auto_switch_profiles") != "on":
+                    break
+                profiles.set_active(available[0]["name"], lab=lab)
+                continue
+            fallback = None
+            for ref in settings.get(f"{role}_cross_lab_fallback") or []:
+                target = resolve_ref(ref)
+                if target is None or target[0] == lab:
+                    continue
+                target_lab, target_model = target
+                target_profile = profiles.next_available(lab=target_lab)
+                if target_profile is None or (target_lab, target_profile) in tried:
+                    continue
+                try:
+                    profiles.read_profile_token(target_lab, target_profile)
+                except profiles.ProfileError:
+                    continue
+                profiles.set_active(target_profile, lab=target_lab)
+                fallback = command_model(target_lab, target_model)
+                store.add_orchestrator_message(
+                    board_id,
+                    _BOARD_AUTHOR,
+                    f"Retrying {role} on {target_lab}/{target_model}; {lab} reached its usage limit.",
+                )
+                break
+            if fallback is None:
+                break
+            model = fallback
         # a turn that answered through its schema and only then hit a limit still answered
         if result.structured_output is not None and result.blocked_reason_code in (None, "CRASH"):
             return json.dumps(result.structured_output)
@@ -635,8 +737,14 @@ def run_orchestrator_turn(
     if store_message:
         store.add_orchestrator_message(board_id, AUTHOR_KEY, message)
 
-    model = store.get_settings().get("orchestrator_model") or DEFAULT_ORCHESTRATOR_MODEL
+    model = command_model(*role_ref(store.get_settings(), "orchestrator"))
     system_prompt = active_prompt(store, "orchestrator", ORCHESTRATOR_PROMPT)
+    usable = {row["lab"] for row in profiles.list_all_profiles() if row["present"]}
+    available = {lab: data["models"] for lab, data in load_catalog().items() if lab in usable}
+    system_prompt += (
+        "\n\nAvailable model catalog (lab, model id, tier, preferred roles):\n"
+        + json.dumps(available)
+    )
     snapshot = build_board_snapshot(store, board_id)
     # read the operator's extra paths once, here: the description below and the runner's mounts both
     # use them, so the setting is not read a second time inside _real_runner
@@ -703,7 +811,10 @@ def run_orchestrator_turn(
         repo_id, warning = _resolve_repo(store, board_id, spec.get("repo"))
         if warning:
             warnings.append(warning)
-        model, warning = _clean_model(spec.get("model"))
+        proposed_ref = spec.get("model")
+        if proposed_ref and spec.get("lab"):
+            proposed_ref = f"{spec['lab']}/{proposed_ref}"
+        model, warning = _clean_model(proposed_ref)
         if warning:
             warnings.append(warning)
         task_id = spec.get("task_id")
@@ -737,7 +848,8 @@ def run_orchestrator_turn(
             criteria=list(spec.get("criteria") or []),
             tasks=list(spec.get("tasks") or []),
             leases=leases,
-            model=model,
+            model=parse_ref(model)[1] if model else None,
+            lab=parse_ref(model)[0] if model else None,
             ledger_task=task_id,
             complexity=_clean_complexity(spec.get("complexity")),
         )
@@ -834,7 +946,7 @@ class OrchestratorRegistry:
                 store,
                 board_id,
                 message,
-                token_path=profiles.token_path_for_run(self._token_path),
+                token_path=self._token_path,
                 runner=runner,
                 store_message=not message_already_stored,
                 mode=mode,

@@ -22,6 +22,8 @@ from smortboard.budgets import spend_refusal
 from smortboard.consolidate import FoldRegistry
 from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
+from smortboard.labs.catalog import ROLES as MODEL_ROLES
+from smortboard.labs.catalog import load_catalog
 from smortboard.local_repos import detect_default_branch, list_folders
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.orchestrator import (
@@ -121,7 +123,10 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/lease/approve$"), "POST"),
     (re.compile(r"^/api/repos/(?P<repo_id>[^/]+)/lease/(?P<lease_id>[^/]+)$"), "DELETE"),
     (re.compile(r"^/api/profiles$"), "GET"),
+    (re.compile(r"^/api/catalog$"), "GET"),
     (re.compile(r"^/api/profiles$"), "POST"),
+    (re.compile(r"^/api/profiles/(?P<lab>[^/]+)/(?P<profile_name>[^/]+)/activate$"), "POST"),
+    (re.compile(r"^/api/profiles/(?P<lab>[^/]+)/(?P<profile_name>[^/]+)$"), "DELETE"),
     (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)/activate$"), "POST"),
     (re.compile(r"^/api/profiles/(?P<profile_name>[^/]+)$"), "DELETE"),
     (re.compile(r"^/api/pulls$"), "GET"),
@@ -201,6 +206,9 @@ def _make_handler(
     # second-tab send of the same message is answered as done instead of starting another turn
     accepted_messages: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=500))
     folds = FoldRegistry(store.path, token_path=token_path)
+    from smortboard.server.landings import LandingRegistry, needs_landing
+
+    landings = LandingRegistry(store.path)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "smortboard/0.1"
@@ -291,6 +299,21 @@ def _make_handler(
             return True
 
         def _handle(self, method: str, path: str, **params: str) -> None:
+            card_id = params.get("card_id")
+            if card_id and (
+                method in ("PATCH", "DELETE")
+                or path.endswith(("/run", "/accept", "/reject", "/answer"))
+            ):
+                landing = landings.get(card_id)
+                if landing is not None and landing.running:
+                    self._send_json(409, {"error": "this card is landing"})
+                    return
+            if method == "DELETE" and "board_id" in params:
+                for card in store.list_cards(params["board_id"]):
+                    landing = landings.get(card["id"])
+                    if landing is not None and landing.running:
+                        self._send_json(409, {"error": "a card on this board is landing"})
+                        return
             if path == "/health":
                 self._send_json(200, {"ok": True, "version": _version(), "operator": OPERATOR_NAME})
             elif path == "/api/boards" and method == "GET":
@@ -369,8 +392,7 @@ def _make_handler(
             elif path == "/api/settings" and method == "GET":
                 self._send_json(200, store.get_settings())
             elif path == "/api/settings" and method == "PATCH":
-                for key, value in self._read_json().items():
-                    store.set_setting(key, value)
+                store.set_settings(self._read_json())
                 self._send_json(200, store.get_settings())
             elif path.endswith("/events"):
                 self._send_json(200, store.list_events(params["card_id"]))
@@ -421,12 +443,16 @@ def _make_handler(
                 self._handle_answer(params["card_id"])
             elif path == "/api/profiles" and method == "GET":
                 self._send_json(200, self._profiles_view())
+            elif path == "/api/catalog" and method == "GET":
+                self._send_json(200, self._catalog_view())
             elif path == "/api/profiles" and method == "POST":
                 self._handle_add_profile()
             elif "profile_name" in params and path.endswith("/activate") and method == "POST":
-                self._handle_activate_profile(params["profile_name"])
+                self._handle_activate_profile(
+                    params["profile_name"], params.get("lab", "anthropic")
+                )
             elif "profile_name" in params and method == "DELETE":
-                self._handle_remove_profile(params["profile_name"])
+                self._handle_remove_profile(params["profile_name"], params.get("lab"))
             elif "card_id" in params and method == "GET":
                 self._send_json(200, store.get_card(params["card_id"]))
             elif "card_id" in params and method == "PATCH":
@@ -442,6 +468,8 @@ def _make_handler(
                 # only this board's own parallel cap and daily budget are writable here; "unset"
                 # arrives as an explicit null, same convention PATCH /api/settings uses for
                 # clearing a value
+                if "merge_mode" in body:
+                    store.set_board_merge_mode(params["board_id"], body["merge_mode"])
                 if "max_parallel" in body:
                     store.set_board_max_parallel(params["board_id"], body["max_parallel"])
                 if "daily_budget_usd" in body:
@@ -515,7 +543,18 @@ def _make_handler(
             if state is not None and state.running:
                 self._send_json(409, {"error": "this card is still running"})
                 return
+            landing = landings.get(card_id)
+            if landing is not None and landing.running:
+                self._send_json(409, {"error": "this card is already landing"})
+                return
             try:
+                candidate = store.get_card(card_id)
+                if decide is accept_card and needs_landing(store, candidate):
+                    if candidate["blocked_reason_code"]:
+                        raise DecisionRefused("this card is blocked")
+                    landings.start(card_id)
+                    self._send_json(202, {"state": "landing"})
+                    return
                 card = decide(store, card_id)
             except DecisionRefused as exc:
                 self._send_json(409, {"error": str(exc)})
@@ -594,60 +633,102 @@ def _make_handler(
             self._send_json(200 if result["granted"] else 202, result)
 
         def _profiles_view(self) -> list[dict]:
-            """name, active, present, limited_until only - never the token, per the card's rule"""
+            """credential metadata across labs, never secret values or filesystem paths"""
             return [
                 {
                     "name": row["name"],
+                    "lab": row["lab"],
+                    "kind": row["kind"],
                     "active": row["active"],
                     "present": row["present"],
                     "limited_until": row["limited_until"],
                 }
-                for row in profiles.list_profiles()
+                for row in profiles.list_all_profiles()
             ]
+
+        def _catalog_view(self) -> dict:
+            catalog = load_catalog()
+            rows = profiles.list_all_profiles()
+            for lab, entry in catalog.items():
+                usable = False
+                for row in rows:
+                    if row["lab"] != lab or not row["present"] or not row["mode_ok"]:
+                        continue
+                    try:
+                        profiles.read_profile_token(lab, row["name"])
+                    except profiles.ProfileError:
+                        continue
+                    usable = True
+                    break
+                entry["available"] = usable
+                entry["unavailable_reason"] = None if usable else f"no usable {lab} profile"
+            return catalog
 
         def _handle_add_profile(self) -> None:
             """pastes a token straight into its mode-600 file - checked for shape, never echoed"""
             body = self._read_json()
             name = (body.get("name") or "").strip()
+            lab = body.get("lab") or "anthropic"
+            kind = body.get("kind")
             token = body.get("token") or ""
-            problem = _token_shape_problem(token)
+            problem = (
+                _token_shape_problem(token)
+                if lab == "anthropic"
+                else (
+                    "token must be non-empty and contain no whitespace"
+                    if not isinstance(token, str)
+                    or not token.strip()
+                    or (kind != "auth_json" and any(char.isspace() for char in token.strip()))
+                    else None
+                )
+            )
             if problem:
                 self._send_json(400, {"error": problem})
                 return
             try:
-                profiles.profiles_dir().mkdir(parents=True, exist_ok=True)
-                profiles.profiles_dir().chmod(0o700)
-            except OSError as exc:
-                self._send_json(
-                    400, {"error": f"could not make {profiles.profiles_dir()} mode 700: {exc}"}
-                )
-                return
-            try:
-                profiles.add_profile(name, token)
-            except profiles.ProfileError as exc:
+                profiles.add_profile(name, token, lab=lab, kind=kind)
+            except (profiles.ProfileError, OSError) as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
-            self._send_json(201, self._one_profile_view(name))
+            self._send_json(201, self._one_profile_view(name, lab))
 
-        def _one_profile_view(self, name: str) -> dict:
+        def _one_profile_view(self, name: str, lab: str = "anthropic") -> dict:
             for row in self._profiles_view():
-                if row["name"] == name:
+                if row["name"] == name and row["lab"] == lab:
                     return row
             raise profiles.ProfileError(f"no such profile '{name}'")  # pragma: no cover - defensive
 
-        def _handle_activate_profile(self, name: str) -> None:
+        def _handle_activate_profile(self, name: str, lab: str = "anthropic") -> None:
             try:
-                profiles.set_active(name)
+                profiles.set_active(name, lab=lab)
             except profiles.ProfileError as exc:
                 self._send_json(404, {"error": str(exc)})
                 return
-            self._send_json(200, self._one_profile_view(name))
+            self._send_json(200, self._one_profile_view(name, lab))
 
-        def _handle_remove_profile(self, name: str) -> None:
-            # remove_profile() does the whole thing itself now: switches active away if needed,
-            # drops the name, and unlinks the token file - nothing left for app.py to do after.
+        def _handle_remove_profile(self, name: str, lab: str | None = None) -> None:
+            scoped = lab is not None
+            lab = lab or "anthropic"
+            settings = store.get_settings()
+            references = []
+            role_labs = {
+                settings.get(f"{role}_lab") or "anthropic"
+                for role in MODEL_ROLES
+                if role != "worker"
+            }
+            for board in store.list_boards():
+                for card in store.list_cards(board["id"]):
+                    worker_lab = (
+                        (card.get("lab") or "anthropic")
+                        if card.get("model")
+                        else settings.get("worker_lab") or "anthropic"
+                    )
+                    if worker_lab == lab or lab in role_labs:
+                        references.append(card)
             try:
-                profiles.remove_profile(name)
+                profiles.remove_profile(
+                    name, lab=lab, referenced_cards=references if scoped or references else None
+                )
             except profiles.ProfileError as exc:
                 message = str(exc)
                 status = 404 if "no such" in message else 409

@@ -231,8 +231,13 @@ def test_gh_not_authenticated(store, tmp_path, monkeypatch):
 # ---- per-repo checks -----------------------------------------------------------------------
 
 
-def _git(repo_path, *args):
-    subprocess.run(["git", "-C", str(repo_path), *args], check=True, capture_output=True)
+def _git(repo_path, *args, date=None):
+    import os
+
+    env = None
+    if date is not None:
+        env = {**os.environ, "GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date}
+    subprocess.run(["git", "-C", str(repo_path), *args], check=True, capture_output=True, env=env)
 
 
 def _init_repo(tmp_path, name="widgets"):
@@ -357,6 +362,74 @@ def test_missing_repo_image_gives_a_build_fix(monkeypatch, store, tmp_path):
     assert "widgets:dev" in row["fix"]
 
 
+def test_stale_image_warns_when_uv_lock_committed_after_the_image_was_built(
+    monkeypatch, store, tmp_path
+):
+    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
+    repo_path = _init_repo(tmp_path)
+    (repo_path / "uv.lock").write_text("version = 1\n")
+    _git(repo_path, "add", "uv.lock")
+    _git(repo_path, "commit", "-m", "add uv.lock", date="2026-09-19T12:00:00+00:00")
+
+    def runner(cmd, timeout=10, cwd=None):
+        if cmd[:4] == ["docker", "image", "inspect", "-f"]:
+            return _ok("2026-09-01T00:00:00Z\n")
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return _ok()
+        if cmd[:2] == ["git", "log"]:
+            return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+        return _all_ok_runner(cmd, timeout, cwd)
+
+    board = store.create_board("b")
+    store.create_repo(
+        board["id"],
+        name="widgets",
+        path=str(repo_path),
+        default_branch="main",
+        test_command="pytest",
+        image="widgets:dev",
+    )
+    checks = run_preflight(store, runner=runner)
+    row = next(
+        c for c in checks if c["group"] == "widgets" and c["label"] == "repo image freshness"
+    )
+    assert row["status"] == "warn"
+    assert "uv.lock" in row["detail"]
+    assert "docker build" in row["fix"]
+
+
+def test_fresh_image_does_not_warn_about_uv_lock(monkeypatch, store, tmp_path):
+    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
+    repo_path = _init_repo(tmp_path)
+    (repo_path / "uv.lock").write_text("version = 1\n")
+    _git(repo_path, "add", "uv.lock")
+    _git(repo_path, "commit", "-m", "add uv.lock", date="2026-01-01T00:00:00+00:00")
+
+    def runner(cmd, timeout=10, cwd=None):
+        if cmd[:4] == ["docker", "image", "inspect", "-f"]:
+            return _ok("2026-09-19T00:00:00Z\n")
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return _ok()
+        if cmd[:2] == ["git", "log"]:
+            return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+        return _all_ok_runner(cmd, timeout, cwd)
+
+    board = store.create_board("b")
+    store.create_repo(
+        board["id"],
+        name="widgets",
+        path=str(repo_path),
+        default_branch="main",
+        test_command="pytest",
+        image="widgets:dev",
+    )
+    checks = run_preflight(store, runner=runner)
+    row = next(
+        c for c in checks if c["group"] == "widgets" and c["label"] == "repo image freshness"
+    )
+    assert row["status"] == "ok"
+
+
 def test_repos_across_every_board_are_included(monkeypatch, store, tmp_path):
     monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
     b1 = store.create_board("b1")
@@ -377,3 +450,47 @@ def test_never_includes_a_token_value_anywhere(store, tmp_path):
     checks = run_preflight(store, token_path=token_file, runner=_all_ok_runner)
     assert secret not in str(checks)
     assert stat.filemode(token_file.stat().st_mode).endswith("------")
+
+
+def test_openai_profile_checks_use_its_kind_and_do_not_require_anthropic_length():
+    from smortboard.preflight import _profile_checks
+
+    profiles.add_profile("work", "short-but-valid", lab="openai", kind="api_key")
+    row = _by_id(_profile_checks(), "profile-openai-work")
+    assert row["status"] == "ok"
+    assert row["lab"] == "openai"
+    assert row["kind"] == "api_key"
+    assert "short-but-valid" not in str(row)
+    profiles.profile_path("work", "openai").unlink()
+    row = _by_id(_profile_checks(), "profile-openai-work")
+    assert row["status"] == "fail"
+    assert "codex login --with-api-key" in row["fix"]
+    assert "claude" not in row["fix"]
+
+
+def test_empty_openai_token_is_not_reported_healthy():
+    from smortboard.preflight import _profile_checks
+
+    profiles.add_profile("work", "", lab="openai")
+    assert _by_id(_profile_checks(), "profile-openai-work")["status"] == "fail"
+
+
+def test_openai_missing_cli_names_image_and_unknown_prices_warn(monkeypatch, store):
+    from smortboard.preflight import _lab_checks
+
+    profiles.add_profile("work", "key", lab="openai", kind="api_key")
+    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
+    monkeypatch.setattr("smortboard.preflight.card_image", lambda: "test-card:latest")
+    commands = []
+
+    def runner(cmd, timeout=10, cwd=None):
+        commands.append(cmd)
+        return _fail("not installed")
+
+    rows = _lab_checks(store, runner)
+    image = _by_id(rows, "lab-openai-image-0")
+    assert image["status"] == "fail"
+    assert "test-card:latest" in image["detail"] and "codex" in image["detail"]
+    assert _by_id(rows, "lab-openai-pricing")["status"] == "warn"
+    assert commands[0][-2:] == ["test-card:latest", "--version"]
+    assert "key" not in commands[0]

@@ -39,12 +39,27 @@ body {
   border: 2px solid var(--grey-border);
   border-bottom: 2px solid var(--grey-border);
 }
+/* FOCUS AND ACTIVE ARE DIFFERENT STATES AND MUST READ DIFFERENTLY. focus is the tab the keyboard is
+   on and wears ui_base's .focus-glow-soft (board.js puts the class on every tab); active is the
+   board actually being shown and is this fill, unchanged. the active tab focused wears both, which
+   is why the soft variant's light is a filter over whatever is there rather than a colour of its
+   own - it lifts the accent fill instead of covering it. retune the glow by restating one of its
+   tokens, never by drawing a second one here. */
 .board-bar .nav-tab.active {
   background: var(--accent-on);
   color: var(--accent-on-text);
   border-color: var(--cream);
 }
 .bucket-row {
+  --ambient-pulse-color: #e06f2d;
+  --ambient-pulse-ms: 4800ms;
+  --ambient-pulse-drift-ms: 5500ms;
+  --ambient-pulse-min: 0.5;
+  --ambient-pulse-max: 0.84;
+  --ambient-pulse-width: 2px;
+  --ambient-pulse-blur: 16px;
+  --ambient-pulse-spread: 3px;
+  --ambient-pulse-reach: 4px;
   flex: 1 1 auto;
   display: flex;
   /* 16px, not 34: the gap was eating the columns' width, and a focused card only grows 1.5% a
@@ -239,7 +254,13 @@ body {
 .card-panel .card-section:not([data-section="title"]) > .field-label {
   padding: 2px 0; margin-bottom: 10px; border-bottom: 2px solid var(--grey-border);
 }
-/* with no box of its own, a focused section lights its rule rather than drawing a ring */
+/* A FOCUSED SECTION WEARS THE CARD'S OWN LOOK, QUIETER (operator, 2026-09-17) - ui_base's
+   .focus-glow-soft, put on every section by card_panel.js: the same inset ring, inner glow and
+   coloured light the card itself wears, at a third of the lift and light and half the ring. A
+   section inside a card is a smaller thing than a card on a board, so the loud one read as the
+   whole card jumping. Retune a part by restating that part's token, not the rule.
+   The rule below stays: the label lighting is what a section had before the glow and it still says
+   which section this is once the ring is drawing round several fields' worth of text. */
 .card-panel .card-section:focus-visible { outline: none; }
 .card-panel .card-section:not([data-section="title"]):focus-visible > .field-label {
   color: var(--cream); border-bottom-color: var(--cream);
@@ -533,7 +554,7 @@ body {
 }
 
 .settings-panel {
-  width: min(520px, 90vw);
+  width: min(600px, 90vw);
   max-height: 80vh;
   display: flex;
   flex-direction: column;
@@ -546,6 +567,13 @@ body {
   flex-direction: column;
   gap: var(--gap, 8px);
 }
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-group + .settings-group { margin-top: var(--gap, 8px); }
+.settings-group-title { color: var(--cream); font-weight: 600; }
 
 .settings-section {
   padding: 6px 0;
@@ -559,6 +587,51 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--gap, 8px);
+}
+.settings-role-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0;
+}
+.settings-role-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.settings-role-name { color: var(--cream); font-weight: 600; }
+.settings-role-status { text-align: right; }
+.settings-role-control {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.settings-role-control > .toggle { justify-self: start; }
+.settings-role-fallback-trigger {
+  justify-self: stretch !important;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-cost-triggers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap, 8px);
+}
+.settings-cost-trigger {
+  justify-content: flex-start;
+  min-width: 0;
+}
+.settings-cost-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  gap: 6px 10px;
+  align-items: center;
+  width: min(420px, 70vw);
 }
 .settings-panel .hazard-placeholder { min-height: 72px; box-sizing: border-box; }
 /* the folder picker opened from settings sits over the settings backdrop, as it does over boards' */

@@ -62,6 +62,18 @@ def test_the_gate_needs_no_credential_and_no_network(tmp_path, monkeypatch):
     assert not any("token" in str(part).lower() for part in cmd)
 
 
+def test_the_gate_exports_writable_cache_dirs_for_the_readonly_mount(tmp_path, monkeypatch):
+    """/workspace is read-only, so ruff/pytest must not try to cache into it (regression for the
+    'Failed to initialize cache: Read-only file system' failure)."""
+    seen = []
+    _fake_docker(monkeypatch, capture=seen)
+    run_test_gate(None, "card", tmp_path, REPO)
+    shell_command = seen[0][-1]
+    assert "RUFF_CACHE_DIR=/tmp/.ruff_cache" in shell_command
+    assert "PYTEST_ADDOPTS='-p no:cacheprovider'" in shell_command
+    assert REPO["test_command"] in shell_command
+
+
 def test_the_gate_cannot_change_what_it_is_judging(tmp_path, monkeypatch):
     seen = []
     _fake_docker(monkeypatch, capture=seen)

@@ -3,12 +3,12 @@
 // board.js and telemetry.js globals: api, fillBar, textLine, formatUsd, toggleOverlay, Menu.
 
 function costPerPrLabel(row) {
-  return row.cost_per_pr_usd == null ? null : `${formatUsd(row.cost_per_pr_usd)} / pr`;
+  return row.cost_per_pr_usd == null ? null : `${formatUsd(row.cost_per_pr_usd, row.cost_estimated)} / pr`;
 }
 
 // an em dash rather than a divide-by-zero when a group or figure holds no cards/prs yet
-function dashOrUsd(value) {
-  return value == null ? '—' : formatUsd(value);
+function dashOrUsd(value, estimated = false) {
+  return value == null ? '—' : formatUsd(value, estimated);
 }
 
 function plural(count, word) {
@@ -30,9 +30,9 @@ function costGroupBox(title, group) {
   const box = document.createElement('div');
   box.className = `cost-group cost-group-${title}`;
   box.appendChild(costCell(title, 'cost-group-title'));
-  box.appendChild(costCell(`${formatUsd(group.cost_usd)} spend`, 'cost-group-figure'));
-  box.appendChild(costCell(`${dashOrUsd(group.cost_per_card_usd)} / card`, 'cost-group-figure'));
-  box.appendChild(costCell(`${dashOrUsd(group.cost_per_pr_usd)} / pr`, 'cost-group-figure'));
+  box.appendChild(costCell(`${formatUsd(group.cost_usd, group.cost_estimated)} spend`, 'cost-group-figure'));
+  box.appendChild(costCell(`${dashOrUsd(group.cost_per_card_usd, group.cost_estimated)} / card`, 'cost-group-figure'));
+  box.appendChild(costCell(`${dashOrUsd(group.cost_per_pr_usd, group.cost_estimated)} / pr`, 'cost-group-figure'));
   box.appendChild(costCell(`${plural(group.cards, 'card')} · ${plural(group.prs, 'pr')}`, 'cost-group-counts'));
   return box;
 }
@@ -57,7 +57,7 @@ function boardCostRow(row, share) {
   line.append(
     name,
     fillBar(share),
-    costCell(formatUsd(row.cost_usd), 'num'),
+    costCell(formatUsd(row.cost_usd, row.cost_estimated), 'num'),
     costCell(String(row.runs), 'num'),
     costCell(`${row.cards_accepted}/${row.cards}`, 'num'),
     costCell(String(row.pull_requests_opened), 'num'),
@@ -77,19 +77,24 @@ function totalsFoot(totals) {
   foot.appendChild(
     textLine(
       `${plural(totals.boards, 'board')} - ${plural(totals.cards, 'card')} - ${plural(totals.runs, 'run')} - ` +
-        `${formatUsd(totals.cost_usd)}${prNote}${wasteNote}`,
+        `${formatUsd(totals.cost_usd, totals.cost_estimated)}${prNote}${wasteNote}`,
       'stat'
     )
   );
-  const models = (totals.spend_by_model || [])
-    .slice()
-    .sort((a, b) => b.cost_usd - a.cost_usd)
-    .map(m => `${m.model} ${formatUsd(m.cost_usd)}`)
-    .join(', ');
-  const roles = `worker ${formatUsd(totals.worker_cost_usd || 0)} - reviewer ${formatUsd(totals.reviewer_cost_usd || 0)}`;
-  foot.appendChild(textLine(models ? `${roles} - ${models}` : roles, 'stat'));
+  const roles = `worker ${formatUsd(totals.worker_cost_usd, totals.worker_cost_estimated)} - reviewer ${formatUsd(totals.reviewer_cost_usd, totals.reviewer_cost_estimated)}`;
+  foot.appendChild(textLine(roles, 'stat'));
+  const byLab = new Map();
+  (totals.spend_by_model || []).forEach(row => {
+    const lab = row.model.includes('/') ? row.model.split('/')[0] : 'anthropic';
+    if (!byLab.has(lab)) byLab.set(lab, []);
+    byLab.get(lab).push(row);
+  });
+  byLab.forEach((models, lab) => {
+    const values = models.map(m => `${m.model} ${formatUsd(m.cost_usd, m.cost_estimated)}`).join(', ');
+    foot.appendChild(textLine(`${lab} - ${values}`, 'stat'));
+  });
   foot.appendChild(textLine(
-    `mission control and fold turns ${formatUsd(totals.turn_cost_usd || 0)} - not in the card totals above`,
+    `mission control and fold turns ${formatUsd(totals.turn_cost_usd, totals.turn_cost_estimated)} - not in the card totals above`,
     'stat cost-note'
   ));
   return foot;

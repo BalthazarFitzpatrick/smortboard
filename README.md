@@ -2,12 +2,24 @@
 
 **A kanban board whose cards are worked by coding agents.**
 
-Each card is one piece of work handed to an agent: it carries the brief, the acceptance criteria,
-the paths the agent is allowed to write, and the model it should run on. Press a key and the agent
-picks the card up in its own container, on its own git branch. When it says it is done, the board
-does not take its word for it - it re-runs the repo's own tests itself, hands the diff to a second,
-read-only agent that reviews it, and only then pushes the branch and opens a pull request. It never
-merges into `main`. Anything that needs a decision from you stops and waits in one inbox.
+**One card is one piece of work.** It carries the brief, the acceptance criteria, the paths the
+agent may write, and the model it runs on.
+
+Press a key and the agent picks it up in its own container, on its own git branch.
+
+When it says it is done, the board does not take its word for it. It re-runs the repo's own tests
+itself, hands the diff to a second, read-only agent that reviews it, and only then pushes the branch
+and opens a pull request.
+
+It never merges into `main`. Anything that needs a decision from you stops and waits in one inbox.
+
+**Two labs.** A run can go to Claude Code or to OpenAI's Codex, chosen per role and per card - so
+mission control can plan on one while the workers execute on the other, and the reviewer can read a
+diff from a lab that did not write it.
+
+**Two modes.** By default a finished card waits at its pull request until you accept it. Tell a
+board otherwise and it lands them itself - and says so with a pulsing frame you can see from across
+the room.
 
 ![A payments service mid-sprint: cards in every state across the columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
 
@@ -38,16 +50,26 @@ merges into `main`. Anything that needs a decision from you stops and waits in o
 |---|---|---|
 | Python 3.11+ and **uv** | runs the board | [uv install](https://docs.astral.sh/uv/getting-started/installation/) |
 | **Docker** (Desktop or Engine), running | every card runs in its own container | [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
-| **Claude Code** | the agent inside the container, and `claude setup-token` | `npm install -g @anthropic-ai/claude-code` |
 | **GitHub CLI**, logged in | the board opens pull requests with it | [cli.github.com](https://cli.github.com/), then `gh auth login` |
 | git | worktrees, branches, pushes | usually already there |
+
+And at least one lab, for the agent inside the container. Both CLIs are installed in the card image
+already; what you need locally is whichever one mints the credential:
+
+| Lab | Install locally | To get a credential |
+|---|---|---|
+| **Claude Code** | `npm install -g @anthropic-ai/claude-code` | `claude setup-token` |
+| **OpenAI Codex** | `npm install -g @openai/codex` or `brew install codex` | `codex login`, which writes `~/.codex/auth.json` |
+
+One lab is enough to run the board; a second buys you an independent reviewer and somewhere to fall
+back when the first is rate-limited.
 
 Only Python and uv are needed to open the board. The rest is needed before a card can run, and the
 pre-flight checklist (`h`) tells you exactly what is missing and how to fix each one.
 
 ### Steps
 
-**1. Clone and build the card image** (git, uv and the `claude` CLI, no credentials, no code):
+**1. Clone and build the card image** (git, uv, Claude Code and Codex, no credentials):
 
 ```bash
 git clone https://github.com/BalthazarFitzpatrick/smortboard && cd smortboard
@@ -55,24 +77,7 @@ uv sync
 docker build -f docker/card.Dockerfile -t smortboard-card:latest .
 ```
 
-**2. Give cards their own token.** Cards use a model-only token, never your Claude login:
-
-```bash
-claude setup-token
-```
-
-It prints the token once. Copy it, then on macOS:
-
-```bash
-mkdir -p ~/.config/smortboard
-(umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
-wc -c < ~/.config/smortboard/card_token      # 108
-```
-
-The file must be mode 600; the board refuses a token file others can read. Linux, Windows and the
-other ways to store it: [Card token](#card-token).
-
-**3. Start the board:**
+**2. Start the board:**
 
 ```bash
 uv run smortboard
@@ -81,6 +86,25 @@ uv run smortboard
 It prints and opens `http://127.0.0.1:8000/ui/index.html?key=...`. The key is swapped for a cookie
 on the first load and dropped from the address bar, so a tab opened by hand has no key - use the
 printed link. Keep the terminal open: closing it stops the board and any running card.
+
+**3. Give cards a credential**, in the board itself. Press `shift`+`p` for credential profiles, add
+one, and paste. The board writes the mode-600 file for you and refuses anything a file others could
+read.
+
+Cards never use your own login. What you paste is:
+
+- **Claude**: the token `claude setup-token` prints once. It prints it, you copy it, the board
+  stores it - a model-only token, not your Claude Code session.
+- **OpenAI**: either **ChatGPT login JSON**, which is the whole contents of the `~/.codex/auth.json`
+  that `codex login` wrote (paste it entire - a bare access token from inside it is refused), or an
+  **API key**.
+
+At run time the credential goes into the container over stdin, into a memory-backed home that dies
+with the container. Your own `~/.claude` and `~/.codex` are never mounted.
+
+Several profiles per lab are fine; the board rotates to the next one when the active profile hits
+its rate limit. The manual file layout, the OS credential store and the Windows and Linux paths are
+under [Card token](#card-token).
 
 No checkout at all: `uvx --from git+https://github.com/BalthazarFitzpatrick/smortboard smortboard`
 runs the board, though you still need the clone once to build the image.
@@ -116,7 +140,8 @@ It is the right way to learn the keys and read the concepts below against someth
 4. Press `.` and tell mission control what you want built. It answers with a plan and proposed cards.
 5. Focus a card and press `r` (it asks once), or `w` to run the whole board.
 
-Anything that needs you lands in the inbox, `n`. The board never merges. You do.
+Anything that needs you lands in the inbox, `n`. Boards default to review-required: inspect the
+pull request, then accept with `y` to land it on an unprotected base. Main stays yours.
 
 ![A card opened over the board: criteria, tasks, dependencies and the run as a timeline - tests passed, reviewer approved, pull request open](docs/images/hero-card.jpg)
 
@@ -163,7 +188,7 @@ restart it. The nine reason codes:
 
 ### The attention column
 
-The board shows **six** columns: `todo`, `doing`, **attention**, `checking`, `accepted`, `rejected`.
+The board shows **six** columns: `todo`, `doing`, `attention`, `checking`, `accepted`, `rejected`.
 
 **The surprising part: attention is not a status.** It is a presentation column sitting between
 doing and checking, and a card appears in it when it carries a blocked reason code *or* a review
@@ -251,12 +276,26 @@ worth of tokens nobody asked for.
 
 ### The landing lock and the push queue
 
-The board never merges into `main`. What it does depends on the repo's base branch:
+The board never merges into `main`, `master` or `trunk`. Other bases follow the board's mode:
 
-- **Base is `main`**: the card ends at an open pull request. A person merges it.
-- **Base is a development branch**: the board **lands** the card there itself, so the next card
-  starts on top of it instead of every card queueing behind a human. It also keeps one standing pull
-  request open from that branch into `main`, which is the one a person merges.
+- **Review required** (default): a card stops at an open pull request. Accept with `y` to land it
+  in the background. If you already merged it on GitHub, accept records that without merging again.
+- **Free merge**: a card lands and is accepted once tests and review pass.
+
+`shift+a` changes the focused board's mode after confirmation. A free-merge board shows a burnt-orange
+pulsing frame and a text label. Reduced motion keeps a static frame.
+
+Review mode keeps dependent work moving: a child can start on one unmerged parent's branch once
+that parent reaches checking. Its PR targets that branch until the parent lands, then moves to the
+repo base. Stacks are at most three cards deep. Two unmerged parents wait. A rejected parent blocks
+its dependents. A child conflict never undoes a parent's successful landing.
+
+A rejected parent keeps its local branch while undecided children need it. Those children cannot
+run against rejected work, and that parent cannot rerun while they remain undecided. Decide the
+dependent attempts and create fresh work; the board does not rewrite an existing stack.
+
+The board also keeps one standing pull request from the development branch into `main`, for you
+to merge. Accepting a protected-base card records your decision; it cannot merge the PR.
 
 Landing is guarded by the **landing lock**: one holder per repo and target branch, with a FIFO queue
 behind it. It is stored in the database, so it survives a board restart, and a holder that stops
@@ -275,9 +314,29 @@ releases. It exits non-zero with the reason on a conflict, a failed test or a re
 refuses `main`, `master` and `trunk` outright.
 
 Two structural guarantees, not careful habits: `main`, `master` and `trunk` are refused as a landing
-target in code, and every `gh` call goes through an allowlist of exactly four subcommands -
-`pr create`, `pr list`, `pr view`, `pr close`. **`pr merge` is not on it and cannot be added by a
-caller.** A push that is rejected because the base moved is re-synced and retried, never forced.
+target in code, and every `gh` call goes through an allowlist of exactly five subcommands -
+`pr create`, `pr list`, `pr view`, `pr close` and `pr edit`, the last one only so a stacked child's
+pull request can be re-pointed at the base when its parent lands. **`pr merge` is not on it and
+cannot be added by a caller.** A push rejected because the base moved is re-synced and retried,
+never forced.
+
+### Keeping a waiting pull request current
+
+GitHub tells nobody when something merges. There is no push event the board can subscribe to, and it
+can only ask about one named pull request at a time. So it watches the thing that actually changes:
+the base branch's own commit.
+
+Every tick the board fetches each repo's base and compares it to the last sha it saw. Unchanged
+means there is nothing to do and no branch is touched. When it moves, every card waiting in checking
+on that repo gets the base merged into its branch and pushed, so the diff you review is against the
+current base rather than whatever it looked like when the card started. A branch that now conflicts
+blocks its card `MERGE_CONFLICT` with the file list instead, and the pull request is left alone. The
+board's own landings trigger the same sweep directly, so a stack moves within seconds rather than
+waiting for the next poll.
+
+This matters more than it sounds. Measured on card `59727ba3` (PR #112): a branch cut at the start
+of a run and never updated drifted **34 commits** behind main while its pull request waited, and
+conflicted in four files other pull requests had since touched.
 
 ### Mission control and the workforce chat
 
@@ -347,16 +406,70 @@ files alone. An answer alone never widens a lease.
 
 ### Credential profiles
 
-The card token is a model-only `claude setup-token`, kept separate from your own Claude login, which
-the board never reads and a card never sees.
+Anthropic profiles use a model-only `claude setup-token`, separate from your own Claude login.
+Existing token files and settings keep working without a migration step.
 
 If you have several subscriptions, `shift`+`p` holds **profiles**: a name plus its own mode-600 token
-file, one active at a time.
+file. Profiles belong to a lab, with one active profile per lab.
 
 **The surprising part: rotation is off by default.** When a profile hits its rate limit, the board
-parks new starts until the window resets rather than quietly spending your other subscription.
+parks new starts on that lab until the window resets.
 Turn on *switch credential profiles automatically* in settings if you want rotation. Cards already
 running are left alone either way.
+
+### OpenAI models
+
+Rebuild the card image with the command above, then open `shift`+`p`, choose
+`openai` and add a profile. Choose **ChatGPT login JSON** to import the contents
+of the `auth.json` created by your Codex login, or **API key** for an OpenAI key.
+The board stores the imported credential in its own mode-600 file. At run time
+it sends the credential over stdin into the container's temporary memory-backed
+Codex home. It does not mount your host Codex home.
+
+Open settings to choose a lab and model for each role: worker, reviewer,
+mission control and fold. A card's `m` menu overrides the worker default.
+Labs without a usable profile are disabled in the model menu.
+
+**Which model for which role.** The board ships with `opus` for mission control and `sonnet` for the
+worker and reviewer, and those defaults exist because the roles want different things:
+
+| role | what it does | what that asks for |
+|---|---|---|
+| mission control | reads the repos, argues about scope, writes the cards | the strongest model you have. It decides what gets built; every other role only executes it |
+| worker | one card, in one container, against a stated lease | the cheapest model that has been reaching pull requests without fix rounds. The `i` view tells you which that is on your board |
+| reviewer | reads a diff and gives a verdict | a model from **a different lab than the worker**, once you have two. An independent reader is the point of the gate, and two models from one family share their blind spots |
+| fold | consolidates the card backlog | the same class as mission control; it is the same kind of judgement on a smaller surface |
+
+A card's own complexity should move the worker, not the board default: raise it for genuine design
+work, leave it low for mechanical edits. The evidence table under `i` groups finished cards by model
+and complexity with what each attempt cost, so the choice is a measurement rather than a habit.
+
+Each role can have an ordered fallback list such as `openai/gpt-5.6-sol`.
+Leave it empty to keep the role on its chosen lab. Automatic profile rotation
+stays within a lab; a cross-lab retry needs an explicit fallback and leaves a
+message on the card. Codex notes are delivered on the next run.
+
+Models come from `smortboard/labs/catalog.json`. Add or override entries in
+`~/.config/smortboard/catalog.json` (under `XDG_CONFIG_HOME` when set):
+
+```json
+{
+  "openai": {
+    "models": [
+      {"id": "your-model-id", "label": "Your model", "tier": "standard"}
+    ]
+  }
+}
+```
+
+To estimate Codex spend, add `price_per_mtok` with numeric `input`,
+`cached_input` and `output` rates to the model entry. Supply your own rates;
+the packaged catalog assumes none. Estimates carry `~`; missing prices show
+`unknown`. An enabled cumulative spend cap refuses new starts when prior spend
+is unknown. Codex's per-run watchdog acts when token usage arrives, which the
+measured CLI emitted at turn completion, so it cannot guarantee a hard dollar
+ceiling during the turn. See the [event spike](docs/spikes/S4-codex-events.md)
+and [credential spike](docs/spikes/S7-codex-auth.md) for the measured limits.
 
 ### Cost and telemetry
 
@@ -675,7 +788,7 @@ thing it was built to do.
 **What will change.** Anything on the rough list. The database migrates itself forward on every open,
 so upgrading does not cost you your boards - but this is a `0.1.x`, and settings, defaults and the
 shape of individual panels are expected to move. The concepts above - cards, leases, the two gates,
-the landing lock, never merging - are the parts that are not going to.
+the landing lock, and human-only merges into main - are the parts that are not going to.
 
 ### Sending a report
 
@@ -721,18 +834,43 @@ A flag beats the matching `SMORTBOARD_*` env var, which beats the default.
 scatter database files. Configuration and tokens live separately, under `~/.config/smortboard`
 (`%APPDATA%\smortboard` on Windows).
 
-Board-wide settings (settings panel, `o`): `findings_route`, `orchestrator_model`, `worker_model`,
-`reviewer_model`, `max_parallel`, `resume_briefing`, `gate_timeout_seconds`, `auto_switch_profiles`,
-the per-run caps `worker_budget_usd`, `reviewer_budget_usd`, `orchestrator_budget_usd`,
-`fold_budget_usd`, the per-card `card_total_budget_usd`, and `mission_control_read_paths` (absolute
-paths mission control may also read). Per board: its own parallel cap and `daily_budget_usd`.
+**The settings panel** (`o`) is three groups: how the board behaves, which lab and model each role
+runs on, and what it may spend.
+
+<table>
+<tr>
+<td width="33%"><img src="docs/images/settings-general.jpg" alt="General board settings: the mouse toggle, how many cards run at once globally and per board, the resume briefing, the gate timeout and the mall cam interval" width="100%"></td>
+<td width="33%"><img src="docs/images/settings-labs.jpg" alt="Labs and models: automatic credential profile rotation, and a primary model plus a fallback order for the worker, reviewer, orchestrator and fold" width="100%"></td>
+<td width="33%"><img src="docs/images/settings-cost.jpg" alt="Spend caps per run: a card run, a review, a mission control turn, a fold, and a per-card total across every run" width="100%"></td>
+</tr>
+<tr>
+<td align="center"><sub>general — how it behaves</sub></td>
+<td align="center"><sub>labs and models — who runs what</sub></td>
+<td align="center"><sub>cost control — what it may spend</sub></td>
+</tr>
+</table>
+
+Every one of those is a stored setting: `findings_route`, the per-role `*_lab` and `*_model` pairs
+and their `*_cross_lab_fallback` lists, `max_parallel`, `resume_briefing`, `gate_timeout_seconds`,
+`auto_switch_profiles`, the per-run caps `worker_budget_usd`, `reviewer_budget_usd`,
+`orchestrator_budget_usd`, `fold_budget_usd`, the per-card `card_total_budget_usd`, and
+`mission_control_read_paths` (absolute paths mission control may also read). Per board: its own
+parallel cap, its `daily_budget_usd`, and its merge mode.
 
 ### Card token
 
-| OS | Token file |
+Adding a profile with `shift`+`p` writes these files for you, at mode 600. This is what it writes,
+for when you would rather do it by hand or script it.
+
+| What | Where |
 |---|---|
-| macOS, Linux | `~/.config/smortboard/card_token` (`$XDG_CONFIG_HOME/smortboard/card_token` if set) |
-| Windows | `%APPDATA%\smortboard\card_token` |
+| the original single Claude token | `~/.config/smortboard/card_token`, or `%APPDATA%\smortboard\card_token` on Windows |
+| any named profile | `~/.config/smortboard/tokens/<lab>/<name>` - `<lab>` being `anthropic` or `openai` |
+
+`$XDG_CONFIG_HOME` is honoured where it is set. An OpenAI profile holds either the whole
+`~/.codex/auth.json` or an API key, depending on the kind chosen when it was added; a bare access
+token pulled out of that JSON is refused, which is measured in
+[the credential spike](docs/spikes/S7-codex-auth.md).
 
 - **Linux:** the macOS command in [Install](#install) with `wl-paste` (Wayland) or
   `xclip -selection clipboard -o` (X11) in place of `pbpaste`.
@@ -745,15 +883,14 @@ paths mission control may also read). Per board: its own parallel cap and `daily
   ```
 
 - **By hand:** create the file, `chmod 600` it, then paste the token in with any editor.
-- **Elsewhere:** `SMORTBOARD_CARD_TOKEN_PATH` points at any file. With no file, the board falls back
-  to the OS credential store (service `smortboard-card-token`, account `smortboard`).
-- **Several subscriptions:** `shift`+`p`, paste each token under its own profile name; it lands at
-  `~/.config/smortboard/tokens/<name>` (mode 600).
+- **Elsewhere:** `SMORTBOARD_CARD_TOKEN_PATH` points at any file. Credentials are read only from
+  files; a missing file requires saving a token before running a card.
+- **Several subscriptions, or both labs:** `shift`+`p`, one profile per credential, each under its
+  own name. The board rotates to the next profile of the same lab when the active one is
+  rate-limited; crossing to the other lab needs a fallback list per role, which is deliberate.
 
-**A mode-600 file is not a shortcut.** It is how Claude Code itself keeps credentials on Linux, and
-where macOS falls back to when the Keychain refuses a write
-([Claude Code docs: credential management](https://code.claude.com/docs/en/authentication.md)).
-`claude setup-token` saves nothing itself, which is why the token has to be stored by hand.
+Neither `claude setup-token` nor `codex login` hands its credential to the board. That is why the
+board stores its own copy, and why it is a model-only token rather than your login.
 
 ### Repos and their test command
 
@@ -827,8 +964,20 @@ uv run ruff check . && uv run ruff format --check .
 uv run pytest -q          # includes the js suite (tests/js/*.mjs) when node is installed
 ```
 
-Neither suite calls a model. CI runs the same on every pull request and must pass before anything
-reaches `main`. `tools/shoot_docs_images.py` retakes this page's screenshots against the demo board.
+The suite runs in parallel by default (`-n auto`), which is what keeps it worth running: it is a
+thousand small I/O-bound tests, and measured on ten cores it takes about 20 seconds that way against
+roughly three minutes on one process. Pass `-n0` when you want one test's output in order, or a
+debugger.
+
+That shapes the loop. Commit as often as the work wants and let ruff be the only thing that runs -
+about a second. Run the file you are changing while you work, `--lf` after a failure, and the whole
+suite once before you push. Running the suite per commit buys nothing CI does not already guarantee
+and turns an afternoon of small commits into an afternoon of waiting.
+
+Neither suite calls a model. CI runs the same checks on every pull request and must pass before
+anything reaches `main`. A markdown-only change skips the toolchain and the suite but still reports,
+so a documentation pull request stays mergeable rather than waiting on a required check that never
+starts. A second push to a branch cancels the run it superseded. `tools/shoot_docs_images.py` retakes this page's screenshots against the demo board.
 `docs/PLAN.md` holds the plan and the containment reasoning, `docs/PHASE1-CONTRACTS.md` the schema and
 API, `docs/PROMPTS.md` the prompt layering, and `docs/spikes/` what was proven before it was built on.
 

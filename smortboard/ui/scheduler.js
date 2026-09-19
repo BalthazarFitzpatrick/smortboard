@@ -51,7 +51,13 @@ function renderScheduleStatus(view) {
 // manual run's phase shows (board.js's showRun) - a card started by run-all looks no different
 // from one started by hand, which is the point
 function applyScheduleToCards(view) {
-  view.running.forEach(id => showRun(id, 'running'));
+  view.running.forEach(id => {
+    showRun(id, 'running');
+    // whatever the CTA named before this run started (a blocked reason, a stale queue note) is
+    // stale the moment the queue actually starts the card - the run itself is now the story
+    const note = actionNote(id);
+    if (note) note.textContent = 'Running…';
+  });
   const waitingIds = new Set(Object.keys(view.waiting));
   Object.entries(view.waiting).forEach(([id, reason]) => showRun(id, 'waiting', null, reason));
   // position is 1-based so "queued, 1 of 3" reads as the front of the line, not the back

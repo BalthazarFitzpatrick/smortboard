@@ -8,7 +8,13 @@ import subprocess
 
 import pytest
 
-from smortboard.repo_image import BuildResult, build_repo_image, detect_stack, dockerfile_for
+from smortboard.repo_image import (
+    BuildResult,
+    build_repo_image,
+    detect_stack,
+    dockerfile_for,
+    rebuild_if_stale,
+)
 from smortboard.store.api import Store
 
 
@@ -17,6 +23,16 @@ def store(tmp_path):
     s = Store(tmp_path / "b.db")
     yield s
     s.close()
+
+
+# a fake `run` never shells out, so a real docker on PATH is not what any of these tests are
+# proving - without this, they only passed on a machine that happened to have docker installed,
+# and failed the gate itself (no docker binary in the sandboxed test container). the one test that
+# wants shutil.which to report "missing" overrides this with its own monkeypatch, which wins since
+# it runs after fixture setup
+@pytest.fixture(autouse=True)
+def _docker_on_path(monkeypatch):
+    monkeypatch.setattr("smortboard.repo_image.shutil.which", lambda name: "/usr/bin/docker")
 
 
 def _fake_run(returncode=0, stdout="build ok", stderr=""):
@@ -128,3 +144,82 @@ def test_docker_missing_from_path_is_reported_without_calling_run(tmp_path, stor
 def test_build_result_is_a_plain_dataclass():
     r = BuildResult(ok=True, tag="x:latest", log="")
     assert r.ok and r.tag == "x:latest"
+
+
+# ---- rebuild_if_stale -----------------------------------------------------------------------
+
+
+def _init_git_repo(path):
+    _run_git = ["git", "-C", str(path)]
+    subprocess.run([*_run_git, "init", "-b", "main"], check=True, capture_output=True)
+    subprocess.run([*_run_git, "config", "user.email", "a@b.c"], check=True, capture_output=True)
+    subprocess.run([*_run_git, "config", "user.name", "a"], check=True, capture_output=True)
+
+
+def _commit_uv_lock(path, when):
+    (path / "uv.lock").write_text("version = 1\n")
+    env = {**__import__("os").environ, "GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when}
+    subprocess.run(["git", "-C", str(path), "add", "uv.lock"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "-m", "uv.lock"],
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
+def _probe(created_at, cmd, timeout=10, cwd=None):
+    if cmd[:4] == ["docker", "image", "inspect", "-f"]:
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"{created_at}\n", stderr="")
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+
+
+def test_rebuild_if_stale_rebuilds_when_uv_lock_postdates_the_image(tmp_path, store):
+    _init_git_repo(tmp_path)
+    _commit_uv_lock(tmp_path, "2026-09-19T12:00:00+00:00")
+    board = store.create_board("b")
+    repo = store.create_repo(board["id"], "myrepo", str(tmp_path), "main")
+    repo = {**repo, "image": "myrepo-repo:latest"}
+
+    result = rebuild_if_stale(
+        repo,
+        run=_fake_run(),
+        probe=lambda cmd, timeout=10, cwd=None: _probe("2026-09-01T00:00:00Z", cmd, timeout, cwd),
+    )
+    assert result is not None
+    assert result.ok
+    assert result.tag == "myrepo-repo:latest"
+
+
+def test_rebuild_if_stale_skips_a_fresh_image(tmp_path, store):
+    _init_git_repo(tmp_path)
+    _commit_uv_lock(tmp_path, "2026-01-01T00:00:00+00:00")
+    board = store.create_board("b")
+    repo = store.create_repo(board["id"], "myrepo", str(tmp_path), "main")
+    repo = {**repo, "image": "myrepo-repo:latest"}
+
+    called = []
+    result = rebuild_if_stale(
+        repo,
+        run=lambda *a, **k: called.append(1),
+        probe=lambda cmd, timeout=10, cwd=None: _probe("2026-09-19T00:00:00Z", cmd, timeout, cwd),
+    )
+    assert result is None
+    assert called == []
+
+
+def test_rebuild_if_stale_never_touches_a_hand_set_custom_image(tmp_path, store):
+    _init_git_repo(tmp_path)
+    _commit_uv_lock(tmp_path, "2026-09-19T12:00:00+00:00")
+    board = store.create_board("b")
+    repo = store.create_repo(board["id"], "myrepo", str(tmp_path), "main")
+    repo = {**repo, "image": "some-custom-image:v3"}
+
+    called = []
+    result = rebuild_if_stale(
+        repo,
+        run=lambda *a, **k: called.append(1),
+        probe=lambda cmd, timeout=10, cwd=None: _probe("2026-09-01T00:00:00Z", cmd, timeout, cwd),
+    )
+    assert result is None
+    assert called == []
