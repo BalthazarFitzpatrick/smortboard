@@ -21,6 +21,7 @@ from smortboard.exec.runner import (
 )
 from smortboard.exec.worktrees import (
     WorktreeError,
+    branch_diverged_from_origin,
     create_worktree,
     destroy_worktree,
     list_worktrees,
@@ -39,7 +40,71 @@ def _init_repo(path):
     )
 
 
+def _with_bare_origin(repo):
+    bare = repo.parent / f"{repo.name}-origin.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(repo), str(bare)], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(bare)], check=True)
+    return bare
+
+
 # -- worktrees ---------------------------------------------------------------
+
+
+def test_branch_diverged_from_origin_detects_a_moved_branch(tmp_path):
+    """found for real: a worktree held one commit while origin had two newer ones"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    bare = _with_bare_origin(repo)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "card/x"], check=True)
+    subprocess.run(["git", "-C", str(repo), "push", "-q", "-u", "origin", "card/x"], check=True)
+
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True)
+    subprocess.run(["git", "-C", str(other), "checkout", "-q", "card/x"], check=True)
+    subprocess.run(["git", "-C", str(other), "config", "user.email", "o@o.com"], check=True)
+    subprocess.run(["git", "-C", str(other), "config", "user.name", "o"], check=True)
+    (other / "extra.txt").write_text("external work\n")
+    subprocess.run(["git", "-C", str(other), "add", "extra.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(other), "commit", "-q", "-m", "external"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "-C", str(other), "push", "-q", "origin", "card/x"], check=True)
+
+    assert branch_diverged_from_origin(repo, "card/x") is True
+
+
+def test_branch_diverged_from_origin_is_false_when_in_sync(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _with_bare_origin(repo)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "card/x"], check=True)
+    subprocess.run(["git", "-C", str(repo), "push", "-q", "-u", "origin", "card/x"], check=True)
+
+    assert branch_diverged_from_origin(repo, "card/x") is False
+
+
+def test_branch_diverged_from_origin_is_none_when_never_pushed(tmp_path):
+    """a card branch on its first run, before any push, is not a divergence"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _with_bare_origin(repo)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "card/x"], check=True)
+
+    assert branch_diverged_from_origin(repo, "card/x") is None
+
+
+def test_branch_diverged_from_origin_is_none_with_no_remote(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "card/x"], check=True)
+
+    assert branch_diverged_from_origin(repo, "card/x") is None
 
 
 def test_create_worktree_round_trip(tmp_path):
