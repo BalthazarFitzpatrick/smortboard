@@ -21,6 +21,7 @@ development into main stays the operator's.
 from __future__ import annotations
 
 import re
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,7 @@ from smortboard.exec.worktrees import (
 from smortboard.labs.routing import command_model, run_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.repo_image import rebuild_if_stale
+from smortboard.review.base_red import check_base_red
 from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.integrate import integrate, open_release_request
 from smortboard.review.merge_request import (
@@ -256,6 +258,35 @@ def _block(store: Store, state: LifecycleResult, reason_code: str, note: str) ->
     return state
 
 
+def _block_on_failed_gate(
+    store: Store,
+    state: LifecycleResult,
+    card_id: str,
+    repo: dict[str, Any],
+    base: str,
+    gate: Any,
+    after_merging: str = "",
+) -> LifecycleResult:
+    """blocks TESTS_FAILED, leading with "base is red" when every failing test also fails on a
+    clean checkout of the base - the card did not cause those. The reason code stays TESTS_FAILED:
+    the card still cannot pass its gate, and a new code would need a schema migration."""
+    note = _tests_failed_note(gate.command, gate.exit_code, gate.output, after_merging)
+    try:
+        red = check_base_red(repo, base, card_id, gate.output)
+    except (GateUnavailable, OSError, subprocess.SubprocessError):
+        red = None
+    if red is not None:
+        sha, ids = red
+        store.append_event(card_id, "base_red", {"base": base, "sha": sha, "tests": ids})
+        note = (
+            f"BASE IS RED: {len(ids)} failing test(s) also fail on {base} ({sha[:8]}) without any "
+            "of this card's changes, so the card did not cause them. Fix the base or merge a fix "
+            f"into it, then run the card again: {', '.join(t.rsplit('::', 1)[-1] for t in ids[:3])}"
+            f"{' ...' if len(ids) > 3 else ''}\n\n{note}"
+        )
+    return _block(store, state, "TESTS_FAILED", note)
+
+
 def _base_for_fresh_cut(store: Store, state: LifecycleResult, repo_path: str, base: str) -> str:
     """the ref a fresh worktree is cut from, for a card that depends on another.
 
@@ -406,11 +437,8 @@ def _sync_and_retest(
                 else f"The test gate could not run after merging {base}: {exc}",
             )
         if not gate.passed:
-            return _block(
-                store,
-                state,
-                "TESTS_FAILED",
-                _tests_failed_note(gate.command, gate.exit_code, gate.output, after_merging=base),
+            return _block_on_failed_gate(
+                store, state, card_id, repo, base, gate, after_merging=base
             )
     return None
 
@@ -712,12 +740,7 @@ def run_card_lifecycle(
         if stopped_now():
             return _stopped(store, state)
         if not gate.passed:
-            return _block(
-                store,
-                state,
-                "TESTS_FAILED",
-                _tests_failed_note(gate.command, gate.exit_code, gate.output),
-            )
+            return _block_on_failed_gate(store, state, card_id, repo, base, gate)
 
         phase("reviewing")
         diff_text = branch_diff(repo["path"], base, tree.branch)

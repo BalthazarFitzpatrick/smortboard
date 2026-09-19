@@ -412,6 +412,42 @@ def test_a_rerun_with_nothing_changed_since_a_failed_gate_skips_the_worker(
     assert any("Nothing has changed" in c["body"] for c in store.list_comments(card_id))
 
 
+def test_a_gate_failure_the_base_already_has_is_reported_as_base_red(board, monkeypatch):
+    """measured 2026-09-19: three cards failed tests a later base commit had fixed"""
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _failing_gate_that_records(monkeypatch)
+    monkeypatch.setattr(
+        lifecycle, "check_base_red", lambda *a, **k: ("abcdef1234", ["tests/a.py::test_one"])
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.blocked_reason_code == "TESTS_FAILED"
+    assert any("BASE IS RED" in c["body"] for c in store.list_comments(card_id))
+    assert "base_red" in [e["kind"] for e in store.list_events(card_id)]
+
+
+def test_an_ordinary_gate_failure_is_not_called_base_red(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _failing_gate_that_records(monkeypatch)
+    monkeypatch.setattr(lifecycle, "check_base_red", lambda *a, **k: None)
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert not any("BASE IS RED" in c["body"] for c in store.list_comments(card_id))
+
+
+def test_a_base_check_that_cannot_run_falls_back_to_the_ordinary_block(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _failing_gate_that_records(monkeypatch)
+
+    def _down(*a, **k):
+        raise GateUnavailable("docker is not running")
+
+    monkeypatch.setattr(lifecycle, "check_base_red", _down)
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    assert result.blocked_reason_code == "TESTS_FAILED"
+
+
 def test_a_rerun_after_the_tree_changed_runs_the_worker_again(board, tmp_path, monkeypatch):
     store, card_id = board
     _stub_gates(monkeypatch)
