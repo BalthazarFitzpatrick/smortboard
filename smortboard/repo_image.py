@@ -102,6 +102,9 @@ def build_repo_image(repo: dict[str, Any], run: Any = subprocess.run) -> BuildRe
 
     Never overwrites an existing docker/smortboard-repo.Dockerfile - that file is reviewable and
     editable by a person the moment it exists, and this module treats it as theirs from then on.
+    Ownership means a repo whose own tests drive a real browser can add a layer for it - see
+    docker/screenshot.Dockerfile for the worked example of installing chromium on top of the same
+    card base image.
     """
     repo_path = Path(repo["path"])
     stack = detect_stack(repo_path)
