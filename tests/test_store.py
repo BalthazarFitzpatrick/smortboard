@@ -568,6 +568,56 @@ def test_set_dependencies_on_a_missing_card_is_not_found(store):
         store.set_dependencies("nope", [])
 
 
+def test_an_existing_database_migrates_to_base_red_without_losing_a_column(tmp_path):
+    """a board.db at migration 21 gets BASE_RED in its CHECK - sqlite cannot ALTER one, so migration
+    22 rebuilds cards. every column added since migration 12 (complexity, lab) has to survive, and
+    so do the child rows that point at the card"""
+    import sqlite3
+
+    from smortboard.store.schema import _MIGRATIONS
+
+    db_path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys = ON")
+    for script in _MIGRATIONS[:21]:
+        conn.executescript(script)
+    conn.execute("PRAGMA user_version = 21")
+    conn.execute("INSERT INTO boards (id, name, position, created_at) VALUES ('b1','b',0,'t')")
+    conn.execute(
+        "INSERT INTO repos (id, board_id, name, path, default_branch) "
+        "VALUES ('r1','b1','repo','/repo','main')"
+    )
+    conn.execute(
+        "INSERT INTO cards (id, board_id, repo_id, title, status, blocked_reason_code, position, "
+        "created_at, updated_at, complexity, lab, model, ledger_task) "
+        "VALUES ('c1','b1','r1','old card','doing','TESTS_FAILED',0,'t','t',3,'codex','m','7')"
+    )
+    conn.execute(
+        "INSERT INTO card_tasks (id, card_id, position, text) VALUES ('t1','c1',0,'do it')"
+    )
+    conn.execute("INSERT INTO card_leases (id, card_id, path_glob) VALUES ('l1','c1','src/**')")
+    conn.execute(
+        "INSERT INTO events (id, card_id, seq, kind, payload_json, created_at) "
+        "VALUES ('e1','c1',1,'result','{}','t')"
+    )
+    conn.commit()
+    conn.close()
+
+    with Store(db_path) as store:
+        card = store.get_card("c1")
+        assert card["blocked_reason_code"] == "TESTS_FAILED"
+        assert (card["complexity"], card["lab"], card["model"]) == (3, "codex", "m")
+        assert card["tasks"][0]["text"] == "do it"
+        assert card["leases"][0]["path_glob"] == "src/**"
+        assert [e["kind"] for e in store.list_events("c1")] == ["result"]
+        assert store._conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+        store.update_card("c1", blocked_reason_code="BASE_RED", review_flag=True)
+        assert store.get_card("c1")["blocked_reason_code"] == "BASE_RED"
+        with pytest.raises(BlockedReasonInvalidError):
+            store.update_card("c1", blocked_reason_code="NOT_A_REAL_REASON")
+
+
 def test_an_existing_database_migrates_to_merge_conflict(tmp_path):
     """a board.db stuck at migration 10 (no MERGE_CONFLICT yet) gets the wider CHECK constraint
     without losing any of its cards, tasks, criteria or leases - the CHECK can't be ALTERed in

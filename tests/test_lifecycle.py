@@ -421,7 +421,8 @@ def test_a_gate_failure_the_base_already_has_is_reported_as_base_red(board, monk
         lifecycle, "check_base_red", lambda *a, **k: ("abcdef1234", ["tests/a.py::test_one"])
     )
     result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
-    assert result.blocked_reason_code == "TESTS_FAILED"
+    assert result.blocked_reason_code == "BASE_RED"
+    assert store.get_card(card_id)["blocked_reason_code"] == "BASE_RED"
     assert any("BASE IS RED" in c["body"] for c in store.list_comments(card_id))
     assert "base_red" in [e["kind"] for e in store.list_events(card_id)]
 
