@@ -38,6 +38,7 @@ from smortboard.exec.worktrees import (
     WorktreeError,
     add_worktree,
     branch_diff,
+    branch_diverged_from_origin,
     branch_exists,
     branch_name,
     create_worktree,
@@ -526,6 +527,24 @@ def run_card_lifecycle(
         elif branch_exists(repo["path"], card_id):
             tree = add_worktree(repo["path"], card_id)
         else:
+            tree = None
+        # someone else pushed to this card's own branch since the board last saw it - the board's
+        # own push at the end of the run is never forced, so waiting until then only burns a full
+        # worker/gate/review turn on work that can never land anyway
+        if (
+            tree is not None
+            and has_remote(repo["path"])
+            and branch_diverged_from_origin(repo["path"], tree.branch)
+        ):
+            return _refuse(
+                store,
+                state,
+                f"{tree.branch} has commits on origin that this worktree does not - someone "
+                "else pushed to this card's own branch. Fetch and rebase or reset the branch "
+                "yourself, or delete the worktree and let the board recut it, then run this "
+                "card again.",
+            )
+        if tree is None:
             worktree_reused = False
             cut_base = base
             if card.get("depends_on"):

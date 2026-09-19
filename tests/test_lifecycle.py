@@ -193,6 +193,71 @@ def lifecycle_statuses():
     return STATUSES
 
 
+def test_a_reused_worktree_whose_branch_diverged_from_origin_is_refused(
+    board, tmp_path, monkeypatch
+):
+    """found for real: a worktree held one commit while origin had two newer ones, and the board
+    only discovered it when its own push failed at the very end of the run - refuse up front"""
+    from smortboard.exec.worktrees import WorktreeInfo
+
+    store, card_id = board
+    monkeypatch.setattr(lifecycle, "worktree_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        lifecycle,
+        "existing_worktree",
+        lambda *a, **k: WorktreeInfo(card_id=card_id, path=tmp_path, branch=f"card/{card_id}"),
+    )
+    monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: True)
+    monkeypatch.setattr(lifecycle, "branch_diverged_from_origin", lambda *a, **k: True)
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "refused"
+    assert "someone else pushed" in result.refusal
+    assert backend.calls == []  # never reached the worker
+
+
+def test_a_reused_worktree_in_sync_with_origin_runs_as_before(board, tmp_path, monkeypatch):
+    from smortboard.exec.worktrees import WorktreeInfo
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "worktree_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        lifecycle,
+        "existing_worktree",
+        lambda *a, **k: WorktreeInfo(card_id=card_id, path=tmp_path, branch=f"card/{card_id}"),
+    )
+    monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: True)
+    monkeypatch.setattr(lifecycle, "branch_diverged_from_origin", lambda *a, **k: False)
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "opened"
+    assert backend.calls
+
+
+def test_a_reused_worktree_with_no_remote_skips_the_divergence_check(board, tmp_path, monkeypatch):
+    """a local-only repo has nowhere to fetch from - never even call the check"""
+    from smortboard.exec.worktrees import WorktreeInfo
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "worktree_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        lifecycle,
+        "existing_worktree",
+        lambda *a, **k: WorktreeInfo(card_id=card_id, path=tmp_path, branch=f"card/{card_id}"),
+    )
+    monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: False)
+    called = []
+    monkeypatch.setattr(
+        lifecycle, "branch_diverged_from_origin", lambda *a, **k: called.append(1) or True
+    )
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "opened"
+    assert called == []
+
+
 def test_a_card_with_no_repo_is_refused_with_a_reason(tmp_path, monkeypatch):
     store = Store(tmp_path / "b.db")
     b = store.create_board("b")
