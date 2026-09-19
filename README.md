@@ -1,37 +1,23 @@
 # smortboard
 
-**A kanban board whose cards are worked by coding agents.**
-
-**One card is one piece of work.** It carries the brief, the acceptance criteria, the paths the
-agent may write, and the model it runs on.
-
-Press a key and the agent picks it up in its own container, on its own git branch.
-
-When it says it is done, the board does not take its word for it. It re-runs the repo's own tests
-itself, hands the diff to a second, read-only agent that reviews it, and only then pushes the branch
-and opens a pull request.
-
-It never merges into `main`. Anything that needs a decision from you stops and waits in one inbox.
-
-**Two labs.** A run can go to Claude Code or to OpenAI's Codex, chosen per role and per card - so
-mission control can plan on one while the workers execute on the other, and the reviewer can read a
-diff from a lab that did not write it.
-
-**Two modes.** By default a finished card waits at its pull request until you accept it. Tell a
-board otherwise and it lands them itself - and says so with a pulsing frame you can see from across
-the room.
+**A kanban board that agents work, not you.** Cards get a brief, a lease on which files may change,
+and a model. Press a key and an agent takes it, in its own container, on its own branch. It never
+merges into `main` - the board tests it, a second agent reviews it, and a pull request waits for you.
 
 ![A payments service mid-sprint: cards in every state across the columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
 
+![A card opened over the board: criteria, tasks, dependencies and the run as a timeline - tests passed, reviewer approved, pull request open](docs/images/hero-card.jpg)
+
+![Both drawers open: a working agent's transcript on the left, the orchestrator planning cards on the right](docs/images/hero-agents.jpg)
+
 <sub>Every screenshot on this page is the built-in demo board: invented projects, invented cards.</sub>
 
-> **Public beta.** It has been run daily on real repos by one person on macOS. Nobody else has
-> tested it, so the rough edges are the ones a single operator never hits. See [Beta](#beta) for
-> what is solid, what is not, and how to file a report.
+> **Public beta.** Run daily on real repos by one person on macOS. Nobody else has tested it, so the
+> rough edges are the ones a single operator never hits. See [Beta](#beta) for what is solid, what
+> is not, and how to file a report.
 
 **Contents** ·
-[Install](#install) ·
-[Quick start](#quick-start) ·
+[Install & start](#install--start) ·
 [Concepts](#concepts) ·
 [How to use it well](#how-to-use-it-well) ·
 [Keyboard](#keyboard) ·
@@ -42,7 +28,40 @@ the room.
 
 ---
 
-## Install
+## Install & start
+
+Four commands, then look before you build anything real:
+
+```bash
+git clone https://github.com/BalthazarFitzpatrick/smortboard && cd smortboard
+uv sync
+docker build -f docker/card.Dockerfile -t smortboard-card:latest .
+uv run smortboard --demo
+```
+
+That prints and opens `http://127.0.0.1:8001/ui/index.html?key=...` - a throwaway demo board, three
+invented projects, cards in every state, on port 8001 so it never touches your real one. It never
+touches your real database either. Click around; nothing here needs a credential or Docker running
+a card yet.
+
+**Ready for real work?** `uv run smortboard` (no `--demo`) starts your actual board on port 8000.
+Three things before a card can run - the pre-flight checklist (`h`) names whichever is missing:
+
+1. **A lab credential.** `shift`+`p`, add a profile, paste what `claude setup-token` or `codex login`
+   gives you. Never your own login - see [Card token](#card-token) for exactly what and how.
+2. **Docker running**, so a card has somewhere to execute.
+3. **A board and a repo.** `b` -> from local repo -> pick a clone with its default branch pushed.
+   Set its test command on the repo's row; a repo with none cannot finish a card.
+
+Then: `.` to tell mission control what you want built, `r` on a card to run it, `w` to run the whole
+board. Anything that needs you lands in the inbox, `n`.
+
+The full requirements table, credential details, and a walkthrough of your first board are under
+[Install, in full](#install-in-full) and [Quick start, in full](#quick-start-in-full) below.
+
+---
+
+## Install, in full
 
 ### Requirements
 
@@ -109,26 +128,15 @@ under [Card token](#card-token).
 No checkout at all: `uvx --from git+https://github.com/BalthazarFitzpatrick/smortboard smortboard`
 runs the board, though you still need the clone once to build the image.
 
-## Quick start
+## Quick start, in full
 
-### Look before you install anything else
+### The demo, in detail
 
-```bash
-uv run smortboard --demo
-```
-
-```
-smortboard serving on http://127.0.0.1:8001/ui/index.html?key=... (demo db, invented content)
-```
-
-Three invented projects with cards in every state, on port **8001** - beside your real board on
-8000, not on top of it. **The demo never touches your real database.** `--demo` bypasses the
-database resolution entirely: it ignores `--db`, ignores `SMORTBOARD_DB`, never looks at the user
-data dir, and writes only to a fresh file in a throwaway directory that does not outlive the
-process. Its runs and pull requests are seeded history, so pressing `r` there would need Docker and
-a real repo.
-
-It is the right way to learn the keys and read the concepts below against something real.
+`--demo` bypasses the database resolution entirely: it ignores `--db`, ignores `SMORTBOARD_DB`,
+never looks at the user data dir, and writes only to a fresh file in a throwaway directory that does
+not outlive the process. Its runs and pull requests are seeded history, so pressing `r` there would
+need Docker and a real repo. It is the right way to learn the keys and read the concepts below
+against something real.
 
 ### Your first board
 
@@ -719,8 +727,6 @@ this list was read from, so the two cannot drift.
 | `s` | this shortcut list |
 | `1`-`9` | jump to board 1-9 |
 
-![Both drawers open: a working agent's transcript on the left, the orchestrator planning cards on the right](docs/images/hero-agents.jpg)
-
 ---
 
 ## Security
@@ -884,7 +890,7 @@ for when you would rather do it by hand or script it.
 token pulled out of that JSON is refused, which is measured in
 [the credential spike](docs/spikes/S7-codex-auth.md).
 
-- **Linux:** the macOS command in [Install](#install) with `wl-paste` (Wayland) or
+- **Linux:** the macOS command in [Install, in full](#install-in-full) with `wl-paste` (Wayland) or
   `xclip -selection clipboard -o` (X11) in place of `pbpaste`.
 - **Windows (PowerShell):**
 
