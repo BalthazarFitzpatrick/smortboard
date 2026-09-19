@@ -198,6 +198,17 @@ def branch_diverged_from_origin(
     return is_ancestor.returncode != 0
 
 
+def rev_parse(repo_path: str | Path, ref: str) -> str | None:
+    """the commit `ref` points at, or None when it does not resolve"""
+    result = subprocess.run(
+        ["git", "-C", str(Path(repo_path).resolve()), "rev-parse", "--verify", "--quiet", ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
 def delete_branch(repo_path: str | Path, card_id: str) -> None:
     """drops the card's local branch. -D because a rejected attempt is never merged anywhere"""
     with repo_lock(repo_path):

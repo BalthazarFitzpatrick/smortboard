@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.actions import with_next
-from smortboard.briefing import resume_briefing
+from smortboard.briefing import repeats_failed_attempt, resume_briefing
 from smortboard.exec.backends import (
     CardRuntimeUnavailable,
     require_card_runtime,
@@ -46,6 +46,7 @@ from smortboard.exec.worktrees import (
     existing_worktree,
     fetch_base,
     has_remote,
+    rev_parse,
     worktree_path,
 )
 from smortboard.labs.routing import command_model, run_ref
@@ -570,6 +571,48 @@ def run_card_lifecycle(
     settings = write_container_guards(tree.path, _lease_globs(card))
     store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
 
+    # a reused branch is brought up to date BEFORE the worker and the gate, not only at handover:
+    # measured 2026-09-19, three cards 28-59 commits behind development failed their gate on tests
+    # a later base commit had already fixed, and every re-run reused the same stale tree
+    conflict_note = None
+    # what "the card's own commits" are counted against: once origin/<base> is merged in, the local
+    # base can lag it, and the merged-in commits would read as the card's work
+    commit_base = base
+    if worktree_reused:
+        synced = sync_with_base(tree.path, base)
+        if synced is not None and synced.clean:
+            commit_base = f"origin/{base}"
+        if synced is not None and not synced.clean:
+            base_ref = f"origin/{base}"
+            store.append_event(
+                card_id,
+                "merge_conflict",
+                {"base_ref": base_ref, "files": synced.conflicting_files},
+            )
+            files = ", ".join(synced.conflicting_files) or "unknown files"
+            conflict_note = (
+                f"Merging {base_ref} into this branch conflicts in: {files}. Merge {base_ref} "
+                "yourself, resolve those files, then commit the merge - the test gate runs "
+                "against this branch, so it has to contain the base first."
+            )
+
+    fingerprint = {
+        "head": rev_parse(tree.path, "HEAD"),
+        "base_head": rev_parse(tree.path, f"origin/{base}"),
+        "notes": sum(1 for c in card.get("comments") or [] if c.get("author") == AUTHOR_KEY),
+    }
+    if worktree_reused and repeats_failed_attempt(store, card_id, fingerprint):
+        return _block(
+            store,
+            state,
+            "TESTS_FAILED",
+            "Nothing has changed since the last attempt: same branch head, same base, no new "
+            "note - and its tests failed. Running the worker again would repeat that failure. "
+            "Change something first (merge the base, fix what the gate names, add a note), then "
+            "run it again.",
+        )
+    store.append_event(card_id, "attempt_fingerprint", fingerprint)
+
     # the card's own model wins, then the board's worker setting, then sonnet. the reviewer has a
     # setting of its own, so a cheap worker never means a cheap review
 
@@ -611,7 +654,7 @@ def run_card_lifecycle(
                 "The run credential was refused. " + get_adapter(worker_lab).setup_hint(),
             )
         if run.subtype in BUDGET_CAPPED_SUBTYPES:
-            if branch_has_commits(repo["path"], tree.branch, base):
+            if branch_has_commits(repo["path"], tree.branch, commit_base):
                 store.append_event(card_id, "budget_capped_with_commits", {"subtype": run.subtype})
                 _note(
                     store,
@@ -645,6 +688,8 @@ def run_card_lifecycle(
     briefing = None
     if configured.get("resume_briefing") != "off":
         briefing = resume_briefing(store, card_id, worktree_reused=worktree_reused)
+    if conflict_note:
+        briefing = f"{briefing}\n\n{conflict_note}" if briefing else conflict_note
 
     phase("running")
     if (stopped := work(build_card_prompt(card, briefing))) is not None:
@@ -653,7 +698,7 @@ def run_card_lifecycle(
         return _stopped(store, state)
     # no commit means nothing to test or review - measured, a card that ended its turn early had
     # its unchanged tree run through the full gate and an approved review of an empty diff first
-    if not branch_has_commits(repo["path"], tree.branch, base):
+    if not branch_has_commits(repo["path"], tree.branch, commit_base):
         return _refuse(store, state, NO_COMMITS_NOTE.format(branch=tree.branch, base=base))
 
     # both gates, and on the fix route the findings go back to the worker until the reviewer

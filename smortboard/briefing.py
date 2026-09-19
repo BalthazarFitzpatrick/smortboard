@@ -27,6 +27,27 @@ def _reached_worker(segment: list[dict[str, Any]]) -> bool:
     return any(event["kind"] == "worker_summary" for event in segment)
 
 
+def repeats_failed_attempt(store: Store, card_id: str, fingerprint: dict[str, Any]) -> bool:
+    """true when the last attempt that reached the worker ended on a failed test gate and started
+    from exactly this fingerprint - same branch head, same base head, same operator notes.
+
+    Nothing the worker sees or the gate runs would differ, so another run only repeats the failure
+    at the cost of a worker run. Measured 2026-09-19: three cards each re-ran a worker that said
+    "all work already committed" (~$0.25 a run) into the same gate failure.
+    """
+    segments = _attempts(store.list_events(card_id))
+    if segments and all(event["kind"] == "lifecycle_started" for event in segments[-1]):
+        segments = segments[:-1]
+    previous = next((s for s in reversed(segments) if _reached_worker(s)), None)
+    if previous is None:
+        return False
+    started = next(
+        (e["payload"] for e in reversed(previous) if e["kind"] == "attempt_fingerprint"), None
+    )
+    gate = _latest_test_gate(previous)
+    return started == fingerprint and gate is not None and not gate.get("passed")
+
+
 def _tool_use_blocks(segment: list[dict[str, Any]]) -> list[dict[str, Any]]:
     blocks = []
     for event in segment:
