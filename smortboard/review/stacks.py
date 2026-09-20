@@ -34,10 +34,16 @@ def dependency_landed(store, card):
     if not url:
         return False
     # accepting a protected-base card records approval, not a merge
+    from smortboard.review.land_card import _pr_reached_base
     from smortboard.scheduler import _cached_pr_view
 
     state = _cached_pr_view(repo["path"], url)
-    return not state.error and state.merged and state.base == base
+    if state.error or not state.merged:
+        return False
+    # a merged PR's own recorded base never changes, so one retargeted before merging (found for
+    # real: smolsmort #9's parent branch merged into main via a base changed before merge) would
+    # never satisfy an exact string match again - same widening as already_landed (#208)
+    return _pr_reached_base(store, card, repo, base, state)
 
 
 def active_stack(store, card_id):
