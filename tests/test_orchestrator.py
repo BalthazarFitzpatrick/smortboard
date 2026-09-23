@@ -4,7 +4,12 @@ import json
 
 import pytest
 
-from smortboard.orchestrator import OrchestratorRegistry, run_orchestrator_turn
+from smortboard.orchestrator import (
+    OrchestratorRegistry,
+    build_system_prompt,
+    card_text_warnings,
+    run_orchestrator_turn,
+)
 from smortboard.store.api import Store
 
 
@@ -350,11 +355,23 @@ def test_the_orchestrator_budget_setting_caps_the_turn(store, board):
 
 
 def test_the_card_text_rules_ride_in_every_turn_prompt():
-    from smortboard.orchestrator import build_system_prompt
-
     prompt = build_system_prompt("", {})
     assert "CARD TEXT RULES" in prompt
-    assert "8 to 10 words" in prompt and "at most 20 words" in prompt
+    assert "title: at most 8 words" in prompt and "description: at most 20 words" in prompt
+    assert '"fox dug hole, dreams of nicer den"' in prompt, "the telegram-style example rides too"
+    assert "8 to 10" not in prompt, "a title has a maximum, never a minimum"
+
+
+def test_card_text_warnings_cap_the_title_at_eight_words_with_no_minimum():
+    assert card_text_warnings({"title": "fix login"}) == []
+    assert card_text_warnings({"title": "one two three four five six seven eight"}) == []
+    nine = "one two three four five six seven eight nine"
+    assert card_text_warnings({"title": nine}) == [
+        f'"{nine}" runs long: 9 words in the title (max 8)'
+    ]
+    long_criterion = " ".join(["word"] * 13)
+    notes = card_text_warnings({"title": "t", "criteria": ["short one", long_criterion]})
+    assert notes == ['"t" runs long: 1 criteria over 12 words']
 
 
 def test_long_card_text_is_reported_not_cut(store, board):
