@@ -4,13 +4,16 @@ import json
 
 import pytest
 
+from smortboard.consolidate import FOLD_JSON_SCHEMA
 from smortboard.orchestrator import (
+    ORCHESTRATOR_JSON_SCHEMA,
     OrchestratorRegistry,
     build_system_prompt,
     card_text_warnings,
     run_orchestrator_turn,
 )
 from smortboard.store.api import Store
+from tests.test_reviewer_path import _objects
 
 
 @pytest.fixture
@@ -204,6 +207,76 @@ def test_depends_on_resolves_against_an_existing_card_by_title(store, board):
     run_orchestrator_turn(store, board["id"], "add a dependent", runner=_runner(payload))
     new_card = next(c for c in store.list_cards(board["id"]) if c["title"] == "new one")
     assert store.get_dependencies(new_card["id"]) == [existing["id"]]
+
+
+# -- strict schemas: what codex's --output-schema accepts, and what comes back --
+
+
+@pytest.mark.parametrize(
+    "schema", [ORCHESTRATOR_JSON_SCHEMA, FOLD_JSON_SCHEMA], ids=["orchestrator", "fold"]
+)
+def test_mission_control_and_fold_schemas_are_strict_at_every_object_level(schema):
+    """the reviewer's failure on card 4c56f435 - `invalid_json_schema ... 'additionalProperties'
+    is required to be supplied and to be false` - holds for every schema codex is handed"""
+    objects = list(_objects(schema))
+    assert len(objects) == 2
+    for obj in objects:
+        assert obj["additionalProperties"] is False
+        assert sorted(obj["required"]) == sorted(obj["properties"])
+
+
+def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_them(store, board):
+    """strict output sends every key, the optional ones as null: no repo, no model, no ledger
+    link, no screenshot re-run, and no board note about any of them"""
+    card_schema = ORCHESTRATOR_JSON_SCHEMA["properties"]["cards"]["items"]["properties"]
+    assert all("null" in card_schema[key]["type"] for key in ("repo", "model", "lab", "task_id"))
+    bare = {
+        "title": "bare",
+        "description": "GOAL: bare",
+        "repo": None,
+        "criteria": ["bare works"],
+        "tasks": [],
+        "leases": ["x.py"],
+        "depends_on": [],
+        "model": None,
+        "lab": None,
+        "task_id": None,
+        "complexity": "low",
+    }
+    full = bare | {
+        "title": "full",
+        "repo": "repo",
+        "leases": ["y.py"],
+        "depends_on": ["bare"],
+        "model": "haiku",
+        "task_id": "t1",
+        "complexity": "high",
+    }
+    payload = {"reply": "ok", "plan": "p", "screenshot": None, "cards": [bare, full]}
+    assert set(payload) == set(ORCHESTRATOR_JSON_SCHEMA["properties"])
+    assert set(bare) == set(full) == set(card_schema)
+    calls = []
+
+    def run(prompt, model, budget_usd):
+        calls.append(prompt)
+        return json.dumps(payload)
+
+    result = run_orchestrator_turn(store, board["id"], "go", runner=run)
+    assert result.error is None
+    assert len(calls) == 1
+    by_title = {c["title"]: c for c in store.list_cards(board["id"])}
+    made_bare, made_full = by_title["bare"], by_title["full"]
+    assert [made_bare[key] for key in ("repo_id", "model", "lab", "ledger_task")] == [None] * 4
+    assert made_bare["complexity"] == 1
+    assert made_full["repo_id"] is not None
+    assert (made_full["model"], made_full["ledger_task"], made_full["complexity"]) == (
+        "haiku",
+        "t1",
+        3,
+    )
+    assert made_full["depends_on"] == [made_bare["id"]]
+    authors = [m["author"] for m in store.list_orchestrator_messages(board["id"])]
+    assert authors == ["operator", "orchestrator"]
 
 
 # -- OrchestratorRegistry: thinking flag and one turn per board --------------
