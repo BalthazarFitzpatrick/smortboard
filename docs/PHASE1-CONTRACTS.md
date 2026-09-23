@@ -1,8 +1,8 @@
 # Phase 1 contracts
 
 > **The Phase 1 contract, kept as the record.** The board has grown past it, and where this document
-> disagrees with the code or the README, they win. The main differences: ten blocked reason codes, not
-> seven (`MERGE_CONFLICT`, `API_UNREACHABLE` and `BASE_RED` joined); many more routes (see
+> disagrees with the code or the README, they win. The main differences: eleven blocked reason codes, not
+> seven (`MERGE_CONFLICT`, `API_UNREACHABLE`, `BASE_RED` and `OUTDATED` joined); many more routes (see
 > `smortboard/server/app.py`); `POST /api/cards` and a `PATCH` that changes a title or description
 > answer with the card plus a `warnings` list about long card text, never refusing or cutting;
 > `GET /api/cards/{id}` carries the same `next_action`, `next_action_short` and `handled_by_board` as

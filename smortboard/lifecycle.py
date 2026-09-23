@@ -455,7 +455,8 @@ def _sync_and_retest(
             "MERGE_CONFLICT",
             f"Merging {base_ref} into {tree.branch} conflicts in: "
             f"{', '.join(merge_result.conflicting_files) or 'unknown files'}.\n\n"
-            "Resuming this card lets the worker merge the base branch and resolve them.",
+            "Resuming this card rebases it onto the base in a fresh tree. If that still "
+            "conflicts, the card turns OUTDATED.",
         )
     if always_test or (merge_result is not None and merge_result.merged):
         try:

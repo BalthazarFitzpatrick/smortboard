@@ -20,6 +20,9 @@
 >   write no longer sinks committed work. On a usage limit the board switches to the fallback model by
 >   itself or asks first (`usage_limit_route`). Every run loads only its role's tools, with skills off,
 >   and an unchanged branch re-runs the gates without re-running the agent.
+> - **Rebase guard** (2026-09-23). When the base moves under a card, at run start or while its pull
+>   request waits, the board rebases the card's own commits onto it in a fresh tree. A rebase that
+>   conflicts blocks the card `OUTDATED`, the eleventh reason code, and leaves the branch alone.
 
 ## Context
 

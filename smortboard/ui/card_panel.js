@@ -143,7 +143,7 @@ const CTA_BLOCKED_LABELS = new Map([
   ['BASE_RED', 'Fix the base'],
   ['REVIEW_REJECTED', 'Review findings'],
   ['DEPENDENCY_REJECTED', 'Review dependency'],
-  ['MERGE_CONFLICT', 'Resolve conflicts'],
+  ['MERGE_CONFLICT', 'Resume to rebase'],
   ['API_UNREACHABLE', 'Retrying automatically'],
   ['OUTDATED', 'Redo on fresh base'],
 ]);

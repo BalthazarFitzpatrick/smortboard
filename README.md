@@ -910,7 +910,7 @@ inbox. In short:
 | `BASE_RED` | not the card's fault. Fix the base or merge a fix into it, then run the card again. |
 | `REVIEW_REJECTED` | read the findings. Real ones mean a fix; a wrong one means the card needed more context. |
 | `LEASE_CONFLICT` | almost always a lease written for a repo layout that does not exist. Approve the paths, or tell it to leave them alone. |
-| `MERGE_CONFLICT` | another card landed first. Resuming makes the worker merge the base and resolve it. |
+| `MERGE_CONFLICT` | another card landed first. Resuming rebases it onto the base in a fresh tree; if that still conflicts, it turns `OUTDATED`. |
 | `DEPENDENCY_REJECTED` | nothing to do here. Fix the dependency. |
 | `USAGE_LIMIT` | wait, or retry it on the fallback model from its row. Answering does nothing. |
 | `CRASH` | check the note, then resume - the worktree and commits are kept. |

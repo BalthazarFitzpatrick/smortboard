@@ -44,9 +44,9 @@ _ACTIONS = {
         "Fix and accept the rejected card it depends on - this one un-blocks itself then.",
     ),
     "MERGE_CONFLICT": (
-        "resolve, then r",
-        "Its branch no longer merges cleanly with the base - resume it (n or r) so the worker "
-        "merges the base branch and resolves the conflict, then commits the result.",
+        "n or r",
+        "Its branch no longer merges cleanly with the base - resume it (n or r) and the board "
+        "rebases it onto the base in a fresh tree. If that still conflicts, it turns OUTDATED.",
     ),
     "API_UNREACHABLE": (
         "retrying",
