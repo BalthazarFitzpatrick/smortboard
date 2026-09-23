@@ -268,12 +268,13 @@ merge mode (review required or free merge) and its lease mode (strict or soft).
 > A card is not a conversation. It is feature-sized, not edit-sized, and nothing you meant but did
 > not write reaches the agent.
 
-![A card opened over the board: what it is about, what it has done and what it needs down the left; its criteria, lease and history down the right](docs/images/hero-card.jpg)
+![A card opened over the board, one column: what it is about, what it has done, what it needs, then its details folded to one line each](docs/images/hero-card.jpg)
 
 Open a card and it reads top to bottom: **about** (what it is for), **done** (what the agent
 delivered, with the test and review verdicts), **needs** (the one thing it wants from you, if
-anything). Its criteria, lease and history sit on the right. The arrow keys move between those
-sections with the same highlight frame the board uses.
+anything), then **details**: criteria, lease, dependencies, attachments and history, each folded to
+one line. The panel is as tall as its content. The arrow keys move between those sections with the
+same highlight frame the board uses.
 
 <details>
 <summary><b>The details</b></summary>
@@ -563,7 +564,7 @@ and retried, never forced.
 |---|---|
 | **Work with it** | Nothing to do. Review when you get to it. |
 | **Encourages** | Reviewing on your schedule, not the agent's. |
-| **Pays off as** | No stale diffs, and conflicts surface as `MERGE_CONFLICT` with a file list, not at merge time. |
+| **Pays off as** | No stale diffs, and conflicts surface as `OUTDATED` with a file list, not at merge time. |
 
 <details>
 <summary><b>The details</b></summary>
@@ -990,7 +991,7 @@ this list was read from, so the two cannot drift.
 
 | Key | Action |
 |---|---|
-| arrows | move focus; up also exits to the board bar. In an open card: up/down within a column, left/right across |
+| arrows | move focus; up also exits to the board bar. In an open card: up/down between sections |
 | `enter` | open the focused card |
 | `space` | open the focused card, or close the open one |
 | `esc` | one level back: input -> panel -> closed |
@@ -1108,13 +1109,15 @@ thing it was built to do.
 - **Task checkboxes in a pull request** are not ticked during a run.
 
 **What will change.** Anything on the rough list. The database migrates itself forward on every open,
-so upgrading does not cost you your boards - but this is a `0.1.x`, and settings, defaults and the
+so upgrading does not cost you your boards - but this is a `0.x`, and settings, defaults and the
 shape of individual panels are expected to move. The concepts above - cards, leases, the two gates,
 the landing lock, and human-only merges into main - are the parts that are not going to.
 
-**Try it end to end.** [docs/beta-test-board.md](docs/beta-test-board.md) builds a small browser
-game from one mission-control prompt: 12-14 cards with dependency chains and parallel tracks, a
-test gate that needs nothing but Node, and a table of which board feature each step exercises.
+**Try it end to end.** `uv run smortboard seed-beta <empty folder>` makes a small browser-game repo
+and a board of 15 cards already written, with dependency chains, parallel tracks and a test gate
+that needs nothing but Node. [docs/beta-test-board.md](docs/beta-test-board.md) walks it, has the
+mission-control prompt if you would rather plan it yourself, and a table of which board feature
+each step exercises.
 
 ### Sending a report
 
