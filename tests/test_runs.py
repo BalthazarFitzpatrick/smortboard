@@ -98,8 +98,54 @@ def test_a_thread_that_dies_becomes_visible_state_not_silence(db):
     registry = runs_module.RunRegistry(path)
     state = registry.start(card_id, runner=_explode)
     assert _wait(lambda: not state.running)
-    assert state.phase == "refused"
+    assert state.phase == "blocked"
     assert "docker went away" in state.error
+
+
+def test_a_run_that_raises_blocks_the_card_crash_instead_of_orphaning_it(db):
+    """run_ended is still written, so recover_orphaned_runs never picks such a card up - it sat in
+    doing with nobody running it. now the card itself says what broke"""
+    path, card_id = db
+    with Store(path) as store:
+        store.update_card(card_id, status="doing")
+
+    def _explode(store, cid, **kwargs):
+        store.append_event(cid, "lifecycle_started", {})
+        raise RuntimeError("x" * 2000)
+
+    registry = runs_module.RunRegistry(path)
+    state = registry.start(card_id, runner=_explode)
+    assert _wait(lambda: not state.running)
+    assert state.blocked_reason_code == "CRASH"
+    with Store(path) as store:
+        card = store.get_card(card_id)
+        assert card["blocked_reason_code"] == "CRASH"
+        assert card["review_flag"]
+        note = store.list_comments(card_id)[-1]["body"]
+        assert "RuntimeError: xxx" in note and len(note) < 1000  # the error, but short
+        assert "run_crashed" in [e["kind"] for e in store.list_events(card_id)]
+        assert runs_module.recover_orphaned_runs(store) == []
+
+
+def test_a_stop_that_breaks_a_step_is_a_stop_not_a_crash(db):
+    path, card_id = db
+    release = threading.Event()
+
+    def _explode_after_stop(store, cid, stop_requested, **kwargs):
+        release.wait(5)
+        assert stop_requested()
+        raise RuntimeError("killed mid fetch-back")
+
+    registry = runs_module.RunRegistry(path)
+    state = registry.start(card_id, runner=_explode_after_stop)
+    with registry._lock:
+        registry._stopping.add(card_id)
+    release.set()
+    assert _wait(lambda: not state.running)
+    assert state.phase == "stopped"
+    with Store(path) as store:
+        assert store.get_card(card_id)["blocked_reason_code"] is None
+        assert "run_stopped" in [e["kind"] for e in store.list_events(card_id)]
 
 
 class _FakeProcess:

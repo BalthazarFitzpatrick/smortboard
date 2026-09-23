@@ -68,6 +68,11 @@ DEFAULT_CARD_BUDGET_USD = 5.0
 
 WAITING_TOOLS = ("Monitor", "ScheduleWakeup", "CronCreate", "TaskOutput")
 
+# claude moves a Bash command past its 120s default timeout to the background, where a headless
+# run cannot read it back - measured, about 8 runs lost their suite (45-108s) that way. names
+# checked in the cli binary, 2.1.273 (card image) and 2.1.280; neither is a credential
+BASH_TIMEOUT_ENV = ("BASH_DEFAULT_TIMEOUT_MS=300000", "BASH_MAX_TIMEOUT_MS=600000")
+
 
 def build_command(
     prompt: str,
@@ -316,7 +321,7 @@ class ClaudeCodeAdapter:
         return "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN && "
 
     def container_env(self) -> list[str]:
-        return []
+        return [arg for pair in BASH_TIMEOUT_ENV for arg in ("-e", pair)]
 
     def normalize(self, raw: dict[str, Any]) -> list[LabEvent]:
         kind = raw.get("type")

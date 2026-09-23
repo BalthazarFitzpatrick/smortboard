@@ -104,7 +104,7 @@ def test_every_run_writes_run_ended_even_when_its_thread_dies(store, board_id, f
     state = registry.start(card_id, runner=_runner)
     assert _wait(lambda: not state.running)
     ended = [e for e in store.list_events(card_id) if e["kind"] == "run_ended"]
-    assert [e["payload"]["phase"] for e in ended] == ["refused" if fails else "opened"]
+    assert [e["payload"]["phase"] for e in ended] == ["blocked" if fails else "opened"]
 
 
 def test_telemetry_reads_an_orphaned_attempt_as_a_crash_not_in_progress():

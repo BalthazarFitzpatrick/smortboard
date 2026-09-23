@@ -124,6 +124,10 @@ def test_codex_only_writable_workers_can_commit_in_the_container_clone(run_reque
         ("Unauthorized: status 401", True, "CRASH"),
         ("Rate limit reached, 429", False, "USAGE_LIMIT"),
         ("Unsupported model status 400", False, "CRASH"),
+        # claude's own outage wording, reused - codex used to call every one of these CRASH
+        ("error sending request: Connection refused (os error 111)", False, "API_UNREACHABLE"),
+        ("upstream connection reset by peer", False, "API_UNREACHABLE"),
+        ("the model is overloaded, try again", False, "API_UNREACHABLE"),
     ],
 )
 def test_codex_error_classification(message, auth, reason):
@@ -323,3 +327,13 @@ def test_codex_guard_covers_patch_paths_and_shell_policy(tmp_path, tool, args, a
         capture_output=True,
     )
     assert result.returncode == (0 if allowed else 2), result.stderr
+
+
+def test_claude_bash_timeouts_cover_a_five_minute_suite_and_carry_no_credential():
+    """measured: about 8 runs had their suite (45-108s) moved to the background at claude's 120s
+    bash default, and could not read its output back"""
+    env = ClaudeCodeAdapter().container_env()
+    pairs = dict(env[i + 1].split("=", 1) for i, arg in enumerate(env) if arg == "-e")
+    assert env.count("-e") == len(pairs) == 2
+    assert int(pairs["BASH_DEFAULT_TIMEOUT_MS"]) >= 300_000
+    assert int(pairs["BASH_MAX_TIMEOUT_MS"]) >= int(pairs["BASH_DEFAULT_TIMEOUT_MS"])
