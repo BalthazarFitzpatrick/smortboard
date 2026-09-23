@@ -47,7 +47,7 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'), uiBase('entrytext.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {cardPanelHtml, doAcceptOrRejectCard, showRun, runBadge, splitCommentHeadline,
-  summarizeDescription, renderCardStrip, appendLine, parseWorkerBlock};`)(SpyMenu, SpyDrawer);
+  summarizeDescription, renderCardStrip, appendLine, parseWorkerBlock, complexityLabel};`)(SpyMenu, SpyDrawer);
 
 // one section's own markup out of the panel string: from its data-section to the next one. the stub
 // does not parse html into a tree, so "under the needs section" means inside this slice
@@ -80,7 +80,7 @@ const html1 = mod.cardPanelHtml(card, outcome);
 const done1 = sectionOf(html1, 'done');
 assert.ok(done1.includes('did it'), 'done should carry the worker summary');
 assert.ok(done1.includes('trailing comma'), 'done should show the finding message, one line under review');
-assert.ok(done1.includes('<a class="pr-link" href="https://x/pull/1" target="_blank" rel="noreferrer">https://x/pull/1</a>'),
+assert.ok(done1.includes('<a class="pr-link" href="https://x/pull/1" target="_blank" rel="noreferrer">#1</a>'),
   'done should link the PR url, opening in a new tab');
 assert.ok(done1.includes('passed, exit 0'), 'the rail says the tests passed and their exit');
 assert.ok(done1.includes('not approved'), 'the rail says the review did not approve');
@@ -98,20 +98,18 @@ const html2 = mod.cardPanelHtml(card, {
 assert.ok(sectionOf(html2, 'done').includes('not run yet'), 'a null outcome should say not run yet');
 assert.ok(!html2.includes('run-rail'), 'a card never run has no rail of empty steps');
 
-// ---- the sections, in order: head, then about -> done -> needs pinned left, the facts pinned right
-assert.deepEqual(sectionOrder(html1), ['title', 'about', 'done', 'needs', 'criteria', 'lease', 'history'],
-  'head, the left column, then the right - which is also the one-column order below 760px');
-['about', 'done', 'needs'].forEach(name => assert.ok(sectionOf(html1, name).includes('data-pin="0"'), `${name} is pinned left`));
-['criteria', 'lease', 'history'].forEach(name => assert.ok(sectionOf(html1, name).includes('data-pin="1"'), `${name} is pinned right`));
-assert.ok(!sectionOf(html1, 'title').includes('data-pin'), 'the head is full width, not pinned');
-assert.ok(html1.includes('data-column-shares="3 2"'), 'the left column is the wider one');
+// ---- bare bones, one column: head, about, done, needs, and the card's facts folded under details
+assert.deepEqual(sectionOrder(html1), ['title', 'about', 'done', 'needs', 'details'], 'five sections, in reading order');
+assert.ok(html1.includes('data-columns="1"'), 'one column at any width');
 assert.ok(!html1.includes('data-section="workstream"'), 'the workstream section is gone');
 
-// dependencies and attachments only when there are any
+// dependencies and attachments fold under details only when there are any
 const linked = mod.cardPanelHtml({...card, depends_on: ['abcdef0123'], attachments: [{filename: 'shot.png'}]}, outcome);
-assert.deepEqual(sectionOrder(linked).slice(4), ['criteria', 'lease', 'deps', 'attachments', 'history']);
-assert.ok(sectionOf(linked, 'deps').includes('card abcdef01'), 'a dependency off this board shows by short id');
-assert.ok(sectionOf(linked, 'attachments').includes('shot.png'));
+const linkedDetails = sectionOf(linked, 'details');
+assert.ok(linkedDetails.includes('<summary>dependencies - 1</summary>') && linkedDetails.includes('card abcdef01'),
+  'a dependency off this board shows by short id, folded');
+assert.ok(linkedDetails.includes('<summary>attachments - 1</summary>') && linkedDetails.includes('shot.png'));
+assert.ok(!sectionOf(html1, 'details').includes('dependencies'), 'no dependency fold without dependencies');
 
 // ---- the head: one meta line over the title - id, status, block reason in words, model, spend
 const headHtml = sectionOf(mod.cardPanelHtml(
@@ -120,19 +118,24 @@ const headHtml = sectionOf(mod.cardPanelHtml(
 ), 'title');
 assert.ok(headHtml.includes('<span class="card-id">abcdef01</span>'), 'the short id leads the meta line');
 assert.ok(headHtml.includes('<span>doing</span>'));
-assert.ok(headHtml.includes('<span class="card-meta-flag">blocked: tests failed</span>'), 'the reason code in plain words');
+assert.ok(headHtml.includes('<span class="card-meta-flag">tests failed</span>'), 'the reason code in plain words');
 assert.ok(headHtml.includes('<span>ui</span>'), 'the workstream folds into the meta line');
-assert.ok(headHtml.includes('<span class="card-model">anthropic/sonnet</span>'));
-assert.ok(headHtml.includes('<span>3 runs · 141 turns · $6.77</span>'), 'runs, turns and cost across attempts');
+assert.ok(headHtml.includes('<span class="card-model">sonnet</span>'));
+assert.ok(headHtml.includes('<span>$6.77</span>') && !headHtml.includes('turns'), 'the cost only; runs and turns live under i');
+const opusHead = sectionOf(mod.cardPanelHtml({...card, model: 'anthropic/claude-opus-5'}, outcome), 'title');
+assert.ok(opusHead.includes('<span class="card-model">opus 5</span>'), 'a model is named the way people say it');
+const haikuHead = sectionOf(mod.cardPanelHtml({...card, model: 'anthropic/claude-haiku-4-5-20251001'}, outcome), 'title');
+assert.ok(haikuHead.includes('<span class="card-model">haiku 4.5</span>'), 'a version keeps its dot, a date suffix goes');
+assert.ok(!headHtml.includes('complexity'), 'complexity stays in the card menu, not the head line');
 assert.ok(headHtml.includes('<div class="section-value">the title</div>'), 'the title sits under the meta line');
 assert.ok(!sectionOf(mod.cardPanelHtml(card, outcome), 'title').includes('runs'), 'no spend part for a card with no runs');
 
 // ---- the lease shows its globs, and an empty one says the card will not run
-assert.ok(sectionOf(html1, 'lease').includes('<span class="empty">none - it will not run</span>'),
-  'a card with no lease should say it will not run');
-const leased = sectionOf(mod.cardPanelHtml({...card, leases: [{path_glob: 'src/**'}, {path_glob: 'tests/**'}]}, outcome), 'lease');
-assert.ok(leased.includes('<li class="card-path">src/**</li><li class="card-path">tests/**</li>'), 'a lease lists its globs');
-assert.ok(leased.includes('lease<span class="field-count">2</span>'), 'the label carries the count');
+assert.ok(sectionOf(html1, 'details').includes('<div class="empty">no lease - it will not run</div>'),
+  'a card with no lease says so out loud, not behind a fold');
+const leased = sectionOf(mod.cardPanelHtml({...card, leases: [{path_glob: 'src/**'}, {path_glob: 'tests/**'}]}, outcome), 'details');
+assert.ok(leased.includes('<summary>lease - 2</summary>'), 'the lease folds behind its count');
+assert.ok(leased.includes('<span class="card-path">src/**</span>, <span class="card-path">tests/**</span>'), 'a lease is one line of globs');
 
 // ---- the worker's closing block: DONE lines under done, ACTION, WHY and NOT DONE under needs
 const blockSummary = 'ACTION: review the PR\nWHY: criteria met\nDONE:\n- a\nNOT DONE:\n- b';
@@ -142,11 +145,15 @@ const blockDone = sectionOf(blockHtml, 'done');
 const blockNeeds = sectionOf(blockHtml, 'needs');
 assert.ok(blockDone.includes('<li>a</li>'), 'a DONE line is listed under done');
 assert.ok(!blockDone.includes('review the PR') && !blockDone.includes('<li>b</li>'), 'done holds no ask and no leftover');
-assert.ok(blockNeeds.includes('agent: review the PR'), "the agent's ACTION sits under needs");
-assert.ok(blockNeeds.includes('why: criteria met'), 'with its WHY');
+// one next step, one voice: the board's step wins, the agent's own ask is not drawn beside it
+assert.ok(blockNeeds.includes('Review the pull request, then press y'), "the board's next action sits under needs");
+assert.ok(!blockNeeds.includes('review the PR') && !blockNeeds.includes('criteria met'),
+  "with a board step, the agent's ACTION and WHY are not a second voice");
 assert.ok(blockNeeds.includes('left: b'), 'a NOT DONE line sits under needs');
-assert.ok(blockNeeds.indexOf('card-next') < blockNeeds.indexOf('agent: review the PR'),
-  "the board's next action comes before the agent's own ask");
+// with no board step, the agent's own ask is the one next step, with its WHY
+const askNeeds = sectionOf(mod.cardPanelHtml({...reviewCard, next_action: null}, {...outcome, summary: blockSummary}), 'needs');
+assert.ok(askNeeds.includes('<li class="card-next">review the PR</li>'), "the agent's ACTION is the step when the board has none");
+assert.ok(askNeeds.includes('why: criteria met'), 'with its WHY');
 assert.ok(blockNeeds.includes('data-accent="attention"'), 'a card waiting on the operator wears the accent');
 assert.ok(!blockHtml.includes('agent summary'), 'with a block to read, the summary is not folded in whole as well');
 
@@ -172,9 +179,11 @@ const fallback = mod.cardPanelHtml(crashed, {...outcome, summary: 'older run, pl
 assert.ok(sectionOf(fallback, 'done').includes('<details class="card-fold"><summary>agent summary - 22 chars</summary>'),
   'the whole summary folds under done');
 assert.ok(sectionOf(fallback, 'done').includes('older run, plain prose'));
-assert.ok(sectionOf(fallback, 'needs').includes('<li>blocked: crash</li>'), 'the block reason leads needs');
+assert.ok(!sectionOf(fallback, 'needs').includes('blocked: crash'), 'the reason lives in the head line, not again under needs');
 assert.ok(sectionOf(fallback, 'needs').includes('<li class="card-next">Check the note for what broke.</li>'),
-  'then the next action');
+  'needs carries the one next step');
+const bare = sectionOf(mod.cardPanelHtml({...crashed, next_action: null}, {...outcome, summary: 'older run, plain prose'}), 'needs');
+assert.ok(bare.includes('<li>blocked: crash</li>'), 'with no step to give, needs says what went wrong');
 
 // ---- a card waiting on someone leads needs with the call to action; a quiet one does not
 const waiting = mod.cardPanelHtml({...card, blocked_reason_code: 'TESTS_FAILED', next_action: 'Press r to run it again.'}, outcome);
@@ -201,8 +210,8 @@ assert.ok(sectionOf(html1, 'needs').includes('<input class="comment-input text-f
 
 // ---- history: one line per note, time and headline, the operator's own marked "you"
 const commented = mod.cardPanelHtml({...card, comments: [{author: 'operator', body: 'a\nb', created_at: '2026-09-14T12:00:00+00:00'}]}, outcome);
-const history = sectionOf(commented, 'history');
-assert.ok(history.includes('history<span class="field-count">1</span>'), 'the label carries the count');
+const history = sectionOf(commented, 'details');
+assert.ok(history.includes('<summary>history - 1</summary>'), 'history folds behind its count');
 assert.ok(/<time>09-14 \d\d:\d\d<\/time>/.test(history), 'a short time leads the line');
 assert.ok(history.includes('<span class="history-head history-you">you: a</span>'), 'an operator line reads as you');
 assert.ok(history.includes('<div class="comment-body">b</div>'), 'the body is folded behind the headline');
@@ -211,7 +220,7 @@ assert.ok(history.includes('<div class="comment-body">b</div>'), 'the body is fo
 const boardNoted = sectionOf(mod.cardPanelHtml(
   {...card, comments: [{author: 'smortboard', body: 'tests failed: test_x\n\nfull output here'}]},
   outcome,
-), 'history');
+), 'details');
 assert.ok(boardNoted.includes('<span class="history-head">tests failed: test_x</span>'), 'a board note leads with its one-liner');
 assert.ok(boardNoted.includes('<details class="history-note"><summary class="history-line">'),
   'the rest of a board note is closed behind details by default');
@@ -346,14 +355,12 @@ assert.ok(!shortAbout.includes('full brief'), 'a brief the lead already shows wh
 assert.ok(sectionOf(mod.cardPanelHtml({...detailCard, description: ''}, {}), 'about').includes('no brief'));
 assert.ok(sectionOf(mod.cardPanelHtml({...detailCard, status: 'todo'}, {}), 'needs').includes('nothing yet, r runs it'));
 
-// ---- complexity sits in the head's meta line: rated shows the level, unrated the estimate with an
-// "(estimated)" note -------------------------------------------------------------------------
+// ---- complexity is read in the card menu (c after m): rated shows the level, unrated the estimate
+// with an "(estimated)" note ------------------------------------------------------------------
 
-const ratedCard = {...card, complexity: 2};
-assert.ok(mod.cardPanelHtml(ratedCard, {}).includes('complexity: medium'), 'a rated card shows its level');
-
-const unratedCard = {...card, complexity: null, criteria: [], tasks: [], leases: []};
-assert.ok(mod.cardPanelHtml(unratedCard, {}).includes('complexity: low (estimated)'),
+assert.equal(mod.complexityLabel({...card, complexity: 2}), 'medium', 'a rated card shows its level');
+assert.equal(mod.complexityLabel({...card, complexity: null, criteria: [], tasks: [], leases: []}), 'low (estimated)',
   'an unrated card with nothing else shows a low estimate');
+
 
 console.log('ok');
