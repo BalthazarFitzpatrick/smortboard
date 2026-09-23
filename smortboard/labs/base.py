@@ -73,6 +73,8 @@ class BashPolicy:
     python: str = "python3"
     guard_dir: str | None = None
     remembered_globs: list[str] = field(default_factory=list)
+    # mode, protected_globs and held_globs from leases.lease_policy; empty means strict
+    lease_policy: dict[str, Any] = field(default_factory=dict)
     bash_allow: tuple[str, ...] = ("git *",)
     read: bool = True
     search: bool = True

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from smortboard.exec.bash_guard import write_bash_guard_hook
-from smortboard.exec.leases import lease_allows, lease_glob_regex
+from smortboard.exec.leases import lease_allows, lease_glob_regex, lease_permits
 from smortboard.labs.base import BashPolicy, GuardFiles
 
 _SCRIPT = (
@@ -13,6 +13,8 @@ _SCRIPT = (
     + inspect.getsource(lease_glob_regex)
     + "\n"
     + inspect.getsource(lease_allows)
+    + "\n"
+    + inspect.getsource(lease_permits)
     + """
 
 payload = json.load(sys.stdin)
@@ -33,7 +35,7 @@ def check_path(path):
         relative = str(candidate.resolve().relative_to(root))
     except ValueError:
         refuse("LEASE_CONFLICT: " + path + " is outside the worktree")
-    if not lease_allows(relative, lease["path_globs"] + lease.get("remembered_globs", [])):
+    if not lease_permits(relative, lease):
         refuse("LEASE_CONFLICT: " + relative + " is outside this card's lease")
 
 if tool == "apply_patch":
@@ -84,6 +86,8 @@ def write_guard_files(lease: list[str], bash: BashPolicy) -> GuardFiles:
     (directory / "lease.json").write_text(
         json.dumps(
             {
+                # the board's lease mode, protected and held globs - see leases.lease_policy
+                **bash.lease_policy,
                 "path_globs": lease,
                 "remembered_globs": bash.remembered_globs,
                 "root": bash.root,

@@ -1106,3 +1106,58 @@ def test_reviewer_fallback_is_kept_when_worker_never_reaches_review(board, monke
         event["kind"] == "fallback_consumed" and event["payload"]["role"] == "reviewer"
         for event in store.list_events(card_id)
     )
+
+
+# a refused in-run write no longer sinks committed work - see test_lease_modes.py for the rule
+def _refused_write():
+    return RunResult(
+        subtype="success",
+        is_error=False,
+        blocked_reason_code="LEASE_CONFLICT",
+        session_id="s",
+        total_cost_usd=0.1,
+        num_turns=4,
+        result_text="DONE:\n- the thing\nNOT DONE:\n- other.py was refused",
+    )
+
+
+def test_a_refused_write_with_committed_work_goes_to_the_gates(board, monkeypatch):
+    store, card_id = board
+    gated = []
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "run_test_gate", lambda *a, **k: gated.append(1) or _passing())
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend(_refused_write()))
+    assert gated == [1]
+    assert result.blocked_reason_code is None
+    kinds = [event["kind"] for event in store.list_events(card_id)]
+    assert "lease_wanted" in kinds
+
+
+def test_a_refused_write_with_nothing_committed_still_blocks(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "branch_has_commits", lambda *a, **k: False)
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend(_refused_write()))
+    assert result.blocked_reason_code == "LEASE_CONFLICT"
+
+
+def test_a_post_run_lease_violation_still_blocks_with_commits(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    committed_outside = RunResult(
+        subtype="error_lease_conflict",
+        is_error=True,
+        blocked_reason_code="LEASE_CONFLICT",
+        session_id="s",
+        total_cost_usd=0.1,
+        num_turns=4,
+        result_text="Committed paths outside the lease:\n.github/ci.yml",
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend(committed_outside))
+    assert result.blocked_reason_code == "LEASE_CONFLICT"
+
+
+def _passing():
+    from smortboard.review.gates import GateResult
+
+    return GateResult(passed=True, command="true", exit_code=0, output="ok")

@@ -22,7 +22,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from smortboard.exec.leases import changed_paths_outside_lease, write_lease_settings
+from smortboard.exec.leases import (
+    changed_paths_outside_lease,
+    lease_policy,
+    split_outside_lease,
+    write_lease_settings,
+)
 from smortboard.exec.runner import (
     DEFAULT_CARD_BUDGET_USD,
     HEADLESS_RULES,
@@ -99,7 +104,10 @@ def container_name(role: str, card_id: str) -> str:
 
 
 def write_container_guards(
-    out_dir: str | Path, path_globs: list[str], remembered_globs: list[str] | None = None
+    out_dir: str | Path,
+    path_globs: list[str],
+    remembered_globs: list[str] | None = None,
+    policy: dict[str, Any] | None = None,
 ) -> Path:
     """the card's lease and bash guards, written into `out_dir` with the paths a card container
     sees. `out_dir` is the board's own directory for this attempt, never the worktree: guard_mount
@@ -107,12 +115,14 @@ def write_container_guards(
 
     `remembered_globs` is the repo's remembered lease list - the post-run committed-path check
     already allowed it, so the hook refusing it asked the operator twice for the same path.
+    `policy` is leases.lease_policy's mode and fences; without it the hook is strict.
     """
     settings = write_lease_settings(
         out_dir,
         path_globs,
         root=_CONTAINER_WORKDIR,
         remembered_globs=remembered_globs,
+        policy=policy,
         python=CONTAINER_PYTHON,
         guard_dir=CONTAINER_GUARD_DIR,
     )
@@ -360,8 +370,10 @@ class ContainerBackend:
             # so no caller has to remember to pass what is already recorded
             # lease ROWS, not strings: get_card returns dicts, and handing those straight to
             # lease_preamble listed python dicts at the agent instead of paths
-            lease_rows = store.get_card(card_id).get("leases") if store else None
-            leases = [row["path_glob"] for row in lease_rows or []]
+            card = store.get_card(card_id) if store else {}
+            leases = [row["path_glob"] for row in card.get("leases") or []]
+            remembered = [row["path_glob"] for row in (repo or {}).get("remembered_leases", [])]
+            policy = lease_policy(store, card, remembered) if store else {"mode": "strict"}
             if not adapter.capabilities.tool_allowlist:
                 bash_allow = tuple(
                     tool[5:-1] for tool in allowed_tools_for_repo(repo) if tool.startswith("Bash(")
@@ -375,9 +387,12 @@ class ContainerBackend:
                         guard_dir=CONTAINER_GUARD_DIR,
                         root=_CONTAINER_WORKDIR,
                         bash_allow=bash_allow,
-                        remembered_globs=[
-                            row["path_glob"] for row in (repo or {}).get("remembered_leases", [])
-                        ],
+                        remembered_globs=remembered,
+                        lease_policy={
+                            key: value
+                            for key, value in policy.items()
+                            if key in ("mode", "protected_globs", "held_globs")
+                        },
                     ),
                 )
                 settings_path = guards.settings_path
@@ -414,7 +429,6 @@ class ContainerBackend:
             )
             self._fetch_back(repo_root, clone_path, branch, worktree_path)
             if store is not None and repo is not None:
-                remembered = [row["path_glob"] for row in repo.get("remembered_leases", [])]
                 base_name = default_branch(repo)
                 base_ref = next(
                     (
@@ -424,9 +438,12 @@ class ContainerBackend:
                     ),
                     None,
                 )
-                outside = changed_paths_outside_lease(
+                beyond = changed_paths_outside_lease(
                     repo_root, start_commit, branch, leases + remembered, base_ref=base_ref
                 )
+                # held globs re-read now: a card that started mid-run must not be written over
+                fresh = lease_policy(store, store.get_card(card_id), remembered)
+                expanded, outside = split_outside_lease(beyond, fresh)
                 store.append_event(
                     card_id,
                     "lease_check_finished",
@@ -434,8 +451,11 @@ class ContainerBackend:
                         "base_commit": start_commit,
                         "passed": not outside,
                         "outside": outside,
+                        "expanded": expanded,
                     },
                 )
+                if expanded:
+                    store.append_event(card_id, "lease_expanded", {"paths": expanded})
                 if outside:
                     result = replace(
                         result,

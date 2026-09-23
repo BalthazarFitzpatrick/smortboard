@@ -470,6 +470,8 @@ def _make_handler(
                 # clearing a value
                 if "merge_mode" in body:
                     store.set_board_merge_mode(params["board_id"], body["merge_mode"])
+                if "lease_mode" in body:
+                    store.set_board_lease_mode(params["board_id"], body["lease_mode"])
                 if "max_parallel" in body:
                     store.set_board_max_parallel(params["board_id"], body["max_parallel"])
                 if "daily_budget_usd" in body:

@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from smortboard.exec.bash_guard import write_bash_guard_hook
 
@@ -51,6 +52,89 @@ def lease_glob_regex(glob: str) -> str:
 def lease_allows(rel: str, globs: list[str]) -> bool:
     """whether a repo-relative path is inside any of the lease's globs"""
     return any(re.match(lease_glob_regex(glob), rel) for glob in globs)
+
+
+LEASE_MODES = ("strict", "soft")
+
+# a soft lease never reaches these on its own: agent settings and hooks, ci, the next agent's
+# orders, what the host builds, installs or runs from, and secrets. a lease that names one allows it
+PROTECTED_GLOBS = (
+    "**/.git/**",
+    "**/.claude/**",
+    "**/.codex/**",
+    "**/.github/**",
+    "**/CLAUDE.md",
+    "**/AGENTS.md",
+    "**/Dockerfile*",
+    "**/*.Dockerfile",
+    "docker/**",
+    "**/pyproject.toml",
+    "**/uv.lock",
+    "**/package.json",
+    "**/package-lock.json",
+    "**/requirements*.txt",
+    "**/.gitignore",
+    "**/.gitattributes",
+    "**/.gitmodules",
+    "**/.pre-commit-config.yaml",
+    "**/.vscode/**",
+    "**/.husky/**",
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+)
+
+
+def lease_permits(rel: str, lease: dict) -> bool:
+    """may this card write `rel` - one answer for the hook, the codex guard and the post-run check.
+
+    strict: its own globs and the repo's remembered ones, nothing else. soft adds any other repo
+    path that is neither protected nor held by another active card on the same repo.
+    """
+    own = list(lease.get("path_globs") or []) + list(lease.get("remembered_globs") or [])
+    if lease_allows(rel, own):
+        return True
+    if lease.get("mode") != "soft" or rel.startswith("/") or rel.split("/")[0] == "..":
+        return False
+    fenced = list(lease.get("protected_globs") or []) + list(lease.get("held_globs") or [])
+    return not lease_allows(rel, fenced)
+
+
+def lease_policy(
+    store: Any, card: dict[str, Any], remembered_globs: list[str] | None = None
+) -> dict[str, Any]:
+    """the lease every guard writes and the post-run check reads: the card's globs, the repo's
+    remembered ones, the board's mode, and in soft mode the protected list plus every glob another
+    doing or checking card on the same repo holds, so a soft card never writes into theirs
+    """
+    board = store.get_board(card["board_id"]) if store is not None else {}
+    mode = board.get("lease_mode") or "strict"
+    policy: dict[str, Any] = {
+        "path_globs": [row["path_glob"] for row in card.get("leases") or []],
+        "remembered_globs": list(remembered_globs or []),
+        "mode": mode,
+    }
+    if mode == "soft":
+        held = []
+        for other in store.list_cards(card["board_id"]):
+            if other["id"] == card["id"] or other.get("repo_id") != card.get("repo_id"):
+                continue
+            if other.get("status") not in ("doing", "checking"):
+                continue
+            leases = other.get("leases")
+            if leases is None:
+                leases = store.get_card(other["id"]).get("leases") or []
+            held += [row["path_glob"] for row in leases]
+        policy["protected_globs"] = list(PROTECTED_GLOBS)
+        policy["held_globs"] = sorted(set(held))
+    return policy
+
+
+def split_outside_lease(paths: list[str], policy: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """committed paths outside the card's own lease, as (expanded, refused) under its mode - strict
+    refuses all of them, soft keeps the ones lease_permits allows as expansions"""
+    expanded = [path for path in paths if lease_permits(path, policy)]
+    return expanded, [path for path in paths if path not in expanded]
 
 
 def _diff_paths(repo_path: str | Path, spec: str) -> list[str] | None:
@@ -100,6 +184,8 @@ _HOOK_SCRIPT = (
     + inspect.getsource(lease_glob_regex)
     + "\n\n"
     + inspect.getsource(lease_allows)
+    + "\n\n"
+    + inspect.getsource(lease_permits)
     + """
 payload = json.load(sys.stdin)
 file_path = payload.get("tool_input", {}).get("file_path")
@@ -107,19 +193,17 @@ if not file_path:
     sys.exit(0)
 
 lease = json.loads(Path(__file__).with_name("lease.json").read_text())
-globs = lease["path_globs"]
-# a repo's remembered globs (see Store.remember_lease_paths) - approved once from the inbox,
-# permitted on every card on this repo since, alongside its own lease rather than instead of it
-remembered = lease.get("remembered_globs") or []
 # the guards never sit inside the repo, so the root comes from lease.json
 repo_root = Path(lease.get("root") or Path(__file__).resolve().parents[1])
 
 try:
     rel = Path(file_path).resolve().relative_to(repo_root)
 except ValueError:
-    rel = Path(file_path)
+    # outside the repo is never leased, whatever the mode
+    rel = Path(file_path).resolve()
 
-if lease_allows(str(rel), globs) or lease_allows(str(rel), remembered):
+# own globs, the repo's remembered ones, and in soft mode any unprotected path nobody else holds
+if lease_permits(str(rel), lease):
     sys.exit(0)
 
 print(f"{prefix} {rel} is outside this card's lease", file=sys.stderr)
@@ -134,6 +218,7 @@ def write_lease_settings(
     *,
     root: str | Path,
     remembered_globs: list[str] | None = None,
+    policy: dict[str, Any] | None = None,
     python: str = sys.executable,
     guard_dir: str | None = None,
 ) -> Path:
@@ -158,7 +243,9 @@ def write_lease_settings(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # `policy` is lease_policy's mode, protected and held globs; without one the lease is strict
     lease = {
+        **(policy or {}),
         "path_globs": path_globs,
         "remembered_globs": remembered_globs or [],
         "root": str(root),

@@ -151,8 +151,15 @@ def _image_for(repo: dict[str, Any] | None) -> str:
     return card_image()
 
 
-def _build_prompt(store: Store | None, diff: str) -> str:
+def _build_prompt(store: Store | None, diff: str, expanded: list[str] | None = None) -> str:
     header = active_prompt(store, "reviewer", REVIEW_PROMPT_HEADER)
+    # the board's own fact, outside the diff's data region so it reads as the board speaking
+    if expanded:
+        header += (
+            "\nThe board's soft lease let this card write outside its declared paths: "
+            + ", ".join(expanded)
+            + ". Judge whether each of those changes belongs to this card.\n"
+        )
     return header + DIFF_FRAMING + diff + f"\n{DIFF_END}\n"
 
 
@@ -311,6 +318,7 @@ def run_review(
     budget_usd: float | None = DEFAULT_REVIEW_BUDGET_USD,
     token_path: str | Path | None = None,
     on_process: Callable[[ProcessHandle], None] | None = None,
+    expanded: list[str] | None = None,
 ) -> ReviewResult:
     """runs the reviewer over `diff` in a throwaway container, and records the verdict.
 
@@ -354,7 +362,14 @@ def run_review(
         )
         settings_path = guards.settings_path
     cmd = _docker_command(
-        work_path, _build_prompt(store, diff), settings_path, model, repo, budget_usd, name, kind
+        work_path,
+        _build_prompt(store, diff, expanded),
+        settings_path,
+        model,
+        repo,
+        budget_usd,
+        name,
+        kind,
     )
     run_result = run_process(
         store,

@@ -35,7 +35,7 @@ from smortboard.exec.backends import (
     require_card_runtime,
     write_container_guards,
 )
-from smortboard.exec.leases import drop_legacy_guards
+from smortboard.exec.leases import drop_legacy_guards, lease_policy
 from smortboard.exec.runner import ProcessHandle
 from smortboard.exec.worktrees import (
     WorktreeError,
@@ -630,10 +630,12 @@ def _run_attempt(
     state.branch, state.worktree = tree.branch, str(tree.path)
 
     drop_legacy_guards(tree.path)
+    remembered = [row["path_glob"] for row in repo.get("remembered_leases") or []]
     settings = write_container_guards(
         guard_path,
         _lease_globs(card),
-        remembered_globs=[row["path_glob"] for row in repo.get("remembered_leases") or []],
+        remembered_globs=remembered,
+        policy=lease_policy(store, card, remembered),
     )
     store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
 
@@ -737,6 +739,26 @@ def _run_attempt(
                 run.blocked_reason_code or "CRASH",
                 NO_COMMITS_BUDGET_NOTE.format(limit=limit),
             )
+        # a refused write does not sink committed work: the post-run check passed (it would have
+        # set error_lease_conflict), so the gates judge it and the wanted paths wait under needs
+        if (
+            run.blocked_reason_code == "LEASE_CONFLICT"
+            and run.subtype != "error_lease_conflict"
+            and branch_has_commits(repo["path"], tree.branch, commit_base)
+        ):
+            from smortboard.attention import lease_conflict_wants
+
+            wanted = lease_conflict_wants(store, card_id)
+            store.append_event(card_id, "lease_wanted", {"paths": wanted})
+            _note(
+                store,
+                card_id,
+                "A write outside its lease was refused, but it committed work, so the work went to "
+                "tests and review. Wanted: " + (", ".join(wanted) or "paths not recorded"),
+            )
+            store.append_event(card_id, "worker_summary", {"text": run.result_text})
+            last_summary = run.result_text
+            return None
         if run.blocked_reason_code:
             return _block(
                 store,
@@ -797,6 +819,14 @@ def _run_attempt(
                 model=reviewer_model,
                 budget_usd=store.spend_cap("reviewer_budget_usd", DEFAULT_REVIEW_BUDGET_USD),
                 on_process=on_process,
+                expanded=sorted(
+                    {
+                        path
+                        for event in store.list_events(card_id)
+                        if event["kind"] == "lease_expanded"
+                        for path in event["payload"].get("paths") or []
+                    }
+                ),
             )
         except ReviewUnavailable as exc:
             return _refuse(store, state, f"The reviewer could not run: {exc}")
