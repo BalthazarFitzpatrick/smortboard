@@ -14,7 +14,8 @@ const FULL_WIDTH_SECTIONS = new Set(['title', 'outcome']);
 
 // pure: given each item's own height (and whether it spans every column), returns where it lands.
 // a full-width item syncs every column to one shared reach first, same as a css row would, but a
-// column item only ever waits on the column it is actually going into
+// column item only ever waits on the column it is actually going into. an item with its own
+// column (item.column) always goes there; the rest take the shortest column
 function computeMasonryLayout(items, columnCount, gap) {
   const reach = new Array(columnCount).fill(0);
   return items.map(item => {
@@ -24,12 +25,32 @@ function computeMasonryLayout(items, columnCount, gap) {
       reach.fill(bottom);
       return {column: null, top, bottom};
     }
-    const column = reach.indexOf(Math.min(...reach));
+    const pinned = Number.isInteger(item.column) && item.column >= 0 && item.column < columnCount;
+    const column = pinned ? item.column : reach.indexOf(Math.min(...reach));
     const top = reach[column];
     const bottom = top + item.height + gap;
     reach[column] = bottom;
     return {column, top, bottom};
   });
+}
+
+// each column's width, from the container's data-column-shares ("3 2") or equal without it. a
+// section is sized before it is measured, so unequal widths need every column section pinned -
+// an unpinned one's column is only known once the layout has run
+function columnWidths(container, pins, width, columnCount) {
+  const free = width - CARD_PANEL_COL_GAP * (columnCount - 1);
+  const shares = String(container.dataset.columnShares || '').split(/\s+/).map(Number);
+  const usable = shares.length === columnCount && shares.every(share => share > 0)
+    && pins.every(pin => pin !== null);
+  const weights = usable ? shares : new Array(columnCount).fill(1);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  return weights.map(weight => (free * weight) / total);
+}
+
+// a section's own column from its data-pin, or null to take the shortest one
+function sectionPin(section) {
+  const pin = Number(section.dataset.pin);
+  return section.dataset.pin !== undefined && Number.isInteger(pin) ? pin : null;
 }
 
 // the dom side: measure each section at its column's width (a section wraps differently at half
@@ -48,11 +69,17 @@ function layoutCardSections(panel) {
   // nothing sane to measure before the panel has a real box - a later call (resize, reopen) fixes it
   if (!width || width < 0) return;
   const columnCount = width < CARD_PANEL_NARROW_PX ? 1 : 2;
-  const columnWidth = (width - CARD_PANEL_COL_GAP * (columnCount - 1)) / columnCount;
   const isFull = section => columnCount === 1 || FULL_WIDTH_SECTIONS.has(section.dataset.section);
-  sections.forEach(section => { section.style.width = isFull(section) ? '100%' : `${columnWidth}px`; });
-  const items = sections.map(section => ({
+  const pins = sections.map(sectionPin);
+  const widths = columnWidths(container, pins.filter((_, i) => !isFull(sections[i])), width, columnCount);
+  // the second column starts one first-column width and a gap in - there is never a third
+  const columnWidth = widths[0];
+  sections.forEach((section, i) => {
+    section.style.width = isFull(section) ? '100%' : `${widths[pins[i] ?? 0] ?? columnWidth}px`;
+  });
+  const items = sections.map((section, i) => ({
     full: isFull(section),
+    column: pins[i],
     height: section.offsetHeight || section.getBoundingClientRect().height,
   }));
   const placed = computeMasonryLayout(items, columnCount, CARD_PANEL_ROW_GAP);

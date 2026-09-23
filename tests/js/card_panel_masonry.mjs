@@ -190,4 +190,58 @@ assert.equal(small.style.top, '0px',
 assert.equal(scaled.sections.style.height, '120px',
   'the container is sized from the layout height, not the scaled one');
 
+// ---- a pinned item goes to its own column even when the other one is shorter; unpinned ones keep
+// the shortest-column rule, and a pin past the last column is ignored ---------------------------
+const pinned = mod.computeMasonryLayout(
+  [{full: true, height: 10}, {column: 0, height: 100}, {column: 0, height: 20}, {column: 1, height: 15},
+    {height: 5}, {column: 7, height: 5}],
+  2, 10,
+);
+assert.deepEqual(pinned.map(p => p.column), [null, 0, 0, 1, 1, 1],
+  'pins hold; the unpinned and the out-of-range one both take the shorter column');
+assert.equal(pinned[2].top, 130, 'the second left item stacks under the first (20 + 100 + 10), though the right is shorter');
+assert.equal(pinned[3].top, 20, 'the right item starts under the band');
+assert.deepEqual(Object.keys(pinned[1]).sort(), ['bottom', 'column', 'top'], 'the output shape is unchanged');
+
+// ---- layoutCardSections reads the pin off data-pin and the widths off data-column-shares. every
+// section pinned, so the left column takes 3 parts of the room and the right 2 ------------------
+function pinnedSection(name, pin, height) {
+  const el = makeSection(name, height);
+  if (pin !== null) el.dataset.pin = String(pin);
+  return el;
+}
+const split = buildPanel(800);
+split.sections.dataset.columnShares = '3 2';
+const head = pinnedSection('title', null, 40);
+const about = pinnedSection('about', 0, 200);
+const needs = pinnedSection('needs', 0, 60);
+const facts = pinnedSection('criteria', 1, 30);
+const notes = pinnedSection('history', 1, 30);
+[head, about, needs, facts, notes].forEach(s => split.sections.appendChild(s));
+mod.layoutCardSections(split.panel);
+assert.equal(head.style.width, '100%', 'the head still spans both columns');
+assert.equal(about.style.width, '456px', 'left: 3/5 of the 760px the gap leaves');
+assert.equal(facts.style.width, '304px', 'right: 2/5 of it');
+assert.equal(needs.style.left, '0px', 'needs stays left under about, though the right column is shorter');
+assert.equal(needs.style.top, '300px', 'under about (40 + 30 + 200 + 30)');
+assert.equal(facts.style.left, '496px', 'the right column starts after the wider left one and the gap');
+assert.equal(notes.style.top, '130px', 'history stacks under criteria in the right column (70 + 30 + 30)');
+assert.equal(split.sections.style.height, '360px', 'the container reaches the taller, left column');
+
+// one unpinned section: its column is only known after it is measured, so the widths stay equal
+const loose = pinnedSection('deps', null, 10);
+split.sections.appendChild(loose);
+mod.layoutCardSections(split.panel);
+assert.equal(about.style.width, '380px', 'an unpinned section falls back to equal widths');
+assert.equal(facts.style.left, '420px');
+loose.remove();
+
+// below 760px everything is one column in document order, pins and shares aside
+split.sections.getBoundingClientRect = () => ({left: 0, top: 0, right: 0, bottom: 0, width: 500, height: 0});
+mod.layoutCardSections(split.panel);
+assert.equal(facts.style.width, '100%', 'one column: every section full width');
+assert.equal(facts.style.left, '0px');
+assert.equal(facts.style.top, '390px', 'the right-column sections follow needs (300 + 60 + 30)');
+assert.equal(notes.style.top, '450px');
+
 console.log('ok');
