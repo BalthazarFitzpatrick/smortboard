@@ -455,10 +455,13 @@ def test_a_rerun_after_the_tree_changed_runs_the_worker_again(board, tmp_path, m
     _failing_gate_that_records(monkeypatch)
     _reuse_worktree(monkeypatch, tmp_path, card_id)
     monkeypatch.setattr(lifecycle, "sync_with_base", lambda *a, **k: None)
-    heads = iter(["a", "a", "b", "b"])
-    monkeypatch.setattr(lifecycle, "rev_parse", lambda *a, **k: next(heads))
+    head = {"now": "a"}
+    monkeypatch.setattr(
+        lifecycle, "rev_parse", lambda path, ref: head["now"] if ref == "HEAD" else "base"
+    )
     backend = _Backend()
     lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    head["now"] = "b"
     lifecycle.run_card_lifecycle(store, card_id, backend=backend)
     assert len(backend.calls) == 2
 

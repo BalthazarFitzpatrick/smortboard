@@ -101,6 +101,13 @@ def test_docker_available_false_when_daemon_does_not_answer(monkeypatch):
 
 # -- the container command line ------------------------------------------------
 
+# the only env a card container is given: claude's bash timeouts, never a credential
+_NON_SECRET_ENV = {"BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS"}
+
+
+def _env_names(cmd):
+    return {cmd[i + 1].split("=", 1)[0] for i, arg in enumerate(cmd) if arg in ("-e", "--env")}
+
 
 def test_the_token_is_never_on_the_command_line_or_a_mount(tmp_path):
     """it arrives on stdin instead. a mount meant a plaintext credential had to exist on the
@@ -108,7 +115,7 @@ def test_the_token_is_never_on_the_command_line_or_a_mount(tmp_path):
     backend = ContainerBackend(image="img")
     cmd = backend._docker_command(tmp_path / "clone", "prompt", tmp_path / "s.json", "sonnet", None)
     joined = shlex.join(cmd)
-    assert "-e" not in cmd and "--env" not in cmd
+    assert _env_names(cmd) <= _NON_SECRET_ENV
     assert "/run/secrets" not in joined
     assert "CLAUDE_CODE_OAUTH_TOKEN" in joined  # read from stdin, never assigned a literal
     assert "read -r CLAUDE_CODE_OAUTH_TOKEN" in joined
@@ -570,7 +577,7 @@ def test_a_repo_brings_its_own_image_and_a_card_still_gets_its_own_container(tmp
     mounts = [with_repo[i + 1] for i, arg in enumerate(with_repo) if arg == "-v"]
     assert mounts == [f"{tmp_path / 'c'}:/workspace:rw", f"{tmp_path}:/smortboard:ro"]
     assert "--rm" in with_repo
-    assert "-e" not in with_repo
+    assert _env_names(with_repo) <= _NON_SECRET_ENV
 
 
 def test_docker_available_asks_the_daemon_not_just_the_client(monkeypatch):

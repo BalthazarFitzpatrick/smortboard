@@ -302,8 +302,8 @@ def _attempt_outcome(segment: list[dict[str, Any]]) -> str:
         return "refused"
     if any(event["kind"] == "run_stopped" for event in segment):
         return "stopped"
-    if any(event["kind"] == "run_orphaned" for event in segment):
-        return "blocked: CRASH"  # the board died under it - see server.runs.recover_orphaned_runs
+    if any(event["kind"] in ("run_orphaned", "run_crashed") for event in segment):
+        return "blocked: CRASH"  # the board died under it, or the run raised - see server.runs
     if any(event["kind"] == "merge_conflict" for event in segment):
         return "blocked: MERGE_CONFLICT"
     for event in reversed(segment):
@@ -318,13 +318,14 @@ def _attempt_outcome(segment: list[dict[str, Any]]) -> str:
             return f"blocked: {result['blocked_reason_code']}"
     for event in reversed(segment):
         if event["kind"] == "review_gate" and not event["payload"].get("approved"):
-            return "blocked: REVIEW_REJECTED"
+            # a reviewer that failed to answer is not a verdict - see reviewer.RUNTIME_REASONS
+            return f"blocked: {event['payload'].get('runtime_reason') or 'REVIEW_REJECTED'}"
     for event in reversed(segment):
         if event["kind"] == "test_gate" and not event["payload"].get("passed"):
             if any(e["kind"] == "base_red" for e in segment):
                 return "blocked: BASE_RED"
             return "blocked: TESTS_FAILED"
-    if not any(event["kind"] == "worker_summary" for event in segment):
+    if not any(event["kind"] in ("worker_summary", "worker_skipped") for event in segment):
         return "refused"  # never reached the worker - no repo, no runtime, no worktree
     return "in progress"
 
