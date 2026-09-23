@@ -1078,6 +1078,10 @@ so upgrading does not cost you your boards - but this is a `0.1.x`, and settings
 shape of individual panels are expected to move. The concepts above - cards, leases, the two gates,
 the landing lock, and human-only merges into main - are the parts that are not going to.
 
+**Try it end to end.** [docs/beta-test-board.md](docs/beta-test-board.md) builds a small browser
+game from one mission-control prompt: 12-14 cards with dependency chains and parallel tracks, a
+test gate that needs nothing but Node, and a table of which board feature each step exercises.
+
 ### Sending a report
 
 Bug reports go to

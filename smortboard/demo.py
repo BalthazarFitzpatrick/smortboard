@@ -400,6 +400,14 @@ _WALKTHROUGH = [
 ]
 
 
+def _summary(action: str, why: str, done: list[str], not_done: list[str] | None = None) -> str:
+    """a worker's closing block, in the shape exec/runner.SYSTEM_PROMPT asks every run to end with,
+    so the opened card's done and needs read the way a real card's do"""
+    lines = [f"ACTION: {action}", f"WHY: {why}", "DONE:", *(f"- {item}" for item in done)]
+    lines += ["NOT DONE:", *(f"- {item}" for item in not_done or ["none"])]
+    return "\n".join(lines)
+
+
 def _clean_attempt(
     store: Store, card_id: str, model: str, cost: float, pr_number: int, repo: str, slug: str
 ) -> None:
@@ -410,7 +418,13 @@ def _clean_attempt(
     store.append_event(
         card_id,
         "worker_summary",
-        {"text": "Keyed the endpoint on the Idempotency-Key header and covered the replay case."},
+        {
+            "text": _summary(
+                "review the PR",
+                "every criterion has a test, and it passes",
+                ["keyed the endpoint on the Idempotency-Key header", "covered the replay case"],
+            )
+        },
     )
     store.append_event(
         card_id, "test_gate", {"passed": True, "command": "uv run pytest -q", "exit_code": 0}
@@ -433,7 +447,15 @@ def _rejected_review_attempt(store: Store, card_id: str, model: str) -> None:
     store.append_event(card_id, "lifecycle_started", {})
     _narration(store, card_id, _WALKTHROUGH[:3])
     store.append_event(card_id, "result", _result_payload(0.62, 7, model))
-    store.append_event(card_id, "worker_summary", {"text": "Widened the retry to every decline."})
+    store.append_event(
+        card_id,
+        "worker_summary",
+        {
+            "text": _summary(
+                "review the PR", "decline retry covered", ["widened the retry to every decline"]
+            )
+        },
+    )
     store.append_event(
         card_id, "test_gate", {"passed": True, "command": "uv run pytest -q", "exit_code": 0}
     )
@@ -463,7 +485,18 @@ def _failed_tests_attempt(store: Store, card_id: str, model: str) -> None:
     store.append_event(card_id, "lifecycle_started", {})
     _narration(store, card_id, _WALKTHROUGH[:2])
     store.append_event(card_id, "result", _result_payload(0.41, 5, model))
-    store.append_event(card_id, "worker_summary", {"text": "Split the report per acquirer."})
+    store.append_event(
+        card_id,
+        "worker_summary",
+        {
+            "text": _summary(
+                "review the PR",
+                "per-acquirer totals match the ledger",
+                ["split the report per acquirer"],
+                ["rounding on split refunds: unsure which side owns the cent"],
+            )
+        },
+    )
     store.append_event(
         card_id,
         "test_gate",
