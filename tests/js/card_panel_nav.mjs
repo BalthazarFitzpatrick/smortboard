@@ -100,7 +100,8 @@ panel.isConnected = true; // the stub has no attachment of its own - openCardPan
 const container = element('div', 'card-sections');
 container.offsetWidth = 800; // two columns (>= the 760px fold point)
 const title = section('title', 50);
-const a = section('workstream', 40);
+// tall enough that B's overlap with A beats its overlap with C at the 14px gap
+const a = section('workstream', 60);
 const b = section('status', 100);
 const c = section('description', 60);
 const d = section('comments', 30);
@@ -116,7 +117,7 @@ await mod.openCardPanel(panel, 'c1');
 
 assert.equal(title.dataset.column, 'all', 'a full-width section is recorded as spanning every column');
 assert.equal(a.dataset.column, '0', 'a column section records its column');
-assert.equal(a.dataset.top, '80', 'and its top (title 50 + the 30 gap)');
+assert.equal(a.dataset.top, '64', 'and its top (title 50 + the 14 gap)');
 assert.equal(b.dataset.column, '1', 'the second section lands in the right column');
 assert.equal(c.dataset.column, '0', 'the third one under the shorter left column');
 assert.equal(document.activeElement, title, 'the open card focuses its first section');

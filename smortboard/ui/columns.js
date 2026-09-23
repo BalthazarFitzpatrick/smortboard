@@ -6,8 +6,8 @@
 // height. a grid row (or a flex row) ties every cell in it to the tallest cell's box, leaving blank
 // space under a shorter neighbour - this replaces that with real measurement instead -------------
 
-const CARD_PANEL_ROW_GAP = 30; // vertical space between stacked sections - the old grid's row-gap
-const CARD_PANEL_COL_GAP = 40; // horizontal space between columns - the old grid's column-gap
+const CARD_PANEL_ROW_GAP = 14; // vertical space between stacked sections, as in the approved mockup
+const CARD_PANEL_COL_GAP = 14; // horizontal space between columns, as in the approved mockup
 const CARD_PANEL_NARROW_PX = 760; // the width the two-column layout used to fold to one at
 // title and the run read across the whole panel; every other section sits in a column
 const FULL_WIDTH_SECTIONS = new Set(['title', 'outcome']);

@@ -242,7 +242,11 @@ body {
    layoutCardSections measures every section and places it right under its own column's last
    section instead, so the head band reads across the whole panel but every other section stacks
    by its own height, one column at a time. */
-.card-panel { --rule-soft: color-mix(in srgb, var(--grey-border) 55%, transparent); }
+.card-panel {
+  --rule-soft: color-mix(in srgb, var(--grey-border) 55%, transparent);
+  /* each section sits on its own ground, a step darker than the panel (operator, 2026-09-23 mockup) */
+  --section-ground: color-mix(in srgb, var(--bg) 70%, var(--panel-row));
+}
 /* the design archive (panel-layouts.css) resets .card-sections back to a flat list for its own
    normal-flow variants - it was written against the old grid and never learned about masonry, so
    pulling every .card-section out of flow here bled into it too and stacked all fifteen archived
@@ -256,36 +260,38 @@ body {
 /* grid children default to min-width: auto, so one long path or url widened a column past the
    panel - zero lets it wrap inside its box */
 .card-panel .card-section { min-width: 0; overflow-wrap: anywhere; }
-/* a section's label is a board column's header: dim text on a 2px rule, the content below it */
+/* A SECTION IS ITS OWN SMALL PANEL, as in the approved mockup: a darker ground, rounded, padded,
+   with a small uppercase label and its count at the far end - no rule under the label */
+.card-panel .card-section:not([data-section="title"]) {
+  background: var(--section-ground); border-radius: 6px; padding: 10px 12px;
+}
 .card-panel .card-section:not([data-section="title"]) > .field-label {
-  padding: 2px 0; margin-bottom: 10px; border-bottom: 2px solid var(--grey-border);
+  margin-bottom: 6px; font-size: 0.85em; letter-spacing: 0.12em; text-transform: uppercase;
 }
-/* A FOCUSED SECTION WEARS THE CARD'S OWN LOOK, QUIETER (operator, 2026-09-17) - ui_base's
-   .focus-glow-soft, put on every section by card_panel.js: the same inset ring, inner glow and
-   coloured light the card itself wears, at a third of the lift and light and half the ring. A
-   section inside a card is a smaller thing than a card on a board, so the loud one read as the
-   whole card jumping. Retune a part by restating that part's token, not the rule.
-   The rule below stays: the label lighting is what a section had before the glow and it still says
-   which section this is once the ring is drawing round several fields' worth of text. */
+/* A FOCUSED SECTION WEARS THE BOARD CARD'S OWN FRAME (operator, 2026-09-23, the approved mockup;
+   before that, 2026-09-17, the quieter focus-glow-soft): the same inset ring and inner glow, with
+   only the lift lowered, since a section is a big box. The label lights up too, to say which one */
 .card-panel .card-section:focus-visible { outline: none; }
-.card-panel .card-section:not([data-section="title"]):focus-visible > .field-label {
-  color: var(--cream); border-bottom-color: var(--cream);
-}
+/* the board card's own frame, at a smaller lift - a section is a big box, 3% reads as a jump */
+.card-panel .card-section { --focus-lift: 1.01; }
+.card-panel .card-section:not([data-section="title"]):focus-visible > .field-label { color: var(--cream); }
 
 /* THE STATE EDGE: the card's state as a thick bar on a band sunk into the page ground, the same
    colour its collapsed strip wears as a border */
 .card-panel [data-section="title"] {
-  border: 0; border-left: 8px solid var(--grey-border);
-  background: var(--bg); padding: 12px 16px;
+  border: 0; border-left: 8px solid var(--grey-border); border-radius: 6px;
+  background: var(--section-ground); padding: 10px 14px 12px 16px;
 }
-.card-panel [data-section="title"] .section-value { color: var(--cream); font-size: 1.15em; margin-top: 4px; }
+.card-panel [data-section="title"] .section-value {
+  color: var(--cream); font-size: 1.3em; font-weight: 600; line-height: 1.3; margin-top: 4px;
+}
 .card-panel.card-working [data-section="title"] { border-left-color: var(--fill-good); }
 .card-panel.card-attention [data-section="title"] { border-left-color: var(--fill-attention); }
 .card-panel.card-accepted [data-section="title"] { border-left-color: var(--status-good); }
 .card-panel.card-rejected [data-section="title"] { border-left-color: var(--fill-warn); }
 /* the head's one meta line: id, status, why it is blocked, model, spend - small facts, dim, and
    the block reason in the attention colour so it reads before the rest */
-.card-panel .card-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--text-dim); }
+.card-panel .card-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--text-dim); font-size: 0.92em; }
 .card-panel .card-meta .card-id { color: var(--cream); }
 .card-panel .card-meta-flag { color: var(--fill-attention); }
 
@@ -295,7 +301,7 @@ body {
 
 /* NEEDS WEARS THE ATTENTION EDGE only while the card waits on the operator - card_panel.js sets
    data-accent then, never for a card that is working or finished */
-.card-panel .card-section[data-accent="attention"] { border-left: 3px solid var(--attention); padding-left: 10px; }
+.card-panel .card-section[data-accent="attention"] { box-shadow: inset 3px 0 0 var(--attention); }
 .card-panel .card-section[data-accent="attention"] > .field-label { color: var(--attention); }
 
 .card-panel ul { margin: 4px 0; padding-left: 18px; }

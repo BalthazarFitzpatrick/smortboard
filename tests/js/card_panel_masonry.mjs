@@ -98,35 +98,35 @@ const comments = makeSection('comments', 15);
 mod.layoutCardSections(panel);
 
 assert.equal(title.style.width, '100%', 'title spans the full width');
-assert.equal(status.style.width, '380px', 'a column section is sized to its own column, not the full width');
-assert.equal(status.style.top, '80px', 'status starts right under title (50 + 30 gap)');
+assert.equal(status.style.width, '393px', 'a column section is sized to its own column, not the full width');
+assert.equal(status.style.top, '64px', 'status starts right under title (50 + 14 gap)');
 assert.equal(status.style.left, '0px', 'status sits in the first column');
-assert.equal(workstream.style.top, '80px', 'workstream starts level with status - both columns began even after title');
-assert.equal(workstream.style.left, '420px', 'workstream sits in the second column (380 + 40 gap)');
-assert.equal(outcome.style.top, '190px', 'outcome starts at the taller of the two columns\' reach (workstream: 80 + 80 + 30)');
-assert.equal(tasks.style.top, '240px', 'tasks starts right under outcome (190 + 20 + 30)');
-assert.equal(deps.style.top, '240px', 'deps starts level with tasks - both columns synced by outcome');
-assert.equal(comments.style.top, '290px',
-  'comments (the third item after the band) stacks right under deps (240 + 20 + 30), not under tasks - no shared-row wait');
-assert.equal(comments.style.left, '420px', 'comments stays in the shorter column, not wherever the row model would have put it');
-assert.equal(sections.style.height, '340px', 'the container is sized to the tallest column\'s actual reach, minus the trailing gap');
+assert.equal(workstream.style.top, '64px', 'workstream starts level with status - both columns began even after title');
+assert.equal(workstream.style.left, '407px', 'workstream sits in the second column (393 + 14 gap)');
+assert.equal(outcome.style.top, '158px', 'outcome starts at the taller of the two columns\' reach (workstream: 64 + 80 + 14)');
+assert.equal(tasks.style.top, '192px', 'tasks starts right under outcome (158 + 20 + 14)');
+assert.equal(deps.style.top, '192px', 'deps starts level with tasks - both columns synced by outcome');
+assert.equal(comments.style.top, '226px',
+  'comments (the third item after the band) stacks right under deps (192 + 20 + 14), not under tasks - no shared-row wait');
+assert.equal(comments.style.left, '407px', 'comments stays in the shorter column, not wherever the row model would have put it');
+assert.equal(sections.style.height, '292px', 'the container is sized to the tallest column\'s actual reach, minus the trailing gap');
 
 // ---- reflow on resize: a narrower width folds to one column and every section restacks in order
 sections.getBoundingClientRect = () => ({left: 0, top: 0, right: 0, bottom: 0, width: 500, height: 0});
 mod.layoutCardSections(panel);
 assert.equal(status.style.width, '100%', 'a narrow panel makes every section full width');
-assert.equal(status.style.top, '80px', 'status still follows title directly');
-assert.equal(workstream.style.top, '140px', 'workstream now queues after status instead of sitting beside it (80 + 30 + 30)');
+assert.equal(status.style.top, '64px', 'status still follows title directly');
+assert.equal(workstream.style.top, '108px', 'workstream now queues after status instead of sitting beside it (64 + 30 + 14)');
 assert.equal(workstream.style.left, '0px', 'a single column has nothing to sit beside');
-assert.equal(comments.style.top, '480px', 'the single column keeps stacking every section in document order');
+assert.equal(comments.style.top, '384px', 'the single column keeps stacking every section in document order');
 
 // ---- reorder and remove: layoutCardSections reads the dom fresh every call, not a cached order
 sections.getBoundingClientRect = () => ({left: 0, top: 0, right: 0, bottom: 0, width: 800, height: 0});
 deps.remove();
 sections.appendChild(deps); // move deps to the end, after comments
 mod.layoutCardSections(panel);
-assert.equal(deps.style.top, '285px', 'a reordered section is measured in its new document position');
-assert.equal(deps.style.left, '420px', 'reordering can change which column a section lands in');
+assert.equal(deps.style.top, '221px', 'a reordered section is measured in its new document position');
+assert.equal(deps.style.left, '407px', 'reordering can change which column a section lands in');
 
 // ---- a container measured before it has a real box (width 0) is left alone rather than handed a
 // negative column width - (0 - gap) / columns went negative here before the guard, squeezing every
@@ -153,7 +153,7 @@ assert.ok(observed.includes(sections), 'the container is watched for its width')
 assert.ok(observed.includes(status), 'each section is watched for its height');
 sections.getBoundingClientRect = () => ({left: 0, top: 0, right: 0, bottom: 0, width: 800, height: 0});
 fire([]);
-assert.equal(status.style.top, '80px', 'the observer lays the panel out once it has a real width');
+assert.equal(status.style.top, '64px', 'the observer lays the panel out once it has a real width');
 panel.isConnected = false;
 fire([]);
 assert.equal(observed.length, 0, 'a closed panel stops being watched');
@@ -183,7 +183,7 @@ small.offsetHeight = 30;
 scaled.sections.appendChild(big);
 scaled.sections.appendChild(small);
 mod.layoutCardSections(scaled.panel);
-assert.equal(big.style.width, '380px',   // (800 - the 40px column gap) / 2
+assert.equal(big.style.width, '393px',   // (800 - the 14px column gap) / 2
   'the column width comes from the layout box, not the transformed rect');
 assert.equal(small.style.top, '0px',
   'a second column exists at the real width, so the status sits beside the description');
@@ -220,20 +220,20 @@ const notes = pinnedSection('history', 1, 30);
 [head, about, needs, facts, notes].forEach(s => split.sections.appendChild(s));
 mod.layoutCardSections(split.panel);
 assert.equal(head.style.width, '100%', 'the head still spans both columns');
-assert.equal(about.style.width, '456px', 'left: 3/5 of the 760px the gap leaves');
-assert.equal(facts.style.width, '304px', 'right: 2/5 of it');
+assert.equal(about.style.width, '471.6px', 'left: 3/5 of the 786px the gap leaves');
+assert.equal(facts.style.width, '314.4px', 'right: 2/5 of it');
 assert.equal(needs.style.left, '0px', 'needs stays left under about, though the right column is shorter');
-assert.equal(needs.style.top, '300px', 'under about (40 + 30 + 200 + 30)');
-assert.equal(facts.style.left, '496px', 'the right column starts after the wider left one and the gap');
-assert.equal(notes.style.top, '130px', 'history stacks under criteria in the right column (70 + 30 + 30)');
-assert.equal(split.sections.style.height, '360px', 'the container reaches the taller, left column');
+assert.equal(needs.style.top, '268px', 'under about (40 + 14 + 200 + 14)');
+assert.equal(facts.style.left, '485.6px', 'the right column starts after the wider left one and the gap');
+assert.equal(notes.style.top, '98px', 'history stacks under criteria in the right column (54 + 30 + 14)');
+assert.equal(split.sections.style.height, '328px', 'the container reaches the taller, left column');
 
 // one unpinned section: its column is only known after it is measured, so the widths stay equal
 const loose = pinnedSection('deps', null, 10);
 split.sections.appendChild(loose);
 mod.layoutCardSections(split.panel);
-assert.equal(about.style.width, '380px', 'an unpinned section falls back to equal widths');
-assert.equal(facts.style.left, '420px');
+assert.equal(about.style.width, '393px', 'an unpinned section falls back to equal widths');
+assert.equal(facts.style.left, '407px');
 loose.remove();
 
 // below 760px everything is one column in document order, pins and shares aside
@@ -241,7 +241,7 @@ split.sections.getBoundingClientRect = () => ({left: 0, top: 0, right: 0, bottom
 mod.layoutCardSections(split.panel);
 assert.equal(facts.style.width, '100%', 'one column: every section full width');
 assert.equal(facts.style.left, '0px');
-assert.equal(facts.style.top, '390px', 'the right-column sections follow needs (300 + 60 + 30)');
-assert.equal(notes.style.top, '450px');
+assert.equal(facts.style.top, '342px', 'the right-column sections follow needs (268 + 60 + 14)');
+assert.equal(notes.style.top, '386px');
 
 console.log('ok');

@@ -415,9 +415,9 @@ async function openCardPanel(panel, cardId) {
 // the same on every card rather than whatever the shortest-column rule makes of it
 
 // one section per field: data-section names it for the layouts, .section-value holds what it says.
-// focus-glow-soft is the quiet version of the card's own focus treatment (ui_base): a section is a
-// smaller thing than a card, so it wears the same look at a third of the lift and light
-const SECTION_CLASS = 'card-section focus-glow focus-glow-soft';
+// focus-glow is the board card's own focus frame (ui_base); layout.css lowers only its lift for a
+// section, per the approved mockup (operator, 2026-09-23)
+const SECTION_CLASS = 'card-section focus-glow';
 function sectionHtml(name, label, value, {pin = null, accent = false} = {}) {
   const pinAttr = pin === null ? '' : ` data-pin="${pin}"`;
   const accentAttr = accent ? ' data-accent="attention"' : '';
