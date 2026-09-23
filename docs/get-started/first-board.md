@@ -49,15 +49,16 @@ finish**: the gate has nothing to run. See [Repos and test commands](../referenc
 
 ### Then press `h`
 
-!!! warning "Press `h` before your first card"
-    The pre-flight checklist is one screen of green and red rows:
-
-    - git, `gh` signed in, Docker, the card image, your lab credentials
-    - per repo on the board: its path, an `origin` on GitHub, its default branch pushed, `gh` able
-      to see it, a test command, and a repo image no older than its lockfile
-
-    A red row says what is missing and how to fix it. Skip it and a card finds the same gap minutes
-    into its run.
+> [!IMPORTANT]
+> **Press `h` before your first card.**
+> The pre-flight checklist is one screen of green and red rows:
+>
+> - git, `gh` signed in, Docker, the card image, your lab credentials
+> - per repo on the board: its path, an `origin` on GitHub, its default branch pushed, `gh` able
+>   to see it, a test command, and a repo image no older than its lockfile
+>
+> A red row says what is missing and how to fix it. Skip it and a card finds the same gap minutes
+> into its run.
 
 ## Your first card
 

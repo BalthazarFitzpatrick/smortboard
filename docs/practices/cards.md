@@ -6,13 +6,16 @@ The agent has only what you write: a short title, criteria your tests can check,
 one pull request, decide it before it starts, then leave it; it finishes unattended, and the history
 reads like a changelog.
 
-!!! warning "A card is not a conversation"
-    It is feature-sized, not edit-sized. Nothing you meant but did not write reaches the agent.
+> [!IMPORTANT]
+> **A card is not a conversation.**
+> It is feature-sized, not edit-sized. Nothing you meant but did not write reaches the agent.
 
 ## How it works
 
-![The card lifecycle: preparing, running, testing, reviewing, fixing, opening, then opened or landing. Reviewer findings on the fix route go back to the worker at most twice; a question, a limit, a crash, a lease conflict, failed tests or a rejected review block the card and wait in the inbox.](../images/art-lifecycle-dark.svg#only-dark)
-![The card lifecycle: preparing, running, testing, reviewing, fixing, opening, then opened or landing. Reviewer findings on the fix route go back to the worker at most twice; a question, a limit, a crash, a lease conflict, failed tests or a rejected review block the card and wait in the inbox.](../images/art-lifecycle-light.svg#only-light)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="../images/art-lifecycle-light.svg">
+  <img src="../images/art-lifecycle-dark.svg" alt="The card lifecycle: preparing, running, testing, reviewing, fixing, opening, then opened or landing. Reviewer findings on the fix route go back to the worker at most twice; a question, a limit, a crash, a lease conflict, failed tests or a rejected review block the card and wait in the inbox." width="100%">
+</picture>
 
 ### Board
 
@@ -60,9 +63,10 @@ a `warnings` list, empty when it fits. Nothing is refused or cut.
 Five are stored: `todo`, `doing`, `checking`, `accepted`, `rejected`. Read the reason code, not the
 column: it says what to do next.
 
-!!! warning "Blocked is a flag, not a status"
-    A blocked card keeps its status and raises a `blocked_reason_code`. A sixth status would throw
-    away what the card was doing, which the resume briefing needs to restart it.
+> [!IMPORTANT]
+> **Blocked is a flag, not a status.**
+> A blocked card keeps its status and raises a `blocked_reason_code`. A sixth status would throw
+> away what the card was doing, which the resume briefing needs to restart it.
 
 So a blocked card resumes exactly where it stopped, worktree and commits intact.
 

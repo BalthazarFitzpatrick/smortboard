@@ -24,8 +24,10 @@ attempts gets its own line.
 
 **Usage** `u`
 
-![One result's spend by model: claude-sonnet-5 $0.2476 for 822 output tokens, claude-haiku-4-5 $0.0009 for 17.](../images/art-cost-credit-dark.svg#only-dark)
-![One result's spend by model: claude-sonnet-5 $0.2476 for 822 output tokens, claude-haiku-4-5 $0.0009 for 17.](../images/art-cost-credit-light.svg#only-light)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="../images/art-cost-credit-light.svg">
+  <img src="../images/art-cost-credit-dark.svg" alt="One result&#x27;s spend by model: claude-sonnet-5 $0.2476 for 822 output tokens, claude-haiku-4-5 $0.0009 for 17." width="100%">
+</picture>
 
 ### Three caps
 

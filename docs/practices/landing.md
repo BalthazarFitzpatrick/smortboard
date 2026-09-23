@@ -6,9 +6,10 @@ The board lands one card at a time per branch, so no two pushes race, and never 
 or `trunk`. Agents land on `development` and you merge `main`: keep review required, accept with
 `y`, and switch a board to free merge with `shift+a` once you trust it.
 
-!!! warning "Refused in code, not by habit"
-    `pr merge` is not on the board's `gh` allowlist and cannot be added by a caller. Protected
-    branches are refused as a landing target in code.
+> [!IMPORTANT]
+> **Refused in code, not by habit.**
+> `pr merge` is not on the board's `gh` allowlist and cannot be added by a caller. Protected
+> branches are refused as a landing target in code.
 
 ## How it works
 

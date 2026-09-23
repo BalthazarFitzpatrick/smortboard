@@ -6,9 +6,10 @@ Your tests, then a second agent, check every card before its pull request, and n
 agent's word. Write criteria your test command checks: with a test behind it a criterion is
 enforced; without one it is a note.
 
-!!! warning "The reviewer does not judge your criteria"
-    It judges the code. Criteria are the test gate's business, enforced only as far as your test
-    command checks them.
+> [!IMPORTANT]
+> **The reviewer does not judge your criteria.**
+> It judges the code. Criteria are the test gate's business, enforced only as far as your test
+> command checks them.
 
 ## How it works
 

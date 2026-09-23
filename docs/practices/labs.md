@@ -12,10 +12,11 @@ independent reviewer and somewhere to go when one is rate-limited.
 several; one is active. Tokens are model-only, never your login: Anthropic profiles use
 `claude setup-token`. Existing token files and settings keep working without a migration.
 
-!!! warning "Rotation is off by default"
-    A profile at its limit parks new starts on that lab until the window resets. Turn on *switch
-    credential profiles automatically* in settings to rotate instead, so one limited account does
-    not stop the board. Running cards are left alone either way.
+> [!IMPORTANT]
+> **Rotation is off by default.**
+> A profile at its limit parks new starts on that lab until the window resets. Turn on *switch
+> credential profiles automatically* in settings to rotate instead, so one limited account does
+> not stop the board. Running cards are left alone either way.
 
 ### Adding an OpenAI profile
 
@@ -51,13 +52,14 @@ Each role takes an ordered fallback list, such as `openai/gpt-5.6-sol`; empty ke
 Profile rotation stays within a lab. A cross-lab retry needs an explicit fallback and leaves a
 message on the card. Codex notes arrive on the next run.
 
-!!! warning "A usage limit switches models unasked"
-    | `o` setting | `usage_limit_route` | on a usage limit |
-    |---|---|---|
-    | unticked (default) | not set | the role switches to its fallback model on its own |
-    | *on a usage limit, ask me before switching to a fallback model* | `attention` | the card waits in the inbox with a **retry on** control |
-
-    Either way the card re-runs on its own model once the window resets.
+> [!IMPORTANT]
+> **A usage limit switches models unasked.**
+> | `o` setting | `usage_limit_route` | on a usage limit |
+> |---|---|---|
+> | unticked (default) | not set | the role switches to its fallback model on its own |
+> | *on a usage limit, ask me before switching to a fallback model* | `attention` | the card waits in the inbox with a **retry on** control |
+>
+> Either way the card re-runs on its own model once the window resets.
 
 ### The model catalog
 

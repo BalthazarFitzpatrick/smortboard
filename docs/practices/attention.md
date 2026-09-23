@@ -5,9 +5,10 @@
 Anything that needs you lands in attention; everything else runs itself. Glance, act, leave: "what
 is waiting for me?" is one look at the board, not a round of opening cards.
 
-!!! warning "Attention is not a status"
-    It is a presentation column between doing and checking. It shows any card with a blocked reason
-    or a review flag, whatever status it holds underneath.
+> [!IMPORTANT]
+> **Attention is not a status.**
+> It is a presentation column between doing and checking. It shows any card with a blocked reason
+> or a review flag, whatever status it holds underneath.
 
 ## How it works
 
@@ -42,11 +43,12 @@ red base, a rejected review, a crash, a lease conflict, a merge conflict, an out
 (answering `OUTDATED` redoes the card from the current base). A card in `checking` waiting for accept
 or reject is a decision, not a question: use `y` or `x` on the card.
 
-!!! warning "Two reasons cannot be answered"
-    `USAGE_LIMIT` clears itself when the window resets, so an answer would only confuse the agent.
-    Its row offers **retry on** the next usable fallback model instead, when there is one (see
-    [labs](labs.md)). `DEPENDENCY_REJECTED` is not this card's fault: fix and accept the card it
-    depends on, and this one un-blocks itself.
+> [!IMPORTANT]
+> **Two reasons cannot be answered.**
+> `USAGE_LIMIT` clears itself when the window resets, so an answer would only confuse the agent.
+> Its row offers **retry on** the next usable fallback model instead, when there is one (see
+> [labs](labs.md)). `DEPENDENCY_REJECTED` is not this card's fault: fix and accept the card it
+> depends on, and this one un-blocks itself.
 
 ### Lease conflicts
 
