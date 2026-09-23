@@ -513,24 +513,26 @@ function reasonWords(code) {
   return String(code).toLowerCase().replace(/_/g, ' ');
 }
 
+// the head line names a model the way people say it: "opus 5", not "anthropic/claude-opus-5"
 function metaModelText(model, lab) {
-  return model ? modelLabel(model, lab) : 'default model';
+  if (!model) return 'default model';
+  const id = model.includes('/') ? model.split('/').pop() : model;
+  return id.startsWith('claude-') ? id.slice('claude-'.length).replace(/-/g, ' ') : id;
 }
 
 function metaComplexityText(card) {
   return `complexity: ${complexityLabel(card)}`;
 }
 
-// runs, turns and cost across every attempt, off the outcome's totals - empty for a card never run
+// what the card has cost across every attempt - empty for a card never run. runs and turns live
+// in the cost view (i); the head line keeps only the number people act on
 function spendLabel(outcome) {
   const runs = outcome?.runs || 0;
   if (!runs) return '';
-  const parts = [`${runs} ${runs === 1 ? 'run' : 'runs'}`];
-  if (outcome.turns) parts.push(`${outcome.turns} turns`);
   if (typeof outcome.cost_usd === 'number') {
-    parts.push(`${outcome.cost_estimated ? '~' : ''}$${outcome.cost_usd.toFixed(2)}`);
+    return `${outcome.cost_estimated ? '~' : ''}$${outcome.cost_usd.toFixed(2)}`;
   }
-  return parts.join(' · ');
+  return `${runs} ${runs === 1 ? 'run' : 'runs'}`;
 }
 
 function cardHeadHtml(card, outcome) {
@@ -539,11 +541,10 @@ function cardHeadHtml(card, outcome) {
     `<span>${escapeHtml(STATUS_LABELS[card.status] || card.status || '')}</span>`,
   ];
   if (card.blocked_reason_code) {
-    meta.push(`<span class="card-meta-flag">blocked: ${escapeHtml(reasonWords(card.blocked_reason_code))}</span>`);
+    meta.push(`<span class="card-meta-flag">${escapeHtml(reasonWords(card.blocked_reason_code))}</span>`);
   }
   if (card.workstream) meta.push(`<span>${escapeHtml(card.workstream)}</span>`);
   meta.push(`<span class="card-model">${escapeHtml(metaModelText(card.model, card.lab))}</span>`);
-  meta.push(`<span class="card-complexity">${escapeHtml(metaComplexityText(card))}</span>`);
   const spend = spendLabel(outcome);
   if (spend) meta.push(`<span>${escapeHtml(spend)}</span>`);
   return `<div class="${SECTION_CLASS}" tabindex="0" data-section="title">` +
@@ -562,8 +563,13 @@ function aboutSectionHtml(card) {
   let body = lead ? `<div class="card-lead">${escapeHtml(lead)}${cut ? '…' : ''}</div>` : '<span class="empty">no brief</span>';
   // the whole brief stays one click away, unless the lead already is the whole brief
   if (description.trim() && description.trim() !== lead) body += foldHtml('full brief', description);
+  // tasks fold like the brief: the lead says what the card is, the rest is one click away
   const tasks = (card.tasks || []).map(t => `<li>${t.done ? '[x]' : '[ ]'} ${escapeHtml(t.text)}</li>`);
-  if (tasks.length) body += `<ul class="card-tasks">${tasks.join('')}</ul>`;
+  const open = (card.tasks || []).filter(t => !t.done).length;
+  if (tasks.length) {
+    body += `<details class="card-fold"><summary>tasks - ${open} of ${tasks.length} open</summary>` +
+      `<ul class="card-tasks">${tasks.join('')}</ul></details>`;
+  }
   return sectionHtml('about', 'about', body, {pin: 0});
 }
 
@@ -614,7 +620,6 @@ function doneSectionHtml(card, outcome, block) {
     body += block.done.length
       ? `<ul class="card-lines">${block.done.map(line => `<li>${linkifyPrRefs(line)}</li>`).join('')}</ul>`
       : '<span class="empty">nothing listed</span>';
-    if (block.before) body += foldHtml('agent notes', block.before);
   } else if (outcome.summary) {
     // no closing block to read the lines from - the summary stays whole, one click away
     body += foldHtml('agent summary', outcome.summary);
@@ -698,10 +703,18 @@ function historyRowHtml(comment) {
     `<div class="comment-body">${linkifyPrRefs(rest)}</div></details></li>`;
 }
 
+// the newest few lines show; anything older folds behind one line, opened on purpose
+const HISTORY_SHOWN = 3;
+
 function historySectionHtml(comments) {
-  const body = comments.length
-    ? `<ul class="card-history">${comments.map(historyRowHtml).join('')}</ul>`
-    : '<span class="empty">none</span>';
+  if (!comments.length) return sectionHtml('history', countLabel('history', 0), '<span class="empty">none</span>', {pin: 1});
+  const older = comments.slice(0, -HISTORY_SHOWN);
+  const recent = comments.slice(-HISTORY_SHOWN);
+  const olderHtml = older.length
+    ? `<details class="card-fold history-older"><summary>${older.length} older</summary>` +
+      `<ul class="card-history">${older.map(historyRowHtml).join('')}</ul></details>`
+    : '';
+  const body = `${olderHtml}<ul class="card-history">${recent.map(historyRowHtml).join('')}</ul>`;
   return sectionHtml('history', countLabel('history', comments.length), body, {pin: 1});
 }
 
@@ -712,8 +725,8 @@ function cardPanelHtml(card, outcome) {
   const hasBoardNote = comments.some(c => c.author === BOARD_COMMENT_AUTHOR);
   const criteria = (card.criteria || []).map(c => `<li>${escapeHtml(c.text)}</li>`);
   // the paths its agent may write - an empty lease is why a run gets refused, so say so here
-  const globs = (card.leases || []).map(l => `<li class="card-path">${escapeHtml(l.path_glob)}</li>`);
-  const lease = globs.length ? `<ul class="card-lines">${globs.join('')}</ul>` : '<span class="empty">none - it will not run</span>';
+  const globs = (card.leases || []).map(l => `<span class="card-path">${escapeHtml(l.path_glob)}</span>`);
+  const lease = globs.length ? `<div class="card-path-line">${globs.join(', ')}</div>` : '<span class="empty">none - it will not run</span>';
   // depends_on holds ids only - shown by title when that card is on this board, a short id otherwise
   const deps = (card.depends_on || []).map(d => `<li>${escapeHtml(dependencyLabel(d))}</li>`);
   const attachments = (card.attachments || []).map(a => `<li>${escapeHtml(a.filename)}</li>`);

@@ -314,6 +314,7 @@ body {
 .card-panel .card-tasks { list-style: none; padding-left: 0; }
 .card-panel .card-lead { color: var(--text); }
 .card-panel .card-path { color: var(--text-dim); }
+.card-panel .card-path-line { overflow-wrap: anywhere; }
 .card-panel .comment-cta { margin-top: 8px; }
 .card-panel .comment-input { width: 100%; box-sizing: border-box; margin-top: 8px; }
 
@@ -336,19 +337,17 @@ body {
 
 /* THE RUN AS A TIMELINE. tests, review and pull request happened in that order, so they sit on a
    rail with a marker each: filled lichen passed, filled red failed, hollow for no verdict */
-.card-panel .run-rail { margin-top: 10px; }
-.card-panel .outcome-part {
-  position: relative; margin-left: 5px; padding: 1px 0 6px 20px;
-  border-left: 2px solid var(--grey-border);
-}
-/* the last step ends the rail */
-.card-panel .outcome-part:not(:has(~ .outcome-part)) { border-left-color: transparent; padding-bottom: 0; }
-.card-panel .rail-key { display: inline-block; min-width: 6em; color: var(--text-dim); }
+/* THE VERDICTS ON ONE LINE (operator, 2026-09-23: minimise the open card) - tests, review and pr
+   side by side, each with its dot; a review that carries findings takes a line of its own */
+.card-panel .run-rail { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 2px 18px; }
+.card-panel .outcome-part { position: relative; padding-left: 12px; }
+.card-panel .outcome-part:has(.rail-line) { flex-basis: 100%; }
+.card-panel .rail-key { margin-right: 6px; color: var(--text-dim); }
 .card-panel .rail-line { color: var(--text); margin-top: 2px; }
 /* a small round dot on the 2px rail, level with the step's first line, pale so the words lead.
    lichen milk done, stone red a problem, vanilla waiting on the operator, blue still going */
 .card-panel .outcome-part::before {
-  content: ""; position: absolute; left: -4px; top: 7px; width: 6px; height: 6px;
+  content: ""; position: absolute; left: 0; top: 7px; width: 6px; height: 6px;
   box-sizing: border-box; border-radius: 50%;
   background: var(--panel-row); border: 1.5px solid var(--grey-border);
 }

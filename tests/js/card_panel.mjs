@@ -47,7 +47,7 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'), uiBase('entrytext.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {cardPanelHtml, doAcceptOrRejectCard, showRun, runBadge, splitCommentHeadline,
-  summarizeDescription, renderCardStrip, appendLine, parseWorkerBlock};`)(SpyMenu, SpyDrawer);
+  summarizeDescription, renderCardStrip, appendLine, parseWorkerBlock, complexityLabel};`)(SpyMenu, SpyDrawer);
 
 // one section's own markup out of the panel string: from its data-section to the next one. the stub
 // does not parse html into a tree, so "under the needs section" means inside this slice
@@ -120,10 +120,13 @@ const headHtml = sectionOf(mod.cardPanelHtml(
 ), 'title');
 assert.ok(headHtml.includes('<span class="card-id">abcdef01</span>'), 'the short id leads the meta line');
 assert.ok(headHtml.includes('<span>doing</span>'));
-assert.ok(headHtml.includes('<span class="card-meta-flag">blocked: tests failed</span>'), 'the reason code in plain words');
+assert.ok(headHtml.includes('<span class="card-meta-flag">tests failed</span>'), 'the reason code in plain words');
 assert.ok(headHtml.includes('<span>ui</span>'), 'the workstream folds into the meta line');
-assert.ok(headHtml.includes('<span class="card-model">anthropic/sonnet</span>'));
-assert.ok(headHtml.includes('<span>3 runs · 141 turns · $6.77</span>'), 'runs, turns and cost across attempts');
+assert.ok(headHtml.includes('<span class="card-model">sonnet</span>'));
+assert.ok(headHtml.includes('<span>$6.77</span>') && !headHtml.includes('turns'), 'the cost only; runs and turns live under i');
+const opusHead = sectionOf(mod.cardPanelHtml({...card, model: 'anthropic/claude-opus-5'}, outcome), 'title');
+assert.ok(opusHead.includes('<span class="card-model">opus 5</span>'), 'a model is named the way people say it');
+assert.ok(!headHtml.includes('complexity'), 'complexity stays in the card menu, not the head line');
 assert.ok(headHtml.includes('<div class="section-value">the title</div>'), 'the title sits under the meta line');
 assert.ok(!sectionOf(mod.cardPanelHtml(card, outcome), 'title').includes('runs'), 'no spend part for a card with no runs');
 
@@ -131,7 +134,7 @@ assert.ok(!sectionOf(mod.cardPanelHtml(card, outcome), 'title').includes('runs')
 assert.ok(sectionOf(html1, 'lease').includes('<span class="empty">none - it will not run</span>'),
   'a card with no lease should say it will not run');
 const leased = sectionOf(mod.cardPanelHtml({...card, leases: [{path_glob: 'src/**'}, {path_glob: 'tests/**'}]}, outcome), 'lease');
-assert.ok(leased.includes('<li class="card-path">src/**</li><li class="card-path">tests/**</li>'), 'a lease lists its globs');
+assert.ok(leased.includes('<span class="card-path">src/**</span>, <span class="card-path">tests/**</span>'), 'a lease is one line of globs');
 assert.ok(leased.includes('lease<span class="field-count">2</span>'), 'the label carries the count');
 
 // ---- the worker's closing block: DONE lines under done, ACTION, WHY and NOT DONE under needs
@@ -352,14 +355,18 @@ assert.ok(!shortAbout.includes('full brief'), 'a brief the lead already shows wh
 assert.ok(sectionOf(mod.cardPanelHtml({...detailCard, description: ''}, {}), 'about').includes('no brief'));
 assert.ok(sectionOf(mod.cardPanelHtml({...detailCard, status: 'todo'}, {}), 'needs').includes('nothing yet, r runs it'));
 
-// ---- complexity sits in the head's meta line: rated shows the level, unrated the estimate with an
-// "(estimated)" note -------------------------------------------------------------------------
+// ---- complexity is read in the card menu (c after m): rated shows the level, unrated the estimate
+// with an "(estimated)" note ------------------------------------------------------------------
 
-const ratedCard = {...card, complexity: 2};
-assert.ok(mod.cardPanelHtml(ratedCard, {}).includes('complexity: medium'), 'a rated card shows its level');
-
-const unratedCard = {...card, complexity: null, criteria: [], tasks: [], leases: []};
-assert.ok(mod.cardPanelHtml(unratedCard, {}).includes('complexity: low (estimated)'),
+assert.equal(mod.complexityLabel({...card, complexity: 2}), 'medium', 'a rated card shows its level');
+assert.equal(mod.complexityLabel({...card, complexity: null, criteria: [], tasks: [], leases: []}), 'low (estimated)',
   'an unrated card with nothing else shows a low estimate');
+
+// ---- history: the newest three lines show, older ones fold behind one line
+const many = Array.from({length: 5}, (_, i) => ({author: 'operator', body: `note ${i}`, created_at: '2026-09-14T10:00:00Z'}));
+const longHistory = sectionOf(mod.cardPanelHtml({...card, comments: many}, outcome), 'history');
+assert.ok(longHistory.includes('<summary>2 older</summary>'), 'older notes fold behind a count');
+assert.ok(longHistory.indexOf('2 older</summary>') < longHistory.indexOf('you: note 4'), 'the fold sits above the newest lines');
+assert.ok(longHistory.includes('you: note 4') && longHistory.includes('you: note 2'), 'the newest three show');
 
 console.log('ok');
