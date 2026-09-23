@@ -25,7 +25,7 @@ const boardsState = [
 ];
 const calls = [];
 // knobs a test flips to make the next call fail, the way the real server would
-const stubControl = {refuseNextSettingsPatch: false};
+const stubControl = {refuseNextSettingsPatch: false, importRefusal: null};
 function stubJson(status, body) {
   return {ok: status >= 200 && status < 300, status, json: async () => body};
 }
@@ -71,6 +71,11 @@ function fetchStub(path, opts) {
       board.daily_budget_usd = body.daily_budget_usd;
     }
     return Promise.resolve(stubJson(200, {...board}));
+  }
+  // import only ever adds: the file's boards come back under new ids beside the existing ones
+  if (path === '/api/import' && opts && opts.method === 'POST') {
+    if (stubControl.importRefusal) return Promise.resolve(stubJson(400, {error: stubControl.importRefusal}));
+    return Promise.resolve(stubJson(201, {boards: [{id: 'b9', name: 'restored', max_parallel: null}]}));
   }
   // anything else never answers, as on main: board.js's own startup fetches (loadBoards) would
   // otherwise reject unhandled and end the run before a single assertion
@@ -172,11 +177,11 @@ assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-s
   .map(section => section.children[0].textContent)), [
   ['mouse', 'mission control can read', 'how many cards run at once',
     'file leases: strict or soft, per board',
-    'mall cam: seconds per card while auto-cycling the workforce drawer'],
+    'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup'],
   ['credential profiles', 'usage limits', 'models by role'],
   ['budgets and spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 9);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 10);
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
 assert.deepEqual(costTriggers.map(trigger => trigger.textContent),
   ['daily budgets per board', 'spend caps per run'], 'cost controls have separate compact triggers');
@@ -471,5 +476,64 @@ press('KeyO');
 assert.ok(mod.st.backdrop.parentNode, 'o should reopen the panel');
 press('KeyO');
 assert.ok(!mod.st.backdrop.parentNode, 'a second o should close the panel');
+
+// ---- backup: export downloads, import adds beside the boards here and never replaces one --------
+{
+  // what the section creates on the fly - the download link and the file picker - is caught here
+  const made = [];
+  const createElement = document.createElement;
+  document.createElement = tag => {
+    const el = createElement(tag);
+    el.click = () => { el.clicked = true; };
+    made.push(el);
+    return el;
+  };
+  mod.openSettingsPanel();
+  await flush();
+  const section = mod.st.listEl.querySelectorAll('.settings-section')
+    .find(s => s.children[0].textContent === 'backup');
+  const buttons = section.querySelectorAll('.run-controls .toggle');
+  assert.deepEqual(buttons.map(btn => btn.textContent), ['export', 'import as new board(s)'],
+    'no replace: import only ever adds boards');
+  assert.ok(buttons.every(btn => btn.tag === 'button' && btn.type === 'button'),
+    'real buttons: tab reaches them and enter or space picks');
+  const status = section.querySelector('.boards-status');
+  const [exportButton, importButton] = buttons;
+
+  made.length = 0; // opening the panel built its own rows; only what the buttons make counts
+  exportButton.onclick();
+  const link = made.find(el => el.tag === 'a');
+  assert.equal(link.href, '/api/export');
+  assert.equal(link.download, '', 'download set, so the page stays and the server names the file');
+  assert.ok(link.clicked && link.removed, 'the link is clicked once and not left in the page');
+
+  made.length = 0;
+  importButton.onclick();
+  const picker = made.find(el => el.tag === 'input');
+  assert.equal(picker.type, 'file');
+  assert.ok(picker.clicked, 'import opens the file picker');
+  assert.equal(picker.parentNode, null, 'the picker never joins the panel, so up/down never land on it');
+
+  const boardsFetchesBefore = calls.filter(c => c.path === '/api/boards').length;
+  picker.files = [new File(['{"boards": []}'], 'backup.json', {type: 'application/json'})];
+  picker._listeners.change.forEach(fn => fn());
+  await flush();
+  const upload = calls.filter(c => c.path === '/api/import').at(-1);
+  assert.equal(upload.opts.method, 'POST');
+  assert.ok(upload.opts.body instanceof FormData, 'the file goes up as multipart, like an attachment');
+  assert.equal(upload.opts.body.get('bundle').name, 'backup.json');
+  assert.equal(status.textContent, 'added 1 board(s): restored');
+  assert.ok(calls.filter(c => c.path === '/api/boards').length > boardsFetchesBefore,
+    'the board bar reloads so the added board shows');
+
+  // a refused file says why, in place
+  stubControl.importRefusal = 'the bundle holds no boards';
+  picker._listeners.change.forEach(fn => fn());
+  await flush();
+  assert.equal(status.textContent, 'the bundle holds no boards');
+  assert.ok(status.classList.contains('boards-error'));
+  document.createElement = createElement;
+  mod.closeSettingsPanel();
+}
 
 console.log('ok');

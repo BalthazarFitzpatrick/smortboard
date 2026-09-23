@@ -5,6 +5,7 @@ import re
 import sqlite3
 import threading
 from collections import defaultdict, deque
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -60,7 +61,12 @@ from smortboard.server.runs import (
 )
 from smortboard.store import Store
 from smortboard.store.api import CARD_WRITABLE_FIELDS
-from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
+from smortboard.store.errors import (
+    BlockedReasonInvalidError,
+    BundleError,
+    NotFoundError,
+    UnknownFieldError,
+)
 from smortboard.store.repo_validation import validate_repo
 from smortboard.telemetry import (
     board_costs,
@@ -106,6 +112,8 @@ _ROUTES = [
     (re.compile(r"^/api/preflight$"), "GET"),
     (re.compile(r"^/api/settings$"), "GET"),
     (re.compile(r"^/api/settings$"), "PATCH"),
+    (re.compile(r"^/api/export$"), "GET"),
+    (re.compile(r"^/api/import$"), "POST"),
     (re.compile(r"^/api/tasks/(?P<task_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "POST"),
@@ -177,6 +185,9 @@ _MEDIA_TYPE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
 _REQUEST_TIMEOUT_S = 30
 _MAX_JSON_BYTES = 1_000_000
 _MAX_UPLOAD_BYTES = 25_000_000
+# a whole bundle: every board's event log and every attachment, base64. a guess, not measured
+# against a real board - generous because refusing an operator's own backup is the worse failure
+_MAX_BUNDLE_BYTES = 200_000_000
 
 
 class NotJsonError(ValueError):
@@ -261,7 +272,7 @@ def _make_handler(
                 self._send_json(404, {"error": f"no route for {method} {path}"})
             except NotFoundError as exc:
                 self._send_json(404, {"error": str(exc)})
-            except (BlockedReasonInvalidError, UnknownFieldError) as exc:
+            except (BlockedReasonInvalidError, UnknownFieldError, BundleError) as exc:
                 self._send_json(400, {"error": str(exc)})
             except sqlite3.Error as exc:
                 # a store error must still be an HTTP response. uncaught, it escaped _dispatch and
@@ -412,6 +423,10 @@ def _make_handler(
             elif path == "/api/settings" and method == "PATCH":
                 store.set_settings(self._read_json())
                 self._send_json(200, store.get_settings())
+            elif path == "/api/export":
+                self._handle_export()
+            elif path == "/api/import":
+                self._handle_import()
             elif path.endswith("/events"):
                 self._send_json(200, store.list_events(params["card_id"]))
             elif "card_id" in params and path.endswith("/timeline"):
@@ -1107,6 +1122,37 @@ def _make_handler(
                 data=uploaded.data,
             )
             self._send_json(201, attachment)
+
+        def _handle_export(self) -> None:
+            data = store.export_text().encode()
+            stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header(
+                "Content-Disposition", f'attachment; filename="smortboard-{stamp}.json"'
+            )
+            self._send_hardening_headers()
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _handle_import(self) -> None:
+            """adds an uploaded bundle's boards beside the ones here - never replaces one, see
+            store/export.py import_as_new. a restore under the original ids is `smortboard import`"""
+            content_type = self.headers.get("Content-Type", "")
+            if "multipart/form-data" not in content_type:
+                self._send_json(400, {"error": "expected multipart/form-data"})
+                return
+            length = self._body_length(_MAX_BUNDLE_BYTES)
+            body = self.rfile.read(length)
+            uploaded = parse_first_file(body, parse_boundary(content_type))
+            try:
+                bundle = json.loads(uploaded.data)
+            except ValueError as exc:  # json and utf-8 decoding both raise a ValueError
+                raise BundleError(f"not a smortboard bundle - not json: {exc}") from exc
+            board_ids = store.import_as_new(bundle)
+            self._send_json(201, {"boards": [store.get_board(board_id) for board_id in board_ids]})
 
         def _handle_get_attachment(self, card_id: str, attachment_id: str) -> None:
             meta = store.get_attachment_meta(attachment_id)

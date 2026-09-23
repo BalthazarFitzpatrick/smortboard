@@ -165,8 +165,8 @@ def _run_import(args: argparse.Namespace) -> None:
         if store.list_boards():
             raise SystemExit(
                 f"{db_path} already has a board - import only restores into an empty database; "
-                "point --db at a fresh path, or use the settings panel's import while the board "
-                "is running, which offers a choice for an existing board"
+                "point --db at a fresh path, or use the backup section of the settings panel (o) "
+                "while the board is running, which adds the bundle's boards beside the ones there"
             )
         store.import_bundle(args.path)
     print(f"imported {args.path} into {db_path}")

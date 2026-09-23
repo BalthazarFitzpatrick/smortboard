@@ -1229,6 +1229,13 @@ database is a fresh throwaway made and discarded every run, never a board worth 
 `import` refuses a database that already has a board in it, rather than half-overwriting one -
 point `--db` at a fresh path for a restore.
 
+While the board runs, the **backup** section of settings (`o`) does the same from the browser.
+**export** downloads the bundle. **import as new board(s)** uploads one and adds its boards beside
+yours: every row gets a new id, so nothing already on the board is replaced. It leaves out the
+bundle's board-wide settings, saved prompts and deleted-card backups, which belong to the database
+they came from. Replacing a board in place is not offered. A restore under the original ids is
+still `smortboard import`, into an empty database.
+
 **What a bundle contains:** every board, repo registration and the paths remembered for it, card
 and its tasks, criteria, leases, dependencies and comments, attachments, the event log, board-wide settings, saved prompts and
 mission control's messages and plans - everything a board's own database holds, as one plain-text

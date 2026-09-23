@@ -7,9 +7,9 @@
 // {label, node, onOpen} entry here - onOpen (optional) runs every time the panel opens, so a
 // section backed by its own fetch can refresh instead of showing stale data from the last open.
 //
-// relies on globals board.js already defines: api, apiOrError, reenterIfFocusLost. no new visual
-// primitive here - rows and text fields reuse boards.js's own classes (board-row, boards-create-row,
-// text-field, toggle), already loaded via boards.css.
+// relies on globals board.js already defines: api, apiOrError, reenterIfFocusLost, loadBoards. no
+// new visual primitive here - rows and text fields reuse boards.js's own classes (board-row,
+// boards-create-row, text-field, toggle), already loaded via boards.css, and ui_base's run-controls.
 
 const st = {backdrop: null, panel: null, listEl: null};
 
@@ -985,6 +985,93 @@ SETTINGS_SECTIONS.push({
   label: 'mall cam: seconds per card while auto-cycling the workforce drawer',
   node: buildMallCamSection(),
   onOpen: loadMallCamSection,
+});
+
+// ---- backup: every board as one file, and a file brought back in beside them -------------------
+// import only ever adds: the file's boards land next to the ones here under fresh ids, so nothing
+// on the board is replaced. a restore under the original ids is `smortboard import`, into an empty db
+
+const backup = {status: null};
+
+function showBackupStatus(text, failed = false) {
+  backup.status.textContent = text;
+  backup.status.className = failed ? 'boards-status boards-error' : 'boards-status';
+}
+
+// a same-origin link with download set: the browser streams the file to disk under the server's
+// name, and the page stays where it is
+function exportBackup() {
+  const link = document.createElement('a');
+  link.href = '/api/export';
+  link.download = '';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  showBackupStatus('export started - your browser saves the file');
+}
+
+// the picker stays detached, so up/down in the panel never walks onto a hidden file input
+function pickBackupFile() {
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = '.json,application/json';
+  picker.addEventListener('change', () => {
+    if (picker.files && picker.files.length) importBackup(picker.files[0]);
+  });
+  picker.click();
+}
+
+async function importBackup(file) {
+  showBackupStatus(`importing ${file.name}...`);
+  const form = new FormData();
+  form.append('bundle', file, file.name);
+  const {ok, body} = await apiOrError('/api/import', {method: 'POST', body: form});
+  if (!ok) {
+    showBackupStatus((body && body.error) || `could not import ${file.name}`, true);
+    return;
+  }
+  const names = body.boards.map(board => board.name).join(', ');
+  showBackupStatus(`added ${body.boards.length} board(s): ${names}`);
+  await loadBoards();
+}
+
+function backupButton(text, className, run) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `toggle ${className}`;
+  btn.textContent = text;
+  btn.onclick = run;
+  return btn;
+}
+
+function buildBackupSection() {
+  const row = document.createElement('div');
+  row.className = 'run-controls';
+  const status = document.createElement('span');
+  status.className = 'boards-status';
+  row.append(
+    backupButton('export', 'settings-backup-export', exportBackup),
+    backupButton('import as new board(s)', 'settings-backup-import', pickBackupFile),
+    status,
+  );
+
+  const note = document.createElement('div');
+  note.className = 'field-label';
+  note.textContent = 'import adds the boards in a file beside yours, under new ids - it never '
+    + 'replaces one. a full restore is smortboard import, into an empty database.';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'settings-stack';
+  wrap.append(row, note);
+  backup.status = status;
+  return wrap;
+}
+
+SETTINGS_SECTIONS.push({
+  group: 'general',
+  label: 'backup',
+  node: buildBackupSection(),
+  onOpen: () => showBackupStatus(''),
 });
 
 function buildSettingsSection(section) {

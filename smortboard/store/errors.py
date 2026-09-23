@@ -15,3 +15,7 @@ class NotFoundError(StoreError):
 
 class UnknownFieldError(StoreError):
     """update_card was asked to write a field that is not writable"""
+
+
+class BundleError(StoreError):
+    """an uploaded bundle is not one this database can take in"""
