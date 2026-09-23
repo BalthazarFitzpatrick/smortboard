@@ -33,13 +33,20 @@ _PYTHON_TEMPLATE = f"""\
 # rebuild whenever uv.lock changes (the boards panel's rebuild action does this for you).
 FROM {_BASE_CARD_IMAGE}
 
+# the card image runs as the non-root agent and /opt is root's, so the install runs as root and
+# hands the venv back - without it uv sync died "failed to create directory /opt/venv"
+USER root
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \\
     UV_PYTHON_INSTALL_DIR=/opt/python \\
     UV_LINK_MODE=copy
 
 WORKDIR /workspace
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen && rm -rf /workspace/*
+RUN uv sync --frozen && rm -rf /workspace/* \\
+    && mkdir -p /opt/python \\
+    && chown -R agent:agent /opt/venv /opt/python /home/agent/.cache
+
+USER agent
 """
 
 _NODE_TEMPLATE = f"""\
