@@ -67,7 +67,7 @@ payload = json.load(sys.stdin)
 tool_input = payload.get("tool_input", {})
 # a headless run ends with its turn, so a background command is abandoned work
 if tool_input.get("run_in_background"):
-    print(f"{prefix} nothing wakes a headless run - run it in the foreground", file=sys.stderr)
+    print("{prefix} nothing wakes a headless run - run it in the foreground", file=sys.stderr)
     sys.exit(2)
 command = tool_input.get("command")
 if not command:
@@ -99,7 +99,7 @@ for token in re.findall(r"(?:^|(?<=[\\s'\\"=<>]))/\\S+", command):
         sys.exit(2)
 
 if re.search(r"(^|[;&|]\\s*)cd\\s+\\.\\.(/|\\s|$)", command):
-    print(f"{prefix} 'cd ..' reaches above this card's worktree", file=sys.stderr)
+    print("{prefix} 'cd ..' reaches above this card's worktree", file=sys.stderr)
     sys.exit(2)
 
 sys.exit(0)
@@ -107,17 +107,17 @@ sys.exit(0)
 
 
 def write_bash_guard_hook(
-    worktree_path: str | Path, *, python: str = sys.executable, guard_dir: str | None = None
+    out_dir: str | Path, *, python: str = sys.executable, guard_dir: str | None = None
 ) -> dict:
-    """writes the hook script under the worktree's .claude dir, returns its PreToolUse entry.
+    """writes the hook script into `out_dir`, returns its PreToolUse entry.
 
-    `python` and `guard_dir` are as the runner sees them - see leases.write_lease_settings.
+    `out_dir` is the board's own guard directory, never the worktree. `python` and `guard_dir` are
+    as the runner sees them - see leases.write_lease_settings.
     """
-    worktree_path = Path(worktree_path)
-    claude_dir = worktree_path / ".claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    hook_script = claude_dir / "bash_guard.py"
+    hook_script = out_dir / "bash_guard.py"
     hook_script.write_text(_HOOK_SCRIPT)
     hook_script.chmod(0o755)
 

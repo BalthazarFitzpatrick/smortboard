@@ -330,6 +330,16 @@ class Store:
         self._conn.commit()
         return self.get_board(board_id)
 
+    def set_board_lease_mode(self, board_id: str, value: str | None) -> dict[str, Any]:
+        """strict (or null) keeps a card inside its lease; soft lets it write any unprotected path
+        no other active card on the repo holds - see exec/leases.lease_policy"""
+        self.get_board(board_id)
+        if value not in (None, "strict", "soft"):
+            raise ValueError("lease_mode must be strict, soft, or null")
+        self._conn.execute("UPDATE boards SET lease_mode = ? WHERE id = ?", (value, board_id))
+        self._conn.commit()
+        return self.get_board(board_id)
+
     def board_merges_freely(self, board_id: str) -> bool:
         return self.get_board(board_id)["merge_mode"] == "free"
 

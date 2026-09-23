@@ -164,6 +164,7 @@ assert.deepEqual(settingsGroups.map(group => group.querySelector('.settings-grou
 assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-section')
   .map(section => section.children[0].textContent)), [
   ['mouse', 'mission control can read', 'how many cards run at once',
+    'file leases: strict or soft, per board',
     'mall cam: seconds per card while auto-cycling the workforce drawer'],
   ['credential profiles', 'usage limits', 'models by role'],
   ['budgets and spend caps'],

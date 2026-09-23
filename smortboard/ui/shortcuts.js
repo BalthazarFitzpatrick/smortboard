@@ -363,3 +363,14 @@ document.addEventListener('keydown', evt => {
     if (board) activateTab(board.id);
   }
 });
+
+// ---- cmd/ctrl+f: the card filter, not the browser's find ----------------------------------------
+// its own listener, since the one above hands every held modifier to the browser. only while a board
+// is on screen with nothing over it - an open card, panel or menu keeps the browser's own find
+document.addEventListener('keydown', evt => {
+  if (evt.code !== 'KeyF' || !(evt.metaKey || evt.ctrlKey) || evt.altKey || evt.shiftKey) return;
+  if (!currentBoardId || openCard || surfaceOverBoard()) return;
+  if (evt.target?.matches?.('input, textarea') && evt.target.id !== 'card-filter') return;
+  evt.preventDefault();
+  focusCardFilter();
+});
