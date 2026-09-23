@@ -62,7 +62,7 @@ git switch -c development && git push -u origin development
 3. On the repo's row: default branch **`development`**, test command **`node --test`**. No lint
    command.
 4. `o`:
-   - **file leases**: leave this board on **strict** for now; step 5 switches it.
+   - **file leases**: leave this board on **strict** for now; the table in section 4 says when to switch.
    - **budgets and spend caps**: a daily budget for this board, e.g. `$30`.
    - **models by role**: worker sonnet. If you have a Codex profile, put the reviewer on OpenAI.
      A reviewer from another lab is the point of the gate.
