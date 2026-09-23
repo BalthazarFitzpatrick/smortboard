@@ -14,6 +14,7 @@ from smortboard.store.errors import UnknownFieldError
 _TABLES = (
     "boards",
     "repos",
+    "repo_remembered_leases",
     "cards",
     "card_tasks",
     "card_criteria",
@@ -52,7 +53,16 @@ def import_bundle(conn: sqlite3.Connection, path: str | Path) -> None:
     """restores a bundle into the current (expected-empty) database, dependency order first"""
     bundle = json.loads(Path(path).read_text(encoding="utf-8"))
 
-    for table in ("boards", "repos", "cards", "card_tasks", "card_criteria", "card_leases"):
+    # a remembered lease path names its repo, so it lands after repos and before anything else
+    for table in (
+        "boards",
+        "repos",
+        "repo_remembered_leases",
+        "cards",
+        "card_tasks",
+        "card_criteria",
+        "card_leases",
+    ):
         _insert_all(conn, table, bundle.get(table, []))
 
     # card_deps references two cards, so it must come after every card exists

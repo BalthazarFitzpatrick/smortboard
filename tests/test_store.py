@@ -175,6 +175,20 @@ def test_export_round_trips_to_an_identical_database(store, tmp_path):
     _assert_databases_identical(store, fresh_path)
 
 
+def test_export_round_trips_a_repos_remembered_lease_paths(store, tmp_path):
+    """a path approved for a whole repo was left out of the bundle, so a restore asked again"""
+    board = store.create_board("Phase 1")
+    repo = store.create_repo(board["id"], "smortboard", "/repo", "main")
+    store.remember_lease_paths(repo["id"], ["docs/**"])
+
+    bundle_path = tmp_path / "bundle.json"
+    store.export(bundle_path)
+
+    with Store(tmp_path / "fresh.sqlite3") as fresh:
+        fresh.import_bundle(bundle_path)
+        assert [row["path_glob"] for row in fresh.remembered_leases(repo["id"])] == ["docs/**"]
+
+
 def test_import_bundle_refuses_a_bundle_row_with_a_non_column_key(store, tmp_path):
     """a bundle key becomes a raw sql column name on import - a crafted key must be refused,
     not interpolated, so the table it targets survives"""

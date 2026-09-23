@@ -1229,8 +1229,8 @@ database is a fresh throwaway made and discarded every run, never a board worth 
 `import` refuses a database that already has a board in it, rather than half-overwriting one -
 point `--db` at a fresh path for a restore.
 
-**What a bundle contains:** every board, repo registration, card and its tasks, criteria, leases,
-dependencies and comments, attachments, the event log, board-wide settings, saved prompts and
+**What a bundle contains:** every board, repo registration and the paths remembered for it, card
+and its tasks, criteria, leases, dependencies and comments, attachments, the event log, board-wide settings, saved prompts and
 mission control's messages and plans - everything a board's own database holds, as one plain-text
 JSON file (attachment contents included, base64-encoded).
 
