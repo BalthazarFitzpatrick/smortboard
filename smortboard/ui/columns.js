@@ -68,7 +68,8 @@ function layoutCardSections(panel) {
   const width = container.offsetWidth || container.getBoundingClientRect().width;
   // nothing sane to measure before the panel has a real box - a later call (resize, reopen) fixes it
   if (!width || width < 0) return;
-  const columnCount = width < CARD_PANEL_NARROW_PX ? 1 : 2;
+  // data-columns="1" keeps a panel to one column at any width (the bare-bones open card)
+  const columnCount = width < CARD_PANEL_NARROW_PX || container.dataset.columns === '1' ? 1 : 2;
   const isFull = section => columnCount === 1 || FULL_WIDTH_SECTIONS.has(section.dataset.section);
   const pins = sections.map(sectionPin);
   const widths = columnWidths(container, pins.filter((_, i) => !isFull(sections[i])), width, columnCount);

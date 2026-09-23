@@ -98,20 +98,18 @@ const html2 = mod.cardPanelHtml(card, {
 assert.ok(sectionOf(html2, 'done').includes('not run yet'), 'a null outcome should say not run yet');
 assert.ok(!html2.includes('run-rail'), 'a card never run has no rail of empty steps');
 
-// ---- the sections, in order: head, then about -> done -> needs pinned left, the facts pinned right
-assert.deepEqual(sectionOrder(html1), ['title', 'about', 'done', 'needs', 'criteria', 'lease', 'history'],
-  'head, the left column, then the right - which is also the one-column order below 760px');
-['about', 'done', 'needs'].forEach(name => assert.ok(sectionOf(html1, name).includes('data-pin="0"'), `${name} is pinned left`));
-['criteria', 'lease', 'history'].forEach(name => assert.ok(sectionOf(html1, name).includes('data-pin="1"'), `${name} is pinned right`));
-assert.ok(!sectionOf(html1, 'title').includes('data-pin'), 'the head is full width, not pinned');
-assert.ok(html1.includes('data-column-shares="3 2"'), 'the left column is the wider one');
+// ---- bare bones, one column: head, about, done, needs, and the card's facts folded under details
+assert.deepEqual(sectionOrder(html1), ['title', 'about', 'done', 'needs', 'details'], 'five sections, in reading order');
+assert.ok(html1.includes('data-columns="1"'), 'one column at any width');
 assert.ok(!html1.includes('data-section="workstream"'), 'the workstream section is gone');
 
-// dependencies and attachments only when there are any
+// dependencies and attachments fold under details only when there are any
 const linked = mod.cardPanelHtml({...card, depends_on: ['abcdef0123'], attachments: [{filename: 'shot.png'}]}, outcome);
-assert.deepEqual(sectionOrder(linked).slice(4), ['criteria', 'lease', 'deps', 'attachments', 'history']);
-assert.ok(sectionOf(linked, 'deps').includes('card abcdef01'), 'a dependency off this board shows by short id');
-assert.ok(sectionOf(linked, 'attachments').includes('shot.png'));
+const linkedDetails = sectionOf(linked, 'details');
+assert.ok(linkedDetails.includes('<summary>dependencies - 1</summary>') && linkedDetails.includes('card abcdef01'),
+  'a dependency off this board shows by short id, folded');
+assert.ok(linkedDetails.includes('<summary>attachments - 1</summary>') && linkedDetails.includes('shot.png'));
+assert.ok(!sectionOf(html1, 'details').includes('dependencies'), 'no dependency fold without dependencies');
 
 // ---- the head: one meta line over the title - id, status, block reason in words, model, spend
 const headHtml = sectionOf(mod.cardPanelHtml(
@@ -133,11 +131,11 @@ assert.ok(headHtml.includes('<div class="section-value">the title</div>'), 'the 
 assert.ok(!sectionOf(mod.cardPanelHtml(card, outcome), 'title').includes('runs'), 'no spend part for a card with no runs');
 
 // ---- the lease shows its globs, and an empty one says the card will not run
-assert.ok(sectionOf(html1, 'lease').includes('<span class="empty">none - it will not run</span>'),
-  'a card with no lease should say it will not run');
-const leased = sectionOf(mod.cardPanelHtml({...card, leases: [{path_glob: 'src/**'}, {path_glob: 'tests/**'}]}, outcome), 'lease');
+assert.ok(sectionOf(html1, 'details').includes('<div class="empty">no lease - it will not run</div>'),
+  'a card with no lease says so out loud, not behind a fold');
+const leased = sectionOf(mod.cardPanelHtml({...card, leases: [{path_glob: 'src/**'}, {path_glob: 'tests/**'}]}, outcome), 'details');
+assert.ok(leased.includes('<summary>lease - 2</summary>'), 'the lease folds behind its count');
 assert.ok(leased.includes('<span class="card-path">src/**</span>, <span class="card-path">tests/**</span>'), 'a lease is one line of globs');
-assert.ok(leased.includes('lease<span class="field-count">2</span>'), 'the label carries the count');
 
 // ---- the worker's closing block: DONE lines under done, ACTION, WHY and NOT DONE under needs
 const blockSummary = 'ACTION: review the PR\nWHY: criteria met\nDONE:\n- a\nNOT DONE:\n- b';
@@ -212,8 +210,8 @@ assert.ok(sectionOf(html1, 'needs').includes('<input class="comment-input text-f
 
 // ---- history: one line per note, time and headline, the operator's own marked "you"
 const commented = mod.cardPanelHtml({...card, comments: [{author: 'operator', body: 'a\nb', created_at: '2026-09-14T12:00:00+00:00'}]}, outcome);
-const history = sectionOf(commented, 'history');
-assert.ok(history.includes('history<span class="field-count">1</span>'), 'the label carries the count');
+const history = sectionOf(commented, 'details');
+assert.ok(history.includes('<summary>history - 1</summary>'), 'history folds behind its count');
 assert.ok(/<time>09-14 \d\d:\d\d<\/time>/.test(history), 'a short time leads the line');
 assert.ok(history.includes('<span class="history-head history-you">you: a</span>'), 'an operator line reads as you');
 assert.ok(history.includes('<div class="comment-body">b</div>'), 'the body is folded behind the headline');
@@ -222,7 +220,7 @@ assert.ok(history.includes('<div class="comment-body">b</div>'), 'the body is fo
 const boardNoted = sectionOf(mod.cardPanelHtml(
   {...card, comments: [{author: 'smortboard', body: 'tests failed: test_x\n\nfull output here'}]},
   outcome,
-), 'history');
+), 'details');
 assert.ok(boardNoted.includes('<span class="history-head">tests failed: test_x</span>'), 'a board note leads with its one-liner');
 assert.ok(boardNoted.includes('<details class="history-note"><summary class="history-line">'),
   'the rest of a board note is closed behind details by default');
@@ -364,11 +362,5 @@ assert.equal(mod.complexityLabel({...card, complexity: 2}), 'medium', 'a rated c
 assert.equal(mod.complexityLabel({...card, complexity: null, criteria: [], tasks: [], leases: []}), 'low (estimated)',
   'an unrated card with nothing else shows a low estimate');
 
-// ---- history: the newest three lines show, older ones fold behind one line
-const many = Array.from({length: 5}, (_, i) => ({author: 'operator', body: `note ${i}`, created_at: '2026-09-14T10:00:00Z'}));
-const longHistory = sectionOf(mod.cardPanelHtml({...card, comments: many}, outcome), 'history');
-assert.ok(longHistory.includes('<summary>2 older</summary>'), 'older notes fold behind a count');
-assert.ok(longHistory.indexOf('2 older</summary>') < longHistory.indexOf('you: note 4'), 'the fold sits above the newest lines');
-assert.ok(longHistory.includes('you: note 4') && longHistory.includes('you: note 2'), 'the newest three show');
 
 console.log('ok');

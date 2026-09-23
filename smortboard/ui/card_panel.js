@@ -708,19 +708,28 @@ function historyRowHtml(comment) {
     `<div class="comment-body">${linkifyPrRefs(rest)}</div></details></li>`;
 }
 
-// the newest few lines show; anything older folds behind one line, opened on purpose
-const HISTORY_SHOWN = 3;
 
-function historySectionHtml(comments) {
-  if (!comments.length) return sectionHtml('history', countLabel('history', 0), '<span class="empty">none</span>', {pin: 1});
-  const older = comments.slice(0, -HISTORY_SHOWN);
-  const recent = comments.slice(-HISTORY_SHOWN);
-  const olderHtml = older.length
-    ? `<details class="card-fold history-older"><summary>${older.length} older</summary>` +
-      `<ul class="card-history">${older.map(historyRowHtml).join('')}</ul></details>`
-    : '';
-  const body = `${olderHtml}<ul class="card-history">${recent.map(historyRowHtml).join('')}</ul>`;
-  return sectionHtml('history', countLabel('history', comments.length), body, {pin: 1});
+// the card's own facts - criteria, lease, dependencies, attachments, notes - each behind one fold,
+// closed: the open card reads as about, done, needs, and the rest is a click away. only a card
+// with no lease says so out loud, because that is why its run gets refused
+function detailsSectionHtml(card) {
+  const fold = (label, count, inner) =>
+    `<details class="card-fold"><summary>${escapeHtml(label)} - ${count}</summary>${inner}</details>`;
+  const parts = [];
+  const criteria = (card.criteria || []).map(c => `<li>${escapeHtml(c.text)}</li>`);
+  if (criteria.length) parts.push(fold('criteria', criteria.length, `<ul class="card-lines">${criteria.join('')}</ul>`));
+  const globs = (card.leases || []).map(l => `<span class="card-path">${escapeHtml(l.path_glob)}</span>`);
+  parts.push(globs.length
+    ? fold('lease', globs.length, `<div class="card-path-line">${globs.join(', ')}</div>`)
+    : '<div class="empty">no lease - it will not run</div>');
+  // depends_on holds ids only - shown by title when that card is on this board, a short id otherwise
+  const deps = (card.depends_on || []).map(d => `<li>${escapeHtml(dependencyLabel(d))}</li>`);
+  if (deps.length) parts.push(fold('dependencies', deps.length, `<ul class="card-lines">${deps.join('')}</ul>`));
+  const attachments = (card.attachments || []).map(a => `<li>${escapeHtml(a.filename)}</li>`);
+  if (attachments.length) parts.push(fold('attachments', attachments.length, `<ul class="card-lines">${attachments.join('')}</ul>`));
+  const comments = card.comments || [];
+  if (comments.length) parts.push(fold('history', comments.length, `<ul class="card-history">${comments.map(historyRowHtml).join('')}</ul>`));
+  return sectionHtml('details', 'details', parts.join(''), {pin: 0});
 }
 
 function cardPanelHtml(card, outcome) {
@@ -728,24 +737,14 @@ function cardPanelHtml(card, outcome) {
   const block = parseWorkerBlock(run.summary);
   const comments = card.comments || [];
   const hasBoardNote = comments.some(c => c.author === BOARD_COMMENT_AUTHOR);
-  const criteria = (card.criteria || []).map(c => `<li>${escapeHtml(c.text)}</li>`);
-  // the paths its agent may write - an empty lease is why a run gets refused, so say so here
-  const globs = (card.leases || []).map(l => `<span class="card-path">${escapeHtml(l.path_glob)}</span>`);
-  const lease = globs.length ? `<div class="card-path-line">${globs.join(', ')}</div>` : '<span class="empty">none - it will not run</span>';
-  // depends_on holds ids only - shown by title when that card is on this board, a short id otherwise
-  const deps = (card.depends_on || []).map(d => `<li>${escapeHtml(dependencyLabel(d))}</li>`);
-  const attachments = (card.attachments || []).map(a => `<li>${escapeHtml(a.filename)}</li>`);
+  // BARE BONES, ONE COLUMN (operator, 2026-09-23): about, done, needs, and the facts folded away
   return `
-    <div class="card-sections" data-column-shares="3 2">
+    <div class="card-sections" data-columns="1">
       ${cardHeadHtml(card, run)}
       ${aboutSectionHtml(card)}
       ${doneSectionHtml(card, run, block)}
       ${needsSectionHtml(card, run, block, hasBoardNote)}
-      ${sectionHtml('criteria', countLabel('criteria', criteria.length), listHtml(criteria), {pin: 1})}
-      ${sectionHtml('lease', countLabel('lease', globs.length), lease, {pin: 1})}
-      ${deps.length ? sectionHtml('deps', countLabel('dependencies', deps.length), listHtml(deps), {pin: 1}) : ''}
-      ${attachments.length ? sectionHtml('attachments', countLabel('attachments', attachments.length), listHtml(attachments), {pin: 1}) : ''}
-      ${historySectionHtml(comments)}
+      ${detailsSectionHtml(card)}
     </div>
   `;
 }
