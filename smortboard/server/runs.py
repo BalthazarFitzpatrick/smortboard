@@ -276,10 +276,11 @@ class RunRegistry:
                 else:
                     _block_crashed(store, state.card_id, state.error)
         finally:
-            state.finished_at = time.time()
-            # the mark a restarted board reads to tell a finished run from one it orphaned
+            # the mark a restarted board reads to tell a finished run from one it orphaned - written
+            # BEFORE finished_at flips running off, so nothing ever sees a finished run without it
             with contextlib.suppress(sqlite3.Error):
                 store.append_event(state.card_id, "run_ended", {"phase": state.phase})
+            state.finished_at = time.time()
             store.close()
             with self._lock:
                 self._handles.pop(state.card_id, None)

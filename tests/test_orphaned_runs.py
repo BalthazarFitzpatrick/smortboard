@@ -107,6 +107,28 @@ def test_every_run_writes_run_ended_even_when_its_thread_dies(store, board_id, f
     assert [e["payload"]["phase"] for e in ended] == ["blocked" if fails else "opened"]
 
 
+def test_run_ended_is_written_while_the_run_still_counts_as_running(store, board_id, monkeypatch):
+    """a reader that sees running flip off must find run_ended already there - the other order
+    let the parallel suite see a finished run with no end mark"""
+    card_id = store.create_card(board_id, None, "a card")["id"]
+    seen = []
+    original = runs_module.Store.append_event
+
+    def _spy(self, cid, kind, payload):
+        if kind == "run_ended":
+            # through the registry: the thread can reach here before start() has returned
+            seen.append(registry.get(cid).running)
+        return original(self, cid, kind, payload)
+
+    registry = runs_module.RunRegistry(store.path)
+    monkeypatch.setattr(runs_module.Store, "append_event", _spy)
+    state = registry.start(
+        card_id, runner=lambda s, cid, **kw: LifecycleResult(card_id=cid, phase="opened")
+    )
+    assert _wait(lambda: not state.running)
+    assert seen == [True]
+
+
 def test_telemetry_reads_an_orphaned_attempt_as_a_crash_not_in_progress():
     segment = [
         {"kind": "lifecycle_started", "payload": {}},
