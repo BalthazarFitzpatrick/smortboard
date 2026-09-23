@@ -175,6 +175,8 @@ const SUMMARY_WORD_LIMIT = 14;
 // an ALL-CAPS line ending in a colon - "GOAL:", "OUT OF SCOPE:", "RULES:" - is a section header,
 // not content, so it never survives into the overview's one-line summary
 const SECTION_HEADER_RE = /^[A-Z][A-Z ]*:$/;
+// the same label sharing its line with content - "GOAL: make x" - keeps only the content
+const INLINE_LABEL_RE = /^[A-Z][A-Z ]*:\s+/;
 
 // the overview's plain <=14-word summary (9bd5a207): strips section headers and bullet markers,
 // keeps the first content it finds, cut to the word limit. the open card's about leads with a
@@ -184,7 +186,7 @@ function summarizeDescription(description, limit = SUMMARY_WORD_LIMIT) {
   for (const rawLine of String(description || '').split('\n')) {
     const line = rawLine.trim();
     if (!line || SECTION_HEADER_RE.test(line)) continue;
-    const cleaned = line.replace(/^[-*]\s*/, '');
+    const cleaned = line.replace(/^[-*]\s*/, '').replace(INLINE_LABEL_RE, '');
     for (const word of cleaned.split(/\s+/)) {
       if (!word) continue;
       words.push(word);

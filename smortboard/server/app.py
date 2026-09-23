@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, quote, unquote
 
 from smortboard import profiles
@@ -30,6 +31,7 @@ from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
     ORCHESTRATOR_PROMPT,
     OrchestratorRegistry,
+    card_text_warnings,
 )
 from smortboard.preflight import run_preflight
 from smortboard.prompts import ROLES
@@ -183,6 +185,12 @@ def _version() -> str:
         return version("smortboard")
     except PackageNotFoundError:
         return "0.0.0-dev"
+
+
+def _text_warnings(card: dict[str, Any]) -> list[str]:
+    """card text past the card text rules, told to the caller - the card is kept exactly as sent"""
+    criteria = [criterion["text"] for criterion in card["criteria"]]
+    return card_text_warnings({**card, "criteria": criteria})
 
 
 def _make_handler(
@@ -353,7 +361,7 @@ def _make_handler(
             elif path == "/api/cards" and method == "POST":
                 body = self._read_json()
                 card = store.create_card(**body)
-                self._send_json(201, card)
+                self._send_json(201, {**card, "warnings": _text_warnings(card)})
             elif "attachment_id" in params:
                 self._handle_get_attachment(params["card_id"], params["attachment_id"])
             elif path.endswith("/comments"):
@@ -760,7 +768,9 @@ def _make_handler(
             if depends_on is not None:
                 store.set_dependencies(card_id, depends_on)
             card = store.update_card(card_id, **body) if body else store.get_card(card_id)
-            self._send_json(200, card)
+            # only a text edit is checked, so moving an old long card stays quiet
+            warnings = _text_warnings(card) if {"title", "description"} & set(body) else []
+            self._send_json(200, {**card, "warnings": warnings})
 
         def _handle_create_repo(self, board_id: str) -> None:
             """registers a repo on a board - the only way to make a card runnable.

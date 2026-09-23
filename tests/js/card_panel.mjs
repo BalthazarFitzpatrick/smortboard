@@ -307,6 +307,13 @@ assert.equal(mod.summarizeDescription(longLine, 20).split(' ').length, 20, 'or t
 assert.equal(mod.summarizeDescription(''), '', 'an empty description summarizes to nothing');
 assert.equal(mod.summarizeDescription('RULES:\nCSS/view-side only.'), 'CSS/view-side only.',
   'any all-caps header line is dropped, not only GOAL:');
+assert.ok(mod.summarizeDescription('GOAL: make x work').startsWith('make x'),
+  'a header sharing its line with content is dropped, the content kept');
+assert.equal(
+  mod.summarizeDescription('GOAL: make x work\nOUT OF SCOPE: y'),
+  'make x work y',
+  'every line loses its leading label, multi-word ones included',
+);
 
 // ---- the overview strip shows the summary, not the raw description, and carries no short-id ----
 
