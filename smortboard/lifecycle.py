@@ -128,6 +128,10 @@ NO_LEASE_NOTE = (
     "then run it again."
 )
 
+# how a refusal over missing Docker or a missing credential starts - the scheduler reads it to
+# retry the card with backoff instead of leaving it for the operator on the first try
+RUNTIME_NOT_READY = "The card runtime is not ready"
+
 # a run that ends on one of these never got to say it was done - it just ran out of budget or
 # turns mid-turn. with commits on the branch that is still real work, so it goes to the gates
 # like a normal finish; with none, it is blocked like any other failed run, but the note names
@@ -587,7 +591,7 @@ def _run_attempt(
             else require_card_runtime(lab=worker_lab)
         )
     except CardRuntimeUnavailable as exc:
-        return _refuse(store, state, f"The card runtime is not ready:\n{exc}")
+        return _refuse(store, state, f"{RUNTIME_NOT_READY}:\n{exc}")
 
     try:
         # a blocked card resuming is not a fresh start - create_worktree raises on an existing

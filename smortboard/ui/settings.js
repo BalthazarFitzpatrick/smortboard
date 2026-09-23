@@ -52,6 +52,44 @@ async function loadAutoSwitchToggle(box) {
   }
 }
 
+// usage_limit_route: unset (the default) switches a limited role to its fallback model by itself;
+// "attention" blocks the card and asks in the inbox (n) instead. credential rotation above is a
+// separate choice - same model, another subscription
+function buildUsageLimitRouteToggle() {
+  const wrap = document.createElement('label');
+  wrap.className = 'settings-toggle-row';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.className = 'settings-usage-limit-route-checkbox';
+  box.checked = false;
+  const text = document.createElement('span');
+  text.textContent = 'on a usage limit, ask me before switching to a fallback model';
+  wrap.append(box, text);
+
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    const {ok} = await apiOrError('/api/settings', {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({usage_limit_route: box.checked ? 'attention' : null}),
+    });
+    box.disabled = false;
+    if (!ok) box.checked = !box.checked; // revert on a failed save
+  });
+
+  loadUsageLimitRouteToggle(box);
+  return wrap;
+}
+
+async function loadUsageLimitRouteToggle(box) {
+  try {
+    const settings = await api('/api/settings');
+    box.checked = settings.usage_limit_route === 'attention';
+  } catch {
+    // leave the default (unchecked) - the board switches by itself, as before this setting
+  }
+}
+
 // enable_mouse: the board is driven from the keyboard, and this turns on the pointer half of it -
 // hovering focuses what the arrow keys would (fanning a piled column with it), and right-click
 // opens the card menu m opens. off by default; the clicks that always worked are never gated by it
@@ -105,6 +143,7 @@ async function loadMouseToggle() {
 
 const SETTINGS_SECTIONS = [
   {group: 'labs', label: 'credential profiles', node: buildAutoSwitchToggle()},
+  {group: 'labs', label: 'usage limits', node: buildUsageLimitRouteToggle()},
   {group: 'general', label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle},
 ];
 
@@ -181,6 +220,27 @@ async function openFallbackPicker(role, initialRefs, anchor, status, onSaved) {
   menu.openAt(anchor);
 }
 
+// unset is the cli's own default and passes no flag; a level becomes --effort (claude) or
+// model_reasoning_effort (codex) on that role's runs - store/schema.py EFFORT_LEVELS
+const ROLE_EFFORT_LEVELS = ['low', 'medium', 'high'];
+
+function openEffortPicker(role, current, anchor, status) {
+  const items = ['default', ...ROLE_EFFORT_LEVELS].map(level => ({
+    id: level, label: level, on: level === (current || 'default'),
+  }));
+  new Menu({
+    title: `${role} effort`,
+    sections: [{kind: 'list', items, onPick: async item => {
+      const value = item.id === 'default' ? null : item.id;
+      const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[`${role}_effort`]: value})});
+      if (ok) loadRoleModels();
+      else status.textContent = body?.error || 'could not save effort';
+    }}],
+  }).openAt(anchor);
+}
+
 async function loadRoleModels() {
   try {
     const settings = await api('/api/settings');
@@ -240,7 +300,19 @@ async function loadRoleModels() {
         }
       };
       fallbackRow.append(fallbackLabel, fallback);
-      block.append(heading, primaryRow, fallbackRow);
+
+      const effortRow = document.createElement('div');
+      effortRow.className = 'settings-role-control';
+      const effortLabel = document.createElement('span');
+      effortLabel.className = 'field-label';
+      effortLabel.textContent = 'effort';
+      const effort = document.createElement('button');
+      effort.className = 'toggle role-effort';
+      effort.dataset.role = role;
+      effort.textContent = settings[`${role}_effort`] || 'default';
+      effort.onclick = () => openEffortPicker(role, settings[`${role}_effort`], effort, status);
+      effortRow.append(effortLabel, effort);
+      block.append(heading, primaryRow, fallbackRow, effortRow);
       roleModels.node.appendChild(block);
       if (index < roles.length - 1) {
         const divider = document.createElement('div');

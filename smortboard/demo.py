@@ -257,10 +257,11 @@ _LEASES = {
 
 # what fills the attention column, drained in order across the three boards and cycled if it runs
 # short. each entry is (stored status, blocked reason or None) - a card with no reason is the
-# checking card waiting on a decision, which raises review_flag instead. USAGE_LIMIT, MERGE_CONFLICT
-# and API_UNREACHABLE are absent on purpose: the board retries those itself, so isAttentionCard
-# leaves them in their own column until the automatic attempts are spent (see attention.py's
-# handled_by_board, and _spend_automatic_retries below, which is how the demo shows the spent case)
+# checking card waiting on a decision, which raises review_flag instead. MERGE_CONFLICT and
+# API_UNREACHABLE are retried by the board itself, so isAttentionCard leaves them in their own column
+# until the automatic attempts are spent (see attention.py's handled_by_board, and
+# _spend_automatic_retries below, which is how the demo shows the spent case). USAGE_LIMIT counts as
+# handled only while a real scheduler holds its retry, and the demo runs none, so it draws here
 _ATTENTION_RECIPE = [
     ("doing", "AGENT_QUESTION"),
     ("doing", "TESTS_FAILED"),
@@ -272,11 +273,13 @@ _ATTENTION_RECIPE = [
     ("todo", "DEPENDENCY_REJECTED"),
     ("doing", "MERGE_CONFLICT"),
     ("doing", "API_UNREACHABLE"),
+    ("doing", "USAGE_LIMIT"),
 ]
 
-# the two reasons the board handles itself, so they stay in the doing column with the gold outline
-# rather than moving to attention - one per board, so the state is on show without being a backlog
-_SELF_HANDLED = ["USAGE_LIMIT", None, None]
+# the reason the board handles itself, so it stays in the doing column with the gold outline
+# rather than moving to attention - on one board, so the state is on show without being a backlog.
+# API_UNREACHABLE with a retry still pending: its note reads from the card's own events
+_SELF_HANDLED = ["API_UNREACHABLE", None, None]
 
 _MODELS = ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"]
 
@@ -733,6 +736,11 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
 
     for card in doing:
         _in_flight(store, card["id"])
+        if card["blocked_reason_code"] == "API_UNREACHABLE":
+            retry_at = (datetime.now(UTC) + timedelta(minutes=10)).timestamp()
+            store.append_event(
+                card["id"], "api_unreachable_retry", {"attempt": 1, "retry_at": retry_at}
+            )
         if card["blocked_reason_code"]:
             store.add_comment(card["id"], BOARD_AUTHOR, _BLOCK_NOTES[card["blocked_reason_code"]])
     if doing:

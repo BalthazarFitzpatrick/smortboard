@@ -38,6 +38,9 @@ class CodexAdapter:
             cmd += ["-c", 'sandbox_workspace_write.writable_roots=["/workspace/.git"]']
         if req.system_prompt:
             cmd += ["-c", "developer_instructions=" + json.dumps(req.system_prompt)]
+        # probed on 0.154.0: a bogus value came back from the api as an invalid reasoning.effort
+        if req.effort is not None:
+            cmd += ["-c", "model_reasoning_effort=" + json.dumps(req.effort)]
         if req.role in ("orchestrator", "fold", "reviewer"):
             cmd += ["--skip-git-repo-check"]
         if req.settings_path is not None:

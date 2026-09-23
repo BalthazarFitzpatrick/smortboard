@@ -31,6 +31,7 @@ from smortboard.exec.leases import (
 from smortboard.exec.runner import (
     DEFAULT_CARD_BUDGET_USD,
     HEADLESS_RULES,
+    READING_RULES,
     SYSTEM_PROMPT,
     ProcessHandle,
     RunResult,
@@ -52,6 +53,7 @@ from smortboard.exec.worktrees import (
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import parse_ref
 from smortboard.labs.registry import get_adapter
+from smortboard.labs.routing import role_effort
 from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
@@ -545,8 +547,10 @@ class ContainerBackend:
                 ),
                 system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT)
                 + HEADLESS_RULES
+                + READING_RULES
                 + note_marker_paragraph(note_marker or new_note_marker()),
                 stream_input=adapter.capabilities.live_steering,
+                effort=role_effort(store.get_settings(), "worker") if store is not None else None,
             )
         )
         # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK INSIDE THE CONTAINER. the host's token

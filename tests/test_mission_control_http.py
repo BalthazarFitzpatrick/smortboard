@@ -84,6 +84,13 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
 
     # OrchestratorRegistry.start takes the runner explicitly - patch it in via the server instance
     original_start = server.orchestrator.start
+    # held until the 202 is read: an instant runner could finish the turn before the response
+    # was built, and the 202 then said not thinking (failed 2 of 6 runs on 8ad321d)
+    gate = threading.Event()
+
+    def _gated_ok_runner(prompt, model, budget_usd):
+        gate.wait(timeout=5)
+        return _ok_runner(prompt, model, budget_usd)
 
     def _patched_start(
         board_id, message, runner=None, message_already_stored=False, mode="planning"
@@ -91,7 +98,7 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
         return original_start(
             board_id,
             message,
-            runner=_ok_runner,
+            runner=_gated_ok_runner,
             message_already_stored=message_already_stored,
             mode=mode,
         )
@@ -104,6 +111,7 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
     assert status == 202
     assert body["thinking"] is True
     assert [m["author"] for m in body["messages"]] == ["operator"]
+    gate.set()
 
     # generous, not a measurement: the suite runs `-n auto` and a worker thread on a
     # loaded machine can wait seconds to be scheduled at all

@@ -17,6 +17,7 @@ from smortboard.attention import (
     answer_card,
     approve_lease,
     attention_rows,
+    fallback_run,
     with_actions,
 )
 from smortboard.budgets import spend_refusal
@@ -42,7 +43,12 @@ from smortboard.review.landing import DEFAULT_TTL_S as DEFAULT_LANDING_TTL_S
 from smortboard.review.landing import resolve_repo_key
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
-from smortboard.scheduler import SchedulerRegistry, conflicting_run, relabel_stale_crashes
+from smortboard.scheduler import (
+    SchedulerRegistry,
+    SchedulerTicker,
+    conflicting_run,
+    relabel_stale_crashes,
+)
 from smortboard.server import access
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
@@ -90,6 +96,7 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/events$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/outcome$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/run$"), "POST"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/fallback-run$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/run$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/stop$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/accept$"), "POST"),
@@ -310,7 +317,7 @@ def _make_handler(
             card_id = params.get("card_id")
             if card_id and (
                 method in ("PATCH", "DELETE")
-                or path.endswith(("/run", "/accept", "/reject", "/answer"))
+                or path.endswith(("/run", "/fallback-run", "/accept", "/reject", "/answer"))
             ):
                 landing = landings.get(card_id)
                 if landing is not None and landing.running:
@@ -336,7 +343,8 @@ def _make_handler(
                 query = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
                 self._send_json(200, list_folders(query.get("under", [None])[0]))
             elif "board_id" in params and path.endswith("/cards"):
-                self._send_json(200, with_actions(store, store.list_cards(params["board_id"])))
+                cards = store.list_cards(params["board_id"])
+                self._send_json(200, with_actions(store, cards, scheduler))
             elif "board_id" in params and path.endswith("/repos") and method == "GET":
                 self._send_json(200, store.list_repos(params["board_id"]))
             elif "board_id" in params and path.endswith("/repos") and method == "POST":
@@ -372,6 +380,8 @@ def _make_handler(
                 self._send_json(201, comment)
             elif path.endswith("/attachments"):
                 self._handle_upload(params["card_id"])
+            elif path.endswith("/fallback-run") and method == "POST":
+                self._handle_fallback_run(params["card_id"])
             elif path.endswith("/run") and method == "POST":
                 self._handle_run(params["card_id"])
             elif "card_id" in params and path.endswith("/stop") and method == "POST":
@@ -442,7 +452,7 @@ def _make_handler(
                 store.get_board(params["board_id"])  # a 404 for a missing board, not an empty table
                 self._send_json(200, board_costs(store, params["board_id"]))
             elif path == "/api/attention":
-                self._send_json(200, attention_rows(store))
+                self._send_json(200, attention_rows(store, scheduler))
             elif "card_id" in params and path.endswith("/lease/approve"):
                 self._handle_lease_approve(params["card_id"])
             elif path == "/api/pulls":
@@ -464,7 +474,7 @@ def _make_handler(
             elif "card_id" in params and method == "GET":
                 # the board list's enrichment too, so the open card says what to do next
                 card = store.get_card(params["card_id"])
-                self._send_json(200, with_actions(store, [card])[0])
+                self._send_json(200, with_actions(store, [card], scheduler)[0])
             elif "card_id" in params and method == "PATCH":
                 self._handle_patch_card(params["card_id"])
             elif "card_id" in params and method == "DELETE":
@@ -537,6 +547,17 @@ def _make_handler(
                     return
             state = runs.start(card_id)
             self._send_json(202, state.as_dict())
+
+        def _handle_fallback_run(self, card_id: str) -> None:
+            """the inbox's retry on a usage-limited card: its limited role runs once on the next
+            usable fallback model. 202 once started, 404 for an unknown card, 409 when it runs,
+            is not usage limited, has no usable fallback, or a lease or spend rule refuses it"""
+            try:
+                state = fallback_run(store, runs, card_id, scheduler)
+            except AnswerRefused as exc:
+                self._send_json(409, {"error": str(exc)})
+                return
+            self._send_json(202, state)
 
         def _handle_stop(self, card_id: str) -> None:
             """stops a running card. 409 if there is nothing running to stop."""
@@ -1180,13 +1201,34 @@ def _build_image_in_background(
         builds[repo["id"]] = outcome
 
 
+class BoardServer(HTTPServer):
+    """the board's http server, which also owns the scheduler ticker - closing the server stops
+    it, so neither the cli nor a test leaves that thread behind"""
+
+    ticker: SchedulerTicker | None = None
+
+    def server_close(self) -> None:
+        if self.ticker is not None:
+            self.ticker.stop()
+        super().server_close()
+
+
+def start_background(server: BoardServer) -> list[str]:
+    """requeues the retries the last process owed and never fired, then starts the ticker that
+    fires them from here on. the cli calls this once serving; build_server alone never starts a
+    run or a thread, so a test opts in. returns the requeued card ids"""
+    requeued = server.scheduler.requeue_lapsed()
+    server.ticker.start()
+    return requeued
+
+
 def build_server(
     store: Store,
     port: int,
     host: str = "127.0.0.1",
     token_path: str | None = None,
     api_key: str | None = None,
-) -> HTTPServer:
+) -> BoardServer:
     """api_key None skips the key check (tests); the cli always passes one"""
     # a new board has no runs, so any card still mid-run lost the last board process under it
     recovered = recover_orphaned_runs(store)
@@ -1199,6 +1241,7 @@ def build_server(
     runs = RunRegistry(store.path, token_path=token_path)
     orchestrator = OrchestratorRegistry(store.path, token_path=token_path)
     scheduler = SchedulerRegistry(store.path, runs)
+    runs.set_finish_hook(scheduler.finish_hook)
     handler_cls = _make_handler(
         store,
         runs,
@@ -1209,9 +1252,10 @@ def build_server(
         api_key=api_key,
         bound_host=host,
     )
-    server = HTTPServer((host, port), handler_cls)
+    server = BoardServer((host, port), handler_cls)
     server.runs = runs  # the cli and the tests reach the registry through the server
     server.recovered = recovered
     server.orchestrator = orchestrator
     server.scheduler = scheduler
+    server.ticker = SchedulerTicker(scheduler)
     return server

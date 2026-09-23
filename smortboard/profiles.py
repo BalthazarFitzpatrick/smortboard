@@ -4,10 +4,12 @@ import json
 import os
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from smortboard.exec.backends import card_token_path, config_base
+from smortboard.labs.catalog import resolve_ref
 
 DEFAULT_PROFILE = "default"
 DEFAULT_LAB = "anthropic"
@@ -362,6 +364,32 @@ def handle_usage_limit(
             "next_profile": next_profile,
             "earliest_reset": _earliest_reset(state, now),
         }
+
+
+def usable_fallback(
+    refs: list[str],
+    from_lab: str,
+    skip: Callable[[str, str], bool] | None = None,
+) -> tuple[str, str, str] | None:
+    """the first fallback ref whose lab has a readable, unlimited credential: (lab, model, profile).
+
+    every observed limit is an account-wide five_hour/seven_day window, so a ref in the limited lab
+    itself is never a fallback. `skip(lab, profile)` drops a candidate the caller already knows is
+    out - a paused lab, a profile this turn already tried."""
+    for ref in refs or []:
+        target = resolve_ref(ref)
+        if target is None or target[0] == from_lab:
+            continue
+        lab, model = target
+        profile = next_available(lab=lab)
+        if profile is None or (skip is not None and skip(lab, profile)):
+            continue
+        try:
+            read_profile_token(lab, profile)
+        except ProfileError:
+            continue
+        return lab, model, profile
+    return None
 
 
 def read_profile_token(lab: str, name: str) -> str:

@@ -309,4 +309,40 @@ mod.openInboxPanel();
 await flush(); await flush();
 assert.equal(mod.ib.focusIndex, 0, 'a row that is no longer waiting falls back to the top');
 
+// ---- a usage-limited row: its note is the action line, its one control retries on the fallback ---
+const LIMITED = [
+  {card_id: 'u1', board_id: 'b1', board_name: 'alpha', title: 'limited with a fallback', reason: 'USAGE_LIMIT',
+    question: '', since: '2026-01-04T00:00:00', answerable: false, fallback: 'openai/gpt-5.6-sol',
+    action: 'opus limit - retry on openai/gpt-5.6-sol? or waits to 15:40 UTC'},
+  {card_id: 'u2', board_id: 'b1', board_name: 'alpha', title: 'limited with none', reason: 'USAGE_LIMIT',
+    question: '', since: '2026-01-05T00:00:00', answerable: false, fallback: null,
+    action: 'opus limit - no usable fallback; waits to 15:40 UTC'},
+];
+responses.set('/api/attention', stubJson(200, LIMITED));
+mod.ib.focusIndex = 0;
+mod.ib.scope = 'all';
+mod.openInboxPanel();
+await flush(); await flush();
+let limitedCards = mod.ib.panel.querySelectorAll('.inbox-card');
+assert.equal(limitedCards[0].querySelector('.inbox-action').textContent,
+  'next: opus limit - retry on openai/gpt-5.6-sol? or waits to 15:40 UTC');
+const retryButton = limitedCards[0].querySelector('.inbox-retry');
+assert.ok(retryButton, 'a row with a usable fallback offers the retry');
+assert.ok(retryButton.classList.contains('toggle'), 'reuses the existing toggle button class');
+assert.equal(retryButton.textContent, 'retry on openai/gpt-5.6-sol');
+assert.equal(limitedCards[0].querySelector('.inbox-answer'), null, 'no answer box - an answer cannot lift a limit');
+responses.set('/api/cards/u1/fallback-run', stubJson(202, {card_id: 'u1', running: true, phase: 'preparing'}));
+retryButton.onclick();
+await flush(); await flush();
+const retryCall = calls.find(c => c.path === '/api/cards/u1/fallback-run');
+assert.ok(retryCall, 'the retry posts to the fallback-run route');
+assert.equal(retryCall.opts.method, 'POST');
+
+mod.ib.focusIndex = 1;
+mod.loadInbox();
+await flush(); await flush();
+limitedCards = mod.ib.panel.querySelectorAll('.inbox-card');
+assert.equal(limitedCards[1].querySelector('.inbox-retry'), null, 'no usable fallback, no control');
+mod.closeInboxPanel();
+
 console.log('ok');
