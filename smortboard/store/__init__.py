@@ -3,6 +3,7 @@
 from smortboard.store.api import Store
 from smortboard.store.errors import (
     BlockedReasonInvalidError,
+    BundleError,
     NotFoundError,
     StoreError,
     UnknownFieldError,
@@ -12,6 +13,7 @@ __all__ = [
     "Store",
     "StoreError",
     "BlockedReasonInvalidError",
+    "BundleError",
     "NotFoundError",
     "UnknownFieldError",
 ]

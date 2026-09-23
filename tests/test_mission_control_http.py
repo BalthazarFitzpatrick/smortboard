@@ -84,6 +84,13 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
 
     # OrchestratorRegistry.start takes the runner explicitly - patch it in via the server instance
     original_start = server.orchestrator.start
+    # held until the 202 is read: an instant runner could finish the turn before the response
+    # was built, and the 202 then said not thinking (failed 2 of 6 runs on 8ad321d)
+    gate = threading.Event()
+
+    def _gated_ok_runner(prompt, model, budget_usd):
+        gate.wait(timeout=5)
+        return _ok_runner(prompt, model, budget_usd)
 
     def _patched_start(
         board_id, message, runner=None, message_already_stored=False, mode="planning"
@@ -91,7 +98,7 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
         return original_start(
             board_id,
             message,
-            runner=_ok_runner,
+            runner=_gated_ok_runner,
             message_already_stored=message_already_stored,
             mode=mode,
         )
@@ -104,6 +111,7 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
     assert status == 202
     assert body["thinking"] is True
     assert [m["author"] for m in body["messages"]] == ["operator"]
+    gate.set()
 
     # generous, not a measurement: the suite runs `-n auto` and a worker thread on a
     # loaded machine can wait seconds to be scheduled at all
@@ -119,6 +127,48 @@ def test_orchestrator_post_then_get_until_not_thinking(running_server):
     assert [m["author"] for m in body["messages"]] == ["operator", "orchestrator"]
     assert body["plan"] == "the plan"
     assert "model" in body
+
+
+def test_a_poll_that_says_done_thinking_already_carries_the_reply(running_server):
+    """the view once read the messages before thinking: a turn ending between the two reads
+    answered not thinking with no reply, and the ui stopped polling there. seen as the flake above
+    under the parallel suite (thinking False, error None, messages ['operator'])"""
+    base_url, server = running_server
+    board = _board(base_url)
+    registry = server.orchestrator
+    original_start, original_thinking = registry.start, registry.thinking
+    gate = threading.Event()
+
+    def _gated_ok_runner(prompt, model, budget_usd):
+        gate.wait(timeout=5)
+        return _ok_runner(prompt, model, budget_usd)
+
+    registry.start = lambda board_id, message, **kw: original_start(
+        board_id,
+        message,
+        runner=_gated_ok_runner,
+        message_already_stored=kw.get("message_already_stored", False),
+    )
+    status, _ = _request(
+        f"{base_url}/api/boards/{board['id']}/orchestrator", "POST", {"message": "build it"}
+    )
+    assert status == 202
+
+    # the widest the race gets: the turn runs to its end inside the view's own thinking read
+    def _thinking_once_the_turn_ends(board_id):
+        gate.set()
+        deadline = time.time() + 30
+        while original_thinking(board_id) and time.time() < deadline:
+            time.sleep(0.01)
+        return original_thinking(board_id)
+
+    registry.thinking = _thinking_once_the_turn_ends
+    status, body = _request(f"{base_url}/api/boards/{board['id']}/orchestrator")
+    assert status == 200
+    assert body["thinking"] is False
+    assert body["error"] is None
+    assert [m["author"] for m in body["messages"]] == ["operator", "orchestrator"]
+    assert body["plan"] == "the plan"
 
 
 def test_orchestrator_post_while_thinking_is_409(running_server):

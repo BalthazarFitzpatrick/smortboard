@@ -218,6 +218,30 @@ def test_reviewer_uses_its_labs_active_credential(tmp_path, monkeypatch, lab):
     assert calls[0]["lab"] == lab
 
 
+def test_a_codex_review_keeps_its_guards_apart_from_the_workers(tmp_path, monkeypatch):
+    """one shared dir let the reviewer's empty read-only lease overwrite the worker's lease.json,
+    so a claude worker's fix round after a codex review would refuse every edit"""
+    from smortboard import profiles
+    from smortboard.exec.backends import write_container_guards
+
+    profiles.add_profile("codex", "openai-test", lab="openai", kind="api_key")
+    profiles.set_active("codex", lab="openai")
+    calls = []
+    _wire(monkeypatch, capture=calls)
+    guards = tmp_path / "guards"
+    settings = write_container_guards(guards, ["src/**"])
+    worker_lease = (guards / "lease.json").read_text()
+
+    run_review(None, "card", DIFF, tmp_path / "wt", settings, REPO, model="openai/gpt-5.6-sol")
+
+    assert (guards / "lease.json").read_text() == worker_lease
+    cmd = calls[0]["cmd"]
+    mounts = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-v"]
+    assert f"{guards / 'reviewer'}:/smortboard:ro" in mounts
+    assert json.loads((guards / "reviewer" / "lease.json").read_text())["read_only"] is True
+    assert not (tmp_path / "wt").exists()  # nothing written into the work tree
+
+
 def test_no_docker_is_refused_rather_than_skipped(tmp_path, monkeypatch):
     _wire(monkeypatch, docker=False)
     with pytest.raises(ReviewUnavailable, match="Docker"):
@@ -230,7 +254,9 @@ def test_the_credential_never_appears_as_an_env_var(tmp_path, monkeypatch):
     run_review(None, "card", DIFF, tmp_path, tmp_path / "s.json", REPO)
     call = calls[0]
     joined = shlex.join(call["cmd"])
-    assert "-e" not in call["cmd"] and "--env" not in call["cmd"]
+    cmd = call["cmd"]
+    env = {cmd[i + 1].split("=", 1)[0] for i, arg in enumerate(cmd) if arg in ("-e", "--env")}
+    assert env <= {"BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS"}
     assert "s3cr3t-token" not in joined
     assert call["stdin"] == "s3cr3t-token\n"
 

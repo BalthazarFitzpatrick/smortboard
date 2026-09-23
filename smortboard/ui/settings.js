@@ -7,9 +7,9 @@
 // {label, node, onOpen} entry here - onOpen (optional) runs every time the panel opens, so a
 // section backed by its own fetch can refresh instead of showing stale data from the last open.
 //
-// relies on globals board.js already defines: api, apiOrError, reenterIfFocusLost. no new visual
-// primitive here - rows and text fields reuse boards.js's own classes (board-row, boards-create-row,
-// text-field, toggle), already loaded via boards.css.
+// relies on globals board.js already defines: api, apiOrError, reenterIfFocusLost, loadBoards. no
+// new visual primitive here - rows and text fields reuse boards.js's own classes (board-row,
+// boards-create-row, text-field, toggle), already loaded via boards.css, and ui_base's run-controls.
 
 const st = {backdrop: null, panel: null, listEl: null};
 
@@ -52,59 +52,117 @@ async function loadAutoSwitchToggle(box) {
   }
 }
 
-// enable_mouse: the board is driven from the keyboard, and this turns on the pointer half of it -
-// hovering focuses what the arrow keys would (fanning a piled column with it), and right-click
-// opens the card menu m opens. off by default; the clicks that always worked are never gated by it
-const mouseSetting = {box: null};
-
-function buildMouseToggle() {
+// usage_limit_route: unset (the default) switches a limited role to its fallback model by itself;
+// "attention" blocks the card and asks in the inbox (n) instead. credential rotation above is a
+// separate choice - same model, another subscription
+function buildUsageLimitRouteToggle() {
+  const wrap = document.createElement('label');
+  wrap.className = 'settings-toggle-row';
   const box = document.createElement('input');
   box.type = 'checkbox';
-  box.className = 'settings-enable-mouse-checkbox';
+  box.className = 'settings-usage-limit-route-checkbox';
   box.checked = false;
-
-  const row = document.createElement('label');
-  row.className = 'settings-toggle-row';
   const text = document.createElement('span');
-  text.textContent = 'enable mouse';
-  row.append(box, text);
-
-  const note = document.createElement('div');
-  note.className = 'field-label';
-  note.textContent = 'the keyboard is how the board is driven. with this on, hovering focuses '
-    + 'what the arrows would and right-click opens the card menu.';
+  text.textContent = 'on a usage limit, ask me before switching to a fallback model';
+  wrap.append(box, text);
 
   box.addEventListener('change', async () => {
     box.disabled = true;
     const {ok} = await apiOrError('/api/settings', {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({enable_mouse: box.checked ? 'on' : null}),
+      body: JSON.stringify({usage_limit_route: box.checked ? 'attention' : null}),
     });
     box.disabled = false;
-    if (!ok) { box.checked = !box.checked; return; } // revert on a failed save
-    setMouseEnabled(box.checked); // live: no reload to start or stop hovering
+    if (!ok) box.checked = !box.checked; // revert on a failed save
   });
+
+  loadUsageLimitRouteToggle(box);
+  return wrap;
+}
+
+async function loadUsageLimitRouteToggle(box) {
+  try {
+    const settings = await api('/api/settings');
+    box.checked = settings.usage_limit_route === 'attention';
+  } catch {
+    // leave the default (unchecked) - the board switches by itself, as before this setting
+  }
+}
+
+// enable_mouse: the board is driven from the keyboard, and this turns on the pointer half of it -
+// hovering focuses what the arrow keys would (fanning a piled column with it), and right-click
+// opens the card menu m opens. off by default; the clicks that always worked are never gated by it
+const mouseSetting = {enabled: null, disabled: null, saving: false};
+
+function showMouseChoice(on) {
+  mouseSetting.enabled.classList.toggle('on', on);
+  mouseSetting.disabled.classList.toggle('on', !on);
+  mouseSetting.enabled.setAttribute('aria-pressed', String(on));
+  mouseSetting.disabled.setAttribute('aria-pressed', String(!on));
+}
+
+// the lit button only moves once the save lands, so a failed save leaves it where it was
+async function pickMouse(on) {
+  if (mouseSetting.saving) return;
+  mouseSetting.saving = true;
+  const {ok} = await apiOrError('/api/settings', {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enable_mouse: on ? 'on' : null}),
+  });
+  mouseSetting.saving = false;
+  if (!ok) return;
+  showMouseChoice(on);
+  setMouseEnabled(on); // live: no reload to start or stop hovering
+}
+
+// real buttons, so tab reaches them and enter or space picks without a key handler of our own
+function mouseChoiceButton(text, on) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'toggle settings-mouse-choice';
+  btn.dataset.choice = text;
+  btn.textContent = text;
+  btn.onclick = () => pickMouse(on);
+  return btn;
+}
+
+// the section heading is the "mouse" label; the two buttons sit in ui_base's row of controls
+function buildMouseToggle() {
+  const row = document.createElement('div');
+  row.className = 'run-controls';
+  const enabled = mouseChoiceButton('enabled', true);
+  const disabled = mouseChoiceButton('disabled', false);
+  row.append(enabled, disabled);
+
+  const note = document.createElement('div');
+  note.className = 'field-label';
+  note.textContent = 'the keyboard is how the board is driven. with this on, hovering focuses '
+    + 'what the arrows would and right-click opens the card menu.';
 
   const wrap = document.createElement('div');
   wrap.className = 'settings-stack';
   wrap.append(row, note);
-  mouseSetting.box = box;
+  Object.assign(mouseSetting, {enabled, disabled});
+  showMouseChoice(false);
   return wrap;
 }
 
 async function loadMouseToggle() {
   try {
     const settings = await api('/api/settings');
-    mouseSetting.box.checked = settings.enable_mouse === 'on';
-    setMouseEnabled(mouseSetting.box.checked);
+    const on = settings.enable_mouse === 'on';
+    showMouseChoice(on);
+    setMouseEnabled(on);
   } catch {
-    // leave it unchecked - keyboard only is the safe default to fail to
+    // leave disabled lit - keyboard only is the safe default to fail to
   }
 }
 
 const SETTINGS_SECTIONS = [
   {group: 'labs', label: 'credential profiles', node: buildAutoSwitchToggle()},
+  {group: 'labs', label: 'usage limits', node: buildUsageLimitRouteToggle()},
   {group: 'general', label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle},
 ];
 
@@ -181,6 +239,27 @@ async function openFallbackPicker(role, initialRefs, anchor, status, onSaved) {
   menu.openAt(anchor);
 }
 
+// unset is the cli's own default and passes no flag; a level becomes --effort (claude) or
+// model_reasoning_effort (codex) on that role's runs - store/schema.py EFFORT_LEVELS
+const ROLE_EFFORT_LEVELS = ['low', 'medium', 'high'];
+
+function openEffortPicker(role, current, anchor, status) {
+  const items = ['default', ...ROLE_EFFORT_LEVELS].map(level => ({
+    id: level, label: level, on: level === (current || 'default'),
+  }));
+  new Menu({
+    title: `${role} effort`,
+    sections: [{kind: 'list', items, onPick: async item => {
+      const value = item.id === 'default' ? null : item.id;
+      const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[`${role}_effort`]: value})});
+      if (ok) loadRoleModels();
+      else status.textContent = body?.error || 'could not save effort';
+    }}],
+  }).openAt(anchor);
+}
+
 async function loadRoleModels() {
   try {
     const settings = await api('/api/settings');
@@ -240,7 +319,19 @@ async function loadRoleModels() {
         }
       };
       fallbackRow.append(fallbackLabel, fallback);
-      block.append(heading, primaryRow, fallbackRow);
+
+      const effortRow = document.createElement('div');
+      effortRow.className = 'settings-role-control';
+      const effortLabel = document.createElement('span');
+      effortLabel.className = 'field-label';
+      effortLabel.textContent = 'effort';
+      const effort = document.createElement('button');
+      effort.className = 'toggle role-effort';
+      effort.dataset.role = role;
+      effort.textContent = settings[`${role}_effort`] || 'default';
+      effort.onclick = () => openEffortPicker(role, settings[`${role}_effort`], effort, status);
+      effortRow.append(effortLabel, effort);
+      block.append(heading, primaryRow, fallbackRow, effortRow);
       roleModels.node.appendChild(block);
       if (index < roles.length - 1) {
         const divider = document.createElement('div');
@@ -570,6 +661,74 @@ SETTINGS_SECTIONS.push({
   onOpen: loadParallelSection,
 });
 
+// ---- lease mode: how far a card's writes may reach past its declared paths ---------------------
+// strict (unset) keeps a card inside its lease; soft lets it write any other repo path that is not
+// protected (settings, ci, agent instructions, build and dependency files, secrets) and that no
+// other active card on the repo holds. every path it reaches that way is shown on the card
+
+const leaseModes = {boardsList: null};
+
+function renderBoardLeaseRow(board) {
+  const row = document.createElement('div');
+  row.className = 'board-row settings-grid-row';
+  const label = document.createElement('span');
+  label.className = 'board-name field-label';
+  label.textContent = board.name;
+  label.title = board.name;
+  const wrap = document.createElement('label');
+  wrap.className = 'settings-toggle-row';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.className = 'settings-lease-mode-checkbox';
+  box.checked = board.lease_mode === 'soft';
+  const text = document.createElement('span');
+  text.textContent = 'soft: may write unprotected paths no other card holds';
+  wrap.append(box, text);
+  const status = document.createElement('span');
+  status.className = 'boards-status settings-grid-note';
+
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({lease_mode: box.checked ? 'soft' : 'strict'}),
+    });
+    box.disabled = false;
+    if (!ok) box.checked = !box.checked; // revert on a failed save
+    status.textContent = ok ? '' : (body && body.error) || 'could not save';
+    status.className = ok ? 'boards-status settings-grid-note' : 'boards-status boards-error settings-grid-note';
+  });
+  row.append(label, wrap, status);
+  return row;
+}
+
+async function loadLeaseModes() {
+  try {
+    const boards = await api('/api/boards');
+    clearChildren(leaseModes.boardsList);
+    leaseModes.boardsList.appendChild(settingsGridHeader(['board', 'file lease']));
+    boards.forEach(board => leaseModes.boardsList.appendChild(renderBoardLeaseRow(board)));
+  } catch (err) {
+    clearChildren(leaseModes.boardsList);
+    leaseModes.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
+  }
+}
+
+function buildLeaseModesSection() {
+  const grid = document.createElement('div');
+  grid.className = 'settings-grid settings-grid-two';
+  leaseModes.boardsList = grid;
+  return grid;
+}
+
+SETTINGS_SECTIONS.push({
+  group: 'general',
+  label: 'file leases: strict or soft, per board',
+  node: buildLeaseModesSection(),
+  onOpen: loadLeaseModes,
+});
+
 // ---- daily budgets: each board's total spend cap for the current utc day -----------------------
 
 const dailyBudgets = {boardsList: null};
@@ -826,6 +985,93 @@ SETTINGS_SECTIONS.push({
   label: 'mall cam: seconds per card while auto-cycling the workforce drawer',
   node: buildMallCamSection(),
   onOpen: loadMallCamSection,
+});
+
+// ---- backup: every board as one file, and a file brought back in beside them -------------------
+// import only ever adds: the file's boards land next to the ones here under fresh ids, so nothing
+// on the board is replaced. a restore under the original ids is `smortboard import`, into an empty db
+
+const backup = {status: null};
+
+function showBackupStatus(text, failed = false) {
+  backup.status.textContent = text;
+  backup.status.className = failed ? 'boards-status boards-error' : 'boards-status';
+}
+
+// a same-origin link with download set: the browser streams the file to disk under the server's
+// name, and the page stays where it is
+function exportBackup() {
+  const link = document.createElement('a');
+  link.href = '/api/export';
+  link.download = '';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  showBackupStatus('export started - your browser saves the file');
+}
+
+// the picker stays detached, so up/down in the panel never walks onto a hidden file input
+function pickBackupFile() {
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = '.json,application/json';
+  picker.addEventListener('change', () => {
+    if (picker.files && picker.files.length) importBackup(picker.files[0]);
+  });
+  picker.click();
+}
+
+async function importBackup(file) {
+  showBackupStatus(`importing ${file.name}...`);
+  const form = new FormData();
+  form.append('bundle', file, file.name);
+  const {ok, body} = await apiOrError('/api/import', {method: 'POST', body: form});
+  if (!ok) {
+    showBackupStatus((body && body.error) || `could not import ${file.name}`, true);
+    return;
+  }
+  const names = body.boards.map(board => board.name).join(', ');
+  showBackupStatus(`added ${body.boards.length} board(s): ${names}`);
+  await loadBoards();
+}
+
+function backupButton(text, className, run) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `toggle ${className}`;
+  btn.textContent = text;
+  btn.onclick = run;
+  return btn;
+}
+
+function buildBackupSection() {
+  const row = document.createElement('div');
+  row.className = 'run-controls';
+  const status = document.createElement('span');
+  status.className = 'boards-status';
+  row.append(
+    backupButton('export', 'settings-backup-export', exportBackup),
+    backupButton('import as new board(s)', 'settings-backup-import', pickBackupFile),
+    status,
+  );
+
+  const note = document.createElement('div');
+  note.className = 'field-label';
+  note.textContent = 'import adds the boards in a file beside yours, under new ids - it never '
+    + 'replaces one. a full restore is smortboard import, into an empty database.';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'settings-stack';
+  wrap.append(row, note);
+  backup.status = status;
+  return wrap;
+}
+
+SETTINGS_SECTIONS.push({
+  group: 'general',
+  label: 'backup',
+  node: buildBackupSection(),
+  onOpen: () => showBackupStatus(''),
 });
 
 function buildSettingsSection(section) {

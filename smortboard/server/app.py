@@ -5,9 +5,11 @@ import re
 import sqlite3
 import threading
 from collections import defaultdict, deque
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, quote, unquote
 
 from smortboard import profiles
@@ -16,6 +18,7 @@ from smortboard.attention import (
     answer_card,
     approve_lease,
     attention_rows,
+    fallback_run,
     with_actions,
 )
 from smortboard.budgets import spend_refusal
@@ -30,6 +33,7 @@ from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
     ORCHESTRATOR_PROMPT,
     OrchestratorRegistry,
+    card_text_warnings,
 )
 from smortboard.preflight import run_preflight
 from smortboard.prompts import ROLES
@@ -40,7 +44,12 @@ from smortboard.review.landing import DEFAULT_TTL_S as DEFAULT_LANDING_TTL_S
 from smortboard.review.landing import resolve_repo_key
 from smortboard.review.outcome import card_outcome
 from smortboard.review.reviewer import REVIEW_PROMPT_HEADER
-from smortboard.scheduler import SchedulerRegistry, conflicting_run, relabel_stale_crashes
+from smortboard.scheduler import (
+    SchedulerRegistry,
+    SchedulerTicker,
+    conflicting_run,
+    relabel_stale_crashes,
+)
 from smortboard.server import access
 from smortboard.server.assets import AssetNotFound, content_type_for, resolve_asset
 from smortboard.server.multipart import MultipartError, parse_boundary, parse_first_file
@@ -52,7 +61,12 @@ from smortboard.server.runs import (
 )
 from smortboard.store import Store
 from smortboard.store.api import CARD_WRITABLE_FIELDS
-from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
+from smortboard.store.errors import (
+    BlockedReasonInvalidError,
+    BundleError,
+    NotFoundError,
+    UnknownFieldError,
+)
 from smortboard.store.repo_validation import validate_repo
 from smortboard.telemetry import (
     board_costs,
@@ -88,6 +102,7 @@ _ROUTES = [
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/events$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/outcome$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/run$"), "POST"),
+    (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/fallback-run$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/run$"), "GET"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/stop$"), "POST"),
     (re.compile(r"^/api/cards/(?P<card_id>[^/]+)/accept$"), "POST"),
@@ -97,6 +112,8 @@ _ROUTES = [
     (re.compile(r"^/api/preflight$"), "GET"),
     (re.compile(r"^/api/settings$"), "GET"),
     (re.compile(r"^/api/settings$"), "PATCH"),
+    (re.compile(r"^/api/export$"), "GET"),
+    (re.compile(r"^/api/import$"), "POST"),
     (re.compile(r"^/api/tasks/(?P<task_id>[^/]+)$"), "PATCH"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/orchestrator$"), "POST"),
@@ -168,6 +185,9 @@ _MEDIA_TYPE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
 _REQUEST_TIMEOUT_S = 30
 _MAX_JSON_BYTES = 1_000_000
 _MAX_UPLOAD_BYTES = 25_000_000
+# a whole bundle: every board's event log and every attachment, base64. a guess, not measured
+# against a real board - generous because refusing an operator's own backup is the worse failure
+_MAX_BUNDLE_BYTES = 200_000_000
 
 
 class NotJsonError(ValueError):
@@ -183,6 +203,12 @@ def _version() -> str:
         return version("smortboard")
     except PackageNotFoundError:
         return "0.0.0-dev"
+
+
+def _text_warnings(card: dict[str, Any]) -> list[str]:
+    """card text past the card text rules, told to the caller - the card is kept exactly as sent"""
+    criteria = [criterion["text"] for criterion in card["criteria"]]
+    return card_text_warnings({**card, "criteria": criteria})
 
 
 def _make_handler(
@@ -246,7 +272,7 @@ def _make_handler(
                 self._send_json(404, {"error": f"no route for {method} {path}"})
             except NotFoundError as exc:
                 self._send_json(404, {"error": str(exc)})
-            except (BlockedReasonInvalidError, UnknownFieldError) as exc:
+            except (BlockedReasonInvalidError, UnknownFieldError, BundleError) as exc:
                 self._send_json(400, {"error": str(exc)})
             except sqlite3.Error as exc:
                 # a store error must still be an HTTP response. uncaught, it escaped _dispatch and
@@ -302,7 +328,7 @@ def _make_handler(
             card_id = params.get("card_id")
             if card_id and (
                 method in ("PATCH", "DELETE")
-                or path.endswith(("/run", "/accept", "/reject", "/answer"))
+                or path.endswith(("/run", "/fallback-run", "/accept", "/reject", "/answer"))
             ):
                 landing = landings.get(card_id)
                 if landing is not None and landing.running:
@@ -328,7 +354,8 @@ def _make_handler(
                 query = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
                 self._send_json(200, list_folders(query.get("under", [None])[0]))
             elif "board_id" in params and path.endswith("/cards"):
-                self._send_json(200, with_actions(store, store.list_cards(params["board_id"])))
+                cards = store.list_cards(params["board_id"])
+                self._send_json(200, with_actions(store, cards, scheduler))
             elif "board_id" in params and path.endswith("/repos") and method == "GET":
                 self._send_json(200, store.list_repos(params["board_id"]))
             elif "board_id" in params and path.endswith("/repos") and method == "POST":
@@ -353,7 +380,7 @@ def _make_handler(
             elif path == "/api/cards" and method == "POST":
                 body = self._read_json()
                 card = store.create_card(**body)
-                self._send_json(201, card)
+                self._send_json(201, {**card, "warnings": _text_warnings(card)})
             elif "attachment_id" in params:
                 self._handle_get_attachment(params["card_id"], params["attachment_id"])
             elif path.endswith("/comments"):
@@ -364,6 +391,8 @@ def _make_handler(
                 self._send_json(201, comment)
             elif path.endswith("/attachments"):
                 self._handle_upload(params["card_id"])
+            elif path.endswith("/fallback-run") and method == "POST":
+                self._handle_fallback_run(params["card_id"])
             elif path.endswith("/run") and method == "POST":
                 self._handle_run(params["card_id"])
             elif "card_id" in params and path.endswith("/stop") and method == "POST":
@@ -394,6 +423,10 @@ def _make_handler(
             elif path == "/api/settings" and method == "PATCH":
                 store.set_settings(self._read_json())
                 self._send_json(200, store.get_settings())
+            elif path == "/api/export":
+                self._handle_export()
+            elif path == "/api/import":
+                self._handle_import()
             elif path.endswith("/events"):
                 self._send_json(200, store.list_events(params["card_id"]))
             elif "card_id" in params and path.endswith("/timeline"):
@@ -434,7 +467,7 @@ def _make_handler(
                 store.get_board(params["board_id"])  # a 404 for a missing board, not an empty table
                 self._send_json(200, board_costs(store, params["board_id"]))
             elif path == "/api/attention":
-                self._send_json(200, attention_rows(store))
+                self._send_json(200, attention_rows(store, scheduler))
             elif "card_id" in params and path.endswith("/lease/approve"):
                 self._handle_lease_approve(params["card_id"])
             elif path == "/api/pulls":
@@ -454,7 +487,9 @@ def _make_handler(
             elif "profile_name" in params and method == "DELETE":
                 self._handle_remove_profile(params["profile_name"], params.get("lab"))
             elif "card_id" in params and method == "GET":
-                self._send_json(200, store.get_card(params["card_id"]))
+                # the board list's enrichment too, so the open card says what to do next
+                card = store.get_card(params["card_id"])
+                self._send_json(200, with_actions(store, [card], scheduler)[0])
             elif "card_id" in params and method == "PATCH":
                 self._handle_patch_card(params["card_id"])
             elif "card_id" in params and method == "DELETE":
@@ -470,6 +505,8 @@ def _make_handler(
                 # clearing a value
                 if "merge_mode" in body:
                     store.set_board_merge_mode(params["board_id"], body["merge_mode"])
+                if "lease_mode" in body:
+                    store.set_board_lease_mode(params["board_id"], body["lease_mode"])
                 if "max_parallel" in body:
                     store.set_board_max_parallel(params["board_id"], body["max_parallel"])
                 if "daily_budget_usd" in body:
@@ -525,6 +562,17 @@ def _make_handler(
                     return
             state = runs.start(card_id)
             self._send_json(202, state.as_dict())
+
+        def _handle_fallback_run(self, card_id: str) -> None:
+            """the inbox's retry on a usage-limited card: its limited role runs once on the next
+            usable fallback model. 202 once started, 404 for an unknown card, 409 when it runs,
+            is not usage limited, has no usable fallback, or a lease or spend rule refuses it"""
+            try:
+                state = fallback_run(store, runs, card_id, scheduler)
+            except AnswerRefused as exc:
+                self._send_json(409, {"error": str(exc)})
+                return
+            self._send_json(202, state)
 
         def _handle_stop(self, card_id: str) -> None:
             """stops a running card. 409 if there is nothing running to stop."""
@@ -758,7 +806,9 @@ def _make_handler(
             if depends_on is not None:
                 store.set_dependencies(card_id, depends_on)
             card = store.update_card(card_id, **body) if body else store.get_card(card_id)
-            self._send_json(200, card)
+            # only a text edit is checked, so moving an old long card stays quiet
+            warnings = _text_warnings(card) if {"title", "description"} & set(body) else []
+            self._send_json(200, {**card, "warnings": warnings})
 
         def _handle_create_repo(self, board_id: str) -> None:
             """registers a repo on a board - the only way to make a card runnable.
@@ -863,14 +913,18 @@ def _make_handler(
         def _orchestrator_view(self, board_id: str) -> dict:
             store.get_board(board_id)  # 404 for an unknown board rather than an empty session
             model = store.get_settings().get("orchestrator_model") or DEFAULT_ORCHESTRATOR_MODEL
+            # turn state before the transcript: a turn stores its reply before clearing thinking,
+            # so reading thinking first means "not thinking" always comes with the reply
+            thinking = orchestrator.thinking(board_id)
+            error = orchestrator.error(board_id)
             return {
                 "messages": [
                     {k: m[k] for k in ("id", "author", "body", "created_at", "cards")}
                     for m in store.list_orchestrator_messages(board_id)
                 ],
                 "plan": store.get_plan(board_id),
-                "thinking": orchestrator.thinking(board_id),
-                "error": orchestrator.error(board_id),
+                "thinking": thinking,
+                "error": error,
                 "model": model,
             }
 
@@ -1073,6 +1127,37 @@ def _make_handler(
             )
             self._send_json(201, attachment)
 
+        def _handle_export(self) -> None:
+            data = store.export_text().encode()
+            stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header(
+                "Content-Disposition", f'attachment; filename="smortboard-{stamp}.json"'
+            )
+            self._send_hardening_headers()
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _handle_import(self) -> None:
+            """adds an uploaded bundle's boards beside the ones here - never replaces one, see
+            store/export.py import_as_new. a restore under the original ids is `smortboard import`"""
+            content_type = self.headers.get("Content-Type", "")
+            if "multipart/form-data" not in content_type:
+                self._send_json(400, {"error": "expected multipart/form-data"})
+                return
+            length = self._body_length(_MAX_BUNDLE_BYTES)
+            body = self.rfile.read(length)
+            uploaded = parse_first_file(body, parse_boundary(content_type))
+            try:
+                bundle = json.loads(uploaded.data)
+            except ValueError as exc:  # json and utf-8 decoding both raise a ValueError
+                raise BundleError(f"not a smortboard bundle - not json: {exc}") from exc
+            board_ids = store.import_as_new(bundle)
+            self._send_json(201, {"boards": [store.get_board(board_id) for board_id in board_ids]})
+
         def _handle_get_attachment(self, card_id: str, attachment_id: str) -> None:
             meta = store.get_attachment_meta(attachment_id)
             if meta["card_id"] != card_id:
@@ -1166,13 +1251,34 @@ def _build_image_in_background(
         builds[repo["id"]] = outcome
 
 
+class BoardServer(HTTPServer):
+    """the board's http server, which also owns the scheduler ticker - closing the server stops
+    it, so neither the cli nor a test leaves that thread behind"""
+
+    ticker: SchedulerTicker | None = None
+
+    def server_close(self) -> None:
+        if self.ticker is not None:
+            self.ticker.stop()
+        super().server_close()
+
+
+def start_background(server: BoardServer) -> list[str]:
+    """requeues the retries the last process owed and never fired, then starts the ticker that
+    fires them from here on. the cli calls this once serving; build_server alone never starts a
+    run or a thread, so a test opts in. returns the requeued card ids"""
+    requeued = server.scheduler.requeue_lapsed()
+    server.ticker.start()
+    return requeued
+
+
 def build_server(
     store: Store,
     port: int,
     host: str = "127.0.0.1",
     token_path: str | None = None,
     api_key: str | None = None,
-) -> HTTPServer:
+) -> BoardServer:
     """api_key None skips the key check (tests); the cli always passes one"""
     # a new board has no runs, so any card still mid-run lost the last board process under it
     recovered = recover_orphaned_runs(store)
@@ -1185,6 +1291,7 @@ def build_server(
     runs = RunRegistry(store.path, token_path=token_path)
     orchestrator = OrchestratorRegistry(store.path, token_path=token_path)
     scheduler = SchedulerRegistry(store.path, runs)
+    runs.set_finish_hook(scheduler.finish_hook)
     handler_cls = _make_handler(
         store,
         runs,
@@ -1195,9 +1302,10 @@ def build_server(
         api_key=api_key,
         bound_host=host,
     )
-    server = HTTPServer((host, port), handler_cls)
+    server = BoardServer((host, port), handler_cls)
     server.runs = runs  # the cli and the tests reach the registry through the server
     server.recovered = recovered
     server.orchestrator = orchestrator
     server.scheduler = scheduler
+    server.ticker = SchedulerTicker(scheduler)
     return server

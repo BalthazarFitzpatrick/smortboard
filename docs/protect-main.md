@@ -1,12 +1,12 @@
 # Keep main for people, give development to the agents
 
-smortboard's own flow assumes a split: agents (the board's cards, and any Claude Code session you run
-next to it) work on branches and merge into `development`; a person merges `development` into
+smortboard's own flow assumes a split: agents (the board's cards, and any Claude Code or Codex session you
+run next to it) work on branches and merge into `development`; a person merges `development` into
 `main`. Three pieces make that hold:
 
 1. a `development` branch that exists on GitHub
-2. a Claude Code hook that lets agents merge into `development` and refuses anything that writes
-   `main`
+2. a hook, shared by Claude Code and Codex, that lets agents merge into `development` and refuses
+   anything that writes `main`
 3. a GitHub ruleset on `main`, so the rule holds even for a tool the hook never sees
 
 The hook catches agent mistakes. The ruleset is the actual protection. Use both.
@@ -70,9 +70,34 @@ chmod +x ~/.claude/hooks/protect-main.sh
 {"type": "command", "command": "bash ~/.claude/hooks/protect-main.sh"}
 ```
 
-Check it: run `/hooks` in Claude Code to see it listed, then ask the agent to run
+**For Codex**, the same script works unchanged: Codex sends a shell call as `tool_name` `Bash` with
+`tool_input.command`, and a hook exiting 2 with a reason on stderr refuses it
+([S6](spikes/S6-codex-hooks.md)). Copy it and register it in `~/.codex/hooks.json`:
+
+```bash
+mkdir -p ~/.codex/hooks
+cp tools/claude-hooks/protect-main.sh ~/.codex/hooks/
+chmod +x ~/.codex/hooks/protect-main.sh
+```
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [{"type": "command", "command": "bash ~/.codex/hooks/protect-main.sh", "timeout": 15}]
+      }
+    ]
+  }
+}
+```
+
+Codex only runs a hook it has recorded as trusted, under `[hooks.state]` in `~/.codex/config.toml`.
+
+Check it: run `/hooks` in Claude Code to see it listed, then ask either agent to run
 `git push origin HEAD:main`. It should be refused. `tests/test_protect_main_hook.py` covers every
-row of the table above against a stubbed `gh`.
+row of the table above against a stubbed `gh`, plus a Codex-shaped payload.
 
 What the hook doesn't do: it only sees commands the agent runs through the Bash tool. A command typed
 in your own terminal, a GUI client or a script outside Claude Code goes straight past it. That is

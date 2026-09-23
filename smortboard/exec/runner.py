@@ -6,12 +6,14 @@ import queue
 import secrets
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from smortboard.exec.commands import declares_formatter
+from smortboard.exec.leases import PROTECTED_GLOBS
 from smortboard.labs.base import LabAdapter, LabEvent, RunRequest, estimate_usage
 from smortboard.labs.claude_code import (
     DEFAULT_ALLOWED_TOOLS,
@@ -49,37 +51,25 @@ from smortboard.store.api import Store
 # can answer a prompt, and S3 showed a card with nobody to ask just deadlocks on them. Only the
 # repo's own project settings and our card-specific --settings file apply.
 
-# replaces the ambient personal CLAUDE.md a card would otherwise inherit. it states the two facts
-# that CLAUDE.md would have supplied for an interactive session, so the agent neither re-derives
-# them nor stops to ask: the branch already exists, and the lease is enforced, not a suggestion
+# replaces the ambient personal CLAUDE.md a card would otherwise inherit: the branch already exists,
+# the lease is enforced, and output is read on the board. house style comes from the repo's own
+# CLAUDE.md or AGENTS.md, never from here, so a node repo is not handed python rules
 SYSTEM_PROMPT = (
-    "You are a headless worker executing one card in its own git worktree, already checked out on "
-    "its branch. Do not create or switch branches, and do not ask for permission to commit — "
-    "committing to this branch is expected. Writes outside your declared path lease are blocked by "
-    "a hook; if one is refused, do not retry it, note it and continue with the rest of the task.\n"
-    "A REFUSED COMMAND WILL NOT SUCCEED REWORDED. Your available tools are fixed for this run: if a "
-    "shell command is denied, no variant of it will be permitted, so record what you could not do "
-    "and move on rather than trying another spelling. Use Grep and Glob to search rather than "
-    "shelling out.\n\n"
-    "House conventions:\n"
-    "- commit messages: lowercase, past tense, no trailing period\n"
-    "- no emojis anywhere\n"
-    "- comments lowercase, one to three lines, explaining intent rather than mechanics\n"
-    "- run python through `uv run`, never bare python\n\n"
-    "Narrate as you go, in plain text between tool calls - not code, not diffs, those already land "
-    f"in the event log. Before each step, one short sentence to {OPERATOR_NAME} about what you are "
-    "doing and why. When something needs their decision, ask it as one clear question on its own line, then take "
-    "the most reversible option and say which you chose.\n\n"
-    f"Writing for the board. Everything you write lands as plain text in {OPERATOR_NAME}'s inbox "
-    "and card panel (newlines kept, no markdown rendering), and they scan it by eye:\n"
-    "- short lines, one fact per line; no paragraph longer than three lines\n"
-    "- plain-text structure: CAPITAL labels and '- ' bullets, a blank line between sections; no "
-    "**bold**, no # headers, no tables\n\n"
-    "If your diff touches smortboard/ui/, end your final message with one more line: "
-    "SCREENSHOT: <what to open> naming the view the board should screenshot once your work lands "
-    "- default to naming the board itself if there is nothing more specific to point at. Leave the "
-    "line out entirely for a change that touches nothing under smortboard/ui/.\n\n"
-    "End every run with this block as your final message, the call to action first:\n"
+    "Headless worker, one card, its own git worktree, branch already checked out. Never create or "
+    "switch branches. Commit freely; never ask to.\n"
+    "A hook blocks every write your lease does not allow. Refused: do not retry, note it, carry on.\n"
+    "A REFUSED COMMAND WILL NOT SUCCEED REWORDED. Tools are fixed for this run; a denied shell "
+    "command stays denied in every spelling. Note it, move on. Search with Grep and Glob, not the "
+    "shell.\n"
+    "Follow the repo's own conventions (its CLAUDE.md or AGENTS.md).\n\n"
+    "Narrate sparingly: one line, at most 10 words, when you start something new - not before "
+    "every tool call. Code and diffs already reach the event log.\n"
+    f"A decision only {OPERATOR_NAME} can make: ask it as one question on its own line, take the "
+    "most reversible option, say which.\n\n"
+    f"All you write lands as plain text in {OPERATOR_NAME}'s inbox and card panel, read by eye: "
+    "short lines, one fact each, CAPITAL labels, '- ' bullets. No markdown bold, headers or "
+    "tables.\n\n"
+    "End every run with this block, the call to action first:\n"
     f"ACTION: <the one thing {OPERATOR_NAME} must do next - 'review the PR', 'answer the question "
     "below', 'widen the lease to X, then re-run' - or 'none'>\n"
     "WHY: <one line>\n"
@@ -87,6 +77,13 @@ SYSTEM_PROMPT = (
     "- <one line per delivered piece>\n"
     "NOT DONE:\n"
     "- <one line per thing left, refused or skipped, with the reason>\n"
+)
+
+# the board screenshots only its own ui (review/screenshot.py serves smortboard with the card's
+# ui/ overlaid), so this reaches only a repo that has one - every other repo read it as noise
+SCREENSHOT_RULE = (
+    "\n\nYour diff touches smortboard/ui/? Add one last line after the block: SCREENSHOT: <the view "
+    "to open once your work lands, or the board itself>. No ui change, no line.\n"
 )
 
 
@@ -111,7 +108,7 @@ def note_marker_paragraph(marker: str) -> str:
     )
 
 
-def lease_preamble(leases: list[str] | None) -> str:
+def lease_preamble(leases: list[str] | None, mode: str = "strict") -> str:
     """the card's path lease, told to the agent rather than only enforced against it.
 
     THIS IS NAVIGATION, NOT A WARNING. the lease says exactly which files the work touches, and an
@@ -123,41 +120,55 @@ def lease_preamble(leases: list[str] | None) -> str:
     if not leases:
         return ""
     listed = "\n".join(f"- {glob}" for glob in leases)
+    if mode != "soft":
+        return (
+            "The files this card may write, and the only ones a hook will permit:\n"
+            f"{listed}\n"
+            "Start there. Read what you need elsewhere, but the work belongs in those paths.\n\n"
+        )
+    # measured on a real soft run: told only its lease, the agent wrote b/y.py, the hook let it
+    # through, and it left the file uncommitted as "outside my lease" - soft has to be said
+    fenced = ", ".join(glob.removeprefix("**/") for glob in PROTECTED_GLOBS)
     return (
-        "The files this card may write, and the only ones a hook will permit:\n"
+        "Your lease, where this card's work belongs:\n"
         f"{listed}\n"
-        "Start there. Read what you need elsewhere, but the work belongs in those paths.\n\n"
+        "SOFT LEASE on this board: when the work needs it, also write and commit other repo files. "
+        f"A hook still refuses protected ones ({fenced}) and files another active card holds. "
+        "Commit what you write outside the lease like the rest; the operator and the reviewer see "
+        "each such path.\n\n"
     )
+
+
+# what the container and the board already settle, told once so no run spends a denial finding
+# out. measured over 155 card runs: 581 denied Bash calls, 221 of them a granted command joined to
+# one that was not (| tail, 2>&1 |, ; echo), 21 dependency installs, asks to push, docker hunts
+_SHELL_FACTS = (
+    "- no pipes or chains (|, &&, ;, 2>&1) unless the whole line is a command named here\n"
+    "- no docker in this container; no sibling repo checkouts exist\n"
+    "- never push: the board pushes\n"
+    "- no dependency installs: uv sync, uv lock, pip, npm\n"
+    "- a test failing outside your lease: note it, move on\n"
+)
 
 
 def commands_preamble(repo: dict[str, Any] | None) -> str:
-    """the repo's test and lint commands, told to the agent word for word.
+    """every shell command the run is granted, verbatim, and the facts that make the rest futile.
 
-    The allowlist admits exactly these, and the repo's own CLAUDE.md may name others - run 3 spent
-    most of its 16 denials on spellings of ruff the allowlist was never going to admit.
+    generated from allowed_tools_for_repo, the same grants the run itself gets, so the two cannot
+    drift. it only informs; it grants nothing. run 3 spent most of its 16 denials on spellings of
+    ruff the allowlist was never going to admit.
     """
     repo = repo or {}
-    lines = [
-        f"{label}: {command}"
-        for label, command in (
-            ("Run the tests with", repo.get("test_command")),
-            ("Run the linter with", repo.get("lint_command")),
-        )
-        if command
-    ]
-    if not lines:
-        return ""
-    body = (
-        "\n".join(lines)
-        + "\nThese exact commands are the only test and lint invocations permitted; where the "
-        "repo's own instructions name others, use these instead.\n"
-    )
+    grants = [tool[5:-1] for tool in allowed_tools_for_repo(repo) if tool.startswith("Bash(")]
+    lines = ["YOU CAN RUN EXACTLY these shell commands (* = any further arguments):"]
+    lines += [f"- {grant}" for grant in grants]
+    for label, key in (("tests", "test_command"), ("lint", "lint_command")):
+        if repo.get(key):
+            lines.append(f"Run {label} with: {repo[key]}")
     if declares_formatter(repo):
-        body += (
-            "The lint command's formatter may also be run in its write form: format and commit "
-            "the result, not only check it.\n"
-        )
-    return body + "\n"
+        lines.append("The formatter's write form is granted too: format and commit the result.")
+    body = "\n".join(lines) + "\nALSO:\n" + _SHELL_FACTS
+    return body + "Where the repo's own instructions name other commands, use these instead.\n\n"
 
 
 # GLOB AND GREP ARE FREE AND THEIR ABSENCE IS EXPENSIVE. without a search tool an agent reaches for
@@ -176,6 +187,13 @@ HEADLESS_RULES = (
     "\n\nYOU RUN HEADLESS AND NOTHING WAKES YOU UP. When your turn ends, the run ends. Never run a "
     "command in the background or schedule a later check - run tests in the foreground and wait "
     "for them. Commit your work before you finish: uncommitted changes are discarded.\n"
+)
+
+# appended beside HEADLESS_RULES, so a stored prompt cannot drop it either. measured over 155
+# card runs, Read was 71% of all tool-result volume: 804 calls, 8.1k characters each on average
+READING_RULES = (
+    "\nREAD NARROW. Grep for the line numbers first, then Read only that range with offset and "
+    "limit. Never re-read a file already read this run unless it changed since.\n"
 )
 
 
@@ -259,6 +277,7 @@ class RunResult:
     output_tokens: int = 0
     cached_tokens: int = 0
     role: str = "worker"
+    cache_creation_tokens: int = 0
 
 
 # a fixed marker would be guessable from the worker prompt, so any file could spoof an operator
@@ -384,6 +403,53 @@ def _record_deliveries(store: Store | None, card_id: str, feeder: _NoteFeeder | 
         store.append_event(card_id, "note_delivered", {"comment_ids": feeder.delivered.get()})
 
 
+# a run whose stream says nothing for this long is hung, not thinking - measured, card ab103f07's
+# run took 285 minutes, 225 of them one silent gap. killed as API_UNREACHABLE, which retries
+STALL_TIMEOUT_SECONDS = 20 * 60
+
+# a lab with no native budget and no reported cost (codex) has nothing else to stop a runaway run
+UNBUDGETED_TIME_CAP_SECONDS = 60 * 60
+
+# the subtype a run stopped by that cap reports - handled like error_max_budget_usd
+TIME_CAP_SUBTYPE = "error_max_wall_clock"
+
+
+class _Watchdog:
+    """kills a run whose stream went silent, or that outlived its time cap. never touches the
+    store - the reading thread records what it found once the stream ends"""
+
+    def __init__(self, handle: ProcessHandle, stall_seconds: float, cap_seconds: float) -> None:
+        self._handle = handle
+        self.stall_seconds = stall_seconds
+        self.cap_seconds = cap_seconds
+        self._started = self._last = time.monotonic()
+        self._done = threading.Event()
+        self.stalled_for: float | None = None
+        self.capped_after: float | None = None
+        limits = [limit for limit in (stall_seconds, cap_seconds) if limit > 0]
+        if limits:
+            poll = min(30.0, min(limits) / 4)
+            threading.Thread(target=self._watch, args=(poll,), daemon=True).start()
+
+    def touch(self) -> None:
+        self._last = time.monotonic()
+
+    def _watch(self, poll: float) -> None:
+        while not self._done.wait(poll):
+            now = time.monotonic()
+            if self.stall_seconds > 0 and now - self._last >= self.stall_seconds:
+                self.stalled_for = now - self._last
+            elif self.cap_seconds > 0 and now - self._started >= self.cap_seconds:
+                self.capped_after = now - self._started
+            else:
+                continue
+            self._handle.terminate()
+            return
+
+    def close(self) -> None:
+        self._done.set()
+
+
 def run_process(
     store: Store | None,
     card_id: str,
@@ -404,8 +470,15 @@ def run_process(
     profile: str | None = None,
     budget_usd: float | None = None,
     role: str = "worker",
+    stall_seconds: float | None = None,
+    time_cap_seconds: float | None = None,
 ) -> RunResult:
-    """record raw and neutral events, preserving the identity selected before launch"""
+    """record raw and neutral events, preserving the identity selected before launch.
+
+    `stall_seconds` (default STALL_TIMEOUT_SECONDS) and `time_cap_seconds` (default
+    UNBUDGETED_TIME_CAP_SECONDS for a lab with no native budget, else none) end a run that went
+    silent or ran too long; 0 turns either off.
+    """
     adapter = adapter or get_adapter(lab)
     lab = adapter.lab
     if profile is None:
@@ -427,6 +500,13 @@ def run_process(
     handle = ProcessHandle(process, container_name=container_name)
     if on_process is not None:
         on_process(handle)
+    if time_cap_seconds is None:
+        time_cap_seconds = 0 if adapter.capabilities.native_budget else UNBUDGETED_TIME_CAP_SECONDS
+    watchdog = _Watchdog(
+        handle,
+        STALL_TIMEOUT_SECONDS if stall_seconds is None else stall_seconds,
+        time_cap_seconds,
+    )
     feeder: _NoteFeeder | None = None
     if live and process.stdin is not None:
         if token_line is not None:
@@ -486,6 +566,7 @@ def run_process(
 
     assert process.stdout is not None
     for raw_line in process.stdout:
+        watchdog.touch()
         raw = parse_line(raw_line)
         if raw is None:
             continue
@@ -522,12 +603,35 @@ def run_process(
             budget_exceeded = True
             handle.terminate()
 
+    watchdog.close()
     if feeder is not None:
         feeder.close()
         _record_deliveries(store, card_id, feeder)
     process.wait()
     stderr_thread.join(timeout=2)
-    if budget_exceeded:
+    if watchdog.stalled_for is not None:
+        # a hung stream is an outage, not the card's fault - the auto-retry picks this code up
+        blocked_reason_code = "API_UNREACHABLE"
+        if store is not None:
+            gap = {
+                "gap_seconds": round(watchdog.stalled_for),
+                "limit_seconds": watchdog.stall_seconds,
+            }
+            store.append_event(card_id, "run_stalled", gap)
+    if watchdog.capped_after is not None and store is not None:
+        store.append_event(
+            card_id,
+            "run_time_capped",
+            {"seconds": round(watchdog.capped_after), "limit_seconds": watchdog.cap_seconds},
+        )
+    capped = (
+        "error_max_budget_usd"
+        if budget_exceeded
+        else TIME_CAP_SUBTYPE
+        if watchdog.capped_after is not None
+        else None
+    )
+    if capped:
         previous = finals[-1].result if finals else {}
         unaccounted = [event.usage.get("cost_usd") for event in pending_usage]
         remaining_cost = sum(unaccounted) if all(cost is not None for cost in unaccounted) else None
@@ -537,7 +641,7 @@ def run_process(
                 result={
                     **(previous or {}),
                     "ok": False,
-                    "subtype": "error_max_budget_usd",
+                    "subtype": capped,
                     "text": (previous or {}).get("text") or partial_text,
                     "structured_output": structured_output,
                     "blocked_reason_code": "CRASH",
@@ -554,7 +658,7 @@ def run_process(
             for event in pending_usage
         ]
         record(
-            {"type": "result", "subtype": "error_max_budget_usd", "is_error": True},
+            {"type": "result", "subtype": capped, "is_error": True},
             [*summaries, final],
         )
     identity = {"lab": lab, "model": model, "profile": profile, "role": role}
@@ -594,18 +698,23 @@ def run_process(
             input_tokens=sum(int(u.get("input_tokens") or 0) for u in usage_events),
             output_tokens=sum(int(u.get("output_tokens") or 0) for u in usage_events),
             cached_tokens=sum(int(u.get("cached_tokens") or 0) for u in usage_events),
+            cache_creation_tokens=sum(
+                int(u.get("cache_creation_tokens") or 0) for u in usage_events
+            ),
             **identity,
         )
     final = finals[-1]
     last = final.result or {}
     reason = adapter.classify(final) or blocked_reason_code
-    if budget_exceeded:
+    if capped:
         reason = "CRASH"
+    if watchdog.stalled_for is not None:
+        reason = "API_UNREACHABLE"
     costs = [u.get("cost_usd") for u in usage_events]
     total_cost = sum(costs) if costs and all(cost is not None for cost in costs) else None
     # reported totals take precedence over rounded per-model subtotals
     result_costs = [(event.result or {}).get("cost_usd") for event in finals]
-    if not budget_exceeded and result_costs and all(cost is not None for cost in result_costs):
+    if not capped and result_costs and all(cost is not None for cost in result_costs):
         total_cost = sum(result_costs)
     result = RunResult(
         subtype=last.get("subtype"),
@@ -622,6 +731,7 @@ def run_process(
         input_tokens=sum(int(u.get("input_tokens") or 0) for u in usage_events),
         output_tokens=sum(int(u.get("output_tokens") or 0) for u in usage_events),
         cached_tokens=sum(int(u.get("cached_tokens") or 0) for u in usage_events),
+        cache_creation_tokens=sum(int(u.get("cache_creation_tokens") or 0) for u in usage_events),
         **identity,
     )
     if reason == "USAGE_LIMIT" and not blocked_reason_code and result.resets_at is not None:

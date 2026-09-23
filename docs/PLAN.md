@@ -15,6 +15,14 @@
 >   opt-in that lands as soon as both gates pass. Neither ever writes `main`, `master` or `trunk`.
 >   Review mode stacks a dependent card on its unmerged parent's branch, up to three deep, so the
 >   queue keeps moving while nobody is watching.
+> - **Lease modes, usage-limit route, context trim** (2026-09-23). A board's lease is strict by default
+>   or soft, where a card may also write any unprotected path no other active card holds. A refused
+>   write no longer sinks committed work. On a usage limit the board switches to the fallback model by
+>   itself or asks first (`usage_limit_route`). Every run loads only its role's tools, with skills off,
+>   and an unchanged branch re-runs the gates without re-running the agent.
+> - **Rebase guard** (2026-09-23). When the base moves under a card, at run start or while its pull
+>   request waits, the board rebases the card's own commits onto it in a fresh tree. A rebase that
+>   conflicts blocks the card `OUTDATED`, the eleventh reason code, and leaves the branch alone.
 
 ## Context
 
@@ -31,7 +39,7 @@ reimplement the agent loop, it schedules and observes one.
 The design test for every feature: does it help him walk away? Anything that rewards hovering is
 wrong.
 
-Source brief: `smortboard/dev-board-brief.md`. All `[OPEN]` and `[FLAG]` items in it are resolved
+Source brief: `docs/dev-board-brief.md`. All `[OPEN]` and `[FLAG]` items in it are resolved
 below.
 
 ---

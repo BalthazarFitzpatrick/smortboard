@@ -22,23 +22,26 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from smortboard.actions import with_next
-from smortboard.briefing import repeats_failed_attempt, resume_briefing
+from smortboard.briefing import repeats_failed_attempt, resume_briefing, resume_point
 from smortboard.exec.backends import (
     CardRuntimeUnavailable,
+    card_image,
+    image_id,
     require_card_runtime,
     write_container_guards,
 )
-from smortboard.exec.runner import ProcessHandle
+from smortboard.exec.leases import drop_legacy_guards, lease_policy
+from smortboard.exec.runner import TIME_CAP_SUBTYPE, ProcessHandle
 from smortboard.exec.worktrees import (
     WorktreeError,
     add_worktree,
-    branch_diff,
     branch_diverged_from_origin,
     branch_exists,
     branch_name,
@@ -63,10 +66,20 @@ from smortboard.review.merge_request import (
     open_merge_request,
 )
 from smortboard.review.mergeable import sync_with_base
+from smortboard.review.rebase_guard import (
+    OUTDATED,
+    outdated_note,
+    pending_reset,
+    push_over_superseded,
+    rebase_onto_base,
+    remote_superseded,
+    reset_briefing,
+)
 from smortboard.review.reviewer import (
     DEFAULT_REVIEW_BUDGET_USD,
     ReviewResult,
     ReviewUnavailable,
+    review_diff,
     run_review,
 )
 from smortboard.review.screenshot import diff_touches_ui, take_screenshot
@@ -126,15 +139,28 @@ NO_LEASE_NOTE = (
     "then run it again."
 )
 
+# how a refusal over missing Docker or a missing credential starts - the scheduler reads it to
+# retry the card with backoff instead of leaving it for the operator on the first try
+RUNTIME_NOT_READY = "The card runtime is not ready"
+
 # a run that ends on one of these never got to say it was done - it just ran out of budget or
 # turns mid-turn. with commits on the branch that is still real work, so it goes to the gates
 # like a normal finish; with none, it is blocked like any other failed run, but the note names
 # the actual limit instead of a bare CRASH
-BUDGET_CAPPED_SUBTYPES = frozenset({"error_max_budget_usd", "error_max_turns"})
+BUDGET_CAPPED_SUBTYPES = frozenset({"error_max_budget_usd", "error_max_turns", TIME_CAP_SUBTYPE})
+_CAP_NAMES = {"error_max_budget_usd": "budget", TIME_CAP_SUBTYPE: "time limit"}
 
 NO_COMMITS_BUDGET_NOTE = (
     "The run hit its {limit} before committing anything, so there is nothing to test or review. "
     "Its last words are in the timeline. Run it again, with a note if it stopped early."
+)
+
+# what the card says when the reviewer itself failed - an outage, a crash, a limit - rather than
+# judging the work. the resume path (briefing.resume_point) is what makes the second half true
+REVIEWER_FAILED_NOTE = (
+    "The reviewer could not finish ({reason}): {error}\n\n"
+    "That is not a verdict on the work. Running it again re-runs the test gate and the reviewer "
+    "on this same branch head, not the worker - unless a note or a new commit arrives first."
 )
 
 
@@ -242,6 +268,13 @@ def _lease_globs(card: dict[str, Any]) -> list[str]:
 
 def _note(store: Store, card_id: str, text: str) -> None:
     store.add_comment(card_id, author=BOARD_AUTHOR, body=text)
+
+
+def _run_environment(repo: dict[str, Any]) -> dict[str, Any]:
+    """what the gate runs besides the card's code, for the attempt fingerprint - a rebuilt image
+    or an edited test command is a change even when the branch head is not"""
+    image = repo.get("image") or card_image()
+    return {"image": image, "image_id": image_id(image), "test_command": repo.get("test_command")}
 
 
 def _block(store: Store, state: LifecycleResult, reason_code: str, note: str) -> LifecycleResult:
@@ -422,7 +455,8 @@ def _sync_and_retest(
             "MERGE_CONFLICT",
             f"Merging {base_ref} into {tree.branch} conflicts in: "
             f"{', '.join(merge_result.conflicting_files) or 'unknown files'}.\n\n"
-            "Resuming this card lets the worker merge the base branch and resolve them.",
+            "Resuming this card rebases it onto the base in a fresh tree. If that still "
+            "conflicts, the card turns OUTDATED.",
         )
     if always_test or (merge_result is not None and merge_result.merged):
         try:
@@ -440,6 +474,13 @@ def _sync_and_retest(
                 store, state, card_id, repo, base, gate, after_merging=base
             )
     return None
+
+
+def _stacked_on_unlanded(store: Store, card_id: str) -> bool:
+    """a stacked child's base is its unlanded parent's branch, not origin/<base> - the rebase guard
+    leaves it alone until the parent lands (rebase_guard's module docstring says why)"""
+    stack = active_stack(store, card_id)
+    return bool(stack) and not dependency_landed(store, store.get_card(stack["parent_id"]))
 
 
 def _integrate(store, state, card, tree, repo, base, url):
@@ -484,7 +525,39 @@ def run_card_lifecycle(
     stop the chain rather than merely killing the process underneath one step: the very next check
     ends the run at "stopped" instead of continuing to the next gate. `on_process` is handed the
     live process/container handle for whichever step is running, so RunRegistry.stop() can reach it.
+
+    The card's guards (lease, hooks, settings) live in a directory made for this attempt and
+    removed after it - never in the worktree, which the test gate mounts: a repo's own lint once
+    failed a card on the board's generated hook scripts.
     """
+    with tempfile.TemporaryDirectory(
+        prefix=f"smortboard-guards-{card_id[:8]}-", ignore_cleanup_errors=True
+    ) as guards:
+        return _run_attempt(
+            store,
+            card_id,
+            Path(guards),
+            token_path=token_path,
+            backend=backend,
+            on_phase=on_phase,
+            pending_notes=pending_notes,
+            stop_requested=stop_requested,
+            on_process=on_process,
+        )
+
+
+def _run_attempt(
+    store: Store,
+    card_id: str,
+    guard_path: Path,
+    token_path: str | Path | None,
+    backend: Any | None,
+    on_phase: Any | None,
+    pending_notes: Callable[[], list[dict[str, Any]]] | None,
+    stop_requested: Callable[[], bool] | None,
+    on_process: Callable[[ProcessHandle], None] | None,
+) -> LifecycleResult:
+    """run_card_lifecycle's body, with `guard_path` the attempt's own guard directory"""
 
     def phase(name: str) -> None:
         state.phase = name
@@ -553,7 +626,7 @@ def run_card_lifecycle(
             else require_card_runtime(lab=worker_lab)
         )
     except CardRuntimeUnavailable as exc:
-        return _refuse(store, state, f"The card runtime is not ready:\n{exc}")
+        return _refuse(store, state, f"{RUNTIME_NOT_READY}:\n{exc}")
 
     try:
         # a blocked card resuming is not a fresh start - create_worktree raises on an existing
@@ -574,6 +647,8 @@ def run_card_lifecycle(
             tree is not None
             and has_remote(repo["path"])
             and branch_diverged_from_origin(repo["path"], tree.branch)
+            # only this card's own pre-reset history on origin is not someone else's push
+            and not remote_superseded(repo["path"], card_id)
         ):
             return _refuse(
                 store,
@@ -595,49 +670,57 @@ def run_card_lifecycle(
         return _refuse(store, state, f"Could not cut a worktree for this card: {exc}")
     state.branch, state.worktree = tree.branch, str(tree.path)
 
-    settings = write_container_guards(tree.path, _lease_globs(card))
+    drop_legacy_guards(tree.path)
+    remembered = [row["path_glob"] for row in repo.get("remembered_leases") or []]
+    settings = write_container_guards(
+        guard_path,
+        _lease_globs(card),
+        remembered_globs=remembered,
+        policy=lease_policy(store, card, remembered),
+    )
     store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
 
-    # a reused branch is brought up to date BEFORE the worker and the gate, not only at handover:
+    # a reused branch is rebased onto its moved base in a fresh tree BEFORE the worker and gate:
     # measured 2026-09-19, three cards 28-59 commits behind development failed their gate on tests
-    # a later base commit had already fixed, and every re-run reused the same stale tree
-    conflict_note = None
-    # what "the card's own commits" are counted against: once origin/<base> is merged in, the local
-    # base can lag it, and the merged-in commits would read as the card's work
+    # a later base commit had already fixed. one that no longer rebases is outdated
     commit_base = base
-    if worktree_reused:
-        synced = sync_with_base(tree.path, base)
-        if synced is not None and synced.clean:
+    if worktree_reused and not _stacked_on_unlanded(store, card_id):
+        guarded = rebase_onto_base(store, card_id, repo["path"], base)
+        if guarded.outcome == "outdated":
+            return _block(store, state, OUTDATED, outdated_note(guarded))
+        if guarded.outcome == "push_refused":
+            return _refuse(
+                store,
+                state,
+                f"{tree.branch} moved on origin while the board rebased it onto origin/{base}, so "
+                "nothing was pushed or changed. Run this card again.",
+            )
+        if guarded.outcome in ("current", "rebased"):
+            # the card's own commits count from here - the local base can lag origin/<base>
             commit_base = f"origin/{base}"
-        if synced is not None and not synced.clean:
-            base_ref = f"origin/{base}"
-            store.append_event(
-                card_id,
-                "merge_conflict",
-                {"base_ref": base_ref, "files": synced.conflicting_files},
-            )
-            files = ", ".join(synced.conflicting_files) or "unknown files"
-            conflict_note = (
-                f"Merging {base_ref} into this branch conflicts in: {files}. Merge {base_ref} "
-                "yourself, resolve those files, then commit the merge - the test gate runs "
-                "against this branch, so it has to contain the base first."
-            )
 
     fingerprint = {
         "head": rev_parse(tree.path, "HEAD"),
         "base_head": rev_parse(tree.path, f"origin/{base}"),
         "notes": sum(1 for c in card.get("comments") or [] if c.get("author") == AUTHOR_KEY),
+        **_run_environment(repo),
     }
     if worktree_reused and repeats_failed_attempt(store, card_id, fingerprint):
         return _block(
             store,
             state,
             "TESTS_FAILED",
-            "Nothing has changed since the last attempt: same branch head, same base, no new "
-            "note - and its tests failed. Running the worker again would repeat that failure. "
-            "Change something first (merge the base, fix what the gate names, add a note), then "
-            "run it again.",
+            "Nothing has changed since the last attempt: same branch head, same base, same image "
+            "and test command, no new note - and its tests failed. Running it again would repeat "
+            "that failure. Change something first (merge the base, fix what the gate names, "
+            "rebuild the image, add a note), then run it again.",
         )
+    # a branch with no commits has nothing for a gate to test - it always runs the worker
+    resume = None
+    if worktree_reused:
+        resume = resume_point(store, card_id, fingerprint)
+        if resume is not None and not branch_has_commits(repo["path"], tree.branch, commit_base):
+            resume = None
     store.append_event(card_id, "attempt_fingerprint", fingerprint)
 
     # the card's own model wins, then the board's worker setting, then sonnet. the reviewer has a
@@ -680,24 +763,46 @@ def run_card_lifecycle(
                 state,
                 "The run credential was refused. " + get_adapter(worker_lab).setup_hint(),
             )
+        limit = _CAP_NAMES.get(run.subtype or "", "turn limit")
         if run.subtype in BUDGET_CAPPED_SUBTYPES:
             if branch_has_commits(repo["path"], tree.branch, commit_base):
                 store.append_event(card_id, "budget_capped_with_commits", {"subtype": run.subtype})
                 _note(
                     store,
                     card_id,
-                    "It hit its budget after committing, so its work went to tests and review.",
+                    f"It hit its {limit} after committing, so its work went to tests and review.",
                 )
-                store.append_event(card_id, "worker_summary", {"text": run.result_text})
+                # not clean: a capped run stopped mid-work, so a re-run never resumes past it
+                summary = {"text": run.result_text, "head": rev_parse(tree.path, "HEAD")}
+                store.append_event(card_id, "worker_summary", {**summary, "clean": False})
                 last_summary = run.result_text
                 return None
-            limit = "budget" if run.subtype == "error_max_budget_usd" else "turn limit"
             return _block(
                 store,
                 state,
                 run.blocked_reason_code or "CRASH",
                 NO_COMMITS_BUDGET_NOTE.format(limit=limit),
             )
+        # a refused write does not sink committed work: the post-run check passed (it would have
+        # set error_lease_conflict), so the gates judge it and the wanted paths wait under needs
+        if (
+            run.blocked_reason_code == "LEASE_CONFLICT"
+            and run.subtype != "error_lease_conflict"
+            and branch_has_commits(repo["path"], tree.branch, commit_base)
+        ):
+            from smortboard.attention import lease_conflict_wants
+
+            wanted = lease_conflict_wants(store, card_id)
+            store.append_event(card_id, "lease_wanted", {"paths": wanted})
+            _note(
+                store,
+                card_id,
+                "A write outside its lease was refused, but it committed work, so the work went to "
+                "tests and review. Wanted: " + (", ".join(wanted) or "paths not recorded"),
+            )
+            store.append_event(card_id, "worker_summary", {"text": run.result_text})
+            last_summary = run.result_text
+            return None
         if run.blocked_reason_code:
             return _block(
                 store,
@@ -705,31 +810,51 @@ def run_card_lifecycle(
                 run.blocked_reason_code,
                 f"The run stopped: {run.blocked_reason_code}.\n\n{run.result_text or ''}".strip(),
             )
-        store.append_event(card_id, "worker_summary", {"text": run.result_text})
+        # the head this clean run left is what lets a later re-run skip the worker
+        summary = {"text": run.result_text, "head": rev_parse(tree.path, "HEAD")}
+        store.append_event(card_id, "worker_summary", {**summary, "clean": True})
         last_summary = run.result_text
         return None
+
+    # an answered OUTDATED card starts over at the base: none of its earlier commits are here
+    reset = pending_reset(store, card_id)
 
     # a resumed card (an inbox answer, or a re-run after a block) keeps this worktree and its
     # commits - the briefing is what lets the agent skip re-reading them to find out what it
     # already did. "off" turns it off board-wide; unset means on.
     briefing = None
     if configured.get("resume_briefing") != "off":
-        briefing = resume_briefing(store, card_id, worktree_reused=worktree_reused)
-    if conflict_note:
-        briefing = f"{briefing}\n\n{conflict_note}" if briefing else conflict_note
+        briefing = resume_briefing(
+            store, card_id, worktree_reused=worktree_reused and reset is None
+        )
+    if reset is not None:
+        note = reset_briefing(reset)
+        briefing = f"{note}\n\n{briefing}" if briefing else note
 
-    phase("running")
-    if (stopped := work(build_card_prompt(card, briefing))) is not None:
-        return stopped
-    if stopped_now():
-        return _stopped(store, state)
-    # no commit means nothing to test or review - measured, a card that ended its turn early had
-    # its unchanged tree run through the full gate and an approved review of an empty diff first
-    if not branch_has_commits(repo["path"], tree.branch, commit_base):
-        return _refuse(store, state, NO_COMMITS_NOTE.format(branch=tree.branch, base=base))
+    if resume is None:
+        phase("running")
+        if (stopped := work(build_card_prompt(card, briefing))) is not None:
+            return stopped
+        if stopped_now():
+            return _stopped(store, state)
+        # no commit means nothing to test or review - measured, a card that ended its turn early had
+        # its unchanged tree run through the full gate and an approved review of an empty diff first
+        if not branch_has_commits(repo["path"], tree.branch, commit_base):
+            return _refuse(store, state, NO_COMMITS_NOTE.format(branch=tree.branch, base=base))
+    else:
+        store.append_event(
+            card_id, "worker_skipped", {"head": fingerprint["head"], "reason": resume.reason}
+        )
+        _note(
+            store,
+            card_id,
+            f"Picked up at the test gate: {resume.reason}, so the worker was not run again.",
+        )
+        last_summary = resume.summary
 
     # both gates, and on the fix route the findings go back to the worker until the reviewer
     # approves or the rounds run out. the tests re-run after every fix, since a fix can break them
+    reuse_verdict = resume is not None and resume.review_approved
     while True:
         phase("testing")
         try:
@@ -741,8 +866,13 @@ def run_card_lifecycle(
         if not gate.passed:
             return _block_on_failed_gate(store, state, card_id, repo, base, gate)
 
+        diff_text, left_out = review_diff(repo["path"], base, tree.branch)
+        head = rev_parse(tree.path, "HEAD")
+        if reuse_verdict:
+            # the reviewer already approved this exact head, in an earlier attempt
+            store.append_event(card_id, "review_reused", {"head": head})
+            break
         phase("reviewing")
-        diff_text = branch_diff(repo["path"], base, tree.branch)
         try:
             if not reviewer_started:
                 run_ref(store, "reviewer", card, consume=True)
@@ -758,6 +888,16 @@ def run_card_lifecycle(
                 model=reviewer_model,
                 budget_usd=store.spend_cap("reviewer_budget_usd", DEFAULT_REVIEW_BUDGET_USD),
                 on_process=on_process,
+                head=head,
+                excluded_paths=left_out,
+                expanded=sorted(
+                    {
+                        path
+                        for event in store.list_events(card_id)
+                        if event["kind"] == "lease_expanded"
+                        for path in event["payload"].get("paths") or []
+                    }
+                ),
             )
         except ReviewUnavailable as exc:
             return _refuse(store, state, f"The reviewer could not run: {exc}")
@@ -765,6 +905,14 @@ def run_card_lifecycle(
             return _stopped(store, state)
         if review.approved:
             break
+        # only a real verdict rejects - a reviewer outage keeps its own, retryable reason
+        if review.runtime_reason:
+            return _block(
+                store,
+                state,
+                review.runtime_reason,
+                REVIEWER_FAILED_NOTE.format(reason=review.runtime_reason, error=review.error),
+            )
 
         # a reviewer that failed to deliver a verdict gave the worker nothing to fix
         fixable = review.error is None and review.findings
@@ -817,6 +965,7 @@ def run_card_lifecycle(
         state.blocked_reason_code = store.get_card(card_id)["blocked_reason_code"]
         return state
     target = integration_base(store, card_id, base)
+    push_over_superseded(store, card_id, repo["path"])
 
     try:
         request = open_merge_request(store, card_id, repo["path"], tree.branch, base=target)

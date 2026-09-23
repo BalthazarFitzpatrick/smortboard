@@ -8,6 +8,7 @@ import urllib.request
 
 import pytest
 
+from smortboard.actions import next_action
 from smortboard.server.app import build_server
 from smortboard.store import Store
 
@@ -125,6 +126,46 @@ def test_patch_card_model_over_http(running_server):
     assert updated["model"] == "haiku"
 
 
+def test_a_long_card_title_is_warned_about_never_refused_or_cut(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    long_title = "one two three four five six seven eight nine ten eleven twelve"
+    status, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": long_title},
+    )
+    assert status == 201
+    assert card["title"] == long_title
+    assert any("12 words" in note and "max 8" in note for note in card["warnings"])
+
+    status, short = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "one two three four five six"},
+    )
+    assert status == 201
+    assert short["warnings"] == []
+
+
+def test_patching_card_text_answers_with_warnings(running_server):
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "x"},
+    )
+    url = f"{running_server}/api/cards/{card['id']}"
+    description = " ".join(["word"] * 30)
+    status, updated = _request(url, "PATCH", {"description": description})
+    assert status == 200
+    assert updated["description"] == description
+    assert updated["warnings"] == ['"x" runs long: 30 words in the description (max 20)']
+    # a move is not a text edit, so an old long card stays quiet
+    status, moved = _request(url, "PATCH", {"status": "doing"})
+    assert status == 200
+    assert moved["warnings"] == []
+
+
 def test_patch_card_unknown_field_is_400(running_server):
     _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
     _, card = _request(
@@ -188,6 +229,26 @@ def test_get_missing_card_is_404(running_server):
     status, body = _request(f"{running_server}/api/cards/does-not-exist")
     assert status == 404
     assert "error" in body
+
+
+def test_get_card_carries_its_next_action(running_server):
+    # the open card reads what to do next off this route, same as the board list
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "x"},
+    )
+    _request(
+        f"{running_server}/api/cards/{card['id']}",
+        "PATCH",
+        {"status": "doing", "blocked_reason_code": "TESTS_FAILED"},
+    )
+    status, fetched = _request(f"{running_server}/api/cards/{card['id']}")
+    assert status == 200
+    assert fetched["next_action"] == next_action("TESTS_FAILED")
+    assert fetched["next_action_short"] == "answer it"
+    assert fetched["handled_by_board"] is False
 
 
 def test_delete_a_card_that_has_been_used(running_server):

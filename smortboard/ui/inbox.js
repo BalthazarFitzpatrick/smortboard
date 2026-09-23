@@ -28,6 +28,7 @@ const REASON_LABELS = {
   DEPENDENCY_REJECTED: 'dependency rejected',
   MERGE_CONFLICT: 'merge conflict',
   API_UNREACHABLE: 'api unreachable',
+  OUTDATED: 'outdated - base moved',
 };
 
 function reasonLabel(reason) {
@@ -247,6 +248,9 @@ function buildInboxCard(row, idx, focused) {
   if (row.reason === 'LEASE_CONFLICT' && row.wants && row.wants.length) {
     extras.push(buildLeaseApproveRow(row));
   }
+  if (row.reason === 'USAGE_LIMIT' && row.fallback) {
+    extras.push(buildFallbackRetryRow(row));
+  }
 
   // an answer cannot move a decision or a rate limit - the action line already says what will
   if (row.answerable === false) {
@@ -311,8 +315,9 @@ function moveInsideCard(control, dir) {
   if (next) next.focus();
 }
 
-// the "wants: <paths>" line and its approve control - one click widens exactly those paths and
-// resumes the card, reusing the `toggle` class other inbox controls already use as a button
+// the "wants: <paths>" line and its two approve controls - both widen exactly those paths and
+// resume the card, the second also remembers them for the whole repo. plain approve comes first,
+// so remembering is always a deliberate pick, never the default
 function buildLeaseApproveRow(row) {
   const wrap = document.createElement('div');
   wrap.className = 'inbox-lease-approve';
@@ -321,32 +326,78 @@ function buildLeaseApproveRow(row) {
   wants.className = 'inbox-wants';
   wants.textContent = `wants: ${row.wants.join(', ')}`;
 
-  const button = document.createElement('span');
-  button.className = 'inbox-approve toggle inbox-control';
-  button.tabIndex = -1;
-  button.textContent = 'approve';
+  const approve = leaseButton('inbox-approve', 'approve');
+  const remember = leaseButton('inbox-approve-remember', 'approve and remember for this repo');
   const status = document.createElement('span');
   status.className = 'inbox-status';
-  button.onclick = () => approveLease(row.card_id, row.wants, button, status);
+  const buttons = [approve, remember];
+  approve.onclick = () => approveLease(row.card_id, row.wants, false, buttons, status);
+  remember.onclick = () => approveLease(row.card_id, row.wants, true, buttons, status);
 
-  wrap.append(wants, button, status);
+  wrap.append(wants, approve, remember, status);
   return wrap;
 }
 
-async function approveLease(cardId, paths, button, status) {
-  button.classList.add('dim');
+// reuses the `toggle` class other inbox controls already use as a button
+function leaseButton(name, label) {
+  const button = document.createElement('span');
+  button.className = `${name} toggle inbox-control`;
+  button.tabIndex = -1;
+  button.textContent = label;
+  return button;
+}
+
+async function approveLease(cardId, paths, remember, buttons, status) {
+  buttons.forEach(b => b.classList.add('dim'));
   status.textContent = 'approving...';
   status.className = 'inbox-status';
+  const payload = remember ? {paths, remember: true} : {paths};
   const {ok, body} = await apiOrError(`/api/cards/${cardId}/lease/approve`, {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({paths}),
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
   });
   if (!ok) {
     status.textContent = (body && body.error) || 'could not approve';
     status.className = 'inbox-status inbox-error';
-    button.classList.remove('dim');
+    buttons.forEach(b => b.classList.remove('dim'));
     return;
   }
   status.textContent = 'resumed';
+  status.className = 'inbox-status inbox-ok';
+  pollAttentionCount();
+  if (currentBoardId) onBoardEnter(currentBoardId);
+  loadInbox();
+}
+
+// a usage-limited row's one control: run the limited role once on its next fallback model now,
+// rather than waiting for the reset. no usable fallback means no control - the note says so
+function buildFallbackRetryRow(row) {
+  const wrap = document.createElement('div');
+  wrap.className = 'inbox-answer-row';
+
+  const button = document.createElement('span');
+  button.className = 'inbox-retry toggle inbox-control';
+  button.tabIndex = -1;
+  button.textContent = `retry on ${row.fallback}`;
+  const status = document.createElement('span');
+  status.className = 'inbox-status';
+  button.onclick = () => retryOnFallback(row.card_id, button, status);
+
+  wrap.append(button, status);
+  return wrap;
+}
+
+async function retryOnFallback(cardId, button, status) {
+  button.classList.add('dim');
+  status.textContent = 'starting...';
+  status.className = 'inbox-status';
+  const {ok, body} = await apiOrError(`/api/cards/${cardId}/fallback-run`, {method: 'POST'});
+  if (!ok) {
+    status.textContent = (body && body.error) || 'could not start';
+    status.className = 'inbox-status inbox-error';
+    button.classList.remove('dim');
+    return;
+  }
+  status.textContent = 'started';
   status.className = 'inbox-status inbox-ok';
   pollAttentionCount();
   if (currentBoardId) onBoardEnter(currentBoardId);

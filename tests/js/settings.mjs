@@ -24,6 +24,8 @@ const boardsState = [
   {id: 'b2', name: 'beta', max_parallel: 1, daily_budget_usd: null},
 ];
 const calls = [];
+// knobs a test flips to make the next call fail, the way the real server would
+const stubControl = {refuseNextSettingsPatch: false, importRefusal: null};
 function stubJson(status, body) {
   return {ok: status >= 200 && status < 300, status, json: async () => body};
 }
@@ -70,11 +72,20 @@ function fetchStub(path, opts) {
     }
     return Promise.resolve(stubJson(200, {...board}));
   }
+  // import only ever adds: the file's boards come back under new ids beside the existing ones
+  if (path === '/api/import' && opts && opts.method === 'POST') {
+    if (stubControl.importRefusal) return Promise.resolve(stubJson(400, {error: stubControl.importRefusal}));
+    return Promise.resolve(stubJson(201, {boards: [{id: 'b9', name: 'restored', max_parallel: null}]}));
+  }
   // anything else never answers, as on main: board.js's own startup fetches (loadBoards) would
   // otherwise reject unhandled and end the run before a single assertion
   if (path !== '/api/settings') return new Promise(() => {});
   if (!opts || !opts.method || opts.method === 'GET') return Promise.resolve(stubJson(200, {...settingsState}));
   if (opts.method === 'PATCH') {
+    if (stubControl.refuseNextSettingsPatch) {
+      stubControl.refuseNextSettingsPatch = false;
+      return Promise.resolve(stubJson(500, {error: 'store error: disk full'}));
+    }
     const body = JSON.parse(opts.body);
     if ('mission_control_read_paths' in body) {
       const resolved = [];
@@ -127,6 +138,7 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('board.js'), smort('settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, dailyBudgets, BINDINGS, mc, mallCam, spendCaps,
+  mouseAffordances,
   buttonRef: () => document.querySelector('.settings-button'),
   addButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'add'),
   browseButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'browse')};`)(SpyMenu, SpyDrawer);
@@ -164,11 +176,12 @@ assert.deepEqual(settingsGroups.map(group => group.querySelector('.settings-grou
 assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-section')
   .map(section => section.children[0].textContent)), [
   ['mouse', 'mission control can read', 'how many cards run at once',
-    'mall cam: seconds per card while auto-cycling the workforce drawer'],
-  ['credential profiles', 'models by role'],
+    'file leases: strict or soft, per board',
+    'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup'],
+  ['credential profiles', 'usage limits', 'models by role'],
   ['budgets and spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 7);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 10);
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
 assert.deepEqual(costTriggers.map(trigger => trigger.textContent),
   ['daily budgets per board', 'spend caps per run'], 'cost controls have separate compact triggers');
@@ -196,8 +209,8 @@ const roleBlocks = mod.st.listEl.querySelectorAll('.settings-role-block');
 assert.equal(roleBlocks.length, 4, 'each model role has its own settings block');
 assert.deepEqual(roleBlocks.map(block => block.querySelector('.settings-role-name').textContent),
   ['worker', 'reviewer', 'orchestrator', 'fold']);
-assert.ok(roleBlocks.every(block => block.querySelectorAll('.settings-role-control').length === 2),
-  'each role separates the primary model from the fallback order');
+assert.ok(roleBlocks.every(block => block.querySelectorAll('.settings-role-control').length === 3),
+  'each role separates the primary model, the fallback order and the effort');
 assert.ok(roleBlocks.every(block => block.querySelector('.settings-role-status')),
   'each role keeps save status beside its heading');
 const reviewerPicker = rolePickers.find(row => row.dataset.role === 'reviewer');
@@ -253,21 +266,62 @@ assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1)
   {fold_cross_lab_fallback: ['openai/gpt-6-astra', 'openai/gpt-5.6-sol', 'anthropic/fable']});
 assert.equal(fallbackMenu.closed, true, 'a successful save closes the picker');
 
-// ---- the mouse is opt-in: unset renders unchecked, and ticking it PATCHes "on" ------------------
+// ---- effort: unset shows default, a pick PATCHes that role's own key, default clears it ---------
 {
-  const mouseBox = mod.st.listEl.querySelector('.settings-enable-mouse-checkbox');
-  assert.ok(mouseBox, 'the panel carries the enable-mouse toggle');
-  assert.equal(mouseBox.checked, false, 'the mouse is off by default');
-  mouseBox.checked = true;
-  mouseBox._listeners.change.forEach(fn => fn());
+  const effortTrigger = mod.st.listEl.querySelectorAll('.role-effort')
+    .find(row => row.dataset.role === 'reviewer');
+  assert.equal(effortTrigger.textContent, 'default', 'unset effort reads as the cli default');
+  effortTrigger.onclick();
+  const effortMenu = modelMenus.at(-1);
+  assert.equal(effortMenu.opts.title, 'reviewer effort');
+  assert.equal(effortMenu.anchor, effortTrigger, 'the effort menu opens at its trigger');
+  const list = effortMenu.opts.sections.find(section => section.kind === 'list');
+  assert.deepEqual(list.items.map(item => item.label), ['default', 'low', 'medium', 'high']);
+  assert.deepEqual(list.items.filter(item => item.on).map(item => item.id), ['default']);
+  await list.onPick({id: 'low'});
+  assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
+    {reviewer_effort: 'low'});
+  await list.onPick({id: 'default'});
+  assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
+    {reviewer_effort: null}, 'default clears the setting rather than storing a level');
+  await flush();
+}
+
+// ---- the mouse is opt-in: two toggles, disabled lit when unset, and enabled PATCHes "on" ---------
+{
+  const mouseSection = mod.st.listEl.querySelectorAll('.settings-section')
+    .find(section => section.children[0].textContent === 'mouse');
+  const choices = mouseSection.querySelectorAll('.run-controls .toggle');
+  assert.deepEqual(choices.map(btn => btn.textContent), ['enabled', 'disabled'],
+    'the mouse section is two toggles side by side in one row');
+  assert.ok(choices.every(btn => btn.tag === 'button' && btn.type === 'button'),
+    'real buttons: tab reaches them and enter or space picks');
+  const [enabled, disabled] = choices;
+  const lit = () => choices.filter(btn => btn.classList.contains('on')).map(btn => btn.textContent);
+  assert.deepEqual(lit(), ['disabled'], 'the mouse is off by default');
+  assert.equal(disabled['aria-pressed'], 'true');
+
+  enabled.onclick();
   await flush();
   const patch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
   assert.deepEqual(JSON.parse(patch.opts.body), {enable_mouse: 'on'});
-  mouseBox.checked = false;
-  mouseBox._listeners.change.forEach(fn => fn());
+  assert.deepEqual(lit(), ['enabled'], 'picking enabled lights it and only it');
+  assert.equal(enabled['aria-pressed'], 'true');
+  assert.equal(mod.mouseAffordances(), true, 'the pointer affordances switch on with no reload');
+
+  disabled.onclick();
   await flush();
   const off = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
-  assert.deepEqual(JSON.parse(off.opts.body), {enable_mouse: null}, 'unticking clears it');
+  assert.deepEqual(JSON.parse(off.opts.body), {enable_mouse: null}, 'disabled clears it');
+  assert.deepEqual(lit(), ['disabled']);
+  assert.equal(mod.mouseAffordances(), false);
+
+  // a refused save leaves the lit button, and the mouse, where they were
+  stubControl.refuseNextSettingsPatch = true;
+  enabled.onclick();
+  await flush();
+  assert.deepEqual(lit(), ['disabled'], 'a failed save does not move the lit button');
+  assert.equal(mod.mouseAffordances(), false);
 }
 
 // ---- spend caps: blank is the default, a value is PATCHed under its own key ----------------------
@@ -303,6 +357,21 @@ autoSwitchBox._listeners.change.forEach(fn => fn());
 await flush();
 switchPatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
 assert.deepEqual(JSON.parse(switchPatch.opts.body), {auto_switch_profiles: null});
+
+// ---- the usage-limit route: unchecked switches by itself (unset), checked asks first -----------
+const routeBox = mod.st.listEl.querySelector('.settings-usage-limit-route-checkbox');
+assert.ok(routeBox, 'the labs group carries the usage-limit route toggle');
+assert.equal(routeBox.checked, false, 'unset renders unchecked - the fallback switch stays automatic');
+routeBox.checked = true;
+routeBox._listeners.change.forEach(fn => fn());
+await flush();
+let routePatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+assert.deepEqual(JSON.parse(routePatch.opts.body), {usage_limit_route: 'attention'});
+routeBox.checked = false;
+routeBox._listeners.change.forEach(fn => fn());
+await flush();
+routePatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+assert.deepEqual(JSON.parse(routePatch.opts.body), {usage_limit_route: null});
 
 // ---- parallelism stays in general settings; daily budgets have their own cost-control grid -----
 assert.equal(mod.parallelCaps.globalInput.value, '', 'an unset global cap renders as an empty field, not 0');
@@ -407,5 +476,64 @@ press('KeyO');
 assert.ok(mod.st.backdrop.parentNode, 'o should reopen the panel');
 press('KeyO');
 assert.ok(!mod.st.backdrop.parentNode, 'a second o should close the panel');
+
+// ---- backup: export downloads, import adds beside the boards here and never replaces one --------
+{
+  // what the section creates on the fly - the download link and the file picker - is caught here
+  const made = [];
+  const createElement = document.createElement;
+  document.createElement = tag => {
+    const el = createElement(tag);
+    el.click = () => { el.clicked = true; };
+    made.push(el);
+    return el;
+  };
+  mod.openSettingsPanel();
+  await flush();
+  const section = mod.st.listEl.querySelectorAll('.settings-section')
+    .find(s => s.children[0].textContent === 'backup');
+  const buttons = section.querySelectorAll('.run-controls .toggle');
+  assert.deepEqual(buttons.map(btn => btn.textContent), ['export', 'import as new board(s)'],
+    'no replace: import only ever adds boards');
+  assert.ok(buttons.every(btn => btn.tag === 'button' && btn.type === 'button'),
+    'real buttons: tab reaches them and enter or space picks');
+  const status = section.querySelector('.boards-status');
+  const [exportButton, importButton] = buttons;
+
+  made.length = 0; // opening the panel built its own rows; only what the buttons make counts
+  exportButton.onclick();
+  const link = made.find(el => el.tag === 'a');
+  assert.equal(link.href, '/api/export');
+  assert.equal(link.download, '', 'download set, so the page stays and the server names the file');
+  assert.ok(link.clicked && link.removed, 'the link is clicked once and not left in the page');
+
+  made.length = 0;
+  importButton.onclick();
+  const picker = made.find(el => el.tag === 'input');
+  assert.equal(picker.type, 'file');
+  assert.ok(picker.clicked, 'import opens the file picker');
+  assert.equal(picker.parentNode, null, 'the picker never joins the panel, so up/down never land on it');
+
+  const boardsFetchesBefore = calls.filter(c => c.path === '/api/boards').length;
+  picker.files = [new File(['{"boards": []}'], 'backup.json', {type: 'application/json'})];
+  picker._listeners.change.forEach(fn => fn());
+  await flush();
+  const upload = calls.filter(c => c.path === '/api/import').at(-1);
+  assert.equal(upload.opts.method, 'POST');
+  assert.ok(upload.opts.body instanceof FormData, 'the file goes up as multipart, like an attachment');
+  assert.equal(upload.opts.body.get('bundle').name, 'backup.json');
+  assert.equal(status.textContent, 'added 1 board(s): restored');
+  assert.ok(calls.filter(c => c.path === '/api/boards').length > boardsFetchesBefore,
+    'the board bar reloads so the added board shows');
+
+  // a refused file says why, in place
+  stubControl.importRefusal = 'the bundle holds no boards';
+  picker._listeners.change.forEach(fn => fn());
+  await flush();
+  assert.equal(status.textContent, 'the bundle holds no boards');
+  assert.ok(status.classList.contains('boards-error'));
+  document.createElement = createElement;
+  mod.closeSettingsPanel();
+}
 
 console.log('ok');

@@ -79,10 +79,12 @@ function isPrUrl(value) {
 
 // a full url renders as itself; a bare number needs the card's own repo_url to become a link at
 // all - with neither, the ref still shows (as plain text) rather than vanishing or breaking
-function prAnchorHtml(ref, repoUrl) {
+function prAnchorHtml(ref, repoUrl, {short = false} = {}) {
   if (ref === null || ref === undefined || ref === '') return '';
   const url = isPrUrl(ref) ? ref : (repoUrl ? `${String(repoUrl).replace(/\/+$/, '')}/pull/${ref}` : null);
-  const label = isPrUrl(ref) ? ref : `#${ref}`;
+  // short: a full url shown as its number, so a one-line row does not wrap on it
+  const number = isPrUrl(ref) ? String(ref).match(/\/pull\/(\d+)/) : null;
+  const label = isPrUrl(ref) ? (short && number ? `#${number[1]}` : ref) : `#${ref}`;
   return url
     ? `<a class="pr-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`
     : escapeHtml(label);
@@ -143,8 +145,9 @@ const CTA_BLOCKED_LABELS = new Map([
   ['BASE_RED', 'Fix the base'],
   ['REVIEW_REJECTED', 'Review findings'],
   ['DEPENDENCY_REJECTED', 'Review dependency'],
-  ['MERGE_CONFLICT', 'Resolve conflicts'],
+  ['MERGE_CONFLICT', 'Resume to rebase'],
   ['API_UNREACHABLE', 'Retrying automatically'],
+  ['OUTDATED', 'Redo on fresh base'],
 ]);
 
 // the one action a card wants next, off the same status and reason code cardClasses reads - never
@@ -175,22 +178,24 @@ const SUMMARY_WORD_LIMIT = 14;
 // an ALL-CAPS line ending in a colon - "GOAL:", "OUT OF SCOPE:", "RULES:" - is a section header,
 // not content, so it never survives into the overview's one-line summary
 const SECTION_HEADER_RE = /^[A-Z][A-Z ]*:$/;
+// the same label sharing its line with content - "GOAL: make x" - keeps only the content
+const INLINE_LABEL_RE = /^[A-Z][A-Z ]*:\s+/;
 
 // the overview's plain <=14-word summary (9bd5a207): strips section headers and bullet markers,
-// keeps the first content it finds, cut to the word limit. the opened card panel still shows the
-// full description untouched - this is a derived view, never a second stored field
-function summarizeDescription(description) {
+// keeps the first content it finds, cut to the word limit. the open card's about leads with a
+// longer cut of the same - a derived view, never a second stored field
+function summarizeDescription(description, limit = SUMMARY_WORD_LIMIT) {
   const words = [];
   for (const rawLine of String(description || '').split('\n')) {
     const line = rawLine.trim();
     if (!line || SECTION_HEADER_RE.test(line)) continue;
-    const cleaned = line.replace(/^[-*]\s*/, '');
+    const cleaned = line.replace(/^[-*]\s*/, '').replace(INLINE_LABEL_RE, '');
     for (const word of cleaned.split(/\s+/)) {
       if (!word) continue;
       words.push(word);
-      if (words.length >= SUMMARY_WORD_LIMIT) break;
+      if (words.length >= limit) break;
     }
-    if (words.length >= SUMMARY_WORD_LIMIT) break;
+    if (words.length >= limit) break;
   }
   return words.join(' ');
 }
@@ -263,6 +268,8 @@ function renderCardStrip(card) {
         .forEach(c => panel.classList.add(c));
       // set before the fetch, so space and y/x can close this card while it is still loading
       openCard = {cardId: card.id, expander};
+      // the panel's own expander, which fitCardPanel shrinks to the content after each layout
+      panel._expander = expander;
       openCardPanel(panel, card.id);
     },
     onClose: () => { openCard = null; runCardClosedWatchers(); },
@@ -308,11 +315,35 @@ function renderCardStrip(card) {
 // board's arrows walk cards. the first one takes focus when the panel renders, so up and down have
 // somewhere to move from
 function focusFirstCardSection(panel) {
-  const section = panel.querySelector('.card-section');
-  if (!section) return null;
-  section.tabIndex = 0;
-  section.focus();
-  return section;
+  const sections = [...panel.querySelectorAll('.card-section')];
+  if (!sections.length) return null;
+  // only the focused section sits in the tab order, the way the board's own rows do
+  sections.forEach((section, i) => { section.tabIndex = i === 0 ? 0 : -1; });
+  sections[0].focus();
+  return sections[0];
+}
+
+const SECTION_MOVES = {ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right'};
+
+// the arrows walk the sections as the masonry drew them (computeSectionMove), not in document
+// order. once per panel: a posted comment re-renders into the same panel, and a second listener
+// would move twice per press
+function wireCardSectionNav(panel) {
+  if (panel._sectionNavWired) return;
+  panel._sectionNavWired = true;
+  panel.addEventListener('keydown', evt => {
+    const direction = SECTION_MOVES[evt.code];
+    if (!direction || withModifier(evt) || evt.target.matches?.('input, textarea')) return;
+    const sections = [...panel.querySelectorAll('.card-section')];
+    const at = sections.indexOf(evt.target.closest?.('.card-section'));
+    if (at === -1) return;
+    const to = computeSectionMove(readSectionPlaces(sections), at, direction);
+    if (to === at) return;
+    evt.preventDefault();
+    sections.forEach((section, i) => { section.tabIndex = i === to ? 0 : -1; });
+    sections[to].focus();
+    sections[to].scrollIntoView?.({block: 'nearest'});
+  });
 }
 
 // the card's one text entry. escape stops here so the panel's own escape (added by makeExpander)
@@ -320,8 +351,8 @@ function focusFirstCardSection(panel) {
 function wireCommentInput(input, panel, cardId) {
   if (!input) return;
   input.addEventListener('keydown', evt => {
-    // ARROWS INSIDE THE BOX BELONG TO THE BOX. makeBuckets listens on the panel and the input sits
-    // inside a .card-section, so without this, down from the caret stepped to the next section
+    // ARROWS INSIDE THE BOX BELONG TO THE BOX. the section nav listens on the panel and the input
+    // sits inside a .card-section, so without this, down from the caret stepped to the next section
     if (evt.code === 'ArrowUp' || evt.code === 'ArrowDown') { evt.stopPropagation(); return; }
     if (evt.code === 'Escape') {
       evt.stopPropagation();
@@ -339,6 +370,16 @@ function wireCommentInput(input, panel, cardId) {
       }).then(() => openCardPanel(panel, cardId));
     }
   });
+}
+
+// the open card hugs its content instead of a fixed 90% of the screen with blank space under a
+// short card. from the first child's top to the last one's bottom, as laid out - offsetTop and
+// offsetHeight, since the panel opens under a transform that scales any rect read mid-animation
+function fitCardPanel(panel) {
+  const kids = [...panel.children];
+  if (!panel._expander || !kids.length) return;
+  const first = kids[0], last = kids[kids.length - 1];
+  panel._expander.fit(last.offsetTop + last.offsetHeight - first.offsetTop);
 }
 
 async function openCardPanel(panel, cardId) {
@@ -361,9 +402,7 @@ async function openCardPanel(panel, cardId) {
     watchCardSections(panel);
   }
 
-  // the panel's one .card-sections div is a single-column bucket - reuses the 2D grid nav as a
-  // plain vertical list rather than inventing a second focus system for "move between sections"
-  const sectionsApi = makeBuckets(panel, {bucketSel: '.card-sections', rowSel: '.card-section'});
+  wireCardSectionNav(panel);
   // THE OPEN CARD TAKES THE KEYBOARD. focus used to stay on the strip behind the panel, so up and
   // down did nothing here and the sections were only reachable by / and then escape
   focusFirstCardSection(panel);
@@ -383,67 +422,27 @@ async function openCardPanel(panel, cardId) {
     });
   });
 
-  if (openCard && openCard.cardId === cardId) Object.assign(openCard, {sectionsApi, input});
+  if (openCard && openCard.cardId === cardId) Object.assign(openCard, {input});
 }
 
-// worker summary, test gate, reviewer verdict, PR link and the fix-round count - all of it null
-// until a run has actually landed on this card, in which case the section says so plainly
-// reason codes that stop a card on the operator rather than on a fault in the work
-const ATTENTION_CODES = new Set(['AGENT_QUESTION', 'LEASE_CONFLICT', 'USAGE_LIMIT', 'DEPENDENCY_REJECTED', 'BASE_RED']);
+// ---- the open card: a head band, then about -> done -> needs down the left and the card's own
+// facts down the right. every section is pinned to its column (data-pin), so the reading order is
+// the same on every card rather than whatever the shortest-column rule makes of it
 
-// ---- card timeline entries: header over small dash-led paragraphs, the review verdict's own
-// shape - deriveEntryHeader/splitEntryParagraphs come from ui_base's entrytext.js (board-agnostic
-// text layout); this wrapper only owns the html/escaping/pr-linking, which is this file's business
-function timelineEntryHtml(header, bodyText, extraLines = []) {
-  const paragraphs = [...splitEntryParagraphs(bodyText), ...extraLines].filter(Boolean);
-  const lines = paragraphs.map(p => `<div class="timeline-line">- ${linkifyPrRefs(p)}</div>`).join('');
-  const body = lines ? `<div class="timeline-body">${lines}</div>` : '';
-  return `<div class="timeline-header verdict">${escapeHtml(header)}</div>${body}`;
+// one section per field: data-section names it for the layouts, .section-value holds what it says.
+// focus-glow is the board card's own focus frame (ui_base); layout.css lowers only its lift for a
+// section, per the approved mockup (operator, 2026-09-23)
+const SECTION_CLASS = 'card-section focus-glow';
+function sectionHtml(name, label, value, {pin = null, accent = false} = {}) {
+  const pinAttr = pin === null ? '' : ` data-pin="${pin}"`;
+  const accentAttr = accent ? ' data-accent="attention"' : '';
+  return `<div class="${SECTION_CLASS}" tabindex="0" data-section="${name}"${pinAttr}${accentAttr}>` +
+    `<div class="field-label">${label}</div><div class="section-value">${value}</div></div>`;
 }
 
-function outcomeSectionHtml(outcome, card = {}) {
-  const working = card.status === 'doing' && !card.blocked_reason_code;
-  const empty = !outcome || (!outcome.summary && !outcome.tests && !outcome.review && !outcome.pr_url);
-  const workingPart = '<div class="outcome-part outcome-working" data-state="doing"><span class="verdict">working</span></div>';
-  if (empty) {
-    return sectionHtml('outcome', 'outcome', working ? workingPart : '<span class="empty">not run yet</span>');
-  }
-  // the run's steps in the order they happened, each dot saying what that step came to: done, a
-  // problem, waiting on the operator, or still going
-  const parts = [];
-  if (outcome.summary) {
-    const waiting = !outcome.tests && ATTENTION_CODES.has(card.blocked_reason_code);
-    const entry = timelineEntryHtml(deriveEntryHeader(outcome.summary), outcome.summary);
-    parts.push(`<div class="outcome-part outcome-summary" data-state="${waiting ? 'attention' : 'ok'}">${entry}</div>`);
-  }
-  if (outcome.tests) {
-    const t = outcome.tests;
-    const entry = timelineEntryHtml(t.passed ? 'tests passed' : 'tests failed', `${t.command} (exit ${t.exit_code})`);
-    parts.push(`<div class="outcome-part outcome-tests" data-ok="${t.passed}" data-state="${t.passed ? 'ok' : 'problem'}">${entry}</div>`);
-  }
-  if (outcome.review) {
-    const r = outcome.review;
-    const findingLines = (r.findings || [])
-      .map(f => `${f.severity} ${f.category} in ${f.file}: ${f.message}`);
-    // a review that did not approve comes to the operator (or back to the worker, still going)
-    const reviewState = r.approved ? 'ok' : (working ? 'doing' : 'attention');
-    const entry = timelineEntryHtml(r.approved ? 'approved' : 'not approved', r.error || '', findingLines);
-    parts.push(`<div class="outcome-part outcome-review" data-ok="${r.approved}" data-state="${reviewState}">${entry}</div>`);
-  }
-  if (outcome.pr_url) {
-    parts.push(`<div class="outcome-part outcome-pr" data-state="ok">${prAnchorHtml(outcome.pr_url, card.repo_url)}</div>`);
-  }
-  if (working && !outcome.pr_url) parts.push(workingPart);
-  parts.push(`<div class="outcome-route">findings route: ${escapeHtml(outcome.findings_route || '')}, fix rounds: ${outcome.fix_rounds ?? 0}</div>`);
-  return sectionHtml('outcome', 'outcome', parts.join(''));
-}
-
-// one section per field: data-section names it for the layouts, .field-value holds what it says.
-// focus-glow-soft is the quiet version of the card's own focus treatment (ui_base): a section is a
-// smaller thing than a card, so it wears the same look at a third of the lift and light
-const SECTION_CLASS = 'card-section focus-glow focus-glow-soft';
-function sectionHtml(name, label, value) {
-  return `<div class="${SECTION_CLASS}" tabindex="0" data-section="${name}"><div class="field-label">${label}</div><div class="section-value">${value}</div></div>`;
+// a label with its count on the right, or the bare label when there is nothing to count
+function countLabel(label, count) {
+  return count ? `${label}<span class="field-count">${count}</span>` : label;
 }
 
 // board-written notes lead with a one-line headline now (lifecycle.py's _note callers write it
@@ -458,28 +457,9 @@ function splitCommentHeadline(body) {
   return {headline: text.slice(0, at).trim(), rest: text.slice(at + 1).trim()};
 }
 
-// one board comment: headline, an optional primary action button (only on the card's most recent
-// note, and only when the CTA does something here rather than just re-opening the panel we're
-// already looking at), and the rest closed behind <details> by default
-function renderComment(comment, card, isLatestBoardNote) {
-  const label = `<span class="field-label">${escapeHtml(authorLabel(comment.author))}</span>`;
-  if (comment.author !== BOARD_COMMENT_AUTHOR) {
-    return `<li>${label}<div class="comment-body">${linkifyPrRefs(comment.body)}</div></li>`;
-  }
-  const {headline, rest} = splitCommentHeadline(comment.body);
-  const cta = isLatestBoardNote ? ctaFor(card) : null;
-  const actionBtn = cta && cta.action !== 'open'
-    ? `<button type="button" class="comment-cta" data-cta-action="${escapeHtml(cta.action)}">${escapeHtml(cta.label)}</button>`
-    : '';
-  const details = rest
-    ? `<details class="comment-details"><summary>details</summary><div class="comment-body">${linkifyPrRefs(rest)}</div></details>`
-    : '';
-  return `<li>${label}<div class="comment-headline">${linkifyPrRefs(headline)}</div>${actionBtn}${details}</li>`;
-}
-
 // a list, or a quiet "none" - an empty <ul> drew a label with nothing under it
 function listHtml(items) {
-  return items.length ? `<ul>${items.join('')}</ul>` : '<span class="empty">none</span>';
+  return items.length ? `<ul class="card-lines">${items.join('')}</ul>` : '<span class="empty">none</span>';
 }
 
 // a dependency's title, read off its strip on the board; a card on another board has no strip here
@@ -488,39 +468,296 @@ function dependencyLabel(cardId) {
   return (title && title.textContent) || `card ${String(cardId).slice(0, 8)}`;
 }
 
-function cardPanelHtml(card, outcome) {
+// long text the operator opens on purpose - a brief, a summary with no block - folded shut
+function foldHtml(label, text) {
+  const body = String(text || '');
+  return `<details class="card-fold"><summary>${escapeHtml(label)} - ${body.length} chars</summary>` +
+    `<div class="card-fold-body">${linkifyPrRefs(body)}</div></details>`;
+}
+
+function pathListHtml(paths) {
+  return paths.map(path => `<span class="card-path">${escapeHtml(path)}</span>`).join(', ');
+}
+
+// ---- the worker's closing block (runner.SYSTEM_PROMPT): ACTION and WHY one line each, then DONE
+// and NOT DONE as "- " lists. read from the last ACTION: line on, so narration above it stays out
+// of the lists; null when there is no block - an older run, or one that stopped before writing it
+const WORKER_BLOCK_LABEL_RE = /^(ACTION|WHY|DONE|NOT DONE|SCREENSHOT):\s*(.*)$/;
+
+function parseWorkerBlock(summary) {
+  const lines = String(summary || '').split('\n').map(line => line.trim());
+  let start = -1;
+  lines.forEach((line, i) => { if (line.startsWith('ACTION:')) start = i; });
+  if (start === -1) return null;
+  const block = {action: '', why: '', done: [], notDone: [], before: lines.slice(0, start).join('\n').trim()};
+  let list = null;
+  for (const line of lines.slice(start)) {
+    const label = WORKER_BLOCK_LABEL_RE.exec(line);
+    if (label) {
+      const [, name, value] = label;
+      // SCREENSHOT names a view for the board to shoot - not something done or left
+      list = name === 'DONE' ? block.done : (name === 'NOT DONE' ? block.notDone : null);
+      if (name === 'ACTION') block.action = value;
+      else if (name === 'WHY') block.why = value;
+      else if (list && value) list.push(value);
+      continue;
+    }
+    const item = line.replace(/^[-*]\s*/, '');
+    if (list && item) list.push(item);
+  }
+  return block;
+}
+
+// "none" on its own says there is nothing - "none, because ..." still says something
+function isNoneLine(text) {
+  return /^none[.\s]*$/i.test(String(text || '').trim());
+}
+
+// the commit a summary names ("committed as ce051d14") - read off prose, so best effort
+const COMMIT_IN_SUMMARY_RE = /\bcommit(?:ted)?(?:\s+(?:as|at|in))?\s+([0-9a-f]{7,40})\b/i;
+
+function commitFromSummary(summary) {
+  const match = COMMIT_IN_SUMMARY_RE.exec(String(summary || ''));
+  return match ? match[1].slice(0, 8) : null;
+}
+
+// ---- head: one meta line over the title, on the band that wears the card's state edge -------
+
+// a reason code in plain words for the meta line - TESTS_FAILED reads "tests failed"
+function reasonWords(code) {
+  return String(code).toLowerCase().replace(/_/g, ' ');
+}
+
+// the head line names a model the way people say it: "opus 5", not "anthropic/claude-opus-5"
+function metaModelText(model, lab) {
+  if (!model) return 'default model';
+  const id = (model.includes('/') ? model.split('/').pop() : model).replace(/-\d{8}$/, '');
+  if (!id.startsWith('claude-')) return id;
+  // claude-haiku-4-5 -> "haiku 4.5", claude-opus-5 -> "opus 5"
+  const [name, ...version] = id.slice('claude-'.length).split('-');
+  return version.length ? `${name} ${version.join('.')}` : name;
+}
+
+function metaComplexityText(card) {
+  return `complexity: ${complexityLabel(card)}`;
+}
+
+// what the card has cost across every attempt - empty for a card never run. runs and turns live
+// in the cost view (i); the head line keeps only the number people act on
+function spendLabel(outcome) {
+  const runs = outcome?.runs || 0;
+  if (!runs) return '';
+  if (typeof outcome.cost_usd === 'number') {
+    return `${outcome.cost_estimated ? '~' : ''}$${outcome.cost_usd.toFixed(2)}`;
+  }
+  return `${runs} ${runs === 1 ? 'run' : 'runs'}`;
+}
+
+function cardHeadHtml(card, outcome) {
+  const meta = [
+    `<span class="card-id">${escapeHtml(shortId(card.id))}</span>`,
+    `<span>${escapeHtml(STATUS_LABELS[card.status] || card.status || '')}</span>`,
+  ];
+  if (card.blocked_reason_code) {
+    meta.push(`<span class="card-meta-flag">${escapeHtml(reasonWords(card.blocked_reason_code))}</span>`);
+  }
+  if (card.workstream) meta.push(`<span>${escapeHtml(card.workstream)}</span>`);
+  meta.push(`<span class="card-model">${escapeHtml(metaModelText(card.model, card.lab))}</span>`);
+  const spend = spendLabel(outcome);
+  if (spend) meta.push(`<span>${escapeHtml(spend)}</span>`);
+  return `<div class="${SECTION_CLASS}" tabindex="0" data-section="title">` +
+    `<div class="card-meta">${meta.join('')}</div>` +
+    `<div class="section-value">${escapeHtml(card.title)}</div></div>`;
+}
+
+// ---- left: about, done, needs ------------------------------------------------------------------
+
+const ABOUT_WORD_LIMIT = 20;
+
+function aboutSectionHtml(card) {
+  const description = card.description || '';
+  const lead = summarizeDescription(description, ABOUT_WORD_LIMIT);
+  const cut = summarizeDescription(description, Infinity).length > lead.length;
+  let body = lead ? `<div class="card-lead">${escapeHtml(lead)}${cut ? '…' : ''}</div>` : '<span class="empty">no brief</span>';
+  // the whole brief stays one click away, unless the lead already is the whole brief
+  if (description.trim() && description.trim() !== lead) body += foldHtml('full brief', description);
+  // tasks fold like the brief: the lead says what the card is, the rest is one click away
   const tasks = (card.tasks || []).map(t => `<li>${t.done ? '[x]' : '[ ]'} ${escapeHtml(t.text)}</li>`);
+  const open = (card.tasks || []).filter(t => !t.done).length;
+  if (tasks.length) {
+    body += `<details class="card-fold"><summary>tasks - ${open} of ${tasks.length} open</summary>` +
+      `<ul class="card-tasks">${tasks.join('')}</ul></details>`;
+  }
+  return sectionHtml('about', 'about', body, {pin: 0});
+}
+
+// one step of the run: tests, review, pr. the dot and the verdict colour come from data-state -
+// ok, problem, attention, doing, or none for a step that has not happened
+function railRowHtml(key, state, valueHtml, {title = '', lines = []} = {}) {
+  const extra = lines.map(line => `<div class="rail-line">${linkifyPrRefs(line)}</div>`).join('');
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+  return `<div class="outcome-part outcome-${key.replace(/\s+/g, '-')}" data-state="${state}"${titleAttr}>` +
+    `<span class="rail-key">${escapeHtml(key)}</span><span class="verdict">${valueHtml}</span>${extra}</div>`;
+}
+
+function runRailHtml(card, outcome) {
+  const working = card.status === 'doing' && !card.blocked_reason_code;
+  const tests = outcome.tests;
+  const review = outcome.review;
+  const rows = [
+    tests
+      ? railRowHtml('tests', tests.passed ? 'ok' : 'problem',
+        `${tests.passed ? 'passed' : 'failed'}, exit ${escapeHtml(String(tests.exit_code))}`, {title: tests.command || ''})
+      : railRowHtml('tests', 'none', 'not run'),
+  ];
+  if (review) {
+    const findings = (review.findings || [])
+      .map(f => `${f.severity} ${f.category} in ${f.file}: ${f.message || f.detail || ''}`);
+    // a review that did not approve comes to the operator (or back to the worker, still going)
+    const state = review.approved ? 'ok' : (working ? 'doing' : 'attention');
+    rows.push(railRowHtml('review', state, review.approved ? 'approved' : 'not approved',
+      {lines: [review.error, ...findings].filter(Boolean)}));
+  } else {
+    rows.push(railRowHtml('review', 'none', 'not run'));
+  }
+  rows.push(outcome.pr_url
+    ? railRowHtml('pr', 'ok', prAnchorHtml(outcome.pr_url, card.repo_url, {short: true}))
+    : railRowHtml('pr', 'none', 'none yet'));
+  if (outcome.fix_rounds > 0) rows.push(railRowHtml('fix rounds', 'none', String(outcome.fix_rounds)));
+  return `<div class="run-rail">${rows.join('')}</div>`;
+}
+
+function doneSectionHtml(card, outcome, block) {
+  const ran = outcome.summary || outcome.tests || outcome.review || outcome.pr_url;
+  if (!ran) {
+    const working = card.status === 'doing' && !card.blocked_reason_code;
+    return sectionHtml('done', 'done', `<span class="empty">${working ? 'nothing yet' : 'not run yet'}</span>`, {pin: 0});
+  }
+  let body = '';
+  if (block) {
+    body += block.done.length
+      ? `<ul class="card-lines">${block.done.map(line => `<li>${linkifyPrRefs(line)}</li>`).join('')}</ul>`
+      : '<span class="empty">nothing listed</span>';
+  } else if (outcome.summary) {
+    // no closing block to read the lines from - the summary stays whole, one click away
+    body += foldHtml('agent summary', outcome.summary);
+  }
+  body += runRailHtml(card, outcome);
+  const commit = commitFromSummary(outcome.summary);
+  const label = commit ? `done<span class="field-count">commit ${escapeHtml(commit)}</span>` : 'done';
+  return sectionHtml('done', label, body, {pin: 0});
+}
+
+// what an open card that is NOT waiting on the operator says under needs
+const QUIET_NEEDS = {
+  todo: 'nothing yet, r runs it',
+  doing: 'nothing, agent on it',
+  checking: 'nothing, in checking',
+  accepted: 'nothing, accepted',
+  rejected: 'nothing, rejected',
+};
+
+function quietNeed(card) {
+  if (card.handled_by_board) return `nothing, board on it${card.next ? ` - ${card.next}` : ''}`;
+  if (isPendingCard(card)) return 'nothing, queued';
+  return QUIET_NEEDS[card.status] || 'nothing';
+}
+
+// the call to action first, then the agent's own ask and what it left, the lease it wanted, the
+// latest board note's run/stop, and the card's one text entry. only a card that really waits on the
+// operator (the same test the strip's attention glow uses) wears the accent
+function needsSectionHtml(card, outcome, block, hasBoardNote) {
+  const attention = ctaFor(card).attention;
+  const lines = [];
+  if (attention) {
+    // ONE NEXT STEP, ONE VOICE: the board's when it has one - it knows the gate failed even when the
+    // agent's own block still says "review the PR" - else the agent's ask, else the bare reason
+    const agentAsk = block?.action && !isNoneLine(block.action);
+    if (card.next_action) {
+      lines.push(`<li class="card-next">${escapeHtml(card.next_action)}</li>`);
+    } else if (agentAsk) {
+      lines.push(`<li class="card-next">${linkifyPrRefs(block.action)}</li>`);
+      if (block.why) lines.push(`<li>why: ${linkifyPrRefs(block.why)}</li>`);
+    } else if (card.blocked_reason_code) {
+      lines.push(`<li>blocked: ${escapeHtml(reasonWords(card.blocked_reason_code))}</li>`);
+    }
+  } else {
+    lines.push(`<li class="empty">${escapeHtml(quietNeed(card))}</li>`);
+  }
+  (block?.notDone || []).filter(line => !isNoneLine(line))
+    .forEach(line => lines.push(`<li>left: ${linkifyPrRefs(line)}</li>`));
+  if (outcome.lease_wanted?.length) lines.push(`<li>wants lease: ${pathListHtml(outcome.lease_wanted)}</li>`);
+  if (outcome.lease_expanded?.length) lines.push(`<li>lease widened: ${pathListHtml(outcome.lease_expanded)}</li>`);
+  // only where the CTA does something other than re-open this already-open panel - run/stop reuse
+  // the same handlers the strip's CTA does
+  const cta = hasBoardNote ? ctaFor(card) : null;
+  const button = cta && cta.action !== 'open'
+    ? `<button type="button" class="toggle comment-cta" data-cta-action="${escapeHtml(cta.action)}">${escapeHtml(cta.label)}</button>`
+    : '';
+  const input = '<input class="comment-input text-field" placeholder="note to agent, enter sends">';
+  return sectionHtml('needs', 'needs', `<ul class="card-lines">${lines.join('')}</ul>${button}${input}`,
+    {pin: 0, accent: attention});
+}
+
+// ---- right: criteria, lease, dependencies, attachments, history ------------------------------
+
+// MM-DD HH:MM in the viewer's own local time, the way every other clock on the board reads
+function formatNoteTime(iso) {
+  const at = new Date(iso);
+  if (!iso || Number.isNaN(at.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
+// one line per note: its time and headline, the operator's own marked "you". a longer note keeps
+// its body behind the headline, opened on purpose
+function historyRowHtml(comment) {
+  const {headline, rest} = splitCommentHeadline(comment.body);
+  const you = comment.author === 'operator';
+  const head = `<time>${escapeHtml(formatNoteTime(comment.created_at))}</time>` +
+    `<span class="history-head${you ? ' history-you' : ''}">${you ? 'you: ' : ''}${linkifyPrRefs(headline)}</span>`;
+  if (!rest) return `<li><div class="history-line">${head}</div></li>`;
+  return `<li><details class="history-note"><summary class="history-line">${head}</summary>` +
+    `<div class="comment-body">${linkifyPrRefs(rest)}</div></details></li>`;
+}
+
+
+// the card's own facts - criteria, lease, dependencies, attachments, notes - each behind one fold,
+// closed: the open card reads as about, done, needs, and the rest is a click away. only a card
+// with no lease says so out loud, because that is why its run gets refused
+function detailsSectionHtml(card) {
+  const fold = (label, count, inner) =>
+    `<details class="card-fold"><summary>${escapeHtml(label)} - ${count}</summary>${inner}</details>`;
+  const parts = [];
   const criteria = (card.criteria || []).map(c => `<li>${escapeHtml(c.text)}</li>`);
+  if (criteria.length) parts.push(fold('criteria', criteria.length, `<ul class="card-lines">${criteria.join('')}</ul>`));
+  const globs = (card.leases || []).map(l => `<span class="card-path">${escapeHtml(l.path_glob)}</span>`);
+  parts.push(globs.length
+    ? fold('lease', globs.length, `<div class="card-path-line">${globs.join(', ')}</div>`)
+    : '<div class="empty">no lease - it will not run</div>');
   // depends_on holds ids only - shown by title when that card is on this board, a short id otherwise
   const deps = (card.depends_on || []).map(d => `<li>${escapeHtml(dependencyLabel(d))}</li>`);
+  if (deps.length) parts.push(fold('dependencies', deps.length, `<ul class="card-lines">${deps.join('')}</ul>`));
   const attachments = (card.attachments || []).map(a => `<li>${escapeHtml(a.filename)}</li>`);
-  const allComments = card.comments || [];
-  const latestBoardIndex = [...allComments]
-    .map((c, i) => (c.author === BOARD_COMMENT_AUTHOR ? i : -1))
-    .filter(i => i !== -1)
-    .pop();
-  const comments = allComments.map((c, i) => renderComment(c, card, i === latestBoardIndex));
-  const status = escapeHtml(card.status) + (card.blocked_reason_code ? ` (${escapeHtml(card.blocked_reason_code)})` : '');
-  // the paths its agent may write - an empty lease is why a run gets refused, so say so here
-  const globs = (card.leases || []).map(l => escapeHtml(l.path_glob));
-  const lease = globs.length ? globs.join(', ') : '<span class="empty">none - it will not run</span>';
-  // the call to action leads the status, so an open card says what to do before anything else
-  const next = card.next_action ? `<div class="card-next">next: ${escapeHtml(card.next_action)}</div>` : '';
+  if (attachments.length) parts.push(fold('attachments', attachments.length, `<ul class="card-lines">${attachments.join('')}</ul>`));
+  const comments = card.comments || [];
+  if (comments.length) parts.push(fold('history', comments.length, `<ul class="card-history">${comments.map(historyRowHtml).join('')}</ul>`));
+  return sectionHtml('details', 'details', parts.join(''), {pin: 0});
+}
+
+function cardPanelHtml(card, outcome) {
+  const run = outcome || {};
+  const block = parseWorkerBlock(run.summary);
+  const comments = card.comments || [];
+  const hasBoardNote = comments.some(c => c.author === BOARD_COMMENT_AUTHOR);
+  // BARE BONES, ONE COLUMN (operator, 2026-09-23): about, done, needs, and the facts folded away
   return `
-    <div class="card-sections">
-      ${sectionHtml('title', 'title', `${escapeHtml(card.title)} <span class="card-id">${escapeHtml(shortId(card.id))}</span>`)}
-      ${sectionHtml('workstream', 'workstream', escapeHtml(card.workstream || '') || '<span class="empty">none</span>')}
-      ${sectionHtml('status', 'status', `${next}${status}<div class="card-model">model: ${escapeHtml(modelLabel(card.model, card.lab))}</div><div class="card-model">complexity: ${escapeHtml(complexityLabel(card))}</div><div class="card-model">lease: ${lease}</div>`)}
-      ${outcomeSectionHtml(outcome, card)}
-      ${sectionHtml('description', 'description', escapeHtml(card.description || ''))}
-      ${sectionHtml('tasks', 'tasks', listHtml(tasks))}
-      ${sectionHtml('criteria', 'acceptance criteria', listHtml(criteria))}
-      ${sectionHtml('deps', 'dependencies', listHtml(deps))}
-      ${sectionHtml('attachments', 'attachments', listHtml(attachments))}
-      <div class="${SECTION_CLASS}" tabindex="0" data-section="comments"><div class="field-label">comments</div>
-        <div class="section-value">${listHtml(comments)}</div>
-        <input class="comment-input text-field" placeholder="add a comment, enter to send">
-      </div>
+    <div class="card-sections" data-columns="1">
+      ${cardHeadHtml(card, run)}
+      ${aboutSectionHtml(card)}
+      ${doneSectionHtml(card, run, block)}
+      ${needsSectionHtml(card, run, block, hasBoardNote)}
+      ${detailsSectionHtml(card)}
     </div>
   `;
 }
@@ -572,10 +809,10 @@ async function doCycleCardComplexity(cardId, next) {
     const updated = await api(`/api/cards/${cardId}`, {
       method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({complexity: next}),
     });
-    const label = `complexity: ${complexityLabel(updated)}`;
+    const label = metaComplexityText(updated);
     showRun(cardId, label);
-    const shown = document.querySelectorAll('.card-panel [data-section="status"] .card-model');
-    if (shown.length > 1 && openCard && openCard.cardId === cardId) shown[1].textContent = label;
+    const shown = document.querySelector('.card-panel .card-complexity');
+    if (shown && openCard && openCard.cardId === cardId) shown.textContent = label;
   } catch (err) {
     showRun(cardId, "can't change complexity", null, err.message);
   }
@@ -677,8 +914,8 @@ async function doCycleCardModel(cardId, next, lab = null) {
     });
     const label = `model: ${modelLabel(updated.model, updated.lab)}`;
     showRun(cardId, label);
-    const shown = document.querySelector('.card-panel [data-section="status"] .card-model');
-    if (shown && openCard && openCard.cardId === cardId) shown.textContent = label;
+    const shown = document.querySelector('.card-panel .card-model');
+    if (shown && openCard && openCard.cardId === cardId) shown.textContent = metaModelText(updated.model, updated.lab);
   } catch (err) {
     showRun(cardId, "can't change model", null, err.message);
   }

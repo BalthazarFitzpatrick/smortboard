@@ -1,3 +1,7 @@
+> **So you have found the origin story.** This is the brief smortboard started from, written on a
+> plane in September 2026 and handed to Claude as the planning prompt, which is why it opens with
+> instructions. Kept as written; the README is what it became.
+
 # Dev Board — Agent Orchestration Wrapper
 
 ## How to use this document

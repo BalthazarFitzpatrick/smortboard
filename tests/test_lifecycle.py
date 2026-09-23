@@ -315,10 +315,10 @@ def _reuse_worktree(monkeypatch, tmp_path, card_id):
     monkeypatch.setattr(lifecycle, "has_remote", lambda *a, **k: False)
 
 
-def test_a_reused_branch_is_synced_with_base_before_the_worker(board, tmp_path, monkeypatch):
+def test_a_reused_branch_is_rebased_onto_its_base_before_the_worker(board, tmp_path, monkeypatch):
     """measured 2026-09-19: three cards 28-59 commits behind development failed a gate on tests the
-    base had already fixed - the sync used to run only at handover, after the first gate"""
-    from smortboard.review.mergeable import MergeSyncResult
+    base had already fixed - bringing the branch current used to happen only at handover"""
+    from smortboard.review.rebase_guard import RebaseResult
 
     store, card_id = board
     _stub_gates(monkeypatch)
@@ -326,10 +326,8 @@ def test_a_reused_branch_is_synced_with_base_before_the_worker(board, tmp_path, 
     order = []
     monkeypatch.setattr(
         lifecycle,
-        "sync_with_base",
-        lambda *a, **k: (
-            order.append("sync") or MergeSyncResult(clean=True, behind=True, merged=True)
-        ),
+        "rebase_onto_base",
+        lambda *a, **k: order.append("rebase") or RebaseResult(outcome="rebased"),
     )
 
     class _Ordered(_Backend):
@@ -338,28 +336,54 @@ def test_a_reused_branch_is_synced_with_base_before_the_worker(board, tmp_path, 
             return super().run_card(*a, **k)
 
     lifecycle.run_card_lifecycle(store, card_id, backend=_Ordered())
-    assert order[:2] == ["sync", "worker"]
+    assert order[:2] == ["rebase", "worker"]
 
 
-def test_a_conflicting_pre_sync_reaches_the_worker_as_a_note(board, tmp_path, monkeypatch):
-    from smortboard.review.mergeable import MergeSyncResult
+def test_a_branch_that_no_longer_rebases_blocks_outdated_before_the_worker(
+    board, tmp_path, monkeypatch
+):
+    """the operator, 2026-09-23: a card whose commits no longer rebase onto its moved base is
+    outdated - it used to be handed to the worker as a merge to resolve"""
+    from smortboard.review.rebase_guard import RebaseResult
 
     store, card_id = board
     _stub_gates(monkeypatch)
     _reuse_worktree(monkeypatch, tmp_path, card_id)
-    results = iter(
-        [
-            MergeSyncResult(clean=False, behind=True, conflicting_files=["a.py"]),
-            MergeSyncResult(clean=True),  # the handover sync, once the worker resolved it
-        ]
+    monkeypatch.setattr(
+        lifecycle,
+        "rebase_onto_base",
+        lambda *a, **k: RebaseResult(
+            outcome="outdated",
+            base_ref="origin/main",
+            base_sha="b" * 40,
+            old_tip="a" * 40,
+            conflicting_files=["a.py"],
+        ),
     )
-    monkeypatch.setattr(lifecycle, "sync_with_base", lambda *a, **k: next(results))
     backend = _Backend()
     result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
-    assert result.phase == "opened"
-    prompt = backend.calls[0]["prompt"]
-    assert "a.py" in prompt and "Merge origin/main yourself" in prompt
-    assert "merge_conflict" in [e["kind"] for e in store.list_events(card_id)]
+    assert result.blocked_reason_code == "OUTDATED"
+    assert backend.calls == []
+    note = store.list_comments(card_id)[-1]["body"]
+    assert "a.py" in note and "origin/main" in note
+
+
+def test_a_stacked_child_on_an_unlanded_parent_is_not_rebased(board, tmp_path, monkeypatch):
+    """its base is the parent's branch, not origin/<base> - rebase_guard's docstring says why"""
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _reuse_worktree(monkeypatch, tmp_path, card_id)
+    card = store.get_card(card_id)
+    parent = store.create_card(card["board_id"], card["repo_id"], "parent", leases=["x"])
+    store.update_card(parent["id"], status="checking")
+    store.append_event(card_id, "stacked_on", {"parent_id": parent["id"], "branch": "card/p"})
+    monkeypatch.setattr(
+        lifecycle, "rebase_onto_base", lambda *a, **k: pytest.fail("rebased a stacked child")
+    )
+    backend = _Backend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert backend.calls
+    assert result.phase == "opened", store.list_comments(card_id)[-1]["body"]
 
 
 def test_a_fresh_cut_is_not_synced_before_the_worker(board, monkeypatch):
@@ -455,10 +479,13 @@ def test_a_rerun_after_the_tree_changed_runs_the_worker_again(board, tmp_path, m
     _failing_gate_that_records(monkeypatch)
     _reuse_worktree(monkeypatch, tmp_path, card_id)
     monkeypatch.setattr(lifecycle, "sync_with_base", lambda *a, **k: None)
-    heads = iter(["a", "a", "b", "b"])
-    monkeypatch.setattr(lifecycle, "rev_parse", lambda *a, **k: next(heads))
+    head = {"now": "a"}
+    monkeypatch.setattr(
+        lifecycle, "rev_parse", lambda path, ref: head["now"] if ref == "HEAD" else "base"
+    )
     backend = _Backend()
     lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    head["now"] = "b"
     lifecycle.run_card_lifecycle(store, card_id, backend=backend)
     assert len(backend.calls) == 2
 
@@ -1106,3 +1133,58 @@ def test_reviewer_fallback_is_kept_when_worker_never_reaches_review(board, monke
         event["kind"] == "fallback_consumed" and event["payload"]["role"] == "reviewer"
         for event in store.list_events(card_id)
     )
+
+
+# a refused in-run write no longer sinks committed work - see test_lease_modes.py for the rule
+def _refused_write():
+    return RunResult(
+        subtype="success",
+        is_error=False,
+        blocked_reason_code="LEASE_CONFLICT",
+        session_id="s",
+        total_cost_usd=0.1,
+        num_turns=4,
+        result_text="DONE:\n- the thing\nNOT DONE:\n- other.py was refused",
+    )
+
+
+def test_a_refused_write_with_committed_work_goes_to_the_gates(board, monkeypatch):
+    store, card_id = board
+    gated = []
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "run_test_gate", lambda *a, **k: gated.append(1) or _passing())
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend(_refused_write()))
+    assert gated == [1]
+    assert result.blocked_reason_code is None
+    kinds = [event["kind"] for event in store.list_events(card_id)]
+    assert "lease_wanted" in kinds
+
+
+def test_a_refused_write_with_nothing_committed_still_blocks(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    monkeypatch.setattr(lifecycle, "branch_has_commits", lambda *a, **k: False)
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend(_refused_write()))
+    assert result.blocked_reason_code == "LEASE_CONFLICT"
+
+
+def test_a_post_run_lease_violation_still_blocks_with_commits(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    committed_outside = RunResult(
+        subtype="error_lease_conflict",
+        is_error=True,
+        blocked_reason_code="LEASE_CONFLICT",
+        session_id="s",
+        total_cost_usd=0.1,
+        num_turns=4,
+        result_text="Committed paths outside the lease:\n.github/ci.yml",
+    )
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend(committed_outside))
+    assert result.blocked_reason_code == "LEASE_CONFLICT"
+
+
+def _passing():
+    from smortboard.review.gates import GateResult
+
+    return GateResult(passed=True, command="true", exit_code=0, output="ok")

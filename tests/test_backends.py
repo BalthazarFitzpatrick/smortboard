@@ -10,6 +10,7 @@ import json
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from smortboard.exec.backends import (
     require_card_runtime,
     write_container_guards,
 )
-from smortboard.exec.runner import RunResult
+from smortboard.exec.runner import SYSTEM_PROMPT, RunResult, commands_preamble
 from smortboard.exec.worktrees import WorktreeError, create_worktree
 from smortboard.store.api import Store
 
@@ -100,6 +101,13 @@ def test_docker_available_false_when_daemon_does_not_answer(monkeypatch):
 
 # -- the container command line ------------------------------------------------
 
+# the only env a card container is given: claude's bash timeouts, never a credential
+_NON_SECRET_ENV = {"BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS"}
+
+
+def _env_names(cmd):
+    return {cmd[i + 1].split("=", 1)[0] for i, arg in enumerate(cmd) if arg in ("-e", "--env")}
+
 
 def test_the_token_is_never_on_the_command_line_or_a_mount(tmp_path):
     """it arrives on stdin instead. a mount meant a plaintext credential had to exist on the
@@ -107,7 +115,7 @@ def test_the_token_is_never_on_the_command_line_or_a_mount(tmp_path):
     backend = ContainerBackend(image="img")
     cmd = backend._docker_command(tmp_path / "clone", "prompt", tmp_path / "s.json", "sonnet", None)
     joined = shlex.join(cmd)
-    assert "-e" not in cmd and "--env" not in cmd
+    assert _env_names(cmd) <= _NON_SECRET_ENV
     assert "/run/secrets" not in joined
     assert "CLAUDE_CODE_OAUTH_TOKEN" in joined  # read from stdin, never assigned a literal
     assert "read -r CLAUDE_CODE_OAUTH_TOKEN" in joined
@@ -151,7 +159,7 @@ def test_the_credential_reaches_the_container_only_through_stdin(tmp_path, monke
 
     assert seen["token_line"] == "s3cret\n"
     # the working directory is told first, so the agent does not go looking for its files
-    assert seen["stream_prompt"] == WORKSPACE_PREAMBLE + "prompt"
+    assert seen["stream_prompt"] == WORKSPACE_PREAMBLE + commands_preamble(None) + "prompt"
     assert seen["stream_prompt"].startswith("Your working directory is /workspace")
     assert "s3cret" not in seen["cmd"]
 
@@ -189,24 +197,66 @@ def test_docker_command_uses_the_configured_image(tmp_path):
 
 def test_the_guards_are_mounted_read_only_outside_the_workspace(tmp_path):
     # the first real run crashed on this: a host path went to --settings and did not exist inside
-    settings_path = tmp_path / "wt" / ".claude" / "settings.json"
+    settings_path = write_container_guards(tmp_path / "guards", ["a.py"])
     cmd = ContainerBackend(image="img")._docker_command(
         tmp_path / "clone", "p", settings_path, "sonnet", None
     )
-    assert f"{settings_path.parent}:/smortboard:ro" in cmd
+    assert f"{tmp_path / 'guards'}:/smortboard:ro" in cmd
     assert "--settings /smortboard/settings.json" in cmd[-1]
     assert str(tmp_path) not in cmd[-1]
 
 
 def test_container_guards_are_written_as_the_container_sees_them(tmp_path):
-    settings_path = write_container_guards(tmp_path / "wt", ["a.py"])
+    settings_path = write_container_guards(tmp_path / "guards", ["a.py"])
     hooks = json.loads(settings_path.read_text())["hooks"]["PreToolUse"]
-    assert [h["hooks"][0]["command"] for h in hooks] == [
-        "python3 /smortboard/lease_guard.py",
-        "python3 /smortboard/bash_guard.py",
-    ]
+    commands = [h["hooks"][0]["command"] for h in hooks]
+    assert commands == ["python3 /smortboard/lease_guard.py", "python3 /smortboard/bash_guard.py"]
+    # every script a hook names is in the dir guard_mount puts at /smortboard - a hook whose
+    # command does not resolve exits 127, which does not block
+    for command in commands:
+        script = command.split(" ", 1)[1]
+        assert (tmp_path / "guards" / Path(script).relative_to("/smortboard")).is_file()
     assert json.loads((settings_path.parent / "lease.json").read_text())["root"] == "/workspace"
     assert str(tmp_path) not in settings_path.read_text()
+
+
+def test_container_guards_write_nothing_but_their_own_dir(tmp_path):
+    before = set(tmp_path.iterdir())
+    write_container_guards(tmp_path / "guards", ["a.py"], remembered_globs=["docs/**"])
+    assert set(tmp_path.iterdir()) - before == {tmp_path / "guards"}
+    assert (tmp_path / "guards").stat().st_mode & 0o777 == 0o755
+
+
+def _container_hook(settings_path, rel):
+    """runs the container's lease hook on the host: the script is the same, only its path differs"""
+    script = settings_path.parent / "lease_guard.py"
+    payload = json.dumps({"tool_input": {"file_path": f"/workspace/{rel}"}})
+    return subprocess.run(
+        [sys.executable, str(script)], input=payload, capture_output=True, text=True
+    )
+
+
+def test_a_remembered_glob_lets_the_container_hook_allow_a_write_outside_the_card_lease(tmp_path):
+    settings_path = write_container_guards(
+        tmp_path / "guards", ["src/**"], remembered_globs=["docs/**"]
+    )
+    assert _container_hook(settings_path, "src/a.py").returncode == 0
+    assert _container_hook(settings_path, "docs/notes.md").returncode == 0
+    refused = _container_hook(settings_path, "elsewhere.py")
+    assert refused.returncode == 2
+    assert "LEASE_CONFLICT:" in refused.stderr
+
+
+def test_the_generated_guard_scripts_lint_clean(tmp_path):
+    """card 05de2d52: the repo's ruff failed the gate on F541 in the board's own bash_guard.py"""
+    write_container_guards(tmp_path / "guards", ["a.py"])
+    result = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", "--isolated", "--no-cache", "--select", "F"]
+        + [str(tmp_path / "guards")],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout
 
 
 # -- clone-then-fetch round trip, with real git -------------------------------
@@ -527,7 +577,7 @@ def test_a_repo_brings_its_own_image_and_a_card_still_gets_its_own_container(tmp
     mounts = [with_repo[i + 1] for i, arg in enumerate(with_repo) if arg == "-v"]
     assert mounts == [f"{tmp_path / 'c'}:/workspace:rw", f"{tmp_path}:/smortboard:ro"]
     assert "--rm" in with_repo
-    assert "-e" not in with_repo
+    assert _env_names(with_repo) <= _NON_SECRET_ENV
 
 
 def test_docker_available_asks_the_daemon_not_just_the_client(monkeypatch):
@@ -667,3 +717,22 @@ def test_the_worker_budget_setting_caps_the_card_run(tmp_path):
         )
     assert "--max-budget-usd 5.0" in shlex.join(default)
     assert "--max-budget-usd 7.5" in shlex.join(capped)
+
+
+def test_the_screenshot_rule_reaches_only_a_repo_with_the_boards_own_ui(tmp_path):
+    """the board screenshots only smortboard's own ui, so any other repo reading the rule was noise"""
+    backend = ContainerBackend(image="img")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    cmd = backend._docker_command(plain, "prompt", tmp_path / "s.json", "sonnet", None)
+    assert "SCREENSHOT:" not in shlex.join(cmd)
+    own = tmp_path / "own"
+    (own / "smortboard" / "ui").mkdir(parents=True)
+    cmd = backend._docker_command(own, "prompt", tmp_path / "s.json", "sonnet", None)
+    assert "SCREENSHOT:" in shlex.join(cmd)
+
+
+def test_the_worker_prompt_carries_no_house_style_of_its_own():
+    """house style comes from the repo's CLAUDE.md or AGENTS.md; a node repo got python rules"""
+    assert "uv run" not in SYSTEM_PROMPT
+    assert "CLAUDE.md or AGENTS.md" in SYSTEM_PROMPT

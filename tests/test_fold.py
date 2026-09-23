@@ -188,6 +188,40 @@ def test_a_turn_folds_what_was_proposed_and_reports_the_old_ids(store, board):
     assert a["id"][:8] in body and b["id"][:8] in body and "both edit x.py" in body
 
 
+def test_a_strict_group_with_null_values_folds_like_one_without_them(store, board):
+    """every key present, as strict output sends them, and the ones a group can do without left
+    null - the schema never allows it, the board still reads a null like a missing key: the
+    merged card falls back to its members' description, criteria and leases, no reason "None" """
+    board_id, repo_id, _ = board
+    a = _card(
+        store, board_id, repo_id, "a", leases=["x.py"], criteria=["a works"], description="GOAL: a"
+    )
+    b = _card(store, board_id, repo_id, "b", leases=["x.py"], criteria=["b works"])
+    group = {
+        "cards": [a["id"][:8], b["id"][:8]],
+        "title": "ab",
+        "description": None,
+        "criteria": None,
+        "leases": None,
+        "reason": None,
+    }
+    assert set(group) == set(
+        consolidate.FOLD_JSON_SCHEMA["properties"]["groups"]["items"]["properties"]
+    )
+
+    def run(prompt, model, budget_usd):
+        return json.dumps({"summary": "a and b share x.py", "groups": [group]})
+
+    result = run_fold_turn(store, board_id, runner=run)
+    assert result.error is None
+    [merged] = store.list_cards(board_id)
+    assert merged["title"] == "ab"
+    assert merged["description"] == "GOAL: a"
+    assert [c["text"] for c in merged["criteria"]] == ["a works", "b works"]
+    assert [lease["path_glob"] for lease in merged["leases"]] == ["x.py"]
+    assert result.lines[0].endswith('"ab"')
+
+
 def test_one_fold_at_a_time_per_board_over_http(running_server, monkeypatch):
     base_url, _ = running_server
     gate = threading.Event()
@@ -223,3 +257,34 @@ def test_the_fold_budget_setting_caps_the_fold_run(store, board):
     store.set_setting("fold_budget_usd", 0.4)
     run_fold_turn(store, board_id, runner=run)
     assert budgets == [0.4]
+
+
+def _board_notes(store, board_id):
+    return [m["body"] for m in store.list_orchestrator_messages(board_id) if m["author"] == "board"]
+
+
+def test_a_fold_with_long_card_text_says_so_and_keeps_it(store, board):
+    board_id, repo_id, _ = board
+    a = _card(store, board_id, repo_id, "a", leases=["x.py"])
+    b = _card(store, board_id, repo_id, "b", leases=["x.py"])
+    title = "one two three four five six seven eight nine ten"
+    description = " ".join(["word"] * 25)
+    group = {"cards": [a["id"], b["id"]], "title": title, "description": description}
+    apply_folds(store, board_id, [{**group, "criteria": ["ab works"]}])
+    merged = store.list_cards(board_id)[0]
+    assert (merged["title"], merged["description"]) == (title, description), "never cut"
+    assert _board_notes(store, board_id) == [
+        f'"{title}" runs long: 10 words in the title (max 8)',
+        f'"{title}" runs long: 25 words in the description (max 20)',
+    ]
+
+
+def test_a_terse_fold_leaves_no_note_whatever_the_ledger_line_adds(store, board):
+    board_id, repo_id, _ = board
+    a = _card(store, board_id, repo_id, "a", leases=["x.py"], ledger_task="t1")
+    b = _card(store, board_id, repo_id, "b", leases=["x.py"], ledger_task="t2")
+    description = " ".join(["word"] * 20)
+    group = {"cards": [a["id"], b["id"]], "title": "fold a and b", "description": description}
+    apply_folds(store, board_id, [group])
+    assert "- t2" in store.list_cards(board_id)[0]["description"]
+    assert _board_notes(store, board_id) == []

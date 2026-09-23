@@ -6,15 +6,16 @@
 // height. a grid row (or a flex row) ties every cell in it to the tallest cell's box, leaving blank
 // space under a shorter neighbour - this replaces that with real measurement instead -------------
 
-const CARD_PANEL_ROW_GAP = 30; // vertical space between stacked sections - the old grid's row-gap
-const CARD_PANEL_COL_GAP = 40; // horizontal space between columns - the old grid's column-gap
+const CARD_PANEL_ROW_GAP = 14; // vertical space between stacked sections, as in the approved mockup
+const CARD_PANEL_COL_GAP = 14; // horizontal space between columns, as in the approved mockup
 const CARD_PANEL_NARROW_PX = 760; // the width the two-column layout used to fold to one at
 // title and the run read across the whole panel; every other section sits in a column
 const FULL_WIDTH_SECTIONS = new Set(['title', 'outcome']);
 
 // pure: given each item's own height (and whether it spans every column), returns where it lands.
 // a full-width item syncs every column to one shared reach first, same as a css row would, but a
-// column item only ever waits on the column it is actually going into
+// column item only ever waits on the column it is actually going into. an item with its own
+// column (item.column) always goes there; the rest take the shortest column
 function computeMasonryLayout(items, columnCount, gap) {
   const reach = new Array(columnCount).fill(0);
   return items.map(item => {
@@ -24,12 +25,32 @@ function computeMasonryLayout(items, columnCount, gap) {
       reach.fill(bottom);
       return {column: null, top, bottom};
     }
-    const column = reach.indexOf(Math.min(...reach));
+    const pinned = Number.isInteger(item.column) && item.column >= 0 && item.column < columnCount;
+    const column = pinned ? item.column : reach.indexOf(Math.min(...reach));
     const top = reach[column];
     const bottom = top + item.height + gap;
     reach[column] = bottom;
     return {column, top, bottom};
   });
+}
+
+// each column's width, from the container's data-column-shares ("3 2") or equal without it. a
+// section is sized before it is measured, so unequal widths need every column section pinned -
+// an unpinned one's column is only known once the layout has run
+function columnWidths(container, pins, width, columnCount) {
+  const free = width - CARD_PANEL_COL_GAP * (columnCount - 1);
+  const shares = String(container.dataset.columnShares || '').split(/\s+/).map(Number);
+  const usable = shares.length === columnCount && shares.every(share => share > 0)
+    && pins.every(pin => pin !== null);
+  const weights = usable ? shares : new Array(columnCount).fill(1);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  return weights.map(weight => (free * weight) / total);
+}
+
+// a section's own column from its data-pin, or null to take the shortest one
+function sectionPin(section) {
+  const pin = Number(section.dataset.pin);
+  return section.dataset.pin !== undefined && Number.isInteger(pin) ? pin : null;
 }
 
 // the dom side: measure each section at its column's width (a section wraps differently at half
@@ -47,12 +68,19 @@ function layoutCardSections(panel) {
   const width = container.offsetWidth || container.getBoundingClientRect().width;
   // nothing sane to measure before the panel has a real box - a later call (resize, reopen) fixes it
   if (!width || width < 0) return;
-  const columnCount = width < CARD_PANEL_NARROW_PX ? 1 : 2;
-  const columnWidth = (width - CARD_PANEL_COL_GAP * (columnCount - 1)) / columnCount;
+  // data-columns="1" keeps a panel to one column at any width (the bare-bones open card)
+  const columnCount = width < CARD_PANEL_NARROW_PX || container.dataset.columns === '1' ? 1 : 2;
   const isFull = section => columnCount === 1 || FULL_WIDTH_SECTIONS.has(section.dataset.section);
-  sections.forEach(section => { section.style.width = isFull(section) ? '100%' : `${columnWidth}px`; });
-  const items = sections.map(section => ({
+  const pins = sections.map(sectionPin);
+  const widths = columnWidths(container, pins.filter((_, i) => !isFull(sections[i])), width, columnCount);
+  // the second column starts one first-column width and a gap in - there is never a third
+  const columnWidth = widths[0];
+  sections.forEach((section, i) => {
+    section.style.width = isFull(section) ? '100%' : `${widths[pins[i] ?? 0] ?? columnWidth}px`;
+  });
+  const items = sections.map((section, i) => ({
     full: isFull(section),
+    column: pins[i],
     height: section.offsetHeight || section.getBoundingClientRect().height,
   }));
   const placed = computeMasonryLayout(items, columnCount, CARD_PANEL_ROW_GAP);
@@ -61,9 +89,51 @@ function layoutCardSections(panel) {
     const {column, top, bottom} = placed[i];
     section.style.top = `${top}px`;
     section.style.left = column ? `${column * (columnWidth + CARD_PANEL_COL_GAP)}px` : '0px';
+    // kept on the section for the arrow keys (readSectionPlaces) - 'all' is a band over every column
+    section.dataset.column = column === null ? 'all' : String(column);
+    section.dataset.top = String(top);
+    section.dataset.bottom = String(bottom);
     reach = Math.max(reach, bottom);
   });
   container.style.height = `${Math.max(0, reach - CARD_PANEL_ROW_GAP)}px`;
+  // every pass ends here - open, a fold opening, a resize - so the panel follows its content
+  fitCardPanel(panel);
+}
+
+// what layoutCardSections placed, read back as computeSectionMove's items. a panel it never placed
+// (the design archive keeps its own grid) reads as one column in document order
+function readSectionPlaces(sections) {
+  return sections.map((section, i) => {
+    const {column, top, bottom} = section.dataset;
+    if (column === undefined) return {column: null, top: i, bottom: i + 1};
+    return {column: column === 'all' ? null : Number(column), top: Number(top), bottom: Number(bottom)};
+  });
+}
+
+// pure: the section an arrow press lands on, or index itself when nothing lies that way. up/down
+// walk this column by top, a band (column null) belonging to every column; left/right take the next
+// column's section overlapping this one's span most, the upper one on a tie
+function computeSectionMove(items, index, direction) {
+  const here = items[index];
+  if (!here) return index;
+  if (direction === 'up' || direction === 'down') {
+    const shares = item => here.column === null || item.column === null || item.column === here.column;
+    const order = items.map((item, i) => ({item, i}))
+      .filter(({item, i}) => i === index || shares(item))
+      .sort((a, b) => a.item.top - b.item.top
+        || (a.item.column ?? -1) - (b.item.column ?? -1) || a.i - b.i);
+    const at = order.findIndex(({i}) => i === index);
+    const next = order[at + (direction === 'down' ? 1 : -1)];
+    return next ? next.i : index;
+  }
+  if (here.column === null) return index;
+  const target = here.column + (direction === 'right' ? 1 : -1);
+  const beside = items.map((item, i) => ({
+    i, top: item.top, column: item.column,
+    overlap: Math.min(here.bottom, item.bottom) - Math.max(here.top, item.top),
+  })).filter(c => c.column === target && c.overlap > 0)
+    .sort((a, b) => b.overlap - a.overlap || a.top - b.top);
+  return beside.length ? beside[0].i : index;
 }
 
 // re-flow whenever the container gets its real width or a section changes height. the one pass at
@@ -652,6 +722,11 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
   });
 }
 
+// the cards a column draws: all of them, or only the matches while the card filter (board.js) is on
+function shownCards(state) {
+  return state.sorted.filter(card => cardMatchesFilter(card));
+}
+
 // redraws bucketRowsEl from its own _pile state: ONE path for every column, the regime deciding
 // whether its cards spread, fan, or fan between two piles. expanded is the one override - the
 // operator asked for the whole column as a scrolling list, so it spreads however dense it is. every
@@ -671,17 +746,21 @@ function drawColumn(bucketRowsEl) {
   };
   bucketRowsEl.innerHTML = '';
   if (!state) { bucketRowsEl._rowRoles = nextRoles; return; }
-  const {sorted, status} = state;
+  const {status} = state;
+  // the filter decides what is drawn, not what is hidden afterwards: every redraw path lands here,
+  // and a match that would sit inside a pile of non-matches is laid out where it can be seen
+  const shown = shownCards(state);
+  state.shown = shown;
   const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || CARD_GAP;
   const width = bucketRowsEl.getBoundingClientRect().width;
   const available = availableColumnHeight(bucketRowsEl);
-  const natural = computeColumnFit(sorted.length, available, gap, width);
+  const natural = computeColumnFit(shown.length, available, gap, width);
   state.regime = natural.regime;
   // expanded draws the column spread whatever its regime says, scrolling if that overflows
   const fit = state.expanded
-    ? {...natural, regime: 1, n: sorted.length, piles: false, scrolls: natural.regime > 1, expanded: true}
+    ? {...natural, regime: 1, n: shown.length, piles: false, scrolls: natural.regime > 1, expanded: true}
     : natural;
-  const layout = computeColumnLayout(sorted, state.focusIndex, state.start, state.anchor, fit);
+  const layout = computeColumnLayout(shown, state.focusIndex, state.start, state.anchor, fit);
   state.start = layout.start;
   state.anchor = layout.anchor;
   layout.rows.forEach(entry => {
@@ -736,7 +815,8 @@ function handlePileKey(bucketRowsEl, evt) {
   const state = bucketRowsEl._pile;
   if (!isPiled(state)) return;
   if (evt.key !== 'ArrowDown' && evt.key !== 'ArrowUp') return;
-  const n = state.sorted.length;
+  // the drawn cards, so a card the filter left out is stepped over rather than landed on
+  const n = state.shown.length;
   const row = evt.target.closest?.('[data-idx]');
   const idx = row ? Number(row.dataset.idx) : (state.focusIndex ?? 0);
   const dir = evt.key === 'ArrowDown' ? 1 : -1;

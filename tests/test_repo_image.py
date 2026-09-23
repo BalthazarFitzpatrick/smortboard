@@ -80,6 +80,20 @@ def test_a_python_repo_builds_and_sets_the_image(tmp_path, store):
     assert "uv sync --frozen" in (tmp_path / "docker" / "smortboard-repo.Dockerfile").read_text()
 
 
+def test_the_python_image_installs_as_root_and_runs_as_agent():
+    """the card image runs as the non-root agent and /opt is root's: measured 2026-09-23, a
+    generated smortui image died "failed to create directory /opt/venv" until the install ran as
+    root and handed the venv back"""
+    from smortboard.repo_image import _PYTHON_TEMPLATE
+
+    lines = [line.strip() for line in _PYTHON_TEMPLATE.splitlines() if line.strip()]
+    assert lines.index("USER root") < next(
+        i for i, line in enumerate(lines) if line.startswith("RUN uv sync")
+    )
+    assert "chown -R agent:agent /opt/venv" in _PYTHON_TEMPLATE
+    assert lines[-1] == "USER agent"
+
+
 def test_a_node_repo_builds_the_npm_variant(tmp_path, store):
     (tmp_path / "package-lock.json").write_text("{}")
     board = store.create_board("b")

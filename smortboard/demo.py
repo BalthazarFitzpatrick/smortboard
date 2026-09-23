@@ -257,10 +257,11 @@ _LEASES = {
 
 # what fills the attention column, drained in order across the three boards and cycled if it runs
 # short. each entry is (stored status, blocked reason or None) - a card with no reason is the
-# checking card waiting on a decision, which raises review_flag instead. USAGE_LIMIT, MERGE_CONFLICT
-# and API_UNREACHABLE are absent on purpose: the board retries those itself, so isAttentionCard
-# leaves them in their own column until the automatic attempts are spent (see attention.py's
-# handled_by_board, and _spend_automatic_retries below, which is how the demo shows the spent case)
+# checking card waiting on a decision, which raises review_flag instead. MERGE_CONFLICT and
+# API_UNREACHABLE are retried by the board itself, so isAttentionCard leaves them in their own column
+# until the automatic attempts are spent (see attention.py's handled_by_board, and
+# _spend_automatic_retries below, which is how the demo shows the spent case). USAGE_LIMIT counts as
+# handled only while a real scheduler holds its retry, and the demo runs none, so it draws here
 _ATTENTION_RECIPE = [
     ("doing", "AGENT_QUESTION"),
     ("doing", "TESTS_FAILED"),
@@ -271,12 +272,15 @@ _ATTENTION_RECIPE = [
     ("doing", "CRASH"),
     ("todo", "DEPENDENCY_REJECTED"),
     ("doing", "MERGE_CONFLICT"),
+    ("checking", "OUTDATED"),
     ("doing", "API_UNREACHABLE"),
+    ("doing", "USAGE_LIMIT"),
 ]
 
-# the two reasons the board handles itself, so they stay in the doing column with the gold outline
-# rather than moving to attention - one per board, so the state is on show without being a backlog
-_SELF_HANDLED = ["USAGE_LIMIT", None, None]
+# the reason the board handles itself, so it stays in the doing column with the gold outline
+# rather than moving to attention - on one board, so the state is on show without being a backlog.
+# API_UNREACHABLE with a retry still pending: its note reads from the card's own events
+_SELF_HANDLED = ["API_UNREACHABLE", None, None]
 
 _MODELS = ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"]
 
@@ -400,6 +404,14 @@ _WALKTHROUGH = [
 ]
 
 
+def _summary(action: str, why: str, done: list[str], not_done: list[str] | None = None) -> str:
+    """a worker's closing block, in the shape exec/runner.SYSTEM_PROMPT asks every run to end with,
+    so the opened card's done and needs read the way a real card's do"""
+    lines = [f"ACTION: {action}", f"WHY: {why}", "DONE:", *(f"- {item}" for item in done)]
+    lines += ["NOT DONE:", *(f"- {item}" for item in not_done or ["none"])]
+    return "\n".join(lines)
+
+
 def _clean_attempt(
     store: Store, card_id: str, model: str, cost: float, pr_number: int, repo: str, slug: str
 ) -> None:
@@ -410,7 +422,13 @@ def _clean_attempt(
     store.append_event(
         card_id,
         "worker_summary",
-        {"text": "Keyed the endpoint on the Idempotency-Key header and covered the replay case."},
+        {
+            "text": _summary(
+                "review the PR",
+                "every criterion has a test, and it passes",
+                ["keyed the endpoint on the Idempotency-Key header", "covered the replay case"],
+            )
+        },
     )
     store.append_event(
         card_id, "test_gate", {"passed": True, "command": "uv run pytest -q", "exit_code": 0}
@@ -433,7 +451,15 @@ def _rejected_review_attempt(store: Store, card_id: str, model: str) -> None:
     store.append_event(card_id, "lifecycle_started", {})
     _narration(store, card_id, _WALKTHROUGH[:3])
     store.append_event(card_id, "result", _result_payload(0.62, 7, model))
-    store.append_event(card_id, "worker_summary", {"text": "Widened the retry to every decline."})
+    store.append_event(
+        card_id,
+        "worker_summary",
+        {
+            "text": _summary(
+                "review the PR", "decline retry covered", ["widened the retry to every decline"]
+            )
+        },
+    )
     store.append_event(
         card_id, "test_gate", {"passed": True, "command": "uv run pytest -q", "exit_code": 0}
     )
@@ -463,7 +489,18 @@ def _failed_tests_attempt(store: Store, card_id: str, model: str) -> None:
     store.append_event(card_id, "lifecycle_started", {})
     _narration(store, card_id, _WALKTHROUGH[:2])
     store.append_event(card_id, "result", _result_payload(0.41, 5, model))
-    store.append_event(card_id, "worker_summary", {"text": "Split the report per acquirer."})
+    store.append_event(
+        card_id,
+        "worker_summary",
+        {
+            "text": _summary(
+                "review the PR",
+                "per-acquirer totals match the ledger",
+                ["split the report per acquirer"],
+                ["rounding on split refunds: unsure which side owns the cent"],
+            )
+        },
+    )
     store.append_event(
         card_id,
         "test_gate",
@@ -616,6 +653,8 @@ _BLOCK_NOTES = {
     "CRASH": "The container exited before the agent finished its first turn.",
     "MERGE_CONFLICT": "The branch no longer merges into development; the base moved underneath it.",
     "API_UNREACHABLE": "The API could not be reached. The board is retrying on its own.",
+    "OUTDATED": "OUTDATED: origin/development moved and this card's commits no longer rebase onto "
+    "it - they conflict in: src/ledger/settle.py.",
     "DEPENDENCY_REJECTED": "The card this one waits on was rejected, so it cannot start.",
 }
 
@@ -700,6 +739,11 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
 
     for card in doing:
         _in_flight(store, card["id"])
+        if card["blocked_reason_code"] == "API_UNREACHABLE":
+            retry_at = (datetime.now(UTC) + timedelta(minutes=10)).timestamp()
+            store.append_event(
+                card["id"], "api_unreachable_retry", {"attempt": 1, "retry_at": retry_at}
+            )
         if card["blocked_reason_code"]:
             store.add_comment(card["id"], BOARD_AUTHOR, _BLOCK_NOTES[card["blocked_reason_code"]])
     if doing:

@@ -158,10 +158,13 @@
 .inbox-status.inbox-ok { color: var(--lichen-milk); }
 .inbox-status.inbox-error { color: var(--status-warn); }
 
+/* wraps for the same reason as the answer row: two approve buttons beside the paths would squeeze
+   the paths down to a few characters in a narrow panel */
 .inbox-lease-approve {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
 }
 .inbox-wants {
   flex: 1 1 auto;

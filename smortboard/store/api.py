@@ -15,8 +15,10 @@ from smortboard.store.schema import (
     BACKUP_RETENTION_DAYS,
     BLOCKED_REASON_CODES,
     DEFAULT_FINDINGS_ROUTE,
+    EFFORT_LEVELS,
     FINDINGS_ROUTES,
     STATUSES,
+    USAGE_LIMIT_ROUTES,
     migrate,
 )
 
@@ -48,6 +50,8 @@ COMPLEXITY_LEVELS = (1, 2, 3)
 # auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - opt-in, "on" rotates
 # credentials; unset (or any other value, including a stored "off" from before this flipped)
 # parks the board until the reset instead, the pre-profiles behaviour
+# usage_limit_route gates the cross-lab half of a USAGE_LIMIT - "attention" blocks the card in the
+# inbox instead of switching model unasked; unset (or "fallback") switches, see schema.USAGE_LIMIT_ROUTES
 # mall_cam_interval_seconds is the workforce drawer's auto-cycle period (cf90bacc) - unset means
 # chat.js's own default (10)
 # enable_mouse turns on the pointer affordances that mirror the keyboard - hover focusing a card,
@@ -67,6 +71,7 @@ _SETTING_KEYS = (
     "resume_briefing",
     "gate_timeout_seconds",
     "auto_switch_profiles",
+    "usage_limit_route",
     "mall_cam_interval_seconds",
     "enable_mouse",
     "worker_budget_usd",
@@ -74,6 +79,11 @@ _SETTING_KEYS = (
     "orchestrator_budget_usd",
     "fold_budget_usd",
     "card_total_budget_usd",
+    # per-role reasoning effort, see schema.EFFORT_LEVELS - unset passes no flag
+    "worker_effort",
+    "reviewer_effort",
+    "orchestrator_effort",
+    "fold_effort",
 )
 
 # per-run dollar caps an operator may set; unset falls back to each role's own default.
@@ -92,11 +102,22 @@ SPEND_CAP_KEYS = (
 # tolerant reader as a list, and the settings panel (o) replaces it whole with a list of paths
 _FALLBACK_KEYS = tuple(f"{role}_cross_lab_fallback" for role in ROLES)
 _EXTRA_SETTING_KEYS = ("mission_control_read_paths", *_FALLBACK_KEYS)
+_EFFORT_KEYS = tuple(f"{role}_effort" for role in ROLES)
+
+# the token counts a board_spend row carries (migration 24), in column order
+BOARD_SPEND_TOKENS = ("input_tokens", "output_tokens", "cached_tokens", "cache_creation_tokens")
 
 
 def _check_findings_route(value: str | None) -> None:
     if value is not None and value not in FINDINGS_ROUTES:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
+
+
+def _check_usage_limit_route(value: str | None) -> None:
+    if value is not None and value not in USAGE_LIMIT_ROUTES:
+        raise ValueError(
+            f"usage_limit_route must be one of {USAGE_LIMIT_ROUTES} or null, not {value!r}"
+        )
 
 
 # both reach docker or claude argv as their own item, so a leading "-" would read as a flag
@@ -112,6 +133,12 @@ def _check_image(value: Any) -> None:
 def _check_model(value: Any) -> None:
     if value is not None and not (isinstance(value, str) and _MODEL_NAME.match(value)):
         raise ValueError(f"model must be a model name or null, not {value!r}")
+
+
+def _check_effort(key: str, value: Any) -> None:
+    # reaches claude or codex argv, so only the named levels pass
+    if value is not None and value not in EFFORT_LEVELS:
+        raise ValueError(f"{key} must be one of {EFFORT_LEVELS} or null, not {value!r}")
 
 
 def _model_pair(lab: Any, model: Any) -> tuple[str | None, str | None]:
@@ -319,6 +346,16 @@ class Store:
         self._conn.commit()
         return self.get_board(board_id)
 
+    def set_board_lease_mode(self, board_id: str, value: str | None) -> dict[str, Any]:
+        """strict (or null) keeps a card inside its lease; soft lets it write any unprotected path
+        no other active card on the repo holds - see exec/leases.lease_policy"""
+        self.get_board(board_id)
+        if value not in (None, "strict", "soft"):
+            raise ValueError("lease_mode must be strict, soft, or null")
+        self._conn.execute("UPDATE boards SET lease_mode = ? WHERE id = ?", (value, board_id))
+        self._conn.commit()
+        return self.get_board(board_id)
+
     def board_merges_freely(self, board_id: str) -> bool:
         return self.get_board(board_id)["merge_mode"] == "free"
 
@@ -468,6 +505,12 @@ class Store:
         self.get_board(board_id)  # raises NotFoundError, so deleting twice is honest
         for card in self.list_cards(board_id):
             self.delete_card(card["id"])
+        # remembered lease paths point at the repo with no cascade: left in place, the repo delete
+        # below failed a foreign key after every card was already gone
+        self._conn.execute(
+            "DELETE FROM repo_remembered_leases WHERE repo_id IN (SELECT id FROM repos WHERE board_id = ?)",
+            (board_id,),
+        )
         self._conn.execute("DELETE FROM repos WHERE board_id = ?", (board_id,))
         self._conn.execute("DELETE FROM boards WHERE id = ?", (board_id,))
         self._conn.commit()
@@ -756,10 +799,14 @@ class Store:
         for key, value in fields.items():
             if key == "findings_route":
                 _check_findings_route(value)
+            if key == "usage_limit_route":
+                _check_usage_limit_route(value)
             if key in {"max_parallel", "mall_cam_interval_seconds"}:
                 _check_positive_int(key, value)
             if key in SPEND_CAP_KEYS:
                 _check_positive_number(key, value)
+            if key in _EFFORT_KEYS:
+                _check_effort(key, value)
             stored = value
             if key == "mission_control_read_paths" or key in _FALLBACK_KEYS:
                 if isinstance(value, str):
@@ -1305,17 +1352,35 @@ class Store:
         lab: str = "anthropic",
         model: str | None = None,
         cost_estimated: bool = False,
+        tokens: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         """a mission control or fold turn's cost - not tied to a card run, so it lives on its own
-        table rather than a card's events. see telemetry.board_spend_today, which sums these too."""
+        table rather than a card's events. see telemetry.board_spend_today, which sums these too.
+
+        `tokens` holds any of input_tokens, output_tokens, cached_tokens and cache_creation_tokens;
+        one left out stays null, unknown rather than zero."""
+        tokens = tokens or {}
         spend_id = _new_id()
         created_at = _now()
         self._conn.execute(
             """
-            INSERT INTO board_spend (id, board_id, role, cost_usd, created_at, lab, model, cost_estimated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO board_spend (
+                id, board_id, role, cost_usd, created_at, lab, model, cost_estimated,
+                input_tokens, output_tokens, cached_tokens, cache_creation_tokens
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (spend_id, board_id, role, cost_usd, created_at, lab, model, int(cost_estimated)),
+            (
+                spend_id,
+                board_id,
+                role,
+                cost_usd,
+                created_at,
+                lab,
+                model,
+                int(cost_estimated),
+                *(tokens.get(key) for key in BOARD_SPEND_TOKENS),
+            ),
         )
         self._conn.commit()
         row = self._conn.execute("SELECT * FROM board_spend WHERE id = ?", (spend_id,)).fetchone()
@@ -1363,6 +1428,20 @@ class Store:
             events.append(event)
         return events
 
+    def list_recent_events(self, kind: str, limit: int) -> list[dict[str, Any]]:
+        """the newest `limit` events of one kind across every card, newest first - a bounded read
+        where list_events_by_kind(None) would parse the whole table (74 MB measured 2026-09-23)"""
+        rows = self._conn.execute(
+            "SELECT * FROM events WHERE kind = ? ORDER BY created_at DESC, seq DESC LIMIT ?",
+            (kind, limit),
+        ).fetchall()
+        events = []
+        for row in rows:
+            event = _row_to_dict(row)
+            event["payload"] = json.loads(event.pop("payload_json"))
+            events.append(event)
+        return events
+
     def list_doing_cards_blocked(self) -> list[dict[str, Any]]:
         """cards in 'doing' with a blocked_reason_code set, across every board - half of the
         roster (the other half is whatever RunRegistry.active() says is actually running)"""
@@ -1382,6 +1461,18 @@ class Store:
         from smortboard.store.export import import_bundle as _import
 
         _import(self._conn, path)
+
+    def export_text(self) -> str:
+        """the bundle export() writes, as text - what the board hands a browser to download"""
+        from smortboard.store.export import bundle_text
+
+        return bundle_text(self._conn)
+
+    def import_as_new(self, bundle: object) -> list[str]:
+        """adds a parsed bundle's boards beside the ones here, under fresh ids - see export.py"""
+        from smortboard.store.export import import_as_new
+
+        return import_as_new(self._conn, bundle)
 
     # -- landing lock: one holder per (repo_key, target), fifo queue behind it -------------
 

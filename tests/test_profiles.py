@@ -650,7 +650,7 @@ def test_reset_filter_uses_the_runs_lab_and_profile(store, board_and_repo):
     ]:
         store.append_event(
             card["id"],
-            "rate_limit",
+            "rate_limit_event",  # the kind a real run records, see runner.record
             {
                 "lab": lab,
                 "profile": profile,
