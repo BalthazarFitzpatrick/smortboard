@@ -52,6 +52,11 @@ _ACTIONS = {
         "retrying",
         "The api was unreachable - the board is retrying it automatically with backoff.",
     ),
+    "OUTDATED": (
+        "redo on fresh base",
+        "The base moved and its commits no longer rebase onto it. Answer in the inbox (n) to "
+        "redo it on a fresh tree at the current base - the old commits stay on a backup ref.",
+    ),
     "refused": ("fix, then r", "Fix what the note says, then press r to run it again."),
     "stopped": ("press r", "Press r to run it again - its worktree and commits are kept."),
     "review": ("y or x", "Review the pull request, then press y to accept or x to reject."),

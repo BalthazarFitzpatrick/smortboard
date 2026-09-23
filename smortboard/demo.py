@@ -272,6 +272,7 @@ _ATTENTION_RECIPE = [
     ("doing", "CRASH"),
     ("todo", "DEPENDENCY_REJECTED"),
     ("doing", "MERGE_CONFLICT"),
+    ("checking", "OUTDATED"),
     ("doing", "API_UNREACHABLE"),
     ("doing", "USAGE_LIMIT"),
 ]
@@ -652,6 +653,8 @@ _BLOCK_NOTES = {
     "CRASH": "The container exited before the agent finished its first turn.",
     "MERGE_CONFLICT": "The branch no longer merges into development; the base moved underneath it.",
     "API_UNREACHABLE": "The API could not be reached. The board is retrying on its own.",
+    "OUTDATED": "OUTDATED: origin/development moved and this card's commits no longer rebase onto "
+    "it - they conflict in: src/ledger/settle.py.",
     "DEPENDENCY_REJECTED": "The card this one waits on was rejected, so it cannot start.",
 }
 

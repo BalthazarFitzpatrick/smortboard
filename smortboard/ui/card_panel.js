@@ -145,6 +145,7 @@ const CTA_BLOCKED_LABELS = new Map([
   ['DEPENDENCY_REJECTED', 'Review dependency'],
   ['MERGE_CONFLICT', 'Resolve conflicts'],
   ['API_UNREACHABLE', 'Retrying automatically'],
+  ['OUTDATED', 'Redo on fresh base'],
 ]);
 
 // the one action a card wants next, off the same status and reason code cardClasses reads - never

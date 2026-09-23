@@ -28,6 +28,7 @@ const REASON_LABELS = {
   DEPENDENCY_REJECTED: 'dependency rejected',
   MERGE_CONFLICT: 'merge conflict',
   API_UNREACHABLE: 'api unreachable',
+  OUTDATED: 'outdated - base moved',
 };
 
 function reasonLabel(reason) {
