@@ -79,14 +79,14 @@ elif tool in ("Bash", "shell", "exec_command", "shell_command"):
 
 
 def write_guard_files(lease: list[str], bash: BashPolicy) -> GuardFiles:
-    directory = Path(bash.worktree_path) / ".claude"
+    directory = Path(bash.out_dir)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "lease.json").write_text(
         json.dumps(
             {
                 "path_globs": lease,
                 "remembered_globs": bash.remembered_globs,
-                "root": bash.root or str(Path(bash.worktree_path).resolve()),
+                "root": bash.root,
                 "bash_allow": bash.bash_allow,
                 "read": bash.read,
                 "search": bash.search,
@@ -95,7 +95,7 @@ def write_guard_files(lease: list[str], bash: BashPolicy) -> GuardFiles:
         )
     )
     (directory / "codex_guard.py").write_text(_SCRIPT)
-    write_bash_guard_hook(bash.worktree_path, python=bash.python, guard_dir=bash.guard_dir)
+    write_bash_guard_hook(directory, python=bash.python, guard_dir=bash.guard_dir)
     script = (
         f"{bash.guard_dir}/codex_guard.py" if bash.guard_dir else str(directory / "codex_guard.py")
     )

@@ -98,15 +98,27 @@ def container_name(role: str, card_id: str) -> str:
     return f"smortboard-{role}-{card_id[:8]}-{uuid.uuid4().hex[:8]}"
 
 
-def write_container_guards(worktree_path: str | Path, path_globs: list[str]) -> Path:
-    """the card's lease and bash guards, written with the paths a card container sees"""
-    return write_lease_settings(
-        worktree_path,
+def write_container_guards(
+    out_dir: str | Path, path_globs: list[str], remembered_globs: list[str] | None = None
+) -> Path:
+    """the card's lease and bash guards, written into `out_dir` with the paths a card container
+    sees. `out_dir` is the board's own directory for this attempt, never the worktree: guard_mount
+    puts it at /smortboard read-only, and the test gate, which mounts the worktree, never sees it.
+
+    `remembered_globs` is the repo's remembered lease list - the post-run committed-path check
+    already allowed it, so the hook refusing it asked the operator twice for the same path.
+    """
+    settings = write_lease_settings(
+        out_dir,
         path_globs,
+        root=_CONTAINER_WORKDIR,
+        remembered_globs=remembered_globs,
         python=CONTAINER_PYTHON,
         guard_dir=CONTAINER_GUARD_DIR,
-        root=_CONTAINER_WORKDIR,
     )
+    # the card image runs as a non-root uid that rarely owns a host temp dir; read, never write
+    Path(out_dir).chmod(0o755)
+    return settings
 
 
 def guard_mount(settings_path: str | Path) -> tuple[list[str], str]:
@@ -354,10 +366,11 @@ class ContainerBackend:
                 bash_allow = tuple(
                     tool[5:-1] for tool in allowed_tools_for_repo(repo) if tool.startswith("Bash(")
                 )
+                # beside the attempt's own guards, which guard_mount puts at /smortboard
                 guards = adapter.guard_files(
                     leases,
                     BashPolicy(
-                        worktree_path=worktree_path,
+                        out_dir=Path(settings_path).parent,
                         python=CONTAINER_PYTHON,
                         guard_dir=CONTAINER_GUARD_DIR,
                         root=_CONTAINER_WORKDIR,

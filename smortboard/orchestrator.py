@@ -228,7 +228,7 @@ def _real_runner(
                 guards = adapter.guard_files(
                     [],
                     BashPolicy(
-                        worktree_path=schema_dir.name,
+                        out_dir=Path(schema_dir.name) / ".claude",
                         python="python3",
                         guard_dir="/smortboard-schema/.claude",
                         root=MOUNT_PARENT,

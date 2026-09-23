@@ -436,12 +436,12 @@ class ClaudeCodeAdapter:
 
     def guard_files(self, lease: list[str], bash: BashPolicy) -> GuardFiles:
         path = write_lease_settings(
-            bash.worktree_path,
+            bash.out_dir,
             lease,
+            root=bash.root,
             remembered_globs=bash.remembered_globs,
             python=bash.python,
             guard_dir=bash.guard_dir,
-            root=bash.root,
         )
         return GuardFiles(path, tuple(path.parent.iterdir()))
 

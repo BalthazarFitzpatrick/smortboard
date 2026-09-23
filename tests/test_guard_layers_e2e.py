@@ -7,6 +7,7 @@ worktree sync, the lease check and the base merge each broke on the other on the
 every unit test passed, because each layer's own tests fake the layers around it.
 """
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from smortboard import lifecycle
 from smortboard.exec import backends
 from smortboard.exec.backends import ContainerBackend
 from smortboard.exec.runner import RunResult
-from smortboard.exec.worktrees import create_worktree
+from smortboard.exec.worktrees import create_worktree, worktree_path
 from smortboard.review.gates import GateResult
 from smortboard.review.merge_request import MergeRequestResult
 from smortboard.review.reviewer import ReviewResult
@@ -112,6 +113,7 @@ def world(tmp_path, monkeypatch):
     w = World(tmp_path, store, card["id"], repo_path, origin, token)
 
     def _gate(store_, card_id, work_path, repo_):
+        w.seen["gate_saw_claude_dir"] = (Path(work_path) / ".claude").exists()
         w.seen["gate_tree_files"] = sorted(
             str(p.relative_to(work_path))
             for p in Path(work_path).rglob("*")
@@ -137,6 +139,7 @@ def _agent(monkeypatch, world, actions):
 
     def _run_process(store, card_id, cmd, cwd=None, **kwargs):
         world.seen["prompt"] = kwargs.get("stream_prompt") or ""
+        world.seen["cmd"] = cmd
         actions(Path(cwd))
         return RunResult(
             subtype="success",
@@ -212,3 +215,46 @@ def test_a_genuine_edit_outside_the_lease_is_still_blocked(world, monkeypatch):
 
     assert result.blocked_reason_code == "LEASE_CONFLICT"
     assert world.lease_events()[-1]["outside"] == ["docs/own.md"]
+
+
+def _guard_mount(cmd) -> Path:
+    """the host dir the worker's docker command mounts read-only at /smortboard"""
+    mounts = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-v"]
+    return next(Path(m.rsplit(":", 2)[0]) for m in mounts if m.endswith(":/smortboard:ro"))
+
+
+def test_the_guards_live_outside_the_worktree_for_exactly_one_attempt(world, monkeypatch):
+    """card 05de2d52 blocked TESTS_FAILED: the gate mounts the worktree, and the repo's own ruff
+    linted the board's .claude/bash_guard.py. the guards now sit in a dir of their own, carry the
+    repo's remembered globs, and a reused worktree loses the files an older board left in it"""
+    worktree = worktree_path(world.repo_path, world.card_id)
+    legacy = worktree / ".claude"
+    legacy.mkdir()
+    (legacy / "bash_guard.py").write_text('print(f"BASH_ESCAPE: stale")\n')
+    (legacy / "lease.json").write_text("{}")
+    repo_id = world.store.get_card(world.card_id)["repo_id"]
+    world.store.remember_lease_paths(repo_id, ["docs/**"])
+
+    def _look_then_edit(clone):
+        guards = _guard_mount(world.seen["cmd"])
+        world.seen["guards"] = guards
+        world.seen["guard_files"] = {p.name for p in guards.iterdir()}
+        world.seen["lease"] = json.loads((guards / "lease.json").read_text())
+        world.seen["worktree_claude_during_run"] = legacy.exists()
+        _edit_own_file(clone)
+
+    _agent(monkeypatch, world, _look_then_edit)
+
+    result = world.run()
+
+    assert result.phase == "opened", world.notes()
+    guards = world.seen["guards"]
+    assert world.repo_path.resolve() not in guards.resolve().parents
+    assert {"settings.json", "lease.json", "lease_guard.py", "bash_guard.py"} <= world.seen[
+        "guard_files"
+    ]
+    assert world.seen["lease"]["path_globs"] == ["src/**"]
+    assert world.seen["lease"]["remembered_globs"] == ["docs/**"]
+    assert world.seen["worktree_claude_during_run"] is False
+    assert world.seen["gate_saw_claude_dir"] is False
+    assert not guards.exists()  # removed once the attempt ended

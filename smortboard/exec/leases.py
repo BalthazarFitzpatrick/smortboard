@@ -5,6 +5,7 @@ lands and can refuse it with exit 2. This module writes the two files that make 
 one card's worktree — the lease itself, and a `--settings` file wiring the hook to enforce it.
 """
 
+import contextlib
 import inspect
 import json
 import re
@@ -110,7 +111,7 @@ globs = lease["path_globs"]
 # a repo's remembered globs (see Store.remember_lease_paths) - approved once from the inbox,
 # permitted on every card on this repo since, alongside its own lease rather than instead of it
 remembered = lease.get("remembered_globs") or []
-# a container mounts the guards outside the repo, so there the root comes from lease.json
+# the guards never sit inside the repo, so the root comes from lease.json
 repo_root = Path(lease.get("root") or Path(__file__).resolve().parents[1])
 
 try:
@@ -128,38 +129,43 @@ sys.exit(2)
 
 
 def write_lease_settings(
-    worktree_path: str | Path,
+    out_dir: str | Path,
     path_globs: list[str],
     *,
+    root: str | Path,
     remembered_globs: list[str] | None = None,
     python: str = sys.executable,
     guard_dir: str | None = None,
-    root: str | None = None,
 ) -> Path:
     """writes lease.json, both hook scripts, and a settings.json wiring PreToolUse to them
 
     also wires bash_guard's PreToolUse:Bash guard, so every card gets both guards from one
     --settings file. returns the settings.json path, which the runner passes via `--settings`.
 
+    `out_dir` is a directory the board owns, NEVER the worktree: the test gate mounts the worktree,
+    and a repo's own `ruff check .` failed a card on the board's generated hook scripts. So the
+    hooks cannot find the repo from their own location - `root` is always recorded in lease.json.
+
     `remembered_globs` is the card's repo's remembered list (see Store.remembered_leases) - a
     second, separate list the guard also allows against, so removing one from the repo later
     never has to touch a single card's own lease rows.
 
-    `python`, `guard_dir` and `root` are the interpreter, this .claude dir and the repo as the
-    RUNNER sees them. A container mounts them elsewhere and has its own interpreter, and a hook
-    whose command does not resolve exits 127 - which Claude Code treats as non-blocking, so the
-    guard would silently let every write through.
+    `python`, `guard_dir` and `root` are the interpreter, `out_dir` and the repo as the RUNNER
+    sees them. A container mounts them elsewhere and has its own interpreter, and a hook whose
+    command does not resolve exits 127 - which Claude Code treats as non-blocking, so the guard
+    would silently let every write through.
     """
-    worktree_path = Path(worktree_path)
-    claude_dir = worktree_path / ".claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    lease = {"path_globs": path_globs, "remembered_globs": remembered_globs or []}
-    if root:
-        lease["root"] = root
-    (claude_dir / "lease.json").write_text(json.dumps(lease, indent=2))
+    lease = {
+        "path_globs": path_globs,
+        "remembered_globs": remembered_globs or [],
+        "root": str(root),
+    }
+    (out_dir / "lease.json").write_text(json.dumps(lease, indent=2))
 
-    hook_script = claude_dir / "lease_guard.py"
+    hook_script = out_dir / "lease_guard.py"
     hook_script.write_text(_HOOK_SCRIPT)
     hook_script.chmod(0o755)
 
@@ -168,9 +174,50 @@ def write_lease_settings(
         "matcher": "Edit|Write",
         "hooks": [{"type": "command", "command": f"{python} {seen_script}"}],
     }
-    bash_guard_entry = write_bash_guard_hook(worktree_path, python=python, guard_dir=guard_dir)
+    bash_guard_entry = write_bash_guard_hook(out_dir, python=python, guard_dir=guard_dir)
 
     settings = {"hooks": {"PreToolUse": [lease_entry, bash_guard_entry]}}
-    settings_file = claude_dir / "settings.json"
+    settings_file = out_dir / "settings.json"
     settings_file.write_text(json.dumps(settings, indent=2))
     return settings_file
+
+
+# what the guard writers (and the reviewer's schema) once put into <worktree>/.claude
+_LEGACY_GUARD_FILES = (
+    "settings.json",
+    "lease.json",
+    "lease_guard.py",
+    "bash_guard.py",
+    "codex_guard.py",
+    "hooks.json",
+    "review-schema.json",
+)
+
+
+def drop_legacy_guards(worktree_path: str | Path) -> list[str]:
+    """removes guard files an older board wrote into the worktree's .claude dir, returns their names.
+
+    A reused worktree still holds them, and the test gate mounts the worktree - measured, card
+    05de2d52 blocked TESTS_FAILED on the repo's ruff linting `.claude/bash_guard.py`. Only
+    untracked files go: a repo's own committed `.claude/settings.json` stays where it is.
+    """
+    claude_dir = Path(worktree_path) / ".claude"
+    present = [name for name in _LEGACY_GUARD_FILES if (claude_dir / name).is_file()]
+    if not present:
+        return []
+    listed = subprocess.run(
+        ["git", "-C", str(worktree_path), "ls-files", "-z", "--", ".claude"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # no answer from git means no way to tell the repo's own files apart, so nothing is removed
+    if listed.returncode:
+        return []
+    tracked = set(listed.stdout.split("\0"))
+    removed = [name for name in present if f".claude/{name}" not in tracked]
+    for name in removed:
+        (claude_dir / name).unlink()
+    with contextlib.suppress(OSError):
+        claude_dir.rmdir()
+    return removed

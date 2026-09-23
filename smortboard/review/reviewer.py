@@ -339,10 +339,12 @@ def run_review(
 
     name = container_name("reviewer", card_id)
     if not adapter.capabilities.tool_allowlist:
+        # a dir of its own under the worker's guards: sharing one overwrote the worker's lease.json
+        # with this empty read-only lease, so a claude worker's next fix round refused every edit
         guards = adapter.guard_files(
             [],
             BashPolicy(
-                worktree_path=Path(settings_path).parent.parent,
+                out_dir=Path(settings_path).parent / "reviewer",
                 python=CONTAINER_PYTHON,
                 guard_dir=CONTAINER_GUARD_DIR,
                 root="/workspace",
