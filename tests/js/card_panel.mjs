@@ -142,11 +142,15 @@ const blockDone = sectionOf(blockHtml, 'done');
 const blockNeeds = sectionOf(blockHtml, 'needs');
 assert.ok(blockDone.includes('<li>a</li>'), 'a DONE line is listed under done');
 assert.ok(!blockDone.includes('review the PR') && !blockDone.includes('<li>b</li>'), 'done holds no ask and no leftover');
-assert.ok(blockNeeds.includes('agent: review the PR'), "the agent's ACTION sits under needs");
-assert.ok(blockNeeds.includes('why: criteria met'), 'with its WHY');
+// one next step, one voice: the board's step wins, the agent's own ask is not drawn beside it
+assert.ok(blockNeeds.includes('Review the pull request, then press y'), "the board's next action sits under needs");
+assert.ok(!blockNeeds.includes('review the PR') && !blockNeeds.includes('criteria met'),
+  "with a board step, the agent's ACTION and WHY are not a second voice");
 assert.ok(blockNeeds.includes('left: b'), 'a NOT DONE line sits under needs');
-assert.ok(blockNeeds.indexOf('card-next') < blockNeeds.indexOf('agent: review the PR'),
-  "the board's next action comes before the agent's own ask");
+// with no board step, the agent's own ask is the one next step, with its WHY
+const askNeeds = sectionOf(mod.cardPanelHtml({...reviewCard, next_action: null}, {...outcome, summary: blockSummary}), 'needs');
+assert.ok(askNeeds.includes('<li class="card-next">review the PR</li>'), "the agent's ACTION is the step when the board has none");
+assert.ok(askNeeds.includes('why: criteria met'), 'with its WHY');
 assert.ok(blockNeeds.includes('data-accent="attention"'), 'a card waiting on the operator wears the accent');
 assert.ok(!blockHtml.includes('agent summary'), 'with a block to read, the summary is not folded in whole as well');
 
@@ -172,9 +176,11 @@ const fallback = mod.cardPanelHtml(crashed, {...outcome, summary: 'older run, pl
 assert.ok(sectionOf(fallback, 'done').includes('<details class="card-fold"><summary>agent summary - 22 chars</summary>'),
   'the whole summary folds under done');
 assert.ok(sectionOf(fallback, 'done').includes('older run, plain prose'));
-assert.ok(sectionOf(fallback, 'needs').includes('<li>blocked: crash</li>'), 'the block reason leads needs');
+assert.ok(!sectionOf(fallback, 'needs').includes('blocked: crash'), 'the reason lives in the head line, not again under needs');
 assert.ok(sectionOf(fallback, 'needs').includes('<li class="card-next">Check the note for what broke.</li>'),
-  'then the next action');
+  'needs carries the one next step');
+const bare = sectionOf(mod.cardPanelHtml({...crashed, next_action: null}, {...outcome, summary: 'older run, plain prose'}), 'needs');
+assert.ok(bare.includes('<li>blocked: crash</li>'), 'with no step to give, needs says what went wrong');
 
 // ---- a card waiting on someone leads needs with the call to action; a quiet one does not
 const waiting = mod.cardPanelHtml({...card, blocked_reason_code: 'TESTS_FAILED', next_action: 'Press r to run it again.'}, outcome);

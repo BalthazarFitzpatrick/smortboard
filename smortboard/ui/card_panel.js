@@ -647,11 +647,17 @@ function needsSectionHtml(card, outcome, block, hasBoardNote) {
   const attention = ctaFor(card).attention;
   const lines = [];
   if (attention) {
-    // with no block to read, the reason itself has to say what went wrong
-    if (!block && card.blocked_reason_code) lines.push(`<li>blocked: ${escapeHtml(reasonWords(card.blocked_reason_code))}</li>`);
-    if (card.next_action) lines.push(`<li class="card-next">${escapeHtml(card.next_action)}</li>`);
-    if (block?.action && !isNoneLine(block.action)) lines.push(`<li>agent: ${linkifyPrRefs(block.action)}</li>`);
-    if (block?.why) lines.push(`<li>why: ${linkifyPrRefs(block.why)}</li>`);
+    // ONE NEXT STEP, ONE VOICE: the board's when it has one - it knows the gate failed even when the
+    // agent's own block still says "review the PR" - else the agent's ask, else the bare reason
+    const agentAsk = block?.action && !isNoneLine(block.action);
+    if (card.next_action) {
+      lines.push(`<li class="card-next">${escapeHtml(card.next_action)}</li>`);
+    } else if (agentAsk) {
+      lines.push(`<li class="card-next">${linkifyPrRefs(block.action)}</li>`);
+      if (block.why) lines.push(`<li>why: ${linkifyPrRefs(block.why)}</li>`);
+    } else if (card.blocked_reason_code) {
+      lines.push(`<li>blocked: ${escapeHtml(reasonWords(card.blocked_reason_code))}</li>`);
+    }
   } else {
     lines.push(`<li class="empty">${escapeHtml(quietNeed(card))}</li>`);
   }
