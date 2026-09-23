@@ -152,7 +152,7 @@ _ROUTES = [
     (re.compile(r"^/api/landing$"), "GET"),
 ]
 
-# a full claude setup-token is 108 bytes (see README Setup); this is a shape check, not a network
+# a full claude setup-token is 108 bytes; this is a shape check, not a network
 # call - short enough to catch an empty paste, generous enough to never reject a real token
 _MIN_TOKEN_LENGTH = 80
 _MAX_TOKEN_LENGTH = 4096
