@@ -202,7 +202,8 @@ await flush(); await flush();
 const approveCall = calls.find(c => c.path === '/api/cards/c3/lease/approve');
 assert.ok(approveCall, 'the approve control posts to the lease/approve route');
 assert.equal(approveCall.opts.method, 'POST');
-assert.deepEqual(JSON.parse(approveCall.opts.body), {paths: ['ui/board.js', 'docs/notes.md']});
+assert.deepEqual(JSON.parse(approveCall.opts.body), {paths: ['ui/board.js', 'docs/notes.md']},
+  'plain approve never sends remember - that stays the operator\'s explicit pick');
 
 // ---- a lease/approve refusal renders inline on that card too ---------------------------------------
 responses.set('/api/attention', stubJson(200, ROWS));
@@ -217,6 +218,35 @@ await flush(); await flush();
 const approveStatus = cards3[2].querySelector('.inbox-lease-approve .inbox-status');
 assert.equal(approveStatus.textContent, 'this card is not blocked on a lease conflict');
 assert.ok(approveStatus.className.includes('inbox-error'));
+assert.ok(!cards3[2].querySelector('.inbox-approve-remember').classList.contains('dim'),
+  'a refusal leaves both approve controls pressable again');
+
+// ---- the second approve control also remembers the paths for the whole repo ----------------------
+// plain approve stays the first control after the title, so remembering is one arrow further down
+responses.set('/api/attention', stubJson(200, ROWS));
+mod.ib.focusIndex = 2;
+mod.loadInbox();
+await flush(); await flush();
+const cards4 = mod.ib.panel.querySelectorAll('.inbox-card');
+const controls4 = Array.from(cards4[2].querySelectorAll('.inbox-control'));
+assert.deepEqual(controls4.map(c => c.textContent),
+  ['edited outside its lease', 'approve', 'approve and remember for this repo'],
+  'title, then plain approve, then approve-and-remember');
+const rememberButton = cards4[2].querySelector('.inbox-approve-remember');
+assert.ok(rememberButton.classList.contains('toggle'), 'the remember control is a toggle button too');
+responses.set('/api/cards/c3/lease/approve', stubJson(202, {card_id: 'c3', running: true, phase: 'running'}));
+const callsBefore = calls.length;
+fireKeydown(cards4[2], {code: 'Space', key: ' '});
+fireKeydown(mod.ib.listEl, {code: 'ArrowDown', key: 'ArrowDown', target: controls4[0]});
+fireKeydown(mod.ib.listEl, {code: 'ArrowDown', key: 'ArrowDown', target: controls4[1]});
+assert.ok(rememberButton.focused, 'arrowdown past approve reaches approve-and-remember');
+fireKeydown(cards4[2], {code: 'Space', key: ' ', target: rememberButton});
+await flush(); await flush();
+const rememberCall = calls.slice(callsBefore).find(c => c.path === '/api/cards/c3/lease/approve');
+assert.ok(rememberCall, 'approve-and-remember posts to the same lease/approve route');
+assert.equal(rememberCall.opts.method, 'POST');
+assert.deepEqual(JSON.parse(rememberCall.opts.body),
+  {paths: ['ui/board.js', 'docs/notes.md'], remember: true});
 
 // ---- arrowdown moves focus card by card, and the focused card is the one wearing tabIndex 0 -------
 mod.ib.focusIndex = 0;
@@ -275,7 +305,7 @@ const noB2 = mod.computeScopes(ROWS); // b2 has nothing waiting any more
 assert.equal(mod.resolveScope(noB2, 'b2'), 'all', 'a scope that emptied out falls back to all boards');
 
 // ---- one press where a row has one thing to do, step-in where it has more ------------------------
-// the lease-conflict card above keeps its two-step walk (title, then approve) because the choice is
+// the lease-conflict card above keeps its step-in walk (title, then its approves) because the choice is
 // real. a row whose only control IS its title opens on the first press instead of reading as "it
 // selected the title" - the complaint that started this
 responses.set('/api/attention', stubJson(200, ROWS));
