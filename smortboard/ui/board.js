@@ -229,6 +229,71 @@ function bucketHasCards(bucket) {
   return bucket.querySelector('.bucket-rows')?.children.length > 0;
 }
 
+// ---- cmd/ctrl+f: a live filter over the board's cards -------------------------------------------
+// view-only: it narrows which cards each column draws (columns.js shownCards), never their order,
+// status or anything on the server. shortcuts.js takes the key and calls focusCardFilter
+let cardFilterQuery = '';
+
+// what a card matches on: title, short id, description, every comment (the timeline an opened card
+// shows) and the name of the column it sits in, so a column's name finds its cards
+function cardFilterText(card) {
+  const column = columnFor(card);
+  const comments = (card.comments || []).map(c => c.body || '');
+  return [card.title, shortId(card.id), card.description, ...comments, STATUS_NAME[column] || column]
+    .filter(Boolean).join('\n').toLowerCase();
+}
+
+function cardMatchesFilter(card, query = cardFilterQuery) {
+  const q = String(query || '').trim().toLowerCase();
+  return !q || cardFilterText(card).includes(q);
+}
+
+const sameCards = (a, b) => a.length === b.length && a.every((card, i) => card === b[i]);
+
+// redraws only the columns whose drawn cards change. such a column starts from rest: its focus
+// index counts the cards it draws, and that list just changed under it
+function applyCardFilter(query) {
+  cardFilterQuery = String(query || '').trim().toLowerCase();
+  document.querySelectorAll('#bucket-row .bucket-rows').forEach(rows => {
+    const state = rows._pile;
+    if (!state || sameCards(shownCards(state), state.shown || [])) return;
+    Object.assign(state, {focusIndex: null, start: 0, anchor: 'top'});
+    refitColumn(rows);
+  });
+}
+
+// built on first use from ui_base's text-field and left in the corner, so escape has something to
+// clear back to rather than a field popping in and out
+function buildCardFilterInput() {
+  const input = document.createElement('input');
+  input.id = 'card-filter';
+  input.className = 'text-field card-filter';
+  input.placeholder = 'filter cards';
+  input.title = 'cmd/ctrl+f - title, id, description, comments or column';
+  input.addEventListener('input', () => applyCardFilter(input.value));
+  input.addEventListener('keydown', evt => {
+    if (evt.code !== 'Escape') return;
+    // the board's own escape must not also act on this press
+    evt.stopPropagation();
+    clearCardFilter();
+    returnToBoardBar();
+  });
+  barCorner().appendChild(input);
+  return input;
+}
+
+function clearCardFilter() {
+  const input = document.getElementById('card-filter');
+  if (input) input.value = '';
+  applyCardFilter('');
+}
+
+function focusCardFilter() {
+  const input = document.getElementById('card-filter') || buildCardFilterInput();
+  input.focus();
+  return input;
+}
+
 // left/right should never park focus on a column with nothing in it. this runs in the capture
 // phase - ahead of makeBuckets' own bubble listener on bucket-row - so it can step aside for a
 // plain adjacent move and only take over once the next column in that direction is empty
@@ -490,8 +555,13 @@ function pollRun(cardId) {
 const FOLLOW_RUNS_MS = 4000;
 let followedCardStates = null; // Map<card id, `${status}|${updated_at}`> as of the last poll
 
+// by the column's own card list first, not its drawn strips - a card the filter leaves out has no
+// strip, and a poll moving it would otherwise leave a copy behind in the column it left
 function bucketHolding(cardId) {
-  return document.querySelector(`.card-strip[data-card-id="${cardId}"]`)?.closest('.bucket') || null;
+  const rows = Array.from(document.querySelectorAll('#bucket-row .bucket-rows'))
+    .find(el => (el._pile?.sorted || []).some(card => card.id === cardId));
+  const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
+  return rows?.closest('.bucket') || strip?.closest('.bucket') || null;
 }
 
 // swaps a card into its (possibly new) column's list and redraws each touched column whole, so a
@@ -843,6 +913,8 @@ async function jumpToCard(cardId, roster) {
     activateTab(row.board_id);
     await onBoardEnter(row.board_id);
   }
+  // a jump asks to see this card, so a filter leaving it out gives way
+  if (cardFilterQuery && !document.querySelector(`.card-strip[data-card-id="${cardId}"]`)) clearCardFilter();
   const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
   if (!strip) return;
   strip.focus();

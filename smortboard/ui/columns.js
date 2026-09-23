@@ -692,6 +692,11 @@ function animateRows(bucketRowsEl, before, plan, priorRoles, nextRoles, status) 
   });
 }
 
+// the cards a column draws: all of them, or only the matches while the card filter (board.js) is on
+function shownCards(state) {
+  return state.sorted.filter(card => cardMatchesFilter(card));
+}
+
 // redraws bucketRowsEl from its own _pile state: ONE path for every column, the regime deciding
 // whether its cards spread, fan, or fan between two piles. expanded is the one override - the
 // operator asked for the whole column as a scrolling list, so it spreads however dense it is. every
@@ -711,17 +716,21 @@ function drawColumn(bucketRowsEl) {
   };
   bucketRowsEl.innerHTML = '';
   if (!state) { bucketRowsEl._rowRoles = nextRoles; return; }
-  const {sorted, status} = state;
+  const {status} = state;
+  // the filter decides what is drawn, not what is hidden afterwards: every redraw path lands here,
+  // and a match that would sit inside a pile of non-matches is laid out where it can be seen
+  const shown = shownCards(state);
+  state.shown = shown;
   const gap = parseFloat(getComputedStyle(bucketRowsEl).rowGap) || CARD_GAP;
   const width = bucketRowsEl.getBoundingClientRect().width;
   const available = availableColumnHeight(bucketRowsEl);
-  const natural = computeColumnFit(sorted.length, available, gap, width);
+  const natural = computeColumnFit(shown.length, available, gap, width);
   state.regime = natural.regime;
   // expanded draws the column spread whatever its regime says, scrolling if that overflows
   const fit = state.expanded
-    ? {...natural, regime: 1, n: sorted.length, piles: false, scrolls: natural.regime > 1, expanded: true}
+    ? {...natural, regime: 1, n: shown.length, piles: false, scrolls: natural.regime > 1, expanded: true}
     : natural;
-  const layout = computeColumnLayout(sorted, state.focusIndex, state.start, state.anchor, fit);
+  const layout = computeColumnLayout(shown, state.focusIndex, state.start, state.anchor, fit);
   state.start = layout.start;
   state.anchor = layout.anchor;
   layout.rows.forEach(entry => {
@@ -776,7 +785,8 @@ function handlePileKey(bucketRowsEl, evt) {
   const state = bucketRowsEl._pile;
   if (!isPiled(state)) return;
   if (evt.key !== 'ArrowDown' && evt.key !== 'ArrowUp') return;
-  const n = state.sorted.length;
+  // the drawn cards, so a card the filter left out is stepped over rather than landed on
+  const n = state.shown.length;
   const row = evt.target.closest?.('[data-idx]');
   const idx = row ? Number(row.dataset.idx) : (state.focusIndex ?? 0);
   const dir = evt.key === 'ArrowDown' ? 1 : -1;

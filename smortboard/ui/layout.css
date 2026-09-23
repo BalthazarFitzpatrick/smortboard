@@ -548,6 +548,16 @@ body {
   text-decoration: none;
 }
 
+/* the card filter (board.js buildCardFilterInput, cmd/ctrl+f): ui_base's text-field at the bar
+   corner's own height, between the bug form and settings */
+.card-filter {
+  order: 1;
+  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  width: 160px;
+  box-sizing: border-box;
+  font-size: var(--font-size, 13px);
+}
+
 /* ---- settings (o): the button in the bar corner and the panel it opens ---------------------- */
 .settings-button {
   order: 2;
