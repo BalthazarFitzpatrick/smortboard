@@ -474,7 +474,7 @@ def _make_handler(
             elif "card_id" in params and method == "GET":
                 # the board list's enrichment too, so the open card says what to do next
                 card = store.get_card(params["card_id"])
-                self._send_json(200, with_actions(store, [card])[0])
+                self._send_json(200, with_actions(store, [card], scheduler)[0])
             elif "card_id" in params and method == "PATCH":
                 self._handle_patch_card(params["card_id"])
             elif "card_id" in params and method == "DELETE":

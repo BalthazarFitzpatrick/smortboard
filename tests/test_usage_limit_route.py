@@ -578,3 +578,27 @@ def test_a_runtime_refusal_backs_off_then_gives_up_to_the_inbox(store, board):
     assert len(retries) == len(RUNTIME_BACKOFF_MINUTES)
     (row,) = attention_rows(store, registry)
     assert row["reason"] == "refused"
+
+
+def test_the_open_card_and_the_board_agree_on_a_usage_limit(tmp_path):
+    """the card route and the board list share one scheduler, so an open card never says it needs
+    you while the board says it is retrying, or the other way round"""
+
+    def setup(store):
+        board_id = store.create_board("b")["id"]
+        repo_id = store.create_repo(board_id, "r", str(tmp_path), "main", test_command="true")["id"]
+        card = store.create_card(board_id, repo_id, "limited", leases=["a.py"])
+        store.update_card(card["id"], status="doing", blocked_reason_code="USAGE_LIMIT")
+        return board_id, card["id"]
+
+    with _served(tmp_path, setup) as ((board_id, card_id), base, server):
+        # a retry the board holds - the case where a route without the scheduler disagreed
+        board_scheduler = server.scheduler.get(board_id)
+        with board_scheduler._lock:
+            board_scheduler._card_retry_at[card_id] = time.time() + 600
+        _, listed = _call(f"{base}/api/boards/{board_id}/cards")
+        _, opened = _call(f"{base}/api/cards/{card_id}")
+    row = next(card for card in listed if card["id"] == card_id)
+    assert row["handled_by_board"] is True
+    assert opened["handled_by_board"] == row["handled_by_board"]
+    assert opened["next_action"] == row["next_action"]
