@@ -416,7 +416,8 @@ The focused card answers in place, and the answer resumes the card. Six reasons 
 answering: a question, failed tests, a rejected review, a crash, a lease conflict, a merge conflict.
 
 **The surprising part: two cannot.** `USAGE_LIMIT` clears itself when the rate-limit window resets,
-so an answer would only be spent confusing the agent. `DEPENDENCY_REJECTED` is not this card's
+so an answer would only be spent confusing the agent. Its row offers **retry on** the next usable
+fallback model instead, when there is one. `DEPENDENCY_REJECTED` is not this card's
 fault - fix and accept the card it depends on, and this one un-blocks itself. Neither is a card in
 `checking` waiting for accept or reject: that is a decision, not a question, and it belongs on the
 card with `y` or `x`.
@@ -471,6 +472,11 @@ Each role can have an ordered fallback list such as `openai/gpt-5.6-sol`.
 Leave it empty to keep the role on its chosen lab. Automatic profile rotation
 stays within a lab; a cross-lab retry needs an explicit fallback and leaves a
 message on the card. Codex notes are delivered on the next run.
+
+The board makes that cross-lab switch on its own by default. Tick "on a usage limit, ask me before
+switching to a fallback model" in `o` (`usage_limit_route` set to `attention`) and it asks instead:
+the card waits in the inbox with a **retry on** control, and still re-runs on its own model once the
+window resets.
 
 Models come from `smortboard/labs/catalog.json`. Add or override entries in
 `~/.config/smortboard/catalog.json` (under `XDG_CONFIG_HOME` when set):
@@ -630,7 +636,7 @@ inbox. In short:
 | `LEASE_CONFLICT` | almost always a lease written for a repo layout that does not exist. Approve the paths, or tell it to leave them alone. |
 | `MERGE_CONFLICT` | another card landed first. Resuming makes the worker merge the base and resolve it. |
 | `DEPENDENCY_REJECTED` | nothing to do here. Fix the dependency. |
-| `USAGE_LIMIT` | wait. Answering does nothing. |
+| `USAGE_LIMIT` | wait, or retry it on the fallback model from its row. Answering does nothing. |
 | `CRASH` | check the note, then resume - the worktree and commits are kept. |
 
 ### The mistakes that cost a day
@@ -875,7 +881,7 @@ runs on, and what it may spend.
 
 Every one of those is a stored setting: `findings_route`, the per-role `*_lab` and `*_model` pairs
 and their `*_cross_lab_fallback` lists, `max_parallel`, `resume_briefing`, `gate_timeout_seconds`,
-`auto_switch_profiles`, the per-run caps `worker_budget_usd`, `reviewer_budget_usd`,
+`auto_switch_profiles`, `usage_limit_route`, the per-run caps `worker_budget_usd`, `reviewer_budget_usd`,
 `orchestrator_budget_usd`, `fold_budget_usd`, the per-card `card_total_budget_usd`, and
 `mission_control_read_paths` (absolute paths mission control may also read). Per board: its own
 parallel cap, its `daily_budget_usd`, and its merge mode.

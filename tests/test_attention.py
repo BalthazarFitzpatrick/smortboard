@@ -126,14 +126,28 @@ def test_a_checking_card_awaiting_decision_surfaces_too(store, repo):
     assert "press y to accept or x to reject" in rows[0]["hint"]
 
 
+class _ScheduledRetry:
+    """stands in for SchedulerRegistry: every card holds a retry at the same time"""
+
+    def __init__(self, at):
+        self.at = at
+
+    def retry_at(self, store, card):
+        return self.at
+
+    def paused_labs(self):
+        return {}
+
+
 def test_usage_limit_is_excluded_from_the_inbox_while_retried_automatically(store, repo):
     from smortboard import attention as attention_module
 
     _, card = _board_and_card(store, repo)
     store.update_card(card["id"], blocked_reason_code="USAGE_LIMIT", review_flag=True)
+    schedule = _ScheduledRetry(1999999999.0)
 
-    assert attention_rows(store) == []
-    cards = attention_module.with_actions(store, [store.get_card(card["id"])])
+    assert attention_rows(store, schedule) == []
+    cards = attention_module.with_actions(store, [store.get_card(card["id"])], schedule)
     assert cards[0]["handled_by_board"] is True
 
 

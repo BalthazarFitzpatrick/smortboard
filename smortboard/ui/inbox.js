@@ -247,6 +247,9 @@ function buildInboxCard(row, idx, focused) {
   if (row.reason === 'LEASE_CONFLICT' && row.wants && row.wants.length) {
     extras.push(buildLeaseApproveRow(row));
   }
+  if (row.reason === 'USAGE_LIMIT' && row.fallback) {
+    extras.push(buildFallbackRetryRow(row));
+  }
 
   // an answer cannot move a decision or a rate limit - the action line already says what will
   if (row.answerable === false) {
@@ -347,6 +350,42 @@ async function approveLease(cardId, paths, button, status) {
     return;
   }
   status.textContent = 'resumed';
+  status.className = 'inbox-status inbox-ok';
+  pollAttentionCount();
+  if (currentBoardId) onBoardEnter(currentBoardId);
+  loadInbox();
+}
+
+// a usage-limited row's one control: run the limited role once on its next fallback model now,
+// rather than waiting for the reset. no usable fallback means no control - the note says so
+function buildFallbackRetryRow(row) {
+  const wrap = document.createElement('div');
+  wrap.className = 'inbox-answer-row';
+
+  const button = document.createElement('span');
+  button.className = 'inbox-retry toggle inbox-control';
+  button.tabIndex = -1;
+  button.textContent = `retry on ${row.fallback}`;
+  const status = document.createElement('span');
+  status.className = 'inbox-status';
+  button.onclick = () => retryOnFallback(row.card_id, button, status);
+
+  wrap.append(button, status);
+  return wrap;
+}
+
+async function retryOnFallback(cardId, button, status) {
+  button.classList.add('dim');
+  status.textContent = 'starting...';
+  status.className = 'inbox-status';
+  const {ok, body} = await apiOrError(`/api/cards/${cardId}/fallback-run`, {method: 'POST'});
+  if (!ok) {
+    status.textContent = (body && body.error) || 'could not start';
+    status.className = 'inbox-status inbox-error';
+    button.classList.remove('dim');
+    return;
+  }
+  status.textContent = 'started';
   status.className = 'inbox-status inbox-ok';
   pollAttentionCount();
   if (currentBoardId) onBoardEnter(currentBoardId);

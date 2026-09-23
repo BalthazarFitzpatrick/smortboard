@@ -40,6 +40,7 @@ from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import command_model, role_effort, role_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.prompts import active_prompt
+from smortboard.scheduler import usage_limit_route
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
 from smortboard.store.api import BOARD_SPEND_TOKENS, Store, _clean_leases, _is_catch_all
 from smortboard.telemetry import board_evidence
@@ -338,30 +339,24 @@ def _real_runner(
                     break
                 profiles.set_active(available[0]["name"], lab=lab)
                 continue
-            fallback = None
-            for ref in settings.get(f"{role}_cross_lab_fallback") or []:
-                target = resolve_ref(ref)
-                if target is None or target[0] == lab:
-                    continue
-                target_lab, target_model = target
-                target_profile = profiles.next_available(lab=target_lab)
-                if target_profile is None or (target_lab, target_profile) in tried:
-                    continue
-                try:
-                    profiles.read_profile_token(target_lab, target_profile)
-                except profiles.ProfileError:
-                    continue
-                profiles.set_active(target_profile, lab=target_lab)
-                fallback = command_model(target_lab, target_model)
-                store.add_orchestrator_message(
-                    board_id,
-                    _BOARD_AUTHOR,
-                    f"Retrying {role} on {target_lab}/{target_model}; {lab} reached its usage limit.",
-                )
+            # the "attention" route never switches model unasked - the turn fails with the limit
+            if usage_limit_route(settings) != "fallback":
                 break
-            if fallback is None:
+            target = profiles.usable_fallback(
+                settings.get(f"{role}_cross_lab_fallback") or [],
+                lab,
+                skip=lambda target_lab, target_profile: (target_lab, target_profile) in tried,
+            )
+            if target is None:
                 break
-            model = fallback
+            target_lab, target_model, target_profile = target
+            profiles.set_active(target_profile, lab=target_lab)
+            store.add_orchestrator_message(
+                board_id,
+                _BOARD_AUTHOR,
+                f"Retrying {role} on {target_lab}/{target_model}; {lab} reached its usage limit.",
+            )
+            model = command_model(target_lab, target_model)
         # a turn that answered through its schema and only then hit a limit still answered
         if result.structured_output is not None and result.blocked_reason_code in (None, "CRASH"):
             return json.dumps(result.structured_output)

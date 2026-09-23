@@ -15,7 +15,7 @@ from platformdirs import user_data_dir
 
 from smortboard.demo import make_demo_db
 from smortboard.server.access import KEY_QUERY, load_or_create_api_key
-from smortboard.server.app import build_server
+from smortboard.server.app import build_server, start_background
 from smortboard.store import Store
 
 _APP_NAME = "smortboard"
@@ -199,10 +199,17 @@ def main(argv: list[str] | None = None) -> None:
                 f"{len(server.recovered)} card(s) were left mid-run by the last board - "
                 "blocked as CRASH, waiting in the inbox"
             )
+        # a demo is a still life - nothing it seeds may start a real run
+        requeued = [] if args.demo else start_background(server)
+        if requeued:
+            print(f"{len(requeued)} card(s) were owed a retry by the last board - requeued")
         if not args.no_browser:
             webbrowser.open(url)
-        with contextlib.suppress(KeyboardInterrupt):
-            server.serve_forever()
+        try:
+            with contextlib.suppress(KeyboardInterrupt):
+                server.serve_forever()
+        finally:
+            server.server_close()
 
 
 if __name__ == "__main__":
