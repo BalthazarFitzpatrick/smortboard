@@ -55,16 +55,23 @@ concepts below against something real.
 
 ### Your first board
 
+> **Press `h` before your first card.** The pre-flight checklist is one screen of green and red rows:
+> git, `gh` signed in, Docker, the card image, your lab credentials, and for every repo on the board
+> its path, an `origin` on GitHub, its default branch pushed, `gh` able to see it, a test command,
+> and a repo image no older than its lockfile. A red row says what is missing and how to fix it.
+> Skip it and a card finds the same gap minutes into its run.
+
 `uv run smortboard` (no `--demo`) starts your actual board on port 8000. Three things before a card
-can run, and the pre-flight checklist (`h`) names whichever is missing:
+can run:
 
 1. **A lab credential.** `shift`+`p`, add a profile, paste what `claude setup-token` or
    `codex login` gives you. Never your own login; [Install](#install) says exactly what to paste.
 2. **Docker running**, so a card has somewhere to execute.
 3. **A board and a repo.** `b` -> **from local repo** -> pick a clone of a GitHub repo with its
-   default branch pushed. On the repo's row, set the command that runs its tests, e.g.
-   `uv run pytest -q`. **A repo without a test command cannot finish a card**; the gate has nothing
-   to run.
+   default branch pushed. A private repo is enough: the board pushes card branches there and opens
+   its pull requests there, so a repo with no GitHub `origin` stops every card at hand-over. On the
+   repo's row, set the command that runs its tests, e.g. `uv run pytest -q`. **A repo without a test
+   command cannot finish a card**; the gate has nothing to run.
 
 Then:
 
