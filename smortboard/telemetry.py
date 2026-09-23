@@ -912,15 +912,17 @@ def _finished_card_evidence(store: Store, card: dict[str, Any]) -> dict[str, Any
     }
 
 
+# the newest finished cards listed one by one in mission control's evidence; the scorecard still
+# counts every finished card, so a long history costs a few rows per model, not one per card
+EVIDENCE_CARD_LIMIT = 20
+
+
 def board_evidence(store: Store, board_id: str) -> dict[str, Any]:
-    """what the orchestrator sees of this board's own run history: each finished card's cost and
-    outcome, plus a scorecard per worker model - kept to finished cards and rounded numbers so it
-    stays small in every turn's prompt."""
-    finished = [
-        row
-        for card in store.list_cards(board_id)
-        if (row := _finished_card_evidence(store, card)) is not None
-    ]
+    """what the orchestrator sees of this board's own run history: the newest finished cards' cost
+    and outcome, plus a scorecard per worker model over all of them - finished cards and rounded
+    numbers only, so it stays small in every turn's prompt."""
+    cards = sorted(store.list_cards(board_id), key=lambda card: card["updated_at"], reverse=True)
+    finished = [row for card in cards if (row := _finished_card_evidence(store, card)) is not None]
 
     by_model: dict[str, list[dict[str, Any]]] = {}
     for row in finished:
@@ -943,4 +945,4 @@ def board_evidence(store: Store, board_id: str) -> dict[str, Any]:
             }
         )
 
-    return {"cards": finished, "model_scorecard": scorecard}
+    return {"cards": finished[:EVIDENCE_CARD_LIMIT], "model_scorecard": scorecard}

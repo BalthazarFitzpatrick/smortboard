@@ -11,14 +11,24 @@ waiting longest surfaces first, same as any other inbox.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from typing import Any
 
+from smortboard import profiles
 from smortboard.actions import next_action, short_action
 from smortboard.budgets import spend_refusal
+from smortboard.labs.routing import role_ref
 from smortboard.lifecycle import BOARD_AUTHOR
 from smortboard.operator import AUTHOR_KEY
-from smortboard.scheduler import API_UNREACHABLE_MAX_RETRIES, _latest_reset, conflicting_run
+from smortboard.scheduler import (
+    API_UNREACHABLE_MAX_RETRIES,
+    card_reset,
+    conflicting_run,
+    latest_limit,
+    record_fallback,
+    usage_limit_route,
+)
 from smortboard.store.api import Store
 from smortboard.telemetry import card_telemetry
 
@@ -38,22 +48,30 @@ RESUMABLE_REASONS = frozenset(
     }
 )
 # USAGE_LIMIT clears on its own once the rate-limit window resets - answering it does not change
-# the model's limit, so an answer would only be spent confusing the agent on its next run.
+# the model's limit, so an answer would only be spent confusing the agent on its next run. its
+# inbox row offers a retry on the next fallback model instead, see fallback_run.
 # DEPENDENCY_REJECTED is not this card's fault - a message to it cannot un-reject the dependency;
 # accept_card already clears it automatically once the dependency comes back (see review/decide.py)
+
+
+def _utc(at: float) -> str:
+    return datetime.fromtimestamp(at, tz=UTC).strftime("%H:%M UTC")
 
 
 def _format_retry_at(retry_at: float | None) -> str:
     if retry_at is None:
         return "once its automatic retry runs"
-    when = datetime.fromtimestamp(retry_at, tz=UTC).strftime("%H:%M UTC")
-    return f"retry at {when}"
+    return f"retry at {_utc(retry_at)}"
 
 
-def handled_by_board(store: Store, card: dict[str, Any]) -> str | None:
+def handled_by_board(store: Store, card: dict[str, Any], schedule: Any = None) -> str | None:
     """the inbox note for a card the board is already retrying on its own, or None once it needs
     a real decision - a spent automatic attempt (API_UNREACHABLE's three retries, MERGE_CONFLICT's
-    one resume) returns None so the card falls back into the inbox instead of hiding forever."""
+    one resume) returns None so the card falls back into the inbox instead of hiding forever.
+
+    `schedule` is anything shaped like SchedulerRegistry (retry_at, paused_labs). a USAGE_LIMIT
+    card or a runtime refusal counts as handled only while it really holds a timer or a queue
+    place there - measured, two cards relabeled on 09-14 hid from the inbox with nothing queued."""
     reason = card.get("blocked_reason_code")
     card_id = card["id"]
     if reason == "API_UNREACHABLE":
@@ -63,13 +81,61 @@ def handled_by_board(store: Store, card: dict[str, Any]) -> str | None:
         retry_at = attempts[-1]["payload"].get("retry_at") if attempts else None
         return _format_retry_at(retry_at)
     if reason == "USAGE_LIMIT":
-        return _format_retry_at(_latest_reset(store))
+        retry_at = schedule.retry_at(store, card) if schedule is not None else None
+        return _format_retry_at(retry_at) if retry_at is not None else None
     if reason == "MERGE_CONFLICT":
         attempted = any(
             e["kind"] == "merge_conflict_auto_resume" for e in store.list_events(card_id)
         )
         return None if attempted else "resuming automatically"
+    if reason is None and card.get("review_flag") and schedule is not None:
+        retry_at = schedule.retry_at(store, card)
+        if retry_at is not None and _flag_reason(store, card_id) == "refused":
+            return _format_retry_at(retry_at)
     return None
+
+
+def _limit_of(store: Store, card: dict[str, Any], settings: dict[str, Any]) -> tuple[str, str, str]:
+    """(role, lab, model) that hit the card's limit - its profile_limited record, or the role's own
+    configured model for a card relabeled from CRASH, which never had one written"""
+    limit = latest_limit(store, card["id"]) or {}
+    role = limit.get("role") or "worker"
+    own_lab, own_model = role_ref(settings, role, card if role == "worker" else None)
+    return role, limit.get("lab") or own_lab, limit.get("model") or own_model
+
+
+def _next_fallback(
+    settings: dict[str, Any], role: str, lab: str, paused_labs: dict[str, float]
+) -> tuple[str, str, str] | None:
+    now = time.time()
+    return profiles.usable_fallback(
+        settings.get(f"{role}_cross_lab_fallback") or [],
+        lab,
+        skip=lambda target_lab, _profile: paused_labs.get(target_lab, 0) > now,
+    )
+
+
+def usage_limit_note(
+    store: Store, card: dict[str, Any], schedule: Any = None
+) -> tuple[str, str | None]:
+    """the inbox line for a USAGE_LIMIT card and the fallback ref its retry control would use,
+    e.g. "opus limit - retry on openai/gpt-5.6-sol? or waits to 15:40 UTC" """
+    settings = store.get_settings()
+    role, lab, model = _limit_of(store, card, settings)
+    paused = schedule.paused_labs() if schedule is not None else {}
+    target = _next_fallback(settings, role, lab, paused)
+    retry_at = schedule.retry_at(store, card) if schedule is not None else None
+    reset = card_reset(store, card["id"])
+    if retry_at is not None:
+        tail = f"waits to {_utc(retry_at)}"
+    elif reset is not None and reset > time.time():
+        tail = f"resets {_utc(reset)}, then r"
+    else:
+        tail = "r runs it again"
+    if target is None:
+        return f"{model} limit - no usable fallback; {tail}", None
+    ref = f"{target[0]}/{target[1]}"
+    return f"{model} limit - retry on {ref}? or {tail}", ref
 
 
 def _flag_reason(store: Store, card_id: str) -> str:
@@ -123,17 +189,22 @@ def waiting_reason(store: Store, card: dict[str, Any]) -> str | None:
     return card.get("blocked_reason_code") or _flag_reason(store, card["id"])
 
 
-def with_actions(store: Store, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def with_actions(
+    store: Store, cards: list[dict[str, Any]], schedule: Any = None
+) -> list[dict[str, Any]]:
     """each card gains next_action and next_action_short - None unless it waits on a person - so
     the board can say what to do on the strip itself, not only in the inbox. Also handled_by_board
     and next: set while the board is retrying the block itself, so the card view can say so instead
     of reading as unattended."""
+    ask_on_limit = usage_limit_route(store.get_settings()) == "attention"
     for card in cards:
         reason = waiting_reason(store, card)
         card["next_action"] = next_action(reason)
         card["next_action_short"] = short_action(reason)
-        next_note = handled_by_board(store, card)
-        card["handled_by_board"] = next_note is not None
+        next_note = handled_by_board(store, card, schedule)
+        # the board and the inbox agree: a limit the inbox asks about draws in attention too
+        asked = reason == "USAGE_LIMIT" and ask_on_limit
+        card["handled_by_board"] = next_note is not None and not asked
         card["next"] = next_note
     return cards
 
@@ -176,6 +247,36 @@ def answer_card(store: Store, runs: Any, card_id: str, message: str) -> dict[str
         raise AnswerRefused(refusal)
 
     store.add_comment(card_id, author=AUTHOR_KEY, body=message)
+    store.update_card(card_id, blocked_reason_code=None, review_flag=False)
+    return runs.start(card_id).as_dict()
+
+
+def fallback_run(store: Store, runs: Any, card_id: str, schedule: Any = None) -> dict[str, Any]:
+    """the inbox's retry on a USAGE_LIMIT row: the limited role runs once on its next usable
+    fallback model, now, instead of waiting for the reset. Refused (AnswerRefused) while it runs,
+    when it is not usage limited, when no fallback is usable, or for the lease and spend reasons
+    answer_card refuses - each checked before anything is written."""
+    state = runs.get(card_id)
+    if state is not None and state.running:
+        raise AnswerRefused("this card is still running")
+    card = store.get_card(card_id)
+    if card.get("blocked_reason_code") != "USAGE_LIMIT" or not _needs_attention(card):
+        raise AnswerRefused("this card is not blocked on a usage limit")
+    settings = store.get_settings()
+    role, lab, _model = _limit_of(store, card, settings)
+    paused = schedule.paused_labs() if schedule is not None else {}
+    target = _next_fallback(settings, role, lab, paused)
+    if target is None:
+        raise AnswerRefused(f"no usable fallback for the {role} - it waits for the reset")
+    active = getattr(runs, "active", None)
+    conflict = conflicting_run(store, card, [s.card_id for s in active()]) if active else None
+    if conflict:
+        raise AnswerRefused(f"not started: {conflict}")
+    refusal = spend_refusal(store, card)
+    if refusal:
+        raise AnswerRefused(refusal)
+
+    record_fallback(store, card_id, role, lab, target, card_reset(store, card_id))
     store.update_card(card_id, blocked_reason_code=None, review_flag=False)
     return runs.start(card_id).as_dict()
 
@@ -232,9 +333,10 @@ def approve_lease(store: Store, runs: Any, card_id: str, paths: list[str]) -> di
         ) from exc
 
 
-def attention_rows(store: Store) -> list[dict[str, Any]]:
+def attention_rows(store: Store, schedule: Any = None) -> list[dict[str, Any]]:
     """one row per card across every board that is waiting on the operator, oldest first"""
     rows = []
+    ask_on_limit = usage_limit_route(store.get_settings()) == "attention"
     for board in store.list_boards():
         for card in store.list_cards(board["id"]):
             reason = waiting_reason(store, card)
@@ -242,8 +344,10 @@ def attention_rows(store: Store) -> list[dict[str, Any]]:
                 continue
             # the board is already retrying this one itself - it stays on the board (the card's
             # own strip still shows handled_by_board and next) but drops out of the inbox until
-            # its automatic attempts are spent
-            if handled_by_board(store, card) is not None:
+            # its automatic attempts are spent. a usage limit under the "attention" route is the
+            # exception: the reset retry stands, but a fallback model is the operator's call
+            asked = reason == "USAGE_LIMIT" and ask_on_limit
+            if not asked and handled_by_board(store, card, schedule) is not None:
                 continue
             answerable = reason in RESUMABLE_REASONS
             row = {
@@ -261,6 +365,9 @@ def attention_rows(store: Store) -> list[dict[str, Any]]:
             }
             if reason == "LEASE_CONFLICT":
                 row["wants"] = lease_conflict_wants(store, card["id"])
+            if reason == "USAGE_LIMIT":
+                note, row["fallback"] = usage_limit_note(store, card, schedule)
+                row["action"] = row["hint"] = note
             rows.append(row)
     rows.sort(key=lambda r: r["since"])
     return rows

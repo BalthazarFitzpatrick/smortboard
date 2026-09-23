@@ -37,6 +37,7 @@ from smortboard.exec.worktrees import branch_changed_paths, branch_diff
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import parse_ref
 from smortboard.labs.registry import get_adapter
+from smortboard.labs.routing import role_effort
 from smortboard.prompts import active_prompt
 from smortboard.store.api import Store
 
@@ -221,6 +222,7 @@ def _docker_command(
     budget_usd: float | None,
     name: str | None = None,
     kind: str | None = None,
+    effort: str | None = None,
 ) -> list[str]:
     lab, model_id = parse_ref(model)
     adapter = get_adapter(lab)
@@ -239,6 +241,7 @@ def _docker_command(
             schema_path="/smortboard/review-schema.json",
             read_only=True,
             role="reviewer",
+            effort=effort,
         )
     )
     # same stdin handoff as ContainerBackend: the token touches no disk and no env var, so
@@ -428,6 +431,7 @@ def run_review(
         budget_usd,
         name,
         kind,
+        effort=role_effort(store.get_settings(), "reviewer") if store is not None else None,
     )
     run_result = run_process(
         store,

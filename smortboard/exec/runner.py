@@ -131,34 +131,36 @@ def lease_preamble(leases: list[str] | None) -> str:
     )
 
 
-def commands_preamble(repo: dict[str, Any] | None) -> str:
-    """the repo's test and lint commands, told to the agent word for word.
+# what the container and the board already settle, told once so no run spends a denial finding
+# out. measured over 155 card runs: 581 denied Bash calls, 221 of them a granted command joined to
+# one that was not (| tail, 2>&1 |, ; echo), 21 dependency installs, asks to push, docker hunts
+_SHELL_FACTS = (
+    "- no pipes or chains (|, &&, ;, 2>&1) unless the whole line is a command named here\n"
+    "- no docker in this container; no sibling repo checkouts exist\n"
+    "- never push: the board pushes\n"
+    "- no dependency installs: uv sync, uv lock, pip, npm\n"
+    "- a test failing outside your lease: note it, move on\n"
+)
 
-    The allowlist admits exactly these, and the repo's own CLAUDE.md may name others - run 3 spent
-    most of its 16 denials on spellings of ruff the allowlist was never going to admit.
+
+def commands_preamble(repo: dict[str, Any] | None) -> str:
+    """every shell command the run is granted, verbatim, and the facts that make the rest futile.
+
+    generated from allowed_tools_for_repo, the same grants the run itself gets, so the two cannot
+    drift. it only informs; it grants nothing. run 3 spent most of its 16 denials on spellings of
+    ruff the allowlist was never going to admit.
     """
     repo = repo or {}
-    lines = [
-        f"{label}: {command}"
-        for label, command in (
-            ("Run the tests with", repo.get("test_command")),
-            ("Run the linter with", repo.get("lint_command")),
-        )
-        if command
-    ]
-    if not lines:
-        return ""
-    body = (
-        "\n".join(lines)
-        + "\nThese exact commands are the only test and lint invocations permitted; where the "
-        "repo's own instructions name others, use these instead.\n"
-    )
+    grants = [tool[5:-1] for tool in allowed_tools_for_repo(repo) if tool.startswith("Bash(")]
+    lines = ["YOU CAN RUN EXACTLY these shell commands (* = any further arguments):"]
+    lines += [f"- {grant}" for grant in grants]
+    for label, key in (("tests", "test_command"), ("lint", "lint_command")):
+        if repo.get(key):
+            lines.append(f"Run {label} with: {repo[key]}")
     if declares_formatter(repo):
-        body += (
-            "The lint command's formatter may also be run in its write form: format and commit "
-            "the result, not only check it.\n"
-        )
-    return body + "\n"
+        lines.append("The formatter's write form is granted too: format and commit the result.")
+    body = "\n".join(lines) + "\nALSO:\n" + _SHELL_FACTS
+    return body + "Where the repo's own instructions name other commands, use these instead.\n\n"
 
 
 # GLOB AND GREP ARE FREE AND THEIR ABSENCE IS EXPENSIVE. without a search tool an agent reaches for
@@ -177,6 +179,13 @@ HEADLESS_RULES = (
     "\n\nYOU RUN HEADLESS AND NOTHING WAKES YOU UP. When your turn ends, the run ends. Never run a "
     "command in the background or schedule a later check - run tests in the foreground and wait "
     "for them. Commit your work before you finish: uncommitted changes are discarded.\n"
+)
+
+# appended beside HEADLESS_RULES, so a stored prompt cannot drop it either. measured over 155
+# card runs, Read was 71% of all tool-result volume: 804 calls, 8.1k characters each on average
+READING_RULES = (
+    "\nREAD NARROW. Grep for the line numbers first, then Read only that range with offset and "
+    "limit. Never re-read a file already read this run unless it changed since.\n"
 )
 
 
@@ -260,6 +269,7 @@ class RunResult:
     output_tokens: int = 0
     cached_tokens: int = 0
     role: str = "worker"
+    cache_creation_tokens: int = 0
 
 
 # a fixed marker would be guessable from the worker prompt, so any file could spoof an operator
@@ -680,6 +690,9 @@ def run_process(
             input_tokens=sum(int(u.get("input_tokens") or 0) for u in usage_events),
             output_tokens=sum(int(u.get("output_tokens") or 0) for u in usage_events),
             cached_tokens=sum(int(u.get("cached_tokens") or 0) for u in usage_events),
+            cache_creation_tokens=sum(
+                int(u.get("cache_creation_tokens") or 0) for u in usage_events
+            ),
             **identity,
         )
     final = finals[-1]
@@ -710,6 +723,7 @@ def run_process(
         input_tokens=sum(int(u.get("input_tokens") or 0) for u in usage_events),
         output_tokens=sum(int(u.get("output_tokens") or 0) for u in usage_events),
         cached_tokens=sum(int(u.get("cached_tokens") or 0) for u in usage_events),
+        cache_creation_tokens=sum(int(u.get("cache_creation_tokens") or 0) for u in usage_events),
         **identity,
     )
     if reason == "USAGE_LIMIT" and not blocked_reason_code and result.resets_at is not None:

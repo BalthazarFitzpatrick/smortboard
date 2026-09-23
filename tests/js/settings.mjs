@@ -166,10 +166,10 @@ assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-s
   ['mouse', 'mission control can read', 'how many cards run at once',
     'file leases: strict or soft, per board',
     'mall cam: seconds per card while auto-cycling the workforce drawer'],
-  ['credential profiles', 'models by role'],
+  ['credential profiles', 'usage limits', 'models by role'],
   ['budgets and spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 8);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 9);
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
 assert.deepEqual(costTriggers.map(trigger => trigger.textContent),
   ['daily budgets per board', 'spend caps per run'], 'cost controls have separate compact triggers');
@@ -197,8 +197,8 @@ const roleBlocks = mod.st.listEl.querySelectorAll('.settings-role-block');
 assert.equal(roleBlocks.length, 4, 'each model role has its own settings block');
 assert.deepEqual(roleBlocks.map(block => block.querySelector('.settings-role-name').textContent),
   ['worker', 'reviewer', 'orchestrator', 'fold']);
-assert.ok(roleBlocks.every(block => block.querySelectorAll('.settings-role-control').length === 2),
-  'each role separates the primary model from the fallback order');
+assert.ok(roleBlocks.every(block => block.querySelectorAll('.settings-role-control').length === 3),
+  'each role separates the primary model, the fallback order and the effort');
 assert.ok(roleBlocks.every(block => block.querySelector('.settings-role-status')),
   'each role keeps save status beside its heading');
 const reviewerPicker = rolePickers.find(row => row.dataset.role === 'reviewer');
@@ -254,6 +254,27 @@ assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1)
   {fold_cross_lab_fallback: ['openai/gpt-6-astra', 'openai/gpt-5.6-sol', 'anthropic/fable']});
 assert.equal(fallbackMenu.closed, true, 'a successful save closes the picker');
 
+// ---- effort: unset shows default, a pick PATCHes that role's own key, default clears it ---------
+{
+  const effortTrigger = mod.st.listEl.querySelectorAll('.role-effort')
+    .find(row => row.dataset.role === 'reviewer');
+  assert.equal(effortTrigger.textContent, 'default', 'unset effort reads as the cli default');
+  effortTrigger.onclick();
+  const effortMenu = modelMenus.at(-1);
+  assert.equal(effortMenu.opts.title, 'reviewer effort');
+  assert.equal(effortMenu.anchor, effortTrigger, 'the effort menu opens at its trigger');
+  const list = effortMenu.opts.sections.find(section => section.kind === 'list');
+  assert.deepEqual(list.items.map(item => item.label), ['default', 'low', 'medium', 'high']);
+  assert.deepEqual(list.items.filter(item => item.on).map(item => item.id), ['default']);
+  await list.onPick({id: 'low'});
+  assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
+    {reviewer_effort: 'low'});
+  await list.onPick({id: 'default'});
+  assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
+    {reviewer_effort: null}, 'default clears the setting rather than storing a level');
+  await flush();
+}
+
 // ---- the mouse is opt-in: unset renders unchecked, and ticking it PATCHes "on" ------------------
 {
   const mouseBox = mod.st.listEl.querySelector('.settings-enable-mouse-checkbox');
@@ -304,6 +325,21 @@ autoSwitchBox._listeners.change.forEach(fn => fn());
 await flush();
 switchPatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
 assert.deepEqual(JSON.parse(switchPatch.opts.body), {auto_switch_profiles: null});
+
+// ---- the usage-limit route: unchecked switches by itself (unset), checked asks first -----------
+const routeBox = mod.st.listEl.querySelector('.settings-usage-limit-route-checkbox');
+assert.ok(routeBox, 'the labs group carries the usage-limit route toggle');
+assert.equal(routeBox.checked, false, 'unset renders unchecked - the fallback switch stays automatic');
+routeBox.checked = true;
+routeBox._listeners.change.forEach(fn => fn());
+await flush();
+let routePatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+assert.deepEqual(JSON.parse(routePatch.opts.body), {usage_limit_route: 'attention'});
+routeBox.checked = false;
+routeBox._listeners.change.forEach(fn => fn());
+await flush();
+routePatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+assert.deepEqual(JSON.parse(routePatch.opts.body), {usage_limit_route: null});
 
 // ---- parallelism stays in general settings; daily budgets have their own cost-control grid -----
 assert.equal(mod.parallelCaps.globalInput.value, '', 'an unset global cap renders as an empty field, not 0');

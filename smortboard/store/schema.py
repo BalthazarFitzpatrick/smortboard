@@ -22,10 +22,18 @@ BLOCKED_REASON_CODES = (
 # spends a run's worth of tokens that nobody asked for
 FINDINGS_ROUTES = ("fix", "attention")
 DEFAULT_FINDINGS_ROUTE = "attention"
+# what a usage limit does to a role with a cross-lab fallback: switch to it unasked, or block and
+# ask in the inbox. unset means fallback, the behaviour before this setting existed
+USAGE_LIMIT_ROUTES = ("fallback", "attention")
+DEFAULT_USAGE_LIMIT_ROUTE = "fallback"
 
 # a deleted card is kept as a backup for this many days before it is purged for good - see
 # Store.delete_card, Store.restore_card and Store._purge_expired_backups
 BACKUP_RETENTION_DAYS = 7
+
+# a role's reasoning effort - claude --effort, codex model_reasoning_effort. unset passes no flag,
+# the cli's own default
+EFFORT_LEVELS = ("low", "medium", "high")
 
 _MIGRATIONS: list[str] = [
     # 1: base tables
@@ -471,6 +479,14 @@ _MIGRATIONS: list[str] = [
     """,
     # 23: how far a card's writes may reach past its lease - null and strict are today's rule
     """ALTER TABLE boards ADD COLUMN lease_mode TEXT;""",
+    # 24: a mission control or fold turn's tokens beside its cost, the same four counts a card
+    # run's usage events carry - null on rows from before, which recorded cost only
+    """
+    ALTER TABLE board_spend ADD COLUMN input_tokens INTEGER;
+    ALTER TABLE board_spend ADD COLUMN output_tokens INTEGER;
+    ALTER TABLE board_spend ADD COLUMN cached_tokens INTEGER;
+    ALTER TABLE board_spend ADD COLUMN cache_creation_tokens INTEGER;
+    """,
 ]
 
 

@@ -56,6 +56,7 @@ def test_the_global_route_forces_every_card(store, card_id):
         "resume_briefing": None,
         "gate_timeout_seconds": None,
         "auto_switch_profiles": None,
+        "usage_limit_route": None,
         "mall_cam_interval_seconds": None,
         "enable_mouse": None,
         "worker_budget_usd": None,
@@ -63,6 +64,10 @@ def test_the_global_route_forces_every_card(store, card_id):
         "orchestrator_budget_usd": None,
         "fold_budget_usd": None,
         "card_total_budget_usd": None,
+        "worker_effort": None,
+        "reviewer_effort": None,
+        "orchestrator_effort": None,
+        "fold_effort": None,
         "mission_control_read_paths": [],
     }
 
@@ -74,6 +79,16 @@ def test_an_unknown_route_or_setting_is_refused(store, card_id):
         store.set_setting("findings_route", "ignore")
     with pytest.raises(UnknownFieldError):
         store.set_setting("theme", "dark")
+
+
+def test_effort_takes_only_the_named_levels_per_role(store, card_id):
+    for bad in ("max", "xhigh", "LOW", "", 1, True, "--effort"):
+        with pytest.raises(ValueError):
+            store.set_setting("reviewer_effort", bad)
+    settings = store.set_settings({"worker_effort": "low", "fold_effort": "high"})
+    assert (settings["worker_effort"], settings["fold_effort"]) == ("low", "high")
+    assert settings["reviewer_effort"] is None and settings["orchestrator_effort"] is None
+    assert store.set_setting("worker_effort", None)["worker_effort"] is None
 
 
 def test_max_parallel_refuses_zero_negatives_and_non_numbers(store, card_id):
@@ -177,6 +192,7 @@ def test_settings_travel_in_the_export_bundle(store, tmp_path):
             "resume_briefing": None,
             "gate_timeout_seconds": None,
             "auto_switch_profiles": None,
+            "usage_limit_route": None,
             "mall_cam_interval_seconds": None,
             "enable_mouse": None,
             "worker_budget_usd": None,
@@ -184,6 +200,10 @@ def test_settings_travel_in_the_export_bundle(store, tmp_path):
             "orchestrator_budget_usd": None,
             "fold_budget_usd": None,
             "card_total_budget_usd": None,
+            "worker_effort": None,
+            "reviewer_effort": None,
+            "orchestrator_effort": None,
+            "fold_effort": None,
             "mission_control_read_paths": [],
         }
 
