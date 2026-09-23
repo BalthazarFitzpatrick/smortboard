@@ -64,8 +64,11 @@ concepts below against something real.
 `uv run smortboard` (no `--demo`) starts your actual board on port 8000. Three things before a card
 can run:
 
-1. **A lab credential.** `shift`+`p`, add a profile, paste what `claude setup-token` or
-   `codex login` gives you. Never your own login; [Install](#install) says exactly what to paste.
+1. **A credential for the cards - never your own login.** Get one in your terminal:
+   `claude setup-token` prints a Claude token once; for Codex, `codex login` writes
+   `~/.codex/auth.json` (paste all of it) or use an OpenAI API key. Then on the board: `shift`+`p`,
+   add a profile, paste, and press **activate** on it. A fresh board lists an empty `default`
+   profile; remove it once yours is active. The board writes the file itself, at mode 600.
 2. **Docker running**, so a card has somewhere to execute.
 3. **A board and a repo.** `b` -> **from local repo** -> pick a clone of a GitHub repo with its
    default branch pushed. A private repo is enough: the board pushes card branches there and opens
@@ -132,8 +135,9 @@ on the first load and dropped from the address bar, so a tab opened by hand has 
 printed link. Keep the terminal open: closing it stops the board and any running card.
 
 **3. Give cards a credential**, in the board itself. Press `shift`+`p` for credential profiles, add
-one, and paste. The board writes the mode-600 file for you and refuses anything a file others could
-read.
+one, paste, and press **activate** on it. A fresh board starts with an empty `default` profile
+active; remove it once yours is. The board writes the mode-600 file for you and refuses a file
+others could read. There is nothing to create by hand.
 
 Cards never use your own login. What you paste is:
 
@@ -147,8 +151,7 @@ At run time the credential goes into the container over stdin, into a memory-bac
 with the container. Your own `~/.claude` and `~/.codex` are never mounted.
 
 Several profiles per lab are fine; the board rotates to the next one when the active profile hits
-its rate limit. The manual file layout, the OS credential store and the Windows and Linux paths are
-under [Card token](#card-token).
+its rate limit. Where the board keeps each credential is under [Card token](#card-token).
 
 **4. Keep `main` for people.** Agents, the board's and your own Claude Code or Codex sessions, merge
 into `development`. A person merges into `main`. One hook script,
@@ -1191,8 +1194,8 @@ mode.
 
 ### Card token
 
-Adding a profile with `shift`+`p` writes these files for you, at mode 600. This is what it writes,
-for when you would rather do it by hand or script it.
+`shift`+`p` is the whole setup: adding a profile writes its file at mode 600, and the board refuses
+to read one anyone else can. For reference, this is where they live:
 
 | What | Where |
 |---|---|
@@ -1204,26 +1207,8 @@ for when you would rather do it by hand or script it.
 token pulled out of that JSON is refused, which is measured in
 [the credential spike](docs/spikes/S7-codex-auth.md).
 
-- **macOS:**
-
-  ```bash
-  mkdir -p ~/.config/smortboard
-  (umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
-  ```
-
-- **Linux:** the macOS command with `wl-paste` (Wayland) or `xclip -selection clipboard -o`
-  (X11) in place of `pbpaste`.
-- **Windows (PowerShell):**
-
-  ```powershell
-  New-Item -ItemType Directory -Force "$env:APPDATA\smortboard" | Out-Null
-  (Get-Clipboard -Raw) -replace '\s', '' |
-    Set-Content -NoNewline -Encoding ascii "$env:APPDATA\smortboard\card_token"
-  ```
-
-- **By hand:** create the file, `chmod 600` it, then paste the token in with any editor.
-- **Elsewhere:** `SMORTBOARD_CARD_TOKEN_PATH` points at any file. Credentials are read only from
-  files; a missing file requires saving a token before running a card.
+- **Elsewhere:** `SMORTBOARD_CARD_TOKEN_PATH` moves the `default` profile's file. Credentials are
+  read only from these files.
 - **Several subscriptions, or both labs:** `shift`+`p`, one profile per credential, each under its
   own name. The board rotates to the next profile of the same lab when the active one is
   rate-limited; crossing to the other lab needs a fallback list per role, which is deliberate.
@@ -1314,7 +1299,7 @@ curl -s -X PATCH -H "$K" -H 'content-type: application/json' 127.0.0.1:8000/api/
 |---|---|
 | `this tab has no api key` at the top of the page | Open the link the board printed on start. |
 | `.../card_token is not mode 600 - refusing to read it` | `chmod 600 ~/.config/smortboard/card_token` |
-| An expired or revoked token (HTTP 401) | The card says how to renew it: `claude setup-token` again. |
+| An expired or revoked token (HTTP 401) | `claude setup-token` again, then in `shift`+`p` add it as a new profile, activate it, and remove the expired one. |
 | The gate fails on `Read-only file system` for a tool other than ruff or pytest | Give that tool its own cache flag - `--no-cache`, `-p no:cacheprovider`, or whatever it takes. |
 | A card fails a test its own diff never touches | Preflight (`h`) may show its repo image predates `uv.lock`; the next run rebuilds it, or rebuild it by hand from the repo's row. |
 | A card waits with `lease conflict with card <id>` | Two leases overlap; it starts when the other card finishes. |

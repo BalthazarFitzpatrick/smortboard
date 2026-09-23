@@ -127,8 +127,7 @@ def _token_check(token_path: str | Path | None) -> dict[str, Any]:
             "card token",
             "fail",
             f"no token file at {path}.",
-            "claude setup-token, then (umask 077; pbpaste | tr -d '\\r\\n ' > "
-            f"{path}) - see README.md 'Setup' (Linux: paste into `cat > {path}` and press Ctrl-D).",
+            "run `claude setup-token`, then in shift+p add a profile, paste it and activate it.",
         )
     if not card_token_available(token_path):
         # surface the mode-600 refusal verbatim when that's the cause - it already names the fix
@@ -143,7 +142,8 @@ def _token_check(token_path: str | Path | None) -> dict[str, Any]:
             "card token",
             "fail",
             f"a file exists at {path} but no usable token could be read from it.",
-            "claude setup-token, then re-paste it into that file.",
+            "run `claude setup-token`, then in shift+p add it as a new profile, activate it, "
+            "and remove this one.",
         )
     stat = path.stat()
     mode = stat.st_mode & 0o777
@@ -154,7 +154,10 @@ def _token_check(token_path: str | Path | None) -> dict[str, Any]:
         fixes.append(f"chmod 600 {path}")
     if stat.st_size < _MIN_TOKEN_BYTES:
         problems.append(f"the file is only {stat.st_size} bytes; a full token is 108.")
-        fixes.append("run `claude setup-token` again and re-paste it - it looks truncated.")
+        fixes.append(
+            "it looks truncated: run `claude setup-token`, then in shift+p add it as a new "
+            "profile, activate it, and remove this one."
+        )
     if problems:
         return _check(
             "card-token", "machine", "card token", "warn", " ".join(problems), " && ".join(fixes)
@@ -180,7 +183,7 @@ def _profile_checks() -> list[dict[str, Any]]:
         setup = (
             "claude setup-token"
             if lab == "anthropic"
-            else "codex login, then paste the ChatGPT login JSON from ~/.codex/auth.json"
+            else "codex login, which writes ~/.codex/auth.json (paste all of it)"
             if row["kind"] == "auth_json"
             else f"codex login --with-{row['kind'].replace('_', '-')}"
         )
@@ -192,7 +195,8 @@ def _profile_checks() -> list[dict[str, Any]]:
                     label,
                     "fail",
                     f"no token file at {row['path']}.",
-                    f"{setup}, then save the credential with mode 600 at {row['path']}",
+                    f"{setup}, then in shift+p add it as a new profile, activate it, "
+                    "and remove this one.",
                 )
             )
         elif not row["mode_ok"]:
