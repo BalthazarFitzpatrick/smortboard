@@ -223,3 +223,34 @@ def test_the_fold_budget_setting_caps_the_fold_run(store, board):
     store.set_setting("fold_budget_usd", 0.4)
     run_fold_turn(store, board_id, runner=run)
     assert budgets == [0.4]
+
+
+def _board_notes(store, board_id):
+    return [m["body"] for m in store.list_orchestrator_messages(board_id) if m["author"] == "board"]
+
+
+def test_a_fold_with_long_card_text_says_so_and_keeps_it(store, board):
+    board_id, repo_id, _ = board
+    a = _card(store, board_id, repo_id, "a", leases=["x.py"])
+    b = _card(store, board_id, repo_id, "b", leases=["x.py"])
+    title = "one two three four five six seven eight nine ten"
+    description = " ".join(["word"] * 25)
+    group = {"cards": [a["id"], b["id"]], "title": title, "description": description}
+    apply_folds(store, board_id, [{**group, "criteria": ["ab works"]}])
+    merged = store.list_cards(board_id)[0]
+    assert (merged["title"], merged["description"]) == (title, description), "never cut"
+    assert _board_notes(store, board_id) == [
+        f'"{title}" runs long: 10 words in the title (max 8)',
+        f'"{title}" runs long: 25 words in the description (max 20)',
+    ]
+
+
+def test_a_terse_fold_leaves_no_note_whatever_the_ledger_line_adds(store, board):
+    board_id, repo_id, _ = board
+    a = _card(store, board_id, repo_id, "a", leases=["x.py"], ledger_task="t1")
+    b = _card(store, board_id, repo_id, "b", leases=["x.py"], ledger_task="t2")
+    description = " ".join(["word"] * 20)
+    group = {"cards": [a["id"], b["id"]], "title": "fold a and b", "description": description}
+    apply_folds(store, board_id, [group])
+    assert "- t2" in store.list_cards(board_id)[0]["description"]
+    assert _board_notes(store, board_id) == []
