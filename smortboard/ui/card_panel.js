@@ -79,10 +79,12 @@ function isPrUrl(value) {
 
 // a full url renders as itself; a bare number needs the card's own repo_url to become a link at
 // all - with neither, the ref still shows (as plain text) rather than vanishing or breaking
-function prAnchorHtml(ref, repoUrl) {
+function prAnchorHtml(ref, repoUrl, {short = false} = {}) {
   if (ref === null || ref === undefined || ref === '') return '';
   const url = isPrUrl(ref) ? ref : (repoUrl ? `${String(repoUrl).replace(/\/+$/, '')}/pull/${ref}` : null);
-  const label = isPrUrl(ref) ? ref : `#${ref}`;
+  // short: a full url shown as its number, so a one-line row does not wrap on it
+  const number = isPrUrl(ref) ? String(ref).match(/\/pull\/(\d+)/) : null;
+  const label = isPrUrl(ref) ? (short && number ? `#${number[1]}` : ref) : `#${ref}`;
   return url
     ? `<a class="pr-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`
     : escapeHtml(label);
@@ -516,8 +518,11 @@ function reasonWords(code) {
 // the head line names a model the way people say it: "opus 5", not "anthropic/claude-opus-5"
 function metaModelText(model, lab) {
   if (!model) return 'default model';
-  const id = model.includes('/') ? model.split('/').pop() : model;
-  return id.startsWith('claude-') ? id.slice('claude-'.length).replace(/-/g, ' ') : id;
+  const id = (model.includes('/') ? model.split('/').pop() : model).replace(/-\d{8}$/, '');
+  if (!id.startsWith('claude-')) return id;
+  // claude-haiku-4-5 -> "haiku 4.5", claude-opus-5 -> "opus 5"
+  const [name, ...version] = id.slice('claude-'.length).split('-');
+  return version.length ? `${name} ${version.join('.')}` : name;
 }
 
 function metaComplexityText(card) {
@@ -603,7 +608,7 @@ function runRailHtml(card, outcome) {
     rows.push(railRowHtml('review', 'none', 'not run'));
   }
   rows.push(outcome.pr_url
-    ? railRowHtml('pr', 'ok', prAnchorHtml(outcome.pr_url, card.repo_url))
+    ? railRowHtml('pr', 'ok', prAnchorHtml(outcome.pr_url, card.repo_url, {short: true}))
     : railRowHtml('pr', 'none', 'none yet'));
   if (outcome.fix_rounds > 0) rows.push(railRowHtml('fix rounds', 'none', String(outcome.fix_rounds)));
   return `<div class="run-rail">${rows.join('')}</div>`;

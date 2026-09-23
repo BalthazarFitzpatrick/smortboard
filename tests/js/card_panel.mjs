@@ -80,7 +80,7 @@ const html1 = mod.cardPanelHtml(card, outcome);
 const done1 = sectionOf(html1, 'done');
 assert.ok(done1.includes('did it'), 'done should carry the worker summary');
 assert.ok(done1.includes('trailing comma'), 'done should show the finding message, one line under review');
-assert.ok(done1.includes('<a class="pr-link" href="https://x/pull/1" target="_blank" rel="noreferrer">https://x/pull/1</a>'),
+assert.ok(done1.includes('<a class="pr-link" href="https://x/pull/1" target="_blank" rel="noreferrer">#1</a>'),
   'done should link the PR url, opening in a new tab');
 assert.ok(done1.includes('passed, exit 0'), 'the rail says the tests passed and their exit');
 assert.ok(done1.includes('not approved'), 'the rail says the review did not approve');
@@ -126,6 +126,8 @@ assert.ok(headHtml.includes('<span class="card-model">sonnet</span>'));
 assert.ok(headHtml.includes('<span>$6.77</span>') && !headHtml.includes('turns'), 'the cost only; runs and turns live under i');
 const opusHead = sectionOf(mod.cardPanelHtml({...card, model: 'anthropic/claude-opus-5'}, outcome), 'title');
 assert.ok(opusHead.includes('<span class="card-model">opus 5</span>'), 'a model is named the way people say it');
+const haikuHead = sectionOf(mod.cardPanelHtml({...card, model: 'anthropic/claude-haiku-4-5-20251001'}, outcome), 'title');
+assert.ok(haikuHead.includes('<span class="card-model">haiku 4.5</span>'), 'a version keeps its dot, a date suffix goes');
 assert.ok(!headHtml.includes('complexity'), 'complexity stays in the card menu, not the head line');
 assert.ok(headHtml.includes('<div class="section-value">the title</div>'), 'the title sits under the meta line');
 assert.ok(!sectionOf(mod.cardPanelHtml(card, outcome), 'title').includes('runs'), 'no spend part for a card with no runs');
