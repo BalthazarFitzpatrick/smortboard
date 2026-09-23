@@ -69,6 +69,16 @@ DEFAULT_CARD_BUDGET_USD = 5.0
 WAITING_TOOLS = ("Monitor", "ScheduleWakeup", "CronCreate", "TaskOutput")
 
 
+def available_tools(allowed_tools: tuple[str, ...]) -> str:
+    """the `--tools` value: each allowed tool's bare name once, in order - `Bash(git *)` is Bash.
+
+    --allowedTools only grants permission; every other built-in tool, skill and slash command is
+    still described to the model on every turn. measured in the card image (cli 2.1.273), a worker
+    went from 24 tools to 6 and its first turn from 20.0k to 9.6k input tokens. derived from the
+    allowlist, so a run is never described a tool it may not use."""
+    return ",".join(dict.fromkeys(tool.split("(", 1)[0] for tool in allowed_tools))
+
+
 def build_command(
     prompt: str,
     settings_path: str | Path | None,
@@ -77,6 +87,7 @@ def build_command(
     budget_usd: float | None = DEFAULT_CARD_BUDGET_USD,
     system_prompt: str = "",
     stream_input: bool = False,
+    effort: str | None = None,
 ) -> list[str]:
     """the proven S1 invocation shape, with our lease settings and scoping decision wired in.
 
@@ -107,6 +118,10 @@ def build_command(
     if settings_path is not None:
         cmd += ["--settings", str(settings_path)]
     cmd += ["--model", model]
+    # definitions, not permissions: the allow and deny lists below stay the permission layer
+    cmd += ["--tools", available_tools(allowed_tools), "--disable-slash-commands"]
+    if effort is not None:
+        cmd += ["--effort", effort]
     # A CEILING, NOT A TARGET. a card that loops burns real money quietly - measured, a single
     # 13-turn card re-read 209k cached tokens, so a card that thrashes multiplies that. with a
     # budget the run is refused at the limit rather than found afterwards on the bill
@@ -304,6 +319,7 @@ class ClaudeCodeAdapter:
             req.budget_usd,
             req.system_prompt,
             req.stream_input,
+            req.effort,
         )
         if req.json_schema is not None:
             cmd += ["--json-schema", json.dumps(req.json_schema)]

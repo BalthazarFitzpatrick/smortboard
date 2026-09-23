@@ -39,6 +39,8 @@ class RunRequest:
     schema_path: str | Path | None = None
     tool_policy: ToolPolicy | None = None
     read_only: bool = False
+    # low/medium/high from the role's settings; None passes no flag, the cli's own default
+    effort: str | None = None
 
 
 @dataclass(frozen=True)

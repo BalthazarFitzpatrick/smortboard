@@ -15,6 +15,7 @@ from smortboard.store.schema import (
     BACKUP_RETENTION_DAYS,
     BLOCKED_REASON_CODES,
     DEFAULT_FINDINGS_ROUTE,
+    EFFORT_LEVELS,
     FINDINGS_ROUTES,
     STATUSES,
     migrate,
@@ -74,6 +75,11 @@ _SETTING_KEYS = (
     "orchestrator_budget_usd",
     "fold_budget_usd",
     "card_total_budget_usd",
+    # per-role reasoning effort, see schema.EFFORT_LEVELS - unset passes no flag
+    "worker_effort",
+    "reviewer_effort",
+    "orchestrator_effort",
+    "fold_effort",
 )
 
 # per-run dollar caps an operator may set; unset falls back to each role's own default.
@@ -92,6 +98,7 @@ SPEND_CAP_KEYS = (
 # tolerant reader as a list, and the settings panel (o) replaces it whole with a list of paths
 _FALLBACK_KEYS = tuple(f"{role}_cross_lab_fallback" for role in ROLES)
 _EXTRA_SETTING_KEYS = ("mission_control_read_paths", *_FALLBACK_KEYS)
+_EFFORT_KEYS = tuple(f"{role}_effort" for role in ROLES)
 
 
 def _check_findings_route(value: str | None) -> None:
@@ -112,6 +119,12 @@ def _check_image(value: Any) -> None:
 def _check_model(value: Any) -> None:
     if value is not None and not (isinstance(value, str) and _MODEL_NAME.match(value)):
         raise ValueError(f"model must be a model name or null, not {value!r}")
+
+
+def _check_effort(key: str, value: Any) -> None:
+    # reaches claude or codex argv, so only the named levels pass
+    if value is not None and value not in EFFORT_LEVELS:
+        raise ValueError(f"{key} must be one of {EFFORT_LEVELS} or null, not {value!r}")
 
 
 def _model_pair(lab: Any, model: Any) -> tuple[str | None, str | None]:
@@ -760,6 +773,8 @@ class Store:
                 _check_positive_int(key, value)
             if key in SPEND_CAP_KEYS:
                 _check_positive_number(key, value)
+            if key in _EFFORT_KEYS:
+                _check_effort(key, value)
             stored = value
             if key == "mission_control_read_paths" or key in _FALLBACK_KEYS:
                 if isinstance(value, str):

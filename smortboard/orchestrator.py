@@ -37,7 +37,7 @@ from smortboard.exec.runner import RunResult, run_process
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import load_catalog, parse_ref, resolve_ref
 from smortboard.labs.registry import get_adapter
-from smortboard.labs.routing import command_model, role_ref
+from smortboard.labs.routing import command_model, role_effort, role_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.prompts import active_prompt
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
@@ -250,6 +250,7 @@ def _real_runner(
                     schema_path="/smortboard-schema/schema.json",
                     read_only=True,
                     role=role,
+                    effort=role_effort(store.get_settings(), role),
                 )
             )
             # read-only by allowlist as well as by mount: nothing that could write, shell out or

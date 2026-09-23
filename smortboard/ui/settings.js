@@ -181,6 +181,27 @@ async function openFallbackPicker(role, initialRefs, anchor, status, onSaved) {
   menu.openAt(anchor);
 }
 
+// unset is the cli's own default and passes no flag; a level becomes --effort (claude) or
+// model_reasoning_effort (codex) on that role's runs - store/schema.py EFFORT_LEVELS
+const ROLE_EFFORT_LEVELS = ['low', 'medium', 'high'];
+
+function openEffortPicker(role, current, anchor, status) {
+  const items = ['default', ...ROLE_EFFORT_LEVELS].map(level => ({
+    id: level, label: level, on: level === (current || 'default'),
+  }));
+  new Menu({
+    title: `${role} effort`,
+    sections: [{kind: 'list', items, onPick: async item => {
+      const value = item.id === 'default' ? null : item.id;
+      const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[`${role}_effort`]: value})});
+      if (ok) loadRoleModels();
+      else status.textContent = body?.error || 'could not save effort';
+    }}],
+  }).openAt(anchor);
+}
+
 async function loadRoleModels() {
   try {
     const settings = await api('/api/settings');
@@ -240,7 +261,19 @@ async function loadRoleModels() {
         }
       };
       fallbackRow.append(fallbackLabel, fallback);
-      block.append(heading, primaryRow, fallbackRow);
+
+      const effortRow = document.createElement('div');
+      effortRow.className = 'settings-role-control';
+      const effortLabel = document.createElement('span');
+      effortLabel.className = 'field-label';
+      effortLabel.textContent = 'effort';
+      const effort = document.createElement('button');
+      effort.className = 'toggle role-effort';
+      effort.dataset.role = role;
+      effort.textContent = settings[`${role}_effort`] || 'default';
+      effort.onclick = () => openEffortPicker(role, settings[`${role}_effort`], effort, status);
+      effortRow.append(effortLabel, effort);
+      block.append(heading, primaryRow, fallbackRow, effortRow);
       roleModels.node.appendChild(block);
       if (index < roles.length - 1) {
         const divider = document.createElement('div');

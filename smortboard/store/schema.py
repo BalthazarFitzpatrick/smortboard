@@ -27,6 +27,10 @@ DEFAULT_FINDINGS_ROUTE = "attention"
 # Store.delete_card, Store.restore_card and Store._purge_expired_backups
 BACKUP_RETENTION_DAYS = 7
 
+# a role's reasoning effort - claude --effort, codex model_reasoning_effort. unset passes no flag,
+# the cli's own default
+EFFORT_LEVELS = ("low", "medium", "high")
+
 _MIGRATIONS: list[str] = [
     # 1: base tables
     """
