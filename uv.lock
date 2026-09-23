@@ -357,7 +357,7 @@ wheels = [
 
 [[package]]
 name = "smortboard"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "platformdirs" },
@@ -377,7 +377,7 @@ dev = [
 requires-dist = [
     { name = "platformdirs", specifier = ">=4.0" },
     { name = "playwright", specifier = ">=1.40" },
-    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=50de78ea76779e2f0b373ec70ab3ffcecf21d3a7" },
+    { name = "ui-base", git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=v0.2.5" },
 ]
 
 [package.metadata.requires-dev]
@@ -399,8 +399,8 @@ wheels = [
 
 [[package]]
 name = "ui-base"
-version = "0.2.4"
-source = { git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=50de78ea76779e2f0b373ec70ab3ffcecf21d3a7#50de78ea76779e2f0b373ec70ab3ffcecf21d3a7" }
+version = "0.2.5"
+source = { git = "https://github.com/BalthazarFitzpatrick/smortui.git?rev=v0.2.5#2f6ce51758605265dac871c33412fb938edb165f" }
 
 [[package]]
 name = "virtualenv"

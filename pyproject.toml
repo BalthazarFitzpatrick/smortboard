@@ -1,6 +1,6 @@
 [project]
 name = "smortboard"
-version = "0.1.0"
+version = "0.2.0"
 description = "a browser-based board built on ui_base, python-served, docker in the backend"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -8,7 +8,7 @@ requires-python = ">=3.11"
 dependencies = [
     # pinned while the shared soft focus glow and ambient pulse await release
     # return to a tag once both primitives ship
-    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@50de78ea76779e2f0b373ec70ab3ffcecf21d3a7",
+    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@v0.2.5",
     # os-correct data dir for the default db location — not the cwd, not a hand-rolled path
     "platformdirs>=4.0",
     # mission control's one screenshot per ask - host-side only, chromium headless. the browser
