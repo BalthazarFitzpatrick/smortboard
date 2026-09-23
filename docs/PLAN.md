@@ -36,7 +36,7 @@ reimplement the agent loop, it schedules and observes one.
 The design test for every feature: does it help him walk away? Anything that rewards hovering is
 wrong.
 
-Source brief: `smortboard/dev-board-brief.md`. All `[OPEN]` and `[FLAG]` items in it are resolved
+Source brief: `docs/dev-board-brief.md`. All `[OPEN]` and `[FLAG]` items in it are resolved
 below.
 
 ---
