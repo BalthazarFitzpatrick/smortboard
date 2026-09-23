@@ -42,7 +42,10 @@ it, in code, on every run:
 
 - **worker, system prompt:** `runner.HEADLESS_RULES` (nothing wakes a headless run, commit before
   finishing), the READ NARROW rule (grep for line numbers, then read only that range, never re-read),
-  and the note-marker paragraph that tells the agent which marker a genuine operator note carries.
+  the note-marker paragraph that tells the agent which marker a genuine operator note carries, and -
+  only when the repo has `smortboard/ui/` - `runner.SCREENSHOT_RULE`, since the board screenshots
+  nothing but its own ui. House style is never in the worker prompt; it comes from the repo's own
+  `CLAUDE.md` or `AGENTS.md`.
 - **worker, first message:** `backends.WORKSPACE_PREAMBLE`, the lease (`runner.lease_preamble`: the
   paths the card may write), and `runner.commands_preamble`: "YOU CAN RUN EXACTLY" every shell
   command the run is granted, word for word, plus the facts that used to cost refused turns - no
