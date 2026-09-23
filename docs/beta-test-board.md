@@ -108,7 +108,7 @@ CARD SHAPE - I want these properties across the set, to test the board itself
 - one card whose natural change reaches a file outside its obvious lease: applying skill upgrades to
   gameplay (its own module, plus small hooks in core.js).
 - two small cards that could be one: a mute toggle and a pause key. leave them separate.
-- one card that is mostly visual: the skill tree screen, so the board takes a screenshot.
+- one card that is mostly visual: the skill tree screen.
 - the api input validation card must be explicit about rejecting bad input, so the reviewer has
   something real to check.
 - a last card: README with how to run and play.
@@ -125,7 +125,7 @@ and acceptance criteria a node:test can check where the card has logic.
 | `w` | run the whole board | parallel runs on disjoint leases, the grey pending edge in doing, lease-overlap serialisation |
 | the three-deep chain | watch a child start on an unmerged parent | review-mode stacks (up to three deep), a pull request re-targeted when its parent lands |
 | the api validation card | read the reviewer's verdict | the reviewer's four questions, severity grading, findings routed to you |
-| the skill-tree screen card | open it in checking | the screenshot on the card and in the pull request |
+| the skill-tree screen card | open it in checking | a mostly visual change judged by tests and review alone. The board's own screenshot step runs only on smortboard's own `ui/`, so no image here |
 | the upgrades card | watch it want core.js | strict: a refused write, then either lease approve in the inbox or, if it committed, the gates run and the wanted path waits under needs. then switch the board to **soft** in `o` and re-run: it may reach core.js unless another active card holds it |
 | mute + pause | `f` on the board | fold: two todo cards into one, dependencies re-pointed, originals restorable |
 | any blocked card | `n` | the inbox, answering, lease approve, retry on fallback after a usage limit |
