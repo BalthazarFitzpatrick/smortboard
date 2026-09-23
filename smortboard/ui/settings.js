@@ -93,51 +93,70 @@ async function loadUsageLimitRouteToggle(box) {
 // enable_mouse: the board is driven from the keyboard, and this turns on the pointer half of it -
 // hovering focuses what the arrow keys would (fanning a piled column with it), and right-click
 // opens the card menu m opens. off by default; the clicks that always worked are never gated by it
-const mouseSetting = {box: null};
+const mouseSetting = {enabled: null, disabled: null, saving: false};
 
+function showMouseChoice(on) {
+  mouseSetting.enabled.classList.toggle('on', on);
+  mouseSetting.disabled.classList.toggle('on', !on);
+  mouseSetting.enabled.setAttribute('aria-pressed', String(on));
+  mouseSetting.disabled.setAttribute('aria-pressed', String(!on));
+}
+
+// the lit button only moves once the save lands, so a failed save leaves it where it was
+async function pickMouse(on) {
+  if (mouseSetting.saving) return;
+  mouseSetting.saving = true;
+  const {ok} = await apiOrError('/api/settings', {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enable_mouse: on ? 'on' : null}),
+  });
+  mouseSetting.saving = false;
+  if (!ok) return;
+  showMouseChoice(on);
+  setMouseEnabled(on); // live: no reload to start or stop hovering
+}
+
+// real buttons, so tab reaches them and enter or space picks without a key handler of our own
+function mouseChoiceButton(text, on) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'toggle settings-mouse-choice';
+  btn.dataset.choice = text;
+  btn.textContent = text;
+  btn.onclick = () => pickMouse(on);
+  return btn;
+}
+
+// the section heading is the "mouse" label; the two buttons sit in ui_base's row of controls
 function buildMouseToggle() {
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.className = 'settings-enable-mouse-checkbox';
-  box.checked = false;
-
-  const row = document.createElement('label');
-  row.className = 'settings-toggle-row';
-  const text = document.createElement('span');
-  text.textContent = 'enable mouse';
-  row.append(box, text);
+  const row = document.createElement('div');
+  row.className = 'run-controls';
+  const enabled = mouseChoiceButton('enabled', true);
+  const disabled = mouseChoiceButton('disabled', false);
+  row.append(enabled, disabled);
 
   const note = document.createElement('div');
   note.className = 'field-label';
   note.textContent = 'the keyboard is how the board is driven. with this on, hovering focuses '
     + 'what the arrows would and right-click opens the card menu.';
 
-  box.addEventListener('change', async () => {
-    box.disabled = true;
-    const {ok} = await apiOrError('/api/settings', {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({enable_mouse: box.checked ? 'on' : null}),
-    });
-    box.disabled = false;
-    if (!ok) { box.checked = !box.checked; return; } // revert on a failed save
-    setMouseEnabled(box.checked); // live: no reload to start or stop hovering
-  });
-
   const wrap = document.createElement('div');
   wrap.className = 'settings-stack';
   wrap.append(row, note);
-  mouseSetting.box = box;
+  Object.assign(mouseSetting, {enabled, disabled});
+  showMouseChoice(false);
   return wrap;
 }
 
 async function loadMouseToggle() {
   try {
     const settings = await api('/api/settings');
-    mouseSetting.box.checked = settings.enable_mouse === 'on';
-    setMouseEnabled(mouseSetting.box.checked);
+    const on = settings.enable_mouse === 'on';
+    showMouseChoice(on);
+    setMouseEnabled(on);
   } catch {
-    // leave it unchecked - keyboard only is the safe default to fail to
+    // leave disabled lit - keyboard only is the safe default to fail to
   }
 }
 

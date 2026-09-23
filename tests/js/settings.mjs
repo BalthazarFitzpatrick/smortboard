@@ -24,6 +24,8 @@ const boardsState = [
   {id: 'b2', name: 'beta', max_parallel: 1, daily_budget_usd: null},
 ];
 const calls = [];
+// knobs a test flips to make the next call fail, the way the real server would
+const stubControl = {refuseNextSettingsPatch: false};
 function stubJson(status, body) {
   return {ok: status >= 200 && status < 300, status, json: async () => body};
 }
@@ -75,6 +77,10 @@ function fetchStub(path, opts) {
   if (path !== '/api/settings') return new Promise(() => {});
   if (!opts || !opts.method || opts.method === 'GET') return Promise.resolve(stubJson(200, {...settingsState}));
   if (opts.method === 'PATCH') {
+    if (stubControl.refuseNextSettingsPatch) {
+      stubControl.refuseNextSettingsPatch = false;
+      return Promise.resolve(stubJson(500, {error: 'store error: disk full'}));
+    }
     const body = JSON.parse(opts.body);
     if ('mission_control_read_paths' in body) {
       const resolved = [];
@@ -127,6 +133,7 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('board.js'), smort('settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, dailyBudgets, BINDINGS, mc, mallCam, spendCaps,
+  mouseAffordances,
   buttonRef: () => document.querySelector('.settings-button'),
   addButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'add'),
   browseButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'browse')};`)(SpyMenu, SpyDrawer);
@@ -275,21 +282,41 @@ assert.equal(fallbackMenu.closed, true, 'a successful save closes the picker');
   await flush();
 }
 
-// ---- the mouse is opt-in: unset renders unchecked, and ticking it PATCHes "on" ------------------
+// ---- the mouse is opt-in: two toggles, disabled lit when unset, and enabled PATCHes "on" ---------
 {
-  const mouseBox = mod.st.listEl.querySelector('.settings-enable-mouse-checkbox');
-  assert.ok(mouseBox, 'the panel carries the enable-mouse toggle');
-  assert.equal(mouseBox.checked, false, 'the mouse is off by default');
-  mouseBox.checked = true;
-  mouseBox._listeners.change.forEach(fn => fn());
+  const mouseSection = mod.st.listEl.querySelectorAll('.settings-section')
+    .find(section => section.children[0].textContent === 'mouse');
+  const choices = mouseSection.querySelectorAll('.run-controls .toggle');
+  assert.deepEqual(choices.map(btn => btn.textContent), ['enabled', 'disabled'],
+    'the mouse section is two toggles side by side in one row');
+  assert.ok(choices.every(btn => btn.tag === 'button' && btn.type === 'button'),
+    'real buttons: tab reaches them and enter or space picks');
+  const [enabled, disabled] = choices;
+  const lit = () => choices.filter(btn => btn.classList.contains('on')).map(btn => btn.textContent);
+  assert.deepEqual(lit(), ['disabled'], 'the mouse is off by default');
+  assert.equal(disabled['aria-pressed'], 'true');
+
+  enabled.onclick();
   await flush();
   const patch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
   assert.deepEqual(JSON.parse(patch.opts.body), {enable_mouse: 'on'});
-  mouseBox.checked = false;
-  mouseBox._listeners.change.forEach(fn => fn());
+  assert.deepEqual(lit(), ['enabled'], 'picking enabled lights it and only it');
+  assert.equal(enabled['aria-pressed'], 'true');
+  assert.equal(mod.mouseAffordances(), true, 'the pointer affordances switch on with no reload');
+
+  disabled.onclick();
   await flush();
   const off = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
-  assert.deepEqual(JSON.parse(off.opts.body), {enable_mouse: null}, 'unticking clears it');
+  assert.deepEqual(JSON.parse(off.opts.body), {enable_mouse: null}, 'disabled clears it');
+  assert.deepEqual(lit(), ['disabled']);
+  assert.equal(mod.mouseAffordances(), false);
+
+  // a refused save leaves the lit button, and the mouse, where they were
+  stubControl.refuseNextSettingsPatch = true;
+  enabled.onclick();
+  await flush();
+  assert.deepEqual(lit(), ['disabled'], 'a failed save does not move the lit button');
+  assert.equal(mod.mouseAffordances(), false);
 }
 
 // ---- spend caps: blank is the default, a value is PATCHed under its own key ----------------------
