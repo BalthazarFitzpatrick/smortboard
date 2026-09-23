@@ -8,6 +8,7 @@ import urllib.request
 
 import pytest
 
+from smortboard.actions import next_action
 from smortboard.server.app import build_server
 from smortboard.store import Store
 
@@ -228,6 +229,26 @@ def test_get_missing_card_is_404(running_server):
     status, body = _request(f"{running_server}/api/cards/does-not-exist")
     assert status == 404
     assert "error" in body
+
+
+def test_get_card_carries_its_next_action(running_server):
+    # the open card reads what to do next off this route, same as the board list
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, card = _request(
+        f"{running_server}/api/cards",
+        "POST",
+        {"board_id": board["id"], "repo_id": None, "title": "x"},
+    )
+    _request(
+        f"{running_server}/api/cards/{card['id']}",
+        "PATCH",
+        {"status": "doing", "blocked_reason_code": "TESTS_FAILED"},
+    )
+    status, fetched = _request(f"{running_server}/api/cards/{card['id']}")
+    assert status == 200
+    assert fetched["next_action"] == next_action("TESTS_FAILED")
+    assert fetched["next_action_short"] == "answer it"
+    assert fetched["handled_by_board"] is False
 
 
 def test_delete_a_card_that_has_been_used(running_server):
