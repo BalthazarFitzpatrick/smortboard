@@ -68,7 +68,7 @@ const backdrops = () => document.body.children.filter(c =>
 const press = code => strip._listeners.keydown[0]({code, preventDefault() {}, stopPropagation() {}});
 press('Enter');
 assert.equal(backdrops().length, 1, 'Enter should open the card into a backdrop + panel');
-document._dispatch('keydown', {key: 'Escape', code: 'Escape', target: document.body});
+document._dispatch('keydown', {key: 'Escape', code: 'Escape', target: document.body, preventDefault() {}});
 assert.equal(backdrops().length, 0, 'Escape should close the open card');
 
 // ---- an open card is three times the default width: 1:1 on an 800px-tall stub, not 1:3

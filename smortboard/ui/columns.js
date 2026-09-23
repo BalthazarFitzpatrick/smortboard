@@ -96,6 +96,8 @@ function layoutCardSections(panel) {
     reach = Math.max(reach, bottom);
   });
   container.style.height = `${Math.max(0, reach - CARD_PANEL_ROW_GAP)}px`;
+  // every pass ends here - open, a fold opening, a resize - so the panel follows its content
+  fitCardPanel(panel);
 }
 
 // what layoutCardSections placed, read back as computeSectionMove's items. a panel it never placed
