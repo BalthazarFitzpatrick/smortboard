@@ -29,6 +29,10 @@ RUN usermod --login agent --home /home/agent --move-home node \
     && mkdir -p /workspace \
     && chown -R agent:agent /workspace /home/agent
 
+# the mounted clone belongs to a host uid, so git refused it as "dubious ownership" - measured, 17
+# tool results across 4 cards, sending agents into `git -c safe.directory`, which the guard refuses
+RUN git config --system --add safe.directory /workspace
+
 ENV HOME=/home/agent
 WORKDIR /workspace
 USER agent
