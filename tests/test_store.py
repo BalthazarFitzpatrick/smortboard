@@ -252,6 +252,22 @@ def test_deleting_a_board_takes_its_cards_with_it(store):
         store.get_card(card["id"])
 
 
+def test_deleting_a_board_whose_repo_remembers_lease_paths(store):
+    """remembered paths point at the repo with no cascade; the repo delete used to fail a foreign
+    key after every card was already gone"""
+    board = store.create_board("b")
+    repo_id = store.create_repo(board["id"], "r", "/tmp/r", "main")["id"]
+    store.create_card(board["id"], repo_id, "a card")
+    store.remember_lease_paths(repo_id, ["src/**"])
+    store.delete_board(board["id"])
+    with pytest.raises(NotFoundError):
+        store.get_board(board["id"])
+    rows = store._conn.execute(
+        "SELECT COUNT(*) FROM repo_remembered_leases WHERE repo_id = ?", (repo_id,)
+    ).fetchone()[0]
+    assert rows == 0
+
+
 # -- repos: test_command -----------------------------------------------------
 
 

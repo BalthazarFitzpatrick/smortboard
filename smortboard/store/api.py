@@ -505,6 +505,12 @@ class Store:
         self.get_board(board_id)  # raises NotFoundError, so deleting twice is honest
         for card in self.list_cards(board_id):
             self.delete_card(card["id"])
+        # remembered lease paths point at the repo with no cascade: left in place, the repo delete
+        # below failed a foreign key after every card was already gone
+        self._conn.execute(
+            "DELETE FROM repo_remembered_leases WHERE repo_id IN (SELECT id FROM repos WHERE board_id = ?)",
+            (board_id,),
+        )
         self._conn.execute("DELETE FROM repos WHERE board_id = ?", (board_id,))
         self._conn.execute("DELETE FROM boards WHERE id = ?", (board_id,))
         self._conn.commit()
