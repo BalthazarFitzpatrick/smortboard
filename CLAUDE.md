@@ -143,7 +143,7 @@ via AskUserQuestion: free or review. Record the explicit answer using
 Read the same session state after compaction. A project preference is not consent.
 In review mode, finish tests and open the PR, then ask before each merge. Record only an explicit
 approval with `session-merge-mode.sh <session_id> approve <absolute_session_cwd> '<exact_command>'`.
-That approval is consumed before execution; a failed command needs fresh approval. Never force-push to main.
+That approval is consumed before execution; a failed or changed command needs fresh approval. Never force-push to main.
 
 **Scope.** Implement exactly what was asked — no unrequested extras; propose them in one line
 instead. If a second attempt at the same bug fails, stop and state the root cause before editing again.
@@ -152,7 +152,7 @@ instead. If a second attempt at the same bug fails, stop and state the root caus
 test output — prefix anything else with "Unverified hypothesis:".
 
 **Code.** No emojis, anywhere, in any output. Comments lowercase, no trailing period, 1-3 lines max
-per block, explaining intent not mechanics. Never bare `except:`. No credential literals — env vars
+per block, explaining intent plus the few mechanics that matter. Never bare `except:`. No credential literals — env vars
 or `.env`, never committed.
 
 **Python.** Always `uv run <script/tool>`, never bare `python`/`python3`. Ruff must pass before
