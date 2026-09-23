@@ -308,11 +308,35 @@ function renderCardStrip(card) {
 // board's arrows walk cards. the first one takes focus when the panel renders, so up and down have
 // somewhere to move from
 function focusFirstCardSection(panel) {
-  const section = panel.querySelector('.card-section');
-  if (!section) return null;
-  section.tabIndex = 0;
-  section.focus();
-  return section;
+  const sections = [...panel.querySelectorAll('.card-section')];
+  if (!sections.length) return null;
+  // only the focused section sits in the tab order, the way the board's own rows do
+  sections.forEach((section, i) => { section.tabIndex = i === 0 ? 0 : -1; });
+  sections[0].focus();
+  return sections[0];
+}
+
+const SECTION_MOVES = {ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right'};
+
+// the arrows walk the sections as the masonry drew them (computeSectionMove), not in document
+// order. once per panel: a posted comment re-renders into the same panel, and a second listener
+// would move twice per press
+function wireCardSectionNav(panel) {
+  if (panel._sectionNavWired) return;
+  panel._sectionNavWired = true;
+  panel.addEventListener('keydown', evt => {
+    const direction = SECTION_MOVES[evt.code];
+    if (!direction || withModifier(evt) || evt.target.matches?.('input, textarea')) return;
+    const sections = [...panel.querySelectorAll('.card-section')];
+    const at = sections.indexOf(evt.target.closest?.('.card-section'));
+    if (at === -1) return;
+    const to = computeSectionMove(readSectionPlaces(sections), at, direction);
+    if (to === at) return;
+    evt.preventDefault();
+    sections.forEach((section, i) => { section.tabIndex = i === to ? 0 : -1; });
+    sections[to].focus();
+    sections[to].scrollIntoView?.({block: 'nearest'});
+  });
 }
 
 // the card's one text entry. escape stops here so the panel's own escape (added by makeExpander)
@@ -320,8 +344,8 @@ function focusFirstCardSection(panel) {
 function wireCommentInput(input, panel, cardId) {
   if (!input) return;
   input.addEventListener('keydown', evt => {
-    // ARROWS INSIDE THE BOX BELONG TO THE BOX. makeBuckets listens on the panel and the input sits
-    // inside a .card-section, so without this, down from the caret stepped to the next section
+    // ARROWS INSIDE THE BOX BELONG TO THE BOX. the section nav listens on the panel and the input
+    // sits inside a .card-section, so without this, down from the caret stepped to the next section
     if (evt.code === 'ArrowUp' || evt.code === 'ArrowDown') { evt.stopPropagation(); return; }
     if (evt.code === 'Escape') {
       evt.stopPropagation();
@@ -361,9 +385,7 @@ async function openCardPanel(panel, cardId) {
     watchCardSections(panel);
   }
 
-  // the panel's one .card-sections div is a single-column bucket - reuses the 2D grid nav as a
-  // plain vertical list rather than inventing a second focus system for "move between sections"
-  const sectionsApi = makeBuckets(panel, {bucketSel: '.card-sections', rowSel: '.card-section'});
+  wireCardSectionNav(panel);
   // THE OPEN CARD TAKES THE KEYBOARD. focus used to stay on the strip behind the panel, so up and
   // down did nothing here and the sections were only reachable by / and then escape
   focusFirstCardSection(panel);
@@ -383,7 +405,7 @@ async function openCardPanel(panel, cardId) {
     });
   });
 
-  if (openCard && openCard.cardId === cardId) Object.assign(openCard, {sectionsApi, input});
+  if (openCard && openCard.cardId === cardId) Object.assign(openCard, {input});
 }
 
 // worker summary, test gate, reviewer verdict, PR link and the fix-round count - all of it null

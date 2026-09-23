@@ -61,9 +61,49 @@ function layoutCardSections(panel) {
     const {column, top, bottom} = placed[i];
     section.style.top = `${top}px`;
     section.style.left = column ? `${column * (columnWidth + CARD_PANEL_COL_GAP)}px` : '0px';
+    // kept on the section for the arrow keys (readSectionPlaces) - 'all' is a band over every column
+    section.dataset.column = column === null ? 'all' : String(column);
+    section.dataset.top = String(top);
+    section.dataset.bottom = String(bottom);
     reach = Math.max(reach, bottom);
   });
   container.style.height = `${Math.max(0, reach - CARD_PANEL_ROW_GAP)}px`;
+}
+
+// what layoutCardSections placed, read back as computeSectionMove's items. a panel it never placed
+// (the design archive keeps its own grid) reads as one column in document order
+function readSectionPlaces(sections) {
+  return sections.map((section, i) => {
+    const {column, top, bottom} = section.dataset;
+    if (column === undefined) return {column: null, top: i, bottom: i + 1};
+    return {column: column === 'all' ? null : Number(column), top: Number(top), bottom: Number(bottom)};
+  });
+}
+
+// pure: the section an arrow press lands on, or index itself when nothing lies that way. up/down
+// walk this column by top, a band (column null) belonging to every column; left/right take the next
+// column's section overlapping this one's span most, the upper one on a tie
+function computeSectionMove(items, index, direction) {
+  const here = items[index];
+  if (!here) return index;
+  if (direction === 'up' || direction === 'down') {
+    const shares = item => here.column === null || item.column === null || item.column === here.column;
+    const order = items.map((item, i) => ({item, i}))
+      .filter(({item, i}) => i === index || shares(item))
+      .sort((a, b) => a.item.top - b.item.top
+        || (a.item.column ?? -1) - (b.item.column ?? -1) || a.i - b.i);
+    const at = order.findIndex(({i}) => i === index);
+    const next = order[at + (direction === 'down' ? 1 : -1)];
+    return next ? next.i : index;
+  }
+  if (here.column === null) return index;
+  const target = here.column + (direction === 'right' ? 1 : -1);
+  const beside = items.map((item, i) => ({
+    i, top: item.top, column: item.column,
+    overlap: Math.min(here.bottom, item.bottom) - Math.max(here.top, item.top),
+  })).filter(c => c.column === target && c.overlap > 0)
+    .sort((a, b) => b.overlap - a.overlap || a.top - b.top);
+  return beside.length ? beside[0].i : index;
 }
 
 // re-flow whenever the container gets its real width or a section changes height. the one pass at

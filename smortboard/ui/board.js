@@ -26,7 +26,7 @@ let boards = [];
 let currentBoardId = null;
 let bucketsApi = null;
 let grouped = false; // g toggles this; workstream layout itself ships post-v1
-let openCard = null; // {cardId, expander, sectionsApi, input} while a card panel is open
+let openCard = null; // {cardId, expander, input} while a card panel is open
 
 // a 401 means this tab has no api key cookie - opened by hand rather than from the printed link
 function noteMissingKey(res) {
