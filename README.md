@@ -73,6 +73,10 @@ Then:
 3. Anything that needs you lands in the inbox, `n`. Boards default to review-required: read the
    pull request, then accept with `y` to land it on an unprotected base. Main stays yours.
 
+**Want a practice run first?** `uv run smortboard seed-beta <empty folder>` makes a small
+browser-game repo and a board of 15 cards written for it.
+[docs/beta-test-board.md](docs/beta-test-board.md) takes it from there to a green `h` and `w`.
+
 ---
 
 ## Install

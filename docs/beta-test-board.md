@@ -13,6 +13,27 @@ $1.12 on sonnet and a review $0.16. Twelve cards that pass first time are about 
 with fix rounds and retries. Keep the worker on sonnet and set a board daily budget before you start
 (`o` -> budgets and spend caps).
 
+## Fast path: seed it (2 minutes)
+
+One command makes the repo and a board with 15 cards already written. You skip sections 1 to 3 and
+test running rather than planning:
+
+```bash
+uv run smortboard seed-beta ~/Documents/dev/comet-catcher
+gh repo create comet-catcher --private --source ~/Documents/dev/comet-catcher --push
+git -C ~/Documents/dev/comet-catcher push -u origin development
+uv run smortboard
+```
+
+Then `h` until every row is green, and `w`. The seed sets the repo's base to `development`, its test
+command to `node --test`, strict leases, a $30 daily budget and sonnet on every card. It never
+touches GitHub: the two lines after it are yours, and a private repo is enough. A folder that is not
+empty, or a board already named `comet-catcher`, is refused before anything is written (`--name`
+picks another name).
+
+The seeded cards have the shape section 3 asks mission control for. Take sections 1 to 3 instead
+when mission control's planning is what you want to test.
+
 ---
 
 ## 1. Create the repo (5 minutes)
