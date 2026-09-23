@@ -52,6 +52,44 @@ async function loadAutoSwitchToggle(box) {
   }
 }
 
+// usage_limit_route: unset (the default) switches a limited role to its fallback model by itself;
+// "attention" blocks the card and asks in the inbox (n) instead. credential rotation above is a
+// separate choice - same model, another subscription
+function buildUsageLimitRouteToggle() {
+  const wrap = document.createElement('label');
+  wrap.className = 'settings-toggle-row';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.className = 'settings-usage-limit-route-checkbox';
+  box.checked = false;
+  const text = document.createElement('span');
+  text.textContent = 'on a usage limit, ask me before switching to a fallback model';
+  wrap.append(box, text);
+
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    const {ok} = await apiOrError('/api/settings', {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({usage_limit_route: box.checked ? 'attention' : null}),
+    });
+    box.disabled = false;
+    if (!ok) box.checked = !box.checked; // revert on a failed save
+  });
+
+  loadUsageLimitRouteToggle(box);
+  return wrap;
+}
+
+async function loadUsageLimitRouteToggle(box) {
+  try {
+    const settings = await api('/api/settings');
+    box.checked = settings.usage_limit_route === 'attention';
+  } catch {
+    // leave the default (unchecked) - the board switches by itself, as before this setting
+  }
+}
+
 // enable_mouse: the board is driven from the keyboard, and this turns on the pointer half of it -
 // hovering focuses what the arrow keys would (fanning a piled column with it), and right-click
 // opens the card menu m opens. off by default; the clicks that always worked are never gated by it
@@ -105,6 +143,7 @@ async function loadMouseToggle() {
 
 const SETTINGS_SECTIONS = [
   {group: 'labs', label: 'credential profiles', node: buildAutoSwitchToggle()},
+  {group: 'labs', label: 'usage limits', node: buildUsageLimitRouteToggle()},
   {group: 'general', label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle},
 ];
 

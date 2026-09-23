@@ -35,8 +35,9 @@ _ACTIONS = {
         "Widen its lease if it needs that file, or answer in the inbox (n) to leave the file be.",
     ),
     "USAGE_LIMIT": (
-        "wait, then r",
-        "Wait for the rate-limit window to reset, then press r to run it again.",
+        "retry or wait",
+        "Retry it on a fallback model from the inbox (n), or wait for the rate-limit window to "
+        "reset - its inbox note says whether it re-runs by itself then or needs r.",
     ),
     "DEPENDENCY_REJECTED": (
         "fix its dependency",

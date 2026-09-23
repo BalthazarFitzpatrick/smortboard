@@ -116,6 +116,14 @@ class RunRegistry:
         self._handles: dict[str, ProcessHandle] = {}
         self._stopping: set[str] = set()
         self._lock = threading.Lock()
+        # card_id -> on_finish, for every start that brings none - see set_finish_hook
+        self._finish_hook: Callable[[str], Callable[[RunState], None] | None] | None = None
+
+    def set_finish_hook(self, hook: Callable[[str], Callable[[RunState], None] | None]) -> None:
+        """gives every run started without an on_finish (a manual r, an inbox answer) the one
+        the scheduler would have passed, so its USAGE_LIMIT, API_UNREACHABLE or MERGE_CONFLICT is
+        handled the same as a queued run's - see SchedulerRegistry.finish_hook"""
+        self._finish_hook = hook
 
     def get(self, card_id: str) -> RunState | None:
         with self._lock:
@@ -167,6 +175,13 @@ class RunRegistry:
             state = RunState(card_id=card_id)
             self._runs[card_id] = state
 
+        # asked before the thread starts, so the hook sees where this run's events begin. a hook
+        # that fails still lets the run start - the state above is already registered as running
+        if on_finish is None and self._finish_hook is not None:
+            try:
+                on_finish = self._finish_hook(card_id)
+            except (sqlite3.Error, profiles.ProfileError):
+                on_finish = None
         thread = threading.Thread(
             target=self._run, args=(state, runner or run_card_lifecycle, on_finish), daemon=True
         )

@@ -22,6 +22,10 @@ BLOCKED_REASON_CODES = (
 # spends a run's worth of tokens that nobody asked for
 FINDINGS_ROUTES = ("fix", "attention")
 DEFAULT_FINDINGS_ROUTE = "attention"
+# what a usage limit does to a role with a cross-lab fallback: switch to it unasked, or block and
+# ask in the inbox. unset means fallback, the behaviour before this setting existed
+USAGE_LIMIT_ROUTES = ("fallback", "attention")
+DEFAULT_USAGE_LIMIT_ROUTE = "fallback"
 
 # a deleted card is kept as a backup for this many days before it is purged for good - see
 # Store.delete_card, Store.restore_card and Store._purge_expired_backups

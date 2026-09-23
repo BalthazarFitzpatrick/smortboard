@@ -17,6 +17,7 @@ from smortboard.store.schema import (
     DEFAULT_FINDINGS_ROUTE,
     FINDINGS_ROUTES,
     STATUSES,
+    USAGE_LIMIT_ROUTES,
     migrate,
 )
 
@@ -48,6 +49,8 @@ COMPLEXITY_LEVELS = (1, 2, 3)
 # auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - opt-in, "on" rotates
 # credentials; unset (or any other value, including a stored "off" from before this flipped)
 # parks the board until the reset instead, the pre-profiles behaviour
+# usage_limit_route gates the cross-lab half of a USAGE_LIMIT - "attention" blocks the card in the
+# inbox instead of switching model unasked; unset (or "fallback") switches, see schema.USAGE_LIMIT_ROUTES
 # mall_cam_interval_seconds is the workforce drawer's auto-cycle period (cf90bacc) - unset means
 # chat.js's own default (10)
 # enable_mouse turns on the pointer affordances that mirror the keyboard - hover focusing a card,
@@ -67,6 +70,7 @@ _SETTING_KEYS = (
     "resume_briefing",
     "gate_timeout_seconds",
     "auto_switch_profiles",
+    "usage_limit_route",
     "mall_cam_interval_seconds",
     "enable_mouse",
     "worker_budget_usd",
@@ -97,6 +101,13 @@ _EXTRA_SETTING_KEYS = ("mission_control_read_paths", *_FALLBACK_KEYS)
 def _check_findings_route(value: str | None) -> None:
     if value is not None and value not in FINDINGS_ROUTES:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
+
+
+def _check_usage_limit_route(value: str | None) -> None:
+    if value is not None and value not in USAGE_LIMIT_ROUTES:
+        raise ValueError(
+            f"usage_limit_route must be one of {USAGE_LIMIT_ROUTES} or null, not {value!r}"
+        )
 
 
 # both reach docker or claude argv as their own item, so a leading "-" would read as a flag
@@ -756,6 +767,8 @@ class Store:
         for key, value in fields.items():
             if key == "findings_route":
                 _check_findings_route(value)
+            if key == "usage_limit_route":
+                _check_usage_limit_route(value)
             if key in {"max_parallel", "mall_cam_interval_seconds"}:
                 _check_positive_int(key, value)
             if key in SPEND_CAP_KEYS:
@@ -1355,6 +1368,20 @@ class Store:
         where = f"WHERE kind IN ({placeholders})" if kinds is not None else ""
         rows = self._conn.execute(
             f"SELECT * FROM events {where} ORDER BY created_at, seq", kinds or []
+        ).fetchall()
+        events = []
+        for row in rows:
+            event = _row_to_dict(row)
+            event["payload"] = json.loads(event.pop("payload_json"))
+            events.append(event)
+        return events
+
+    def list_recent_events(self, kind: str, limit: int) -> list[dict[str, Any]]:
+        """the newest `limit` events of one kind across every card, newest first - a bounded read
+        where list_events_by_kind(None) would parse the whole table (74 MB measured 2026-09-23)"""
+        rows = self._conn.execute(
+            "SELECT * FROM events WHERE kind = ? ORDER BY created_at DESC, seq DESC LIMIT ?",
+            (kind, limit),
         ).fetchall()
         events = []
         for row in rows:

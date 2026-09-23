@@ -165,10 +165,10 @@ assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-s
   .map(section => section.children[0].textContent)), [
   ['mouse', 'mission control can read', 'how many cards run at once',
     'mall cam: seconds per card while auto-cycling the workforce drawer'],
-  ['credential profiles', 'models by role'],
+  ['credential profiles', 'usage limits', 'models by role'],
   ['budgets and spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 7);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 8);
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
 assert.deepEqual(costTriggers.map(trigger => trigger.textContent),
   ['daily budgets per board', 'spend caps per run'], 'cost controls have separate compact triggers');
@@ -303,6 +303,21 @@ autoSwitchBox._listeners.change.forEach(fn => fn());
 await flush();
 switchPatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
 assert.deepEqual(JSON.parse(switchPatch.opts.body), {auto_switch_profiles: null});
+
+// ---- the usage-limit route: unchecked switches by itself (unset), checked asks first -----------
+const routeBox = mod.st.listEl.querySelector('.settings-usage-limit-route-checkbox');
+assert.ok(routeBox, 'the labs group carries the usage-limit route toggle');
+assert.equal(routeBox.checked, false, 'unset renders unchecked - the fallback switch stays automatic');
+routeBox.checked = true;
+routeBox._listeners.change.forEach(fn => fn());
+await flush();
+let routePatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+assert.deepEqual(JSON.parse(routePatch.opts.body), {usage_limit_route: 'attention'});
+routeBox.checked = false;
+routeBox._listeners.change.forEach(fn => fn());
+await flush();
+routePatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
+assert.deepEqual(JSON.parse(routePatch.opts.body), {usage_limit_route: null});
 
 // ---- parallelism stays in general settings; daily budgets have their own cost-control grid -----
 assert.equal(mod.parallelCaps.globalInput.value, '', 'an unset global cap renders as an empty field, not 0');
