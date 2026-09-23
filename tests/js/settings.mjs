@@ -164,11 +164,12 @@ assert.deepEqual(settingsGroups.map(group => group.querySelector('.settings-grou
 assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-section')
   .map(section => section.children[0].textContent)), [
   ['mouse', 'mission control can read', 'how many cards run at once',
+    'file leases: strict or soft, per board',
     'mall cam: seconds per card while auto-cycling the workforce drawer'],
   ['credential profiles', 'models by role'],
   ['budgets and spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 7);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 8);
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
 assert.deepEqual(costTriggers.map(trigger => trigger.textContent),
   ['daily budgets per board', 'spend caps per run'], 'cost controls have separate compact triggers');

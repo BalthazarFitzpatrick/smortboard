@@ -603,6 +603,74 @@ SETTINGS_SECTIONS.push({
   onOpen: loadParallelSection,
 });
 
+// ---- lease mode: how far a card's writes may reach past its declared paths ---------------------
+// strict (unset) keeps a card inside its lease; soft lets it write any other repo path that is not
+// protected (settings, ci, agent instructions, build and dependency files, secrets) and that no
+// other active card on the repo holds. every path it reaches that way is shown on the card
+
+const leaseModes = {boardsList: null};
+
+function renderBoardLeaseRow(board) {
+  const row = document.createElement('div');
+  row.className = 'board-row settings-grid-row';
+  const label = document.createElement('span');
+  label.className = 'board-name field-label';
+  label.textContent = board.name;
+  label.title = board.name;
+  const wrap = document.createElement('label');
+  wrap.className = 'settings-toggle-row';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.className = 'settings-lease-mode-checkbox';
+  box.checked = board.lease_mode === 'soft';
+  const text = document.createElement('span');
+  text.textContent = 'soft: may write unprotected paths no other card holds';
+  wrap.append(box, text);
+  const status = document.createElement('span');
+  status.className = 'boards-status settings-grid-note';
+
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({lease_mode: box.checked ? 'soft' : 'strict'}),
+    });
+    box.disabled = false;
+    if (!ok) box.checked = !box.checked; // revert on a failed save
+    status.textContent = ok ? '' : (body && body.error) || 'could not save';
+    status.className = ok ? 'boards-status settings-grid-note' : 'boards-status boards-error settings-grid-note';
+  });
+  row.append(label, wrap, status);
+  return row;
+}
+
+async function loadLeaseModes() {
+  try {
+    const boards = await api('/api/boards');
+    clearChildren(leaseModes.boardsList);
+    leaseModes.boardsList.appendChild(settingsGridHeader(['board', 'file lease']));
+    boards.forEach(board => leaseModes.boardsList.appendChild(renderBoardLeaseRow(board)));
+  } catch (err) {
+    clearChildren(leaseModes.boardsList);
+    leaseModes.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
+  }
+}
+
+function buildLeaseModesSection() {
+  const grid = document.createElement('div');
+  grid.className = 'settings-grid settings-grid-two';
+  leaseModes.boardsList = grid;
+  return grid;
+}
+
+SETTINGS_SECTIONS.push({
+  group: 'general',
+  label: 'file leases: strict or soft, per board',
+  node: buildLeaseModesSection(),
+  onOpen: loadLeaseModes,
+});
+
 // ---- daily budgets: each board's total spend cap for the current utc day -----------------------
 
 const dailyBudgets = {boardsList: null};

@@ -68,11 +68,15 @@ class GuardFiles:
 
 @dataclass(frozen=True)
 class BashPolicy:
-    worktree_path: str | Path
+    # where the guard files are written on the host - a board-owned dir, never the worktree
+    out_dir: str | Path
+    # the repo root the hooks check paths against, as the runner sees it
+    root: str
     python: str = "python3"
     guard_dir: str | None = None
-    root: str | None = None
     remembered_globs: list[str] = field(default_factory=list)
+    # mode, protected_globs and held_globs from leases.lease_policy; empty means strict
+    lease_policy: dict[str, Any] = field(default_factory=dict)
     bash_allow: tuple[str, ...] = ("git *",)
     read: bool = True
     search: bool = True

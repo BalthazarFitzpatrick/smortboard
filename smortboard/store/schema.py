@@ -473,7 +473,9 @@ _MIGRATIONS: list[str] = [
 
     PRAGMA foreign_keys = ON;
     """,
-    # 23: a mission control or fold turn's tokens beside its cost, the same four counts a card
+    # 23: how far a card's writes may reach past its lease - null and strict are today's rule
+    """ALTER TABLE boards ADD COLUMN lease_mode TEXT;""",
+    # 24: a mission control or fold turn's tokens beside its cost, the same four counts a card
     # run's usage events carry - null on rows from before, which recorded cost only
     """
     ALTER TABLE board_spend ADD COLUMN input_tokens INTEGER;

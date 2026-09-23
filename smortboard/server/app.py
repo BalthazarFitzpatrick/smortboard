@@ -462,7 +462,9 @@ def _make_handler(
             elif "profile_name" in params and method == "DELETE":
                 self._handle_remove_profile(params["profile_name"], params.get("lab"))
             elif "card_id" in params and method == "GET":
-                self._send_json(200, store.get_card(params["card_id"]))
+                # the board list's enrichment too, so the open card says what to do next
+                card = store.get_card(params["card_id"])
+                self._send_json(200, with_actions(store, [card])[0])
             elif "card_id" in params and method == "PATCH":
                 self._handle_patch_card(params["card_id"])
             elif "card_id" in params and method == "DELETE":
@@ -478,6 +480,8 @@ def _make_handler(
                 # clearing a value
                 if "merge_mode" in body:
                     store.set_board_merge_mode(params["board_id"], body["merge_mode"])
+                if "lease_mode" in body:
+                    store.set_board_lease_mode(params["board_id"], body["lease_mode"])
                 if "max_parallel" in body:
                     store.set_board_max_parallel(params["board_id"], body["max_parallel"])
                 if "daily_budget_usd" in body:

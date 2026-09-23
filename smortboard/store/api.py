@@ -100,7 +100,7 @@ _FALLBACK_KEYS = tuple(f"{role}_cross_lab_fallback" for role in ROLES)
 _EXTRA_SETTING_KEYS = ("mission_control_read_paths", *_FALLBACK_KEYS)
 _EFFORT_KEYS = tuple(f"{role}_effort" for role in ROLES)
 
-# the token counts a board_spend row carries (migration 23), in column order
+# the token counts a board_spend row carries (migration 24), in column order
 BOARD_SPEND_TOKENS = ("input_tokens", "output_tokens", "cached_tokens", "cache_creation_tokens")
 
 
@@ -332,6 +332,16 @@ class Store:
         if value not in (None, "review", "free"):
             raise ValueError("merge_mode must be review, free, or null")
         self._conn.execute("UPDATE boards SET merge_mode = ? WHERE id = ?", (value, board_id))
+        self._conn.commit()
+        return self.get_board(board_id)
+
+    def set_board_lease_mode(self, board_id: str, value: str | None) -> dict[str, Any]:
+        """strict (or null) keeps a card inside its lease; soft lets it write any unprotected path
+        no other active card on the repo holds - see exec/leases.lease_policy"""
+        self.get_board(board_id)
+        if value not in (None, "strict", "soft"):
+            raise ValueError("lease_mode must be strict, soft, or null")
+        self._conn.execute("UPDATE boards SET lease_mode = ? WHERE id = ?", (value, board_id))
         self._conn.commit()
         return self.get_board(board_id)
 

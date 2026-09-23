@@ -52,7 +52,8 @@ def test_the_headless_rule_reaches_the_worker_even_under_a_stored_prompt(tmp_pat
 def test_the_bash_guard_refuses_a_background_command(tmp_path):
     worktree = tmp_path / "wt"
     worktree.mkdir()
-    settings = json.loads(write_lease_settings(worktree, ["**"]).read_text())
+    settings_path = write_lease_settings(tmp_path / "guards", ["**"], root=worktree)
+    settings = json.loads(settings_path.read_text())
     entry = next(e for e in settings["hooks"]["PreToolUse"] if e["matcher"] == "Bash")
     hook = entry["hooks"][0]["command"].split(" ", 1)
 

@@ -318,7 +318,9 @@ def test_crash_before_final_event_preserves_partial_spend(monkeypatch, tmp_path,
     ],
 )
 def test_codex_guard_covers_patch_paths_and_shell_policy(tmp_path, tool, args, allowed):
-    guards = CodexAdapter().guard_files(["src/**"], BashPolicy(tmp_path, python=sys.executable))
+    guards = CodexAdapter().guard_files(
+        ["src/**"], BashPolicy(tmp_path / "guards", root=str(tmp_path), python=sys.executable)
+    )
     result = subprocess.run(
         [sys.executable, str(guards.settings_path.parent / "codex_guard.py")],
         input=json.dumps({"tool_name": tool, "tool_input": args}),

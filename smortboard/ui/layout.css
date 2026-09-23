@@ -235,11 +235,13 @@ body {
 
 /* ---- the open card ------------------------------------------------------------------------
    TWO-UP, A STATE EDGE, THE RUN AS A TIMELINE - the operator's pick on 2026-09-10 from fifteen previews.
+   ABOUT, DONE, NEEDS down the left, the card's own facts down the right (operator, 2026-09-23):
+   card_panel.js pins every section to its column and gives the left 3 parts to the right's 2.
    MASONRY, NOT A GRID ROW: a css grid (or flex) row ties every cell in it to the tallest cell's
-   box, which is exactly the blank gap a shorter neighbour used to sit in. board.js's
+   box, which is exactly the blank gap a shorter neighbour used to sit in. columns.js's
    layoutCardSections measures every section and places it right under its own column's last
-   section instead, so title and the run still read across the whole panel but every other
-   section stacks by its own height, one column at a time. */
+   section instead, so the head band reads across the whole panel but every other section stacks
+   by its own height, one column at a time. */
 .card-panel { --rule-soft: color-mix(in srgb, var(--grey-border) 55%, transparent); }
 /* the design archive (panel-layouts.css) resets .card-sections back to a flat list for its own
    normal-flow variants - it was written against the old grid and never learned about masonry, so
@@ -276,23 +278,67 @@ body {
   border: 0; border-left: 8px solid var(--grey-border);
   background: var(--bg); padding: 12px 16px;
 }
-.card-panel [data-section="title"] .section-value { color: var(--cream); font-size: 1.15em; }
+.card-panel [data-section="title"] .section-value { color: var(--cream); font-size: 1.15em; margin-top: 4px; }
 .card-panel.card-working [data-section="title"] { border-left-color: var(--fill-good); }
 .card-panel.card-attention [data-section="title"] { border-left-color: var(--fill-attention); }
 .card-panel.card-accepted [data-section="title"] { border-left-color: var(--status-good); }
 .card-panel.card-rejected [data-section="title"] { border-left-color: var(--fill-warn); }
+/* the head's one meta line: id, status, why it is blocked, model, spend - small facts, dim, and
+   the block reason in the attention colour so it reads before the rest */
+.card-panel .card-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--text-dim); }
+.card-panel .card-meta .card-id { color: var(--cream); }
+.card-panel .card-meta-flag { color: var(--fill-attention); }
+
+/* a label's count sits at the far end of its rule, like a board column's own count */
+.card-panel .card-section > .field-label { display: flex; justify-content: space-between; gap: 8px; }
+.card-panel .field-count { color: var(--text-dim); }
+
+/* NEEDS WEARS THE ATTENTION EDGE only while the card waits on the operator - card_panel.js sets
+   data-accent then, never for a card that is working or finished */
+.card-panel .card-section[data-accent="attention"] { border-left: 3px solid var(--attention); padding-left: 10px; }
+.card-panel .card-section[data-accent="attention"] > .field-label { color: var(--attention); }
 
 .card-panel ul { margin: 4px 0; padding-left: 18px; }
+/* one fact per line, dash-led - the same "- " the agents write in, not the browser's bullet */
+.card-panel .card-lines { list-style: none; padding-left: 0; display: grid; gap: 3px; }
+.card-panel .card-lines > li { padding-left: 2ch; text-indent: -2ch; }
+.card-panel .card-lines > li::before { content: "- "; color: var(--text-dim); }
+.card-panel .card-lines > li.empty { padding-left: 0; text-indent: 0; }
+.card-panel .card-lines > li.empty::before { content: none; }
+.card-panel .card-tasks { list-style: none; padding-left: 0; }
+.card-panel .card-lead { color: var(--text); }
+.card-panel .card-path { color: var(--text-dim); }
+.card-panel .comment-cta { margin-top: 8px; }
 .card-panel .comment-input { width: 100%; box-sizing: border-box; margin-top: 8px; }
 
-/* THE RUN AS A TIMELINE. worker, tests, review and pull request happened in that order, so they sit
-   on a rail with a marker each: filled lichen passed, filled red failed, hollow for no verdict */
+/* folded long text - the full brief, a summary with no block to read - opened on purpose */
+.card-panel .card-fold { margin-top: 6px; }
+.card-panel .card-fold > summary { cursor: pointer; color: var(--text-dim); }
+.card-panel .card-fold-body { margin-top: 6px; color: var(--text-dim); }
+
+/* history: one line per note, its time in a fixed column, the headline cut to one line; a note
+   with more to it opens in place */
+.card-panel .card-history { list-style: none; padding-left: 0; display: grid; gap: 3px; }
+.card-panel .history-line { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: 8px; }
+.card-panel .history-line time { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.card-panel .history-head { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-panel .history-you { color: var(--cream); }
+.card-panel .history-note > summary { cursor: pointer; list-style: none; }
+.card-panel .history-note > summary::-webkit-details-marker { display: none; }
+.card-panel .history-note[open] .history-head { white-space: normal; }
+.card-panel .history-note > .comment-body { margin: 4px 0 6px 8.5em; color: var(--text-dim); }
+
+/* THE RUN AS A TIMELINE. tests, review and pull request happened in that order, so they sit on a
+   rail with a marker each: filled lichen passed, filled red failed, hollow for no verdict */
+.card-panel .run-rail { margin-top: 10px; }
 .card-panel .outcome-part {
-  position: relative; margin-left: 5px; padding: 2px 0 12px 20px;
+  position: relative; margin-left: 5px; padding: 1px 0 6px 20px;
   border-left: 2px solid var(--grey-border);
 }
-/* the last step ends the rail - the route line after it is not a step */
+/* the last step ends the rail */
 .card-panel .outcome-part:not(:has(~ .outcome-part)) { border-left-color: transparent; padding-bottom: 0; }
+.card-panel .rail-key { display: inline-block; min-width: 6em; color: var(--text-dim); }
+.card-panel .rail-line { color: var(--text); margin-top: 2px; }
 /* a small round dot on the 2px rail, level with the step's first line, pale so the words lead.
    lichen milk done, stone red a problem, vanilla waiting on the operator, blue still going */
 .card-panel .outcome-part::before {
@@ -309,16 +355,9 @@ body {
 .card-panel .outcome-part[data-state="problem"] .verdict { color: var(--fill-warn); }
 .card-panel .outcome-part[data-state="attention"] .verdict { color: var(--fill-attention); }
 .card-panel .outcome-part[data-state="doing"] .verdict { color: var(--fill-good); }
-.card-panel .outcome-route { margin-top: 10px; }
-.card-panel .outcome-route, .card-panel .empty { color: var(--text-dim); }
+.card-panel .empty { color: var(--text-dim); }
 /* the browser's default link blue sat near-invisible on the panel ground */
 .card-panel a { color: var(--kingfisher); }
-
-/* every timeline entry: a header (state colour carried by .verdict already) over its own small
-   "- " led paragraphs - a literal dash, not a real list, so a long summary still reads at a glance */
-.card-panel .timeline-header { display: block; font-weight: 600; margin-bottom: 4px; }
-.card-panel .timeline-body { display: flex; flex-direction: column; gap: 4px; }
-.card-panel .timeline-line { color: var(--text); }
 
 /* fills whatever holds it - a drawer body, not a fixed box */
 .hazard-placeholder {
@@ -514,7 +553,7 @@ body {
 }
 
 /* agents and the board write short labelled lines - keep the line breaks instead of one wall */
-.card-body, .comment-body, .card-panel [data-section="description"] .section-value {
+.card-body, .comment-body, .card-panel .card-fold-body {
   white-space: pre-line;
 }
 .comment-body { line-height: 1.4; }
@@ -546,6 +585,16 @@ body {
   align-items: center;
   font-size: var(--font-size, 13px);
   text-decoration: none;
+}
+
+/* the card filter (board.js buildCardFilterInput, cmd/ctrl+f): ui_base's text-field at the bar
+   corner's own height, between the bug form and settings */
+.card-filter {
+  order: 1;
+  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  width: 160px;
+  box-sizing: border-box;
+  font-size: var(--font-size, 13px);
 }
 
 /* ---- settings (o): the button in the bar corner and the panel it opens ---------------------- */
