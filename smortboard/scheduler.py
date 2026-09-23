@@ -93,7 +93,7 @@ _RESET_LOOKBACK_EVENTS = 200
 
 
 def usage_limit_route(settings: dict[str, Any]) -> str:
-    """ "attention" asks in the inbox before a cross-lab model switch; anything else switches"""
+    """the route in effect - "attention" asks before a cross-lab model switch, anything else switches"""
     route = settings.get("usage_limit_route")
     return "attention" if route == "attention" else DEFAULT_USAGE_LIMIT_ROUTE
 

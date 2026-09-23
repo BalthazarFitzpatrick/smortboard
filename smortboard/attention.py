@@ -196,12 +196,15 @@ def with_actions(
     the board can say what to do on the strip itself, not only in the inbox. Also handled_by_board
     and next: set while the board is retrying the block itself, so the card view can say so instead
     of reading as unattended."""
+    ask_on_limit = usage_limit_route(store.get_settings()) == "attention"
     for card in cards:
         reason = waiting_reason(store, card)
         card["next_action"] = next_action(reason)
         card["next_action_short"] = short_action(reason)
         next_note = handled_by_board(store, card, schedule)
-        card["handled_by_board"] = next_note is not None
+        # the board and the inbox agree: a limit the inbox asks about draws in attention too
+        asked = reason == "USAGE_LIMIT" and ask_on_limit
+        card["handled_by_board"] = next_note is not None and not asked
         card["next"] = next_note
     return cards
 
@@ -343,8 +346,8 @@ def attention_rows(store: Store, schedule: Any = None) -> list[dict[str, Any]]:
             # own strip still shows handled_by_board and next) but drops out of the inbox until
             # its automatic attempts are spent. a usage limit under the "attention" route is the
             # exception: the reset retry stands, but a fallback model is the operator's call
-            asks = reason == "USAGE_LIMIT" and ask_on_limit
-            if not asks and handled_by_board(store, card, schedule) is not None:
+            asked = reason == "USAGE_LIMIT" and ask_on_limit
+            if not asked and handled_by_board(store, card, schedule) is not None:
                 continue
             answerable = reason in RESUMABLE_REASONS
             row = {
