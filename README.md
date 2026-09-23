@@ -421,6 +421,11 @@ Only `todo` cards fold; a card that is already running holds a branch and a run,
 would orphan both. A proposed group past four cards or twelve criteria is refused whatever the model
 suggested, so a fold never turns a queue of small cards into one nobody can finish.
 
+**Card text is short.** A title is at most 8 words, a description at most 20, each criterion at most
+12. Mission control and fold are told so, and the board leaves a note when a card runs long.
+`POST /api/cards`, and a `PATCH` that changes a title or description, answer with the card plus a
+`warnings` list, empty when it fits. Nothing is refused or cut.
+
 **The workforce chat** (`,`) is a terminal onto one card's agent, pinned to the card you are on. With
 no card focused it rotates through every working card. A **note** sent here reaches a *running* agent
 between two of its tool calls.

@@ -23,6 +23,7 @@ from smortboard.orchestrator import (
     _real_runner,
     _short_id,
     _snapshot_repos,
+    card_text_warnings,
 )
 from smortboard.scheduler import globs_may_overlap
 from smortboard.store.api import Store, _clean_leases
@@ -159,6 +160,8 @@ def _fold(
     )
     ledger = [card["ledger_task"] for card in fresh if card["ledger_task"]]
     description = str(group.get("description") or "").strip() or (fresh[0]["description"] or "")
+    # checked before the ledger note below is added - that text is the board's, not the fold's
+    notes = card_text_warnings({"title": title, "description": description, "criteria": criteria})
     # a card links one ledger task; the rest stay named so the fold loses none of them
     if len(ledger) > 1:
         description += "\n\nALSO COVERS LEDGER TASKS:\n" + "\n".join(f"- {t}" for t in ledger[1:])
@@ -193,6 +196,10 @@ def _fold(
         for dependent in card["depended_on_by"]:
             if dependent not in ids:
                 store.add_dependency(dependent, merged["id"])
+
+    # the same board notes mission control leaves for its own cards: reported, never cut
+    for note in notes:
+        _say(store, board_id, note)
 
     folded = ", ".join(_short_id(card["id"]) for card in fresh)
     line = f'folded {folded} into {_short_id(merged["id"])} "{title}"'
