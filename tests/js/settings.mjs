@@ -169,7 +169,7 @@ assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-s
   ['credential profiles', 'usage limits', 'models by role'],
   ['budgets and spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 8);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 9);
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
 assert.deepEqual(costTriggers.map(trigger => trigger.textContent),
   ['daily budgets per board', 'spend caps per run'], 'cost controls have separate compact triggers');
