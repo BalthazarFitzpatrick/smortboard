@@ -23,6 +23,8 @@ secrets.*
 output/
 outputs/
 .work/
+# the docs site as mkdocs builds it; github pages builds its own copy
+site/
 *.log
 *.tmp
 *.bak

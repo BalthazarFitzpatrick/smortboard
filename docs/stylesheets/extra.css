@@ -1,0 +1,25 @@
+/* the board's own palette (smortui base.css), so the docs look like the thing they describe */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #17171b;
+  --md-default-fg-color: #cfc9bd;
+  --md-typeset-color: #cfc9bd;
+  --md-primary-fg-color: #1e1e23;
+  --md-primary-bg-color: #e8ddc3;
+  --md-accent-fg-color: #c7ed5f;
+  --md-typeset-a-color: #52bed9;
+  --md-code-bg-color: #1e1e23;
+}
+
+/* light keeps the same accents at contrast that holds on white */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #17171b;
+  --md-primary-bg-color: #e8ddc3;
+  --md-accent-fg-color: #788f39;
+  --md-typeset-a-color: #1f7f99;
+}
+
+/* screenshots read as objects, not page background */
+.md-typeset img {
+  border: 1px solid #4a4a52;
+  border-radius: 6px;
+}
