@@ -6,6 +6,7 @@ import queue
 import secrets
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -384,6 +385,53 @@ def _record_deliveries(store: Store | None, card_id: str, feeder: _NoteFeeder | 
         store.append_event(card_id, "note_delivered", {"comment_ids": feeder.delivered.get()})
 
 
+# a run whose stream says nothing for this long is hung, not thinking - measured, card ab103f07's
+# run took 285 minutes, 225 of them one silent gap. killed as API_UNREACHABLE, which retries
+STALL_TIMEOUT_SECONDS = 20 * 60
+
+# a lab with no native budget and no reported cost (codex) has nothing else to stop a runaway run
+UNBUDGETED_TIME_CAP_SECONDS = 60 * 60
+
+# the subtype a run stopped by that cap reports - handled like error_max_budget_usd
+TIME_CAP_SUBTYPE = "error_max_wall_clock"
+
+
+class _Watchdog:
+    """kills a run whose stream went silent, or that outlived its time cap. never touches the
+    store - the reading thread records what it found once the stream ends"""
+
+    def __init__(self, handle: ProcessHandle, stall_seconds: float, cap_seconds: float) -> None:
+        self._handle = handle
+        self.stall_seconds = stall_seconds
+        self.cap_seconds = cap_seconds
+        self._started = self._last = time.monotonic()
+        self._done = threading.Event()
+        self.stalled_for: float | None = None
+        self.capped_after: float | None = None
+        limits = [limit for limit in (stall_seconds, cap_seconds) if limit > 0]
+        if limits:
+            poll = min(30.0, min(limits) / 4)
+            threading.Thread(target=self._watch, args=(poll,), daemon=True).start()
+
+    def touch(self) -> None:
+        self._last = time.monotonic()
+
+    def _watch(self, poll: float) -> None:
+        while not self._done.wait(poll):
+            now = time.monotonic()
+            if self.stall_seconds > 0 and now - self._last >= self.stall_seconds:
+                self.stalled_for = now - self._last
+            elif self.cap_seconds > 0 and now - self._started >= self.cap_seconds:
+                self.capped_after = now - self._started
+            else:
+                continue
+            self._handle.terminate()
+            return
+
+    def close(self) -> None:
+        self._done.set()
+
+
 def run_process(
     store: Store | None,
     card_id: str,
@@ -404,8 +452,15 @@ def run_process(
     profile: str | None = None,
     budget_usd: float | None = None,
     role: str = "worker",
+    stall_seconds: float | None = None,
+    time_cap_seconds: float | None = None,
 ) -> RunResult:
-    """record raw and neutral events, preserving the identity selected before launch"""
+    """record raw and neutral events, preserving the identity selected before launch.
+
+    `stall_seconds` (default STALL_TIMEOUT_SECONDS) and `time_cap_seconds` (default
+    UNBUDGETED_TIME_CAP_SECONDS for a lab with no native budget, else none) end a run that went
+    silent or ran too long; 0 turns either off.
+    """
     adapter = adapter or get_adapter(lab)
     lab = adapter.lab
     if profile is None:
@@ -427,6 +482,13 @@ def run_process(
     handle = ProcessHandle(process, container_name=container_name)
     if on_process is not None:
         on_process(handle)
+    if time_cap_seconds is None:
+        time_cap_seconds = 0 if adapter.capabilities.native_budget else UNBUDGETED_TIME_CAP_SECONDS
+    watchdog = _Watchdog(
+        handle,
+        STALL_TIMEOUT_SECONDS if stall_seconds is None else stall_seconds,
+        time_cap_seconds,
+    )
     feeder: _NoteFeeder | None = None
     if live and process.stdin is not None:
         if token_line is not None:
@@ -486,6 +548,7 @@ def run_process(
 
     assert process.stdout is not None
     for raw_line in process.stdout:
+        watchdog.touch()
         raw = parse_line(raw_line)
         if raw is None:
             continue
@@ -522,12 +585,35 @@ def run_process(
             budget_exceeded = True
             handle.terminate()
 
+    watchdog.close()
     if feeder is not None:
         feeder.close()
         _record_deliveries(store, card_id, feeder)
     process.wait()
     stderr_thread.join(timeout=2)
-    if budget_exceeded:
+    if watchdog.stalled_for is not None:
+        # a hung stream is an outage, not the card's fault - the auto-retry picks this code up
+        blocked_reason_code = "API_UNREACHABLE"
+        if store is not None:
+            gap = {
+                "gap_seconds": round(watchdog.stalled_for),
+                "limit_seconds": watchdog.stall_seconds,
+            }
+            store.append_event(card_id, "run_stalled", gap)
+    if watchdog.capped_after is not None and store is not None:
+        store.append_event(
+            card_id,
+            "run_time_capped",
+            {"seconds": round(watchdog.capped_after), "limit_seconds": watchdog.cap_seconds},
+        )
+    capped = (
+        "error_max_budget_usd"
+        if budget_exceeded
+        else TIME_CAP_SUBTYPE
+        if watchdog.capped_after is not None
+        else None
+    )
+    if capped:
         previous = finals[-1].result if finals else {}
         unaccounted = [event.usage.get("cost_usd") for event in pending_usage]
         remaining_cost = sum(unaccounted) if all(cost is not None for cost in unaccounted) else None
@@ -537,7 +623,7 @@ def run_process(
                 result={
                     **(previous or {}),
                     "ok": False,
-                    "subtype": "error_max_budget_usd",
+                    "subtype": capped,
                     "text": (previous or {}).get("text") or partial_text,
                     "structured_output": structured_output,
                     "blocked_reason_code": "CRASH",
@@ -554,7 +640,7 @@ def run_process(
             for event in pending_usage
         ]
         record(
-            {"type": "result", "subtype": "error_max_budget_usd", "is_error": True},
+            {"type": "result", "subtype": capped, "is_error": True},
             [*summaries, final],
         )
     identity = {"lab": lab, "model": model, "profile": profile, "role": role}
@@ -599,13 +685,15 @@ def run_process(
     final = finals[-1]
     last = final.result or {}
     reason = adapter.classify(final) or blocked_reason_code
-    if budget_exceeded:
+    if capped:
         reason = "CRASH"
+    if watchdog.stalled_for is not None:
+        reason = "API_UNREACHABLE"
     costs = [u.get("cost_usd") for u in usage_events]
     total_cost = sum(costs) if costs and all(cost is not None for cost in costs) else None
     # reported totals take precedence over rounded per-model subtotals
     result_costs = [(event.result or {}).get("cost_usd") for event in finals]
-    if not budget_exceeded and result_costs and all(cost is not None for cost in result_costs):
+    if not capped and result_costs and all(cost is not None for cost in result_costs):
         total_cost = sum(result_costs)
     result = RunResult(
         subtype=last.get("subtype"),

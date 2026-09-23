@@ -28,17 +28,18 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.actions import with_next
-from smortboard.briefing import repeats_failed_attempt, resume_briefing
+from smortboard.briefing import repeats_failed_attempt, resume_briefing, resume_point
 from smortboard.exec.backends import (
     CardRuntimeUnavailable,
+    card_image,
+    image_id,
     require_card_runtime,
     write_container_guards,
 )
-from smortboard.exec.runner import ProcessHandle
+from smortboard.exec.runner import TIME_CAP_SUBTYPE, ProcessHandle
 from smortboard.exec.worktrees import (
     WorktreeError,
     add_worktree,
-    branch_diff,
     branch_diverged_from_origin,
     branch_exists,
     branch_name,
@@ -67,6 +68,7 @@ from smortboard.review.reviewer import (
     DEFAULT_REVIEW_BUDGET_USD,
     ReviewResult,
     ReviewUnavailable,
+    review_diff,
     run_review,
 )
 from smortboard.review.screenshot import diff_touches_ui, take_screenshot
@@ -130,11 +132,20 @@ NO_LEASE_NOTE = (
 # turns mid-turn. with commits on the branch that is still real work, so it goes to the gates
 # like a normal finish; with none, it is blocked like any other failed run, but the note names
 # the actual limit instead of a bare CRASH
-BUDGET_CAPPED_SUBTYPES = frozenset({"error_max_budget_usd", "error_max_turns"})
+BUDGET_CAPPED_SUBTYPES = frozenset({"error_max_budget_usd", "error_max_turns", TIME_CAP_SUBTYPE})
+_CAP_NAMES = {"error_max_budget_usd": "budget", TIME_CAP_SUBTYPE: "time limit"}
 
 NO_COMMITS_BUDGET_NOTE = (
     "The run hit its {limit} before committing anything, so there is nothing to test or review. "
     "Its last words are in the timeline. Run it again, with a note if it stopped early."
+)
+
+# what the card says when the reviewer itself failed - an outage, a crash, a limit - rather than
+# judging the work. the resume path (briefing.resume_point) is what makes the second half true
+REVIEWER_FAILED_NOTE = (
+    "The reviewer could not finish ({reason}): {error}\n\n"
+    "That is not a verdict on the work. Running it again re-runs the test gate and the reviewer "
+    "on this same branch head, not the worker - unless a note or a new commit arrives first."
 )
 
 
@@ -242,6 +253,13 @@ def _lease_globs(card: dict[str, Any]) -> list[str]:
 
 def _note(store: Store, card_id: str, text: str) -> None:
     store.add_comment(card_id, author=BOARD_AUTHOR, body=text)
+
+
+def _run_environment(repo: dict[str, Any]) -> dict[str, Any]:
+    """what the gate runs besides the card's code, for the attempt fingerprint - a rebuilt image
+    or an edited test command is a change even when the branch head is not"""
+    image = repo.get("image") or card_image()
+    return {"image": image, "image_id": image_id(image), "test_command": repo.get("test_command")}
 
 
 def _block(store: Store, state: LifecycleResult, reason_code: str, note: str) -> LifecycleResult:
@@ -627,17 +645,25 @@ def run_card_lifecycle(
         "head": rev_parse(tree.path, "HEAD"),
         "base_head": rev_parse(tree.path, f"origin/{base}"),
         "notes": sum(1 for c in card.get("comments") or [] if c.get("author") == AUTHOR_KEY),
+        **_run_environment(repo),
     }
     if worktree_reused and repeats_failed_attempt(store, card_id, fingerprint):
         return _block(
             store,
             state,
             "TESTS_FAILED",
-            "Nothing has changed since the last attempt: same branch head, same base, no new "
-            "note - and its tests failed. Running the worker again would repeat that failure. "
-            "Change something first (merge the base, fix what the gate names, add a note), then "
-            "run it again.",
+            "Nothing has changed since the last attempt: same branch head, same base, same image "
+            "and test command, no new note - and its tests failed. Running it again would repeat "
+            "that failure. Change something first (merge the base, fix what the gate names, "
+            "rebuild the image, add a note), then run it again.",
         )
+    # a conflict at the sync is the worker's to resolve, and a branch with no commits has nothing
+    # for a gate to test - both always run the worker
+    resume = None
+    if worktree_reused and conflict_note is None:
+        resume = resume_point(store, card_id, fingerprint)
+        if resume is not None and not branch_has_commits(repo["path"], tree.branch, commit_base):
+            resume = None
     store.append_event(card_id, "attempt_fingerprint", fingerprint)
 
     # the card's own model wins, then the board's worker setting, then sonnet. the reviewer has a
@@ -680,18 +706,20 @@ def run_card_lifecycle(
                 state,
                 "The run credential was refused. " + get_adapter(worker_lab).setup_hint(),
             )
+        limit = _CAP_NAMES.get(run.subtype or "", "turn limit")
         if run.subtype in BUDGET_CAPPED_SUBTYPES:
             if branch_has_commits(repo["path"], tree.branch, commit_base):
                 store.append_event(card_id, "budget_capped_with_commits", {"subtype": run.subtype})
                 _note(
                     store,
                     card_id,
-                    "It hit its budget after committing, so its work went to tests and review.",
+                    f"It hit its {limit} after committing, so its work went to tests and review.",
                 )
-                store.append_event(card_id, "worker_summary", {"text": run.result_text})
+                # not clean: a capped run stopped mid-work, so a re-run never resumes past it
+                summary = {"text": run.result_text, "head": rev_parse(tree.path, "HEAD")}
+                store.append_event(card_id, "worker_summary", {**summary, "clean": False})
                 last_summary = run.result_text
                 return None
-            limit = "budget" if run.subtype == "error_max_budget_usd" else "turn limit"
             return _block(
                 store,
                 state,
@@ -705,7 +733,9 @@ def run_card_lifecycle(
                 run.blocked_reason_code,
                 f"The run stopped: {run.blocked_reason_code}.\n\n{run.result_text or ''}".strip(),
             )
-        store.append_event(card_id, "worker_summary", {"text": run.result_text})
+        # the head this clean run left is what lets a later re-run skip the worker
+        summary = {"text": run.result_text, "head": rev_parse(tree.path, "HEAD")}
+        store.append_event(card_id, "worker_summary", {**summary, "clean": True})
         last_summary = run.result_text
         return None
 
@@ -718,18 +748,30 @@ def run_card_lifecycle(
     if conflict_note:
         briefing = f"{briefing}\n\n{conflict_note}" if briefing else conflict_note
 
-    phase("running")
-    if (stopped := work(build_card_prompt(card, briefing))) is not None:
-        return stopped
-    if stopped_now():
-        return _stopped(store, state)
-    # no commit means nothing to test or review - measured, a card that ended its turn early had
-    # its unchanged tree run through the full gate and an approved review of an empty diff first
-    if not branch_has_commits(repo["path"], tree.branch, commit_base):
-        return _refuse(store, state, NO_COMMITS_NOTE.format(branch=tree.branch, base=base))
+    if resume is None:
+        phase("running")
+        if (stopped := work(build_card_prompt(card, briefing))) is not None:
+            return stopped
+        if stopped_now():
+            return _stopped(store, state)
+        # no commit means nothing to test or review - measured, a card that ended its turn early had
+        # its unchanged tree run through the full gate and an approved review of an empty diff first
+        if not branch_has_commits(repo["path"], tree.branch, commit_base):
+            return _refuse(store, state, NO_COMMITS_NOTE.format(branch=tree.branch, base=base))
+    else:
+        store.append_event(
+            card_id, "worker_skipped", {"head": fingerprint["head"], "reason": resume.reason}
+        )
+        _note(
+            store,
+            card_id,
+            f"Picked up at the test gate: {resume.reason}, so the worker was not run again.",
+        )
+        last_summary = resume.summary
 
     # both gates, and on the fix route the findings go back to the worker until the reviewer
     # approves or the rounds run out. the tests re-run after every fix, since a fix can break them
+    reuse_verdict = resume is not None and resume.review_approved
     while True:
         phase("testing")
         try:
@@ -741,8 +783,13 @@ def run_card_lifecycle(
         if not gate.passed:
             return _block_on_failed_gate(store, state, card_id, repo, base, gate)
 
+        diff_text, left_out = review_diff(repo["path"], base, tree.branch)
+        head = rev_parse(tree.path, "HEAD")
+        if reuse_verdict:
+            # the reviewer already approved this exact head, in an earlier attempt
+            store.append_event(card_id, "review_reused", {"head": head})
+            break
         phase("reviewing")
-        diff_text = branch_diff(repo["path"], base, tree.branch)
         try:
             if not reviewer_started:
                 run_ref(store, "reviewer", card, consume=True)
@@ -758,6 +805,8 @@ def run_card_lifecycle(
                 model=reviewer_model,
                 budget_usd=store.spend_cap("reviewer_budget_usd", DEFAULT_REVIEW_BUDGET_USD),
                 on_process=on_process,
+                head=head,
+                excluded_paths=left_out,
             )
         except ReviewUnavailable as exc:
             return _refuse(store, state, f"The reviewer could not run: {exc}")
@@ -765,6 +814,14 @@ def run_card_lifecycle(
             return _stopped(store, state)
         if review.approved:
             break
+        # only a real verdict rejects - a reviewer outage keeps its own, retryable reason
+        if review.runtime_reason:
+            return _block(
+                store,
+                state,
+                review.runtime_reason,
+                REVIEWER_FAILED_NOTE.format(reason=review.runtime_reason, error=review.error),
+            )
 
         # a reviewer that failed to deliver a verdict gave the worker nothing to fix
         fixable = review.error is None and review.findings

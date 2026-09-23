@@ -33,6 +33,7 @@ from smortboard.exec.backends import (
     read_card_token,
 )
 from smortboard.exec.runner import ProcessHandle, RunResult, run_process
+from smortboard.exec.worktrees import branch_changed_paths, branch_diff
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import parse_ref
 from smortboard.labs.registry import get_adapter
@@ -58,13 +59,18 @@ DEFAULT_REVIEW_BUDGET_USD = 1.50
 # the result subtype of a run stopped by --max-budget-usd
 BUDGET_STOP = "error_max_budget_usd"
 
+# strict at every level: codex's --output-schema refuses a schema without additionalProperties
+# false or with an optional property - measured, card 4c56f435's codex review failed on
+# invalid_json_schema every time. `line` is required but nullable, which claude accepts too
 REVIEW_JSON_SCHEMA = {
     "type": "object",
+    "additionalProperties": False,
     "properties": {
         "findings": {
             "type": "array",
             "items": {
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "category": {"type": "string", "enum": list(CATEGORIES)},
                     "severity": {"type": "string", "enum": list(SEVERITIES)},
@@ -72,12 +78,30 @@ REVIEW_JSON_SCHEMA = {
                     "line": {"type": ["integer", "null"]},
                     "message": {"type": "string"},
                 },
-                "required": ["category", "severity", "file", "message"],
+                "required": ["category", "severity", "file", "line", "message"],
             },
         }
     },
     "required": ["findings"],
 }
+
+# files a reviewer cannot judge line by line and that only bloat its diff - left out of it, and
+# named in one line of the prompt instead, so the reviewer still knows they changed
+REVIEW_DIFF_EXCLUDES = (
+    "uv.lock",
+    "poetry.lock",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "Cargo.lock",
+    "go.sum",
+    "*.min.js",
+    "*.min.css",
+)
+
+# how a reviewer run can fail without judging anything. these keep their own reason code, so an
+# api outage or a crash is retried rather than read as the work being rejected
+RUNTIME_REASONS = frozenset({"API_UNREACHABLE", "CRASH", "USAGE_LIMIT"})
 
 REVIEW_PROMPT_HEADER = (
     "Review the diff below and answer exactly four questions - no others:\n"
@@ -136,6 +160,14 @@ class ReviewResult:
         return None if self.approved else self.runtime_reason or "REVIEW_REJECTED"
 
 
+def review_diff(repo_path: str | Path, base: str, branch: str) -> tuple[str, list[str]]:
+    """the diff the reviewer reads, and the changed paths REVIEW_DIFF_EXCLUDES kept out of it"""
+    return (
+        branch_diff(repo_path, base, branch, exclude=REVIEW_DIFF_EXCLUDES),
+        branch_changed_paths(repo_path, base, branch, REVIEW_DIFF_EXCLUDES),
+    )
+
+
 def _compute_approved(findings: list[ReviewFinding]) -> bool:
     for finding in findings:
         if finding.category == "leaked_credential":
@@ -151,9 +183,19 @@ def _image_for(repo: dict[str, Any] | None) -> str:
     return card_image()
 
 
-def _build_prompt(store: Store | None, diff: str) -> str:
+def _build_prompt(
+    store: Store | None, diff: str, excluded: list[str] | tuple[str, ...] = ()
+) -> str:
     header = active_prompt(store, "reviewer", REVIEW_PROMPT_HEADER)
-    return header + DIFF_FRAMING + diff + f"\n{DIFF_END}\n"
+    # inside the markers: the names come from the branch, so they are data like the diff itself
+    left_out = (
+        "Changed, but left out of this diff (lockfiles and generated files): "
+        + ", ".join(excluded)
+        + "\n"
+        if excluded
+        else ""
+    )
+    return header + DIFF_FRAMING + left_out + diff + f"\n{DIFF_END}\n"
 
 
 def _docker_command(
@@ -209,39 +251,39 @@ def _docker_command(
     ]
 
 
+def _no_verdict(error: str, reason: str = "CRASH") -> ReviewResult:
+    """the reviewer failed to judge the work at all - never approval, and never REVIEW_REJECTED
+    either, since a failed run says nothing about the diff"""
+    return ReviewResult(approved=False, error=error, runtime_reason=reason)
+
+
 def _parse(run_result: RunResult) -> ReviewResult:
     if run_result.blocked_reason_code == "USAGE_LIMIT":
-        return ReviewResult(
-            approved=False,
-            error="the reviewer credential reached its usage limit",
-            runtime_reason="USAGE_LIMIT",
-        )
+        return _no_verdict("the reviewer credential reached its usage limit", "USAGE_LIMIT")
     if run_result.structured_output is not None:
         # the answer the reviewer submitted is its verdict - a budget stop right after it does
         # not unmake it
         data: Any = run_result.structured_output
     elif run_result.subtype == BUDGET_STOP:
-        return ReviewResult(
-            approved=False, error="the reviewer hit its budget before it gave a verdict"
-        )
-    elif run_result.blocked_reason_code is not None:
-        # a crash, a lease conflict, an unanswered question - none of those is a verdict, so
+        return _no_verdict("the reviewer hit its budget before it gave a verdict")
+    elif (code := run_result.blocked_reason_code) is not None:
+        # a crash, an unreachable api, an unanswered question - none of those is a verdict, so
         # refuse rather than treat "no findings reported" as approval
-        return ReviewResult(
-            approved=False,
-            error=f"reviewer run did not complete cleanly: {run_result.blocked_reason_code}",
+        return _no_verdict(
+            f"reviewer run did not complete cleanly: {code}",
+            code if code in RUNTIME_REASONS else "CRASH",
         )
     else:
         text = run_result.result_text
         if not text:
-            return ReviewResult(approved=False, error="reviewer produced no output")
+            return _no_verdict("reviewer produced no output")
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
-            return ReviewResult(approved=False, error="reviewer response was not valid json")
+            return _no_verdict("reviewer response was not valid json")
     raw_findings = data.get("findings") if isinstance(data, dict) else None
     if not isinstance(raw_findings, list):
-        return ReviewResult(approved=False, error="reviewer response had no findings list")
+        return _no_verdict("reviewer response had no findings list")
 
     findings = []
     dropped = 0
@@ -273,7 +315,10 @@ def _parse(run_result: RunResult) -> ReviewResult:
     return ReviewResult(approved=_compute_approved(findings), findings=findings)
 
 
-def _record(store: Store | None, card_id: str, result: ReviewResult) -> None:
+def _record(
+    store: Store | None, card_id: str, result: ReviewResult, head: str | None = None
+) -> None:
+    """the verdict, with the branch head it judged - a re-run of that same head reuses it"""
     if store is None:
         return
     store.append_event(
@@ -284,6 +329,8 @@ def _record(store: Store | None, card_id: str, result: ReviewResult) -> None:
                 {
                     "approved": result.approved,
                     "error": result.error,
+                    "runtime_reason": result.runtime_reason,
+                    "head": head,
                     "findings": [
                         {
                             "category": f.category,
@@ -311,12 +358,15 @@ def run_review(
     budget_usd: float | None = DEFAULT_REVIEW_BUDGET_USD,
     token_path: str | Path | None = None,
     on_process: Callable[[ProcessHandle], None] | None = None,
+    head: str | None = None,
+    excluded_paths: list[str] | tuple[str, ...] = (),
 ) -> ReviewResult:
     """runs the reviewer over `diff` in a throwaway container, and records the verdict.
 
     `work_path` is mounted read-only so Read/Grep/Glob can see surrounding context; the reviewer
     never touches git and never writes, so no clone and no fetch-back are needed the way a card's
-    container needs them.
+    container needs them. `excluded_paths` changed but were left out of `diff` (see
+    REVIEW_DIFF_EXCLUDES); `head` is recorded with the verdict.
     """
     if not docker_available():
         raise ReviewUnavailable("Docker is not running, and the reviewer runs in a container.")
@@ -332,9 +382,10 @@ def run_review(
         else profiles.read_profile_token(lab, profile)
     )
 
-    if not diff.strip():
+    # a diff of only lockfiles still goes to the reviewer, which can Read them if it wants to
+    if not diff.strip() and not excluded_paths:
         result = ReviewResult(approved=True, findings=[])
-        _record(store, card_id, result)
+        _record(store, card_id, result, head)
         return result
 
     name = container_name("reviewer", card_id)
@@ -352,7 +403,14 @@ def run_review(
         )
         settings_path = guards.settings_path
     cmd = _docker_command(
-        work_path, _build_prompt(store, diff), settings_path, model, repo, budget_usd, name, kind
+        work_path,
+        _build_prompt(store, diff, excluded_paths),
+        settings_path,
+        model,
+        repo,
+        budget_usd,
+        name,
+        kind,
     )
     run_result = run_process(
         store,
@@ -370,7 +428,7 @@ def run_review(
         budget_usd=budget_usd,
     )
     result = _parse(run_result)
-    _record(store, card_id, result)
+    _record(store, card_id, result, head)
     return result
 
 

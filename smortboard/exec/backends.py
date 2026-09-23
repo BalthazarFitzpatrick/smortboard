@@ -228,6 +228,24 @@ def card_image_available(image: str | None = None) -> bool:
     return result.returncode == 0
 
 
+def image_id(image: str) -> str | None:
+    """the local image's content id, or None when docker cannot say. a rebuild keeps its tag
+    (`<repo>-repo:latest`) and changes only this"""
+    if shutil.which("docker") is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+            capture_output=True,
+            text=True,
+            timeout=_DOCKER_PROBE_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
 def _current_repo(store: Store | None, repo: dict[str, Any] | None) -> dict[str, Any] | None:
     """the repo row fresh off the store, not whatever the caller happened to be holding.
 
