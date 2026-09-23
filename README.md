@@ -418,6 +418,12 @@ is stored as a second copy. An **attempt** is one run of a card: one start event
 follows it. A card that was blocked, answered and re-run has several attempts, and they all stay:
 cost, replay and the resume briefing all work per attempt, and a re-run never erases an earlier one.
 
+**A re-run does not pay for the agent twice.** When the branch is exactly where the agent last left it
+cleanly and nothing new was said to it, a re-run skips the agent and goes straight to the gates. A
+rebuilt image or a changed test command counts as a reason to test again; the same code, the same
+image and the same command after a failed gate is refused as "nothing has changed". A run silent for
+20 minutes is stopped and retried as an outage, and a Codex run is capped at 60 minutes.
+
 A card passes through these phases: `preparing`, `running`, `testing`, `reviewing`, `fixing`,
 `opening`, then one of `opened`, `blocked`, `refused`, `stopped`.
 
@@ -462,8 +468,10 @@ credential**, **best practice**, **efficiency** - and grades each finding `low`,
 - any finding at `high` or `critical`
 - a `leaked_credential` finding at **any** severity, because a model that rates a leaked key "low"
   is not a label to trust
-- no usable verdict at all - a crash, a budget stop before it answered, or unparseable output. A
-  reviewer that fails to deliver a verdict blocks rather than passing quietly.
+- no usable verdict at all - a crash, an outage, a limit, a budget stop before it answered, or
+  unparseable output. A reviewer that fails to deliver a verdict blocks rather than passing quietly,
+  but with its own reason (`CRASH`, `API_UNREACHABLE`, `USAGE_LIMIT`), so it retries; only a real
+  verdict is a `REVIEW_REJECTED`.
 
 The diff is framed as untrusted data: text inside it asking to be approved is itself reported as a
 finding.
@@ -846,8 +854,10 @@ whether you are going to verify it by hand, and expect to.
 
 **A lease that is narrow and does not overlap.** Narrow because it is a boundary; non-overlapping
 because overlapping leases serialise cards that could have run together. Cover every file the card
-genuinely must touch, including its tests, or it will stop on `LEASE_CONFLICT` at the first write it
-needed and did not have.
+genuinely must touch, including its tests. A write it needed and did not have is refused: if the
+card still committed the rest, that goes on to the gates and the path waits under needs; if it
+committed nothing, the card stops on `LEASE_CONFLICT`. A soft board lets it reach an unprotected file
+on its own.
 
 **One feature, not one edit.** A card that is a single edit spends most of its money on the agent
 reading its way in. A card that is three features has no clean point where it is done. Feature-sized
@@ -941,7 +951,9 @@ Three consequences of that model worth knowing:
   you were in saves.
 
 Bindings resolve on the physical key, so a non-US layout does not move them. A held cmd, ctrl or alt
-belongs to the browser - `cmd`+`c` copies, it does not open the cost panel.
+belongs to the browser - `cmd`+`c` copies, it does not open the cost panel. The one exception is
+`cmd`/`ctrl`+`f` on a board with nothing open over it: it filters the board's cards instead of
+searching the page, and `esc` clears the filter.
 
 ### Confirmations, and which button is focused
 
@@ -965,7 +977,7 @@ this list was read from, so the two cannot drift.
 
 | Key | Action |
 |---|---|
-| arrows | move focus; up also exits to the board bar |
+| arrows | move focus; up also exits to the board bar. In an open card: up/down within a column, left/right across |
 | `enter` | open the focused card |
 | `space` | open the focused card, or close the open one |
 | `esc` | one level back: input -> panel -> closed |
@@ -1034,7 +1046,12 @@ and the agents in their lane.
   `docker inspect`; inside the container it reaches only the `claude` process.
 - **Guards the agent cannot touch.** The lease hook covers Edit and Write. A bash guard allows only
   git and the repo's own test and lint commands, and refuses git's option tricks (`-c`,
-  `--upload-pack` and friends). Both are mounted read-only outside the working tree.
+  `--upload-pack` and friends). Both are written to a temporary folder outside the repo and mounted
+  read-only. A soft lease never reaches agent settings, CI, agent instructions, build and dependency
+  files or secrets unless the card's own lease names them.
+- **Only the tools a role needs.** A worker loads read, edit, write, two searches and a shell; the
+  reviewer, mission control and fold load only read and the searches. Skills and slash commands are
+  off for every run.
 - **Proof comes from outside the agent.** Tests re-run offline, the reviewer can only read, and only
   a note carrying the run's own marker counts as you.
 - **No merge path exists** in the code.
@@ -1149,10 +1166,12 @@ runs on, and what it may spend.
 
 Every one of those is a stored setting: `findings_route`, the per-role `*_lab` and `*_model` pairs
 and their `*_cross_lab_fallback` lists, `max_parallel`, `resume_briefing`, `gate_timeout_seconds`,
-`auto_switch_profiles`, `usage_limit_route`, the per-run caps `worker_budget_usd`, `reviewer_budget_usd`,
-`orchestrator_budget_usd`, `fold_budget_usd`, the per-card `card_total_budget_usd`, and
-`mission_control_read_paths` (absolute paths mission control may also read). Per board: its own
-parallel cap, its `daily_budget_usd`, and its merge mode.
+`auto_switch_profiles`, `usage_limit_route`, the per-role `worker_effort`, `reviewer_effort`,
+`orchestrator_effort` and `fold_effort` (unset passes no effort flag), the per-run caps
+`worker_budget_usd`, `reviewer_budget_usd`, `orchestrator_budget_usd`, `fold_budget_usd`, the
+per-card `card_total_budget_usd`, and `mission_control_read_paths` (absolute paths mission control may
+also read). Per board: its own parallel cap, its `daily_budget_usd`, its merge mode and its lease
+mode.
 
 ### Card token
 
@@ -1248,8 +1267,11 @@ Resources) and lower `max_parallel` if it is tight.
 
 ### A card stopped on `LEASE_CONFLICT`
 
-Its agent tried to write outside its lease; the note names the files. The usual cause is a lease
-written for a layout the repo does not have. In the inbox (`n`), **approve** adds exactly the refused
+Either the card committed a file outside its lease, or it was refused a write and committed nothing
+at all; the note names the files. A card that was refused a write but committed the rest does not
+stop here - it goes on to the gates and lists the wanted paths under needs. The usual cause is a
+lease written for a layout the repo does not have. On a board you trust, switching it to a soft
+lease in `o` lets cards reach unprotected files on their own. In the inbox (`n`), **approve** adds exactly the refused
 paths and resumes the card. Or answer instead, to tell the agent to leave those files alone. An
 answer alone never widens a lease.
 
