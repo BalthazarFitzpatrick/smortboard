@@ -563,22 +563,57 @@ def test_the_brief_says_the_card_may_format_not_only_check():
     assert "write form" not in plain
 
 
-def test_a_bash_written_reformat_outside_the_lease_still_classifies_lease_conflict():
-    """the write-form grant lets a formatter touch paths the Edit/Write hook never sees, so
-    permission_denials alone cannot carry this one - exec/backends.py's fetch-back path is the
-    other half of this contract (it flags an out-of-lease diff by putting LEASE_CONFLICT_PREFIX in
-    the result text), and this is the runner-side half: classify_result must still catch it with
-    no Edit/Write denial at all, the same as if the hook itself had refused it."""
+def test_a_summary_quoting_the_lease_prefix_is_not_a_lease_conflict():
+    """card 48e86bcf: a finished run's summary quoted the prefix in prose and the card blocked.
+    a bash-written change outside the lease is caught by the post-run committed-path check in
+    exec/backends.py, which sets LEASE_CONFLICT itself - it never needed the agent's own words"""
     result_event = {
         "type": "result",
         "subtype": "success",
         "is_error": False,
         "permission_denials": [],
-        "result": f"{LEASE_CONFLICT_PREFIX} billing.py was reformatted outside the lease",
+        "result": f"Verified: the hook prints {LEASE_CONFLICT_PREFIX} when a path is refused.",
     }
-    run_result = result_to_run_result(result_event)
-    assert run_result.is_error is False
-    assert run_result.blocked_reason_code == "LEASE_CONFLICT"
+    assert classify_result(result_event) is None
+    assert result_to_run_result(result_event).blocked_reason_code is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["You've hit your session limit · resets 3:40pm (UTC)", "Request rejected (429)"],
+)
+def test_a_usage_limit_wins_over_an_earlier_lease_denial(text):
+    """card b286983f: a Write was refused mid-run, then the session limit ended it - the limit is
+    what stopped the run, so it must park as USAGE_LIMIT and resume, not wait on a lease answer"""
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": True,
+        "api_error_status": 429,
+        "permission_denials": [
+            {
+                "tool_name": "Write",
+                "tool_use_id": "t1",
+                "tool_input": {"file_path": "/workspace/wowtomate/extract/restedxp.py"},
+            }
+        ],
+        "result": text,
+    }
+    assert classify_result(result_event) == "USAGE_LIMIT"
+
+
+def test_an_edit_denial_that_ends_in_a_question_stays_a_lease_conflict():
+    # the order below the usage limit is unchanged: a lease refusal still outranks the question
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "permission_denials": [
+            {"tool_name": "Edit", "tool_use_id": "t1", "tool_input": {"file_path": "/w/x.py"}}
+        ],
+        "result": "x.py is outside my lease - should I widen it?",
+    }
+    assert classify_result(result_event) == "LEASE_CONFLICT"
 
 
 # -- bash guard: refuses a command that reaches outside the worktree ----------
