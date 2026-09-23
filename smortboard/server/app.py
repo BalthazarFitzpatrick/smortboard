@@ -898,14 +898,18 @@ def _make_handler(
         def _orchestrator_view(self, board_id: str) -> dict:
             store.get_board(board_id)  # 404 for an unknown board rather than an empty session
             model = store.get_settings().get("orchestrator_model") or DEFAULT_ORCHESTRATOR_MODEL
+            # turn state before the transcript: a turn stores its reply before clearing thinking,
+            # so reading thinking first means "not thinking" always comes with the reply
+            thinking = orchestrator.thinking(board_id)
+            error = orchestrator.error(board_id)
             return {
                 "messages": [
                     {k: m[k] for k in ("id", "author", "body", "created_at", "cards")}
                     for m in store.list_orchestrator_messages(board_id)
                 ],
                 "plan": store.get_plan(board_id),
-                "thinking": orchestrator.thinking(board_id),
-                "error": orchestrator.error(board_id),
+                "thinking": thinking,
+                "error": error,
                 "model": model,
             }
 
