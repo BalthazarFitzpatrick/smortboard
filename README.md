@@ -1,14 +1,20 @@
 # smortboard
 
-**A kanban board that agents work, not you.** Cards get a brief, a lease on which files may change,
-and a model. Press a key and an agent takes it, in its own container, on its own branch. It never
-merges into `main` - the board tests it, a second agent reviews it, and a pull request waits for you.
+**A kanban board that agents work, not you.** You write the card. An agent takes it in its own
+container, on its own branch. The board runs the tests, a second agent reviews the diff, and a pull
+request waits for you. Nothing lands on `main` unless you merge it.
 
 ![A payments service mid-sprint: cards in every state across the columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
 
-![A card opened over the board: criteria, tasks, dependencies and the run as a timeline - tests passed, reviewer approved, pull request open](docs/images/hero-card.jpg)
+**Define the work, then walk away.** Blue cards have an agent on them. Vanilla cards wait on you,
+and that column is the only one you need to watch. Everything else is the board keeping itself
+busy: queueing, retrying after a rate limit, rebasing a waiting pull request.
 
 ![Both drawers open: a working agent's transcript on the left, the orchestrator planning cards on the right](docs/images/hero-agents.jpg)
+
+**Plan in one chat, steer in the other.** Tell mission control what you want built and it drafts
+the cards, with a file lease and a model for each (right). Talk to any agent while it works; your
+note reaches it between two tool calls, without stopping the run (left).
 
 <sub>Every screenshot on this page is the built-in demo board: invented projects, invented cards.</sub>
 
@@ -17,7 +23,8 @@ merges into `main` - the board tests it, a second agent reviews it, and a pull r
 > is not, and how to file a report.
 
 **Contents** ·
-[Install & start](#install--start) ·
+[Quick start](#quick-start) ·
+[Install](#install) ·
 [Concepts](#concepts) ·
 [How to use it well](#how-to-use-it-well) ·
 [Keyboard](#keyboard) ·
@@ -28,7 +35,7 @@ merges into `main` - the board tests it, a second agent reviews it, and a pull r
 
 ---
 
-## Install & start
+## Quick start
 
 Four commands, then look before you build anything real:
 
@@ -39,29 +46,36 @@ docker build -f docker/card.Dockerfile -t smortboard-card:latest .
 uv run smortboard --demo
 ```
 
-That prints and opens `http://127.0.0.1:8001/ui/index.html?key=...` - a throwaway demo board, three
-invented projects, cards in every state, on port 8001 so it never touches your real one. It never
-touches your real database either. Click around; nothing here needs a credential or Docker running
-a card yet.
+That prints and opens `http://127.0.0.1:8001/ui/index.html?key=...`: a throwaway demo board with
+three invented projects and cards in every state, on port 8001 so it never touches your real one.
+`--demo` ignores `--db` and `SMORTBOARD_DB`, never looks at the user data dir, and writes only to a
+fresh file in a temp directory that dies with the process. Its runs and pull requests are seeded
+history, so `r` there would need Docker and a real repo. Use it to learn the keys and read the
+concepts below against something real.
 
-**Ready for real work?** `uv run smortboard` (no `--demo`) starts your actual board on port 8000.
-Three things before a card can run - the pre-flight checklist (`h`) names whichever is missing:
+### Your first board
 
-1. **A lab credential.** `shift`+`p`, add a profile, paste what `claude setup-token` or `codex login`
-   gives you. Never your own login - see [Card token](#card-token) for exactly what and how.
+`uv run smortboard` (no `--demo`) starts your actual board on port 8000. Three things before a card
+can run, and the pre-flight checklist (`h`) names whichever is missing:
+
+1. **A lab credential.** `shift`+`p`, add a profile, paste what `claude setup-token` or
+   `codex login` gives you. Never your own login; [Install](#install) says exactly what to paste.
 2. **Docker running**, so a card has somewhere to execute.
-3. **A board and a repo.** `b` -> from local repo -> pick a clone with its default branch pushed.
-   Set its test command on the repo's row; a repo with none cannot finish a card.
+3. **A board and a repo.** `b` -> **from local repo** -> pick a clone of a GitHub repo with its
+   default branch pushed. On the repo's row, set the command that runs its tests, e.g.
+   `uv run pytest -q`. **A repo without a test command cannot finish a card**; the gate has nothing
+   to run.
 
-Then: `.` to tell mission control what you want built, `r` on a card to run it, `w` to run the whole
-board. Anything that needs you lands in the inbox, `n`.
+Then:
 
-The full requirements table, credential details, and a walkthrough of your first board are under
-[Install, in full](#install-in-full) and [Quick start, in full](#quick-start-in-full) below.
+1. `.` and tell mission control what you want built. It answers with a plan and proposed cards.
+2. Focus a card and press `r` (it asks once), or `w` to run the whole board.
+3. Anything that needs you lands in the inbox, `n`. Boards default to review-required: read the
+   pull request, then accept with `y` to land it on an unprotected base. Main stays yours.
 
 ---
 
-## Install, in full
+## Install
 
 ### Requirements
 
@@ -80,7 +94,7 @@ already; what you need locally is whichever one mints the credential:
 | **Claude Code** | `npm install -g @anthropic-ai/claude-code` | `claude setup-token` |
 | **OpenAI Codex** | `npm install -g @openai/codex` or `brew install codex` | `codex login`, which writes `~/.codex/auth.json` |
 
-One lab is enough to run the board; a second buys you an independent reviewer and somewhere to fall
+One lab is enough to run the board. A second buys you an independent reviewer and somewhere to fall
 back when the first is rate-limited.
 
 Only Python and uv are needed to open the board. The rest is needed before a card can run, and the
@@ -103,7 +117,7 @@ uv run smortboard
 ```
 
 It prints and opens `http://127.0.0.1:8000/ui/index.html?key=...`. The key is swapped for a cookie
-on the first load and dropped from the address bar, so a tab opened by hand has no key - use the
+on the first load and dropped from the address bar, so a tab opened by hand has no key. Use the
 printed link. Keep the terminal open: closing it stops the board and any running card.
 
 **3. Give cards a credential**, in the board itself. Press `shift`+`p` for credential profiles, add
@@ -113,9 +127,9 @@ read.
 Cards never use your own login. What you paste is:
 
 - **Claude**: the token `claude setup-token` prints once. It prints it, you copy it, the board
-  stores it - a model-only token, not your Claude Code session.
+  stores it. A model-only token, not your Claude Code session.
 - **OpenAI**: either **ChatGPT login JSON**, which is the whole contents of the `~/.codex/auth.json`
-  that `codex login` wrote (paste it entire - a bare access token from inside it is refused), or an
+  that `codex login` wrote (paste it entire; a bare access token from inside it is refused), or an
   **API key**.
 
 At run time the credential goes into the container over stdin, into a memory-backed home that dies
@@ -125,33 +139,60 @@ Several profiles per lab are fine; the board rotates to the next one when the ac
 its rate limit. The manual file layout, the OS credential store and the Windows and Linux paths are
 under [Card token](#card-token).
 
+**4. Keep `main` for people.** Agents, the board's and your own Claude Code or Codex sessions, merge
+into `development`. A person merges into `main`. One hook script,
+[`tools/claude-hooks/protect-main.sh`](tools/claude-hooks/protect-main.sh), refuses the rest in both
+CLIs: committing on `main`, pushing to it by any refspec, and merging a pull request whose base is
+not `development`. It needs `bash`, `jq` and a logged-in `gh`.
+
+```bash
+mkdir -p ~/.claude/hooks ~/.codex/hooks
+cp tools/claude-hooks/protect-main.sh ~/.claude/hooks/
+cp tools/claude-hooks/protect-main.sh ~/.codex/hooks/
+chmod +x ~/.claude/hooks/protect-main.sh ~/.codex/hooks/protect-main.sh
+```
+
+Claude Code, in `~/.claude/settings.json` (merge into a `PreToolUse` list already there):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/protect-main.sh"}]
+      }
+    ]
+  }
+}
+```
+
+Codex, in `~/.codex/hooks.json`. Codex sends its shell calls as `Bash` with the same payload shape
+and honours the same exit code, so the script is shared:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [{"type": "command", "command": "bash ~/.codex/hooks/protect-main.sh", "timeout": 15}]
+      }
+    ]
+  }
+}
+```
+
+Codex only runs a hook it has recorded as trusted, under `[hooks.state]` in `~/.codex/config.toml`.
+Check both: ask the agent to run `git push origin HEAD:main`. It should be refused.
+
+The hook only sees commands an agent runs through its shell tool. Pair it with the GitHub ruleset in
+[`tools/github/protect-main.json`](tools/github/protect-main.json), which protects `main` against
+everything else. [docs/protect-main.md](docs/protect-main.md) has the `development` branch setup, a
+per-repo variant of the hook and the ruleset commands.
+
 No checkout at all: `uvx --from git+https://github.com/BalthazarFitzpatrick/smortboard smortboard`
 runs the board, though you still need the clone once to build the image.
-
-## Quick start, in full
-
-### The demo, in detail
-
-`--demo` bypasses the database resolution entirely: it ignores `--db`, ignores `SMORTBOARD_DB`,
-never looks at the user data dir, and writes only to a fresh file in a throwaway directory that does
-not outlive the process. Its runs and pull requests are seeded history, so pressing `r` there would
-need Docker and a real repo. It is the right way to learn the keys and read the concepts below
-against something real.
-
-### Your first board
-
-1. Press `b`, then **from local repo**. Browse to a clone of a GitHub repo and pick **create board
-   from this repo**. The board is named after it and the repo is registered with its default branch.
-2. On the repo's row, set the command that runs its tests, e.g. `uv run pytest -q`, and save.
-   **A repo without a test command cannot finish a card** - the gate has nothing to run.
-3. Press `1` to open the board, then `h`. Fix whatever the checklist lists; each row says how.
-4. Press `.` and tell mission control what you want built. It answers with a plan and proposed cards.
-5. Focus a card and press `r` (it asks once), or `w` to run the whole board.
-
-Anything that needs you lands in the inbox, `n`. Boards default to review-required: inspect the
-pull request, then accept with `y` to land it on an unprotected base. Main stays yours.
-
-![A card opened over the board: criteria, tasks, dependencies and the run as a timeline - tests passed, reviewer approved, pull request open](docs/images/hero-card.jpg)
 
 ---
 
@@ -172,6 +213,8 @@ a **complexity** rating of low, medium or high used for cost analysis.
 
 A card is meant to be feature-sized, not edit-sized. It is not a conversation - you define it up
 front, and the detail you put in is what the agent has.
+
+![A card opened over the board: criteria, tasks, dependencies and the run as a timeline - tests passed, reviewer approved, pull request open](docs/images/hero-card.jpg)
 
 ### Statuses, and why there is no "blocked"
 
@@ -890,8 +933,15 @@ for when you would rather do it by hand or script it.
 token pulled out of that JSON is refused, which is measured in
 [the credential spike](docs/spikes/S7-codex-auth.md).
 
-- **Linux:** the macOS command in [Install, in full](#install-in-full) with `wl-paste` (Wayland) or
-  `xclip -selection clipboard -o` (X11) in place of `pbpaste`.
+- **macOS:**
+
+  ```bash
+  mkdir -p ~/.config/smortboard
+  (umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
+  ```
+
+- **Linux:** the macOS command with `wl-paste` (Wayland) or `xclip -selection clipboard -o`
+  (X11) in place of `pbpaste`.
 - **Windows (PowerShell):**
 
   ```powershell
@@ -955,16 +1005,6 @@ installed, since the gate is offline; `docker/repo.Dockerfile` is the template. 
 (`h`) flags an image that predates the repo's `uv.lock` or its own base image, and the board rebuilds
 it itself before the next card runs on that repo. Give Docker Desktop a memory limit (Settings ->
 Resources) and lower `max_parallel` if it is tight.
-
-### Keep main for people
-
-The board, and your own Claude Code sessions, work best with a `development` branch that agents merge
-into and a `main` only a person merges into. [docs/protect-main.md](docs/protect-main.md) sets that up
-in three steps: create and push `development` and register it as the default branch; install
-[`tools/claude-hooks/protect-main.sh`](tools/claude-hooks/protect-main.sh), a Claude Code hook that
-lets agents merge into `development` and refuses committing on, pushing to or merging into `main`;
-and add the GitHub ruleset in [`tools/github/protect-main.json`](tools/github/protect-main.json) so
-`main` stays protected against anything the hook cannot see.
 
 ---
 

@@ -87,3 +87,33 @@ def test_pushing_to_main_from_any_branch_is_refused(env, command):
 )
 def test_everyday_commands_pass(env, command):
     assert run_hook(env, command) == 0
+
+
+def run_codex_hook(env, command):
+    """codex's PreToolUse payload for a shell call, as measured in docs/spikes/S6-codex-hooks.md"""
+    tmp_path, bin_dir = env
+    payload = json.dumps(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "cwd": str(tmp_path / "feature"),
+            "hook_event_name": "PreToolUse",
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(HOOK)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path / "feature",
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin"},
+        check=False,
+    )
+    return result.returncode, result.stderr
+
+
+def test_the_same_script_guards_a_codex_shell_call(env):
+    code, stderr = run_codex_hook(env, "git push origin HEAD:main")
+    assert code == 2
+    assert "BLOCKED" in stderr
+    assert run_codex_hook(env, "git status")[0] == 0
