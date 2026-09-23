@@ -108,14 +108,16 @@ def _run_guard(command, root, rel):
 
 
 def test_write_lease_settings_writes_both_lists(tmp_path):
-    settings_path = write_lease_settings(tmp_path / "wt", ["src/**"], remembered_globs=["docs/**"])
+    settings_path = write_lease_settings(
+        tmp_path / "guards", ["src/**"], root=tmp_path / "wt", remembered_globs=["docs/**"]
+    )
     lease = json.loads(settings_path.with_name("lease.json").read_text())
     assert lease["path_globs"] == ["src/**"]
     assert lease["remembered_globs"] == ["docs/**"]
 
 
 def test_write_lease_settings_defaults_remembered_globs_to_empty(tmp_path):
-    settings_path = write_lease_settings(tmp_path / "wt", ["src/**"])
+    settings_path = write_lease_settings(tmp_path / "guards", ["src/**"], root=tmp_path / "wt")
     lease = json.loads(settings_path.with_name("lease.json").read_text())
     assert lease["remembered_globs"] == []
 

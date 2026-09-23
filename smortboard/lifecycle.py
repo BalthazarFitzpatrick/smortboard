@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,7 @@ from smortboard.exec.backends import (
     require_card_runtime,
     write_container_guards,
 )
+from smortboard.exec.leases import drop_legacy_guards, lease_policy
 from smortboard.exec.runner import ProcessHandle
 from smortboard.exec.worktrees import (
     WorktreeError,
@@ -484,7 +486,39 @@ def run_card_lifecycle(
     stop the chain rather than merely killing the process underneath one step: the very next check
     ends the run at "stopped" instead of continuing to the next gate. `on_process` is handed the
     live process/container handle for whichever step is running, so RunRegistry.stop() can reach it.
+
+    The card's guards (lease, hooks, settings) live in a directory made for this attempt and
+    removed after it - never in the worktree, which the test gate mounts: a repo's own lint once
+    failed a card on the board's generated hook scripts.
     """
+    with tempfile.TemporaryDirectory(
+        prefix=f"smortboard-guards-{card_id[:8]}-", ignore_cleanup_errors=True
+    ) as guards:
+        return _run_attempt(
+            store,
+            card_id,
+            Path(guards),
+            token_path=token_path,
+            backend=backend,
+            on_phase=on_phase,
+            pending_notes=pending_notes,
+            stop_requested=stop_requested,
+            on_process=on_process,
+        )
+
+
+def _run_attempt(
+    store: Store,
+    card_id: str,
+    guard_path: Path,
+    token_path: str | Path | None,
+    backend: Any | None,
+    on_phase: Any | None,
+    pending_notes: Callable[[], list[dict[str, Any]]] | None,
+    stop_requested: Callable[[], bool] | None,
+    on_process: Callable[[ProcessHandle], None] | None,
+) -> LifecycleResult:
+    """run_card_lifecycle's body, with `guard_path` the attempt's own guard directory"""
 
     def phase(name: str) -> None:
         state.phase = name
@@ -595,7 +629,14 @@ def run_card_lifecycle(
         return _refuse(store, state, f"Could not cut a worktree for this card: {exc}")
     state.branch, state.worktree = tree.branch, str(tree.path)
 
-    settings = write_container_guards(tree.path, _lease_globs(card))
+    drop_legacy_guards(tree.path)
+    remembered = [row["path_glob"] for row in repo.get("remembered_leases") or []]
+    settings = write_container_guards(
+        guard_path,
+        _lease_globs(card),
+        remembered_globs=remembered,
+        policy=lease_policy(store, card, remembered),
+    )
     store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
 
     # a reused branch is brought up to date BEFORE the worker and the gate, not only at handover:
@@ -698,6 +739,26 @@ def run_card_lifecycle(
                 run.blocked_reason_code or "CRASH",
                 NO_COMMITS_BUDGET_NOTE.format(limit=limit),
             )
+        # a refused write does not sink committed work: the post-run check passed (it would have
+        # set error_lease_conflict), so the gates judge it and the wanted paths wait under needs
+        if (
+            run.blocked_reason_code == "LEASE_CONFLICT"
+            and run.subtype != "error_lease_conflict"
+            and branch_has_commits(repo["path"], tree.branch, commit_base)
+        ):
+            from smortboard.attention import lease_conflict_wants
+
+            wanted = lease_conflict_wants(store, card_id)
+            store.append_event(card_id, "lease_wanted", {"paths": wanted})
+            _note(
+                store,
+                card_id,
+                "A write outside its lease was refused, but it committed work, so the work went to "
+                "tests and review. Wanted: " + (", ".join(wanted) or "paths not recorded"),
+            )
+            store.append_event(card_id, "worker_summary", {"text": run.result_text})
+            last_summary = run.result_text
+            return None
         if run.blocked_reason_code:
             return _block(
                 store,
@@ -758,6 +819,14 @@ def run_card_lifecycle(
                 model=reviewer_model,
                 budget_usd=store.spend_cap("reviewer_budget_usd", DEFAULT_REVIEW_BUDGET_USD),
                 on_process=on_process,
+                expanded=sorted(
+                    {
+                        path
+                        for event in store.list_events(card_id)
+                        if event["kind"] == "lease_expanded"
+                        for path in event["payload"].get("paths") or []
+                    }
+                ),
             )
         except ReviewUnavailable as exc:
             return _refuse(store, state, f"The reviewer could not run: {exc}")

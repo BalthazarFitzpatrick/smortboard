@@ -66,3 +66,16 @@ def test_http_mode_patch_and_validation(running_server):
     status, boards = request(f"{running_server}/api/boards")
     assert status == 200
     assert boards[0]["merge_mode"] is None
+
+
+def test_http_lease_mode_patch_and_validation(running_server):
+    status, board = request(f"{running_server}/api/boards", "POST", {"name": "board"})
+    assert status == 201
+    endpoint = f"{running_server}/api/boards/{board['id']}"
+    for value in ("soft", "strict", None):
+        status, changed = request(endpoint, "PATCH", {"lease_mode": value})
+        assert status == 200
+        assert changed["lease_mode"] == value
+    status, error = request(endpoint, "PATCH", {"lease_mode": "loose"})
+    assert status == 400
+    assert "lease_mode" in error["error"]

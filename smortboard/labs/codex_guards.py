@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from smortboard.exec.bash_guard import write_bash_guard_hook
-from smortboard.exec.leases import lease_allows, lease_glob_regex
+from smortboard.exec.leases import lease_allows, lease_glob_regex, lease_permits
 from smortboard.labs.base import BashPolicy, GuardFiles
 
 _SCRIPT = (
@@ -13,6 +13,8 @@ _SCRIPT = (
     + inspect.getsource(lease_glob_regex)
     + "\n"
     + inspect.getsource(lease_allows)
+    + "\n"
+    + inspect.getsource(lease_permits)
     + """
 
 payload = json.load(sys.stdin)
@@ -33,7 +35,7 @@ def check_path(path):
         relative = str(candidate.resolve().relative_to(root))
     except ValueError:
         refuse("LEASE_CONFLICT: " + path + " is outside the worktree")
-    if not lease_allows(relative, lease["path_globs"] + lease.get("remembered_globs", [])):
+    if not lease_permits(relative, lease):
         refuse("LEASE_CONFLICT: " + relative + " is outside this card's lease")
 
 if tool == "apply_patch":
@@ -79,14 +81,16 @@ elif tool in ("Bash", "shell", "exec_command", "shell_command"):
 
 
 def write_guard_files(lease: list[str], bash: BashPolicy) -> GuardFiles:
-    directory = Path(bash.worktree_path) / ".claude"
+    directory = Path(bash.out_dir)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "lease.json").write_text(
         json.dumps(
             {
+                # the board's lease mode, protected and held globs - see leases.lease_policy
+                **bash.lease_policy,
                 "path_globs": lease,
                 "remembered_globs": bash.remembered_globs,
-                "root": bash.root or str(Path(bash.worktree_path).resolve()),
+                "root": bash.root,
                 "bash_allow": bash.bash_allow,
                 "read": bash.read,
                 "search": bash.search,
@@ -95,7 +99,7 @@ def write_guard_files(lease: list[str], bash: BashPolicy) -> GuardFiles:
         )
     )
     (directory / "codex_guard.py").write_text(_SCRIPT)
-    write_bash_guard_hook(bash.worktree_path, python=bash.python, guard_dir=bash.guard_dir)
+    write_bash_guard_hook(directory, python=bash.python, guard_dir=bash.guard_dir)
     script = (
         f"{bash.guard_dir}/codex_guard.py" if bash.guard_dir else str(directory / "codex_guard.py")
     )

@@ -211,6 +211,60 @@ def test_the_outcome_falls_back_past_an_attempt_that_never_reached_the_worker(st
     assert outcome["pr_url"] == "https://x/pull/1"
 
 
+def test_the_outcome_has_empty_lease_lists_without_lease_events(store, card_id):
+    store.append_event(card_id, "lifecycle_started", {})
+    store.append_event(card_id, "worker_summary", {"text": "done"})
+    outcome = card_outcome(store, card_id)
+    assert outcome["lease_wanted"] == []
+    assert outcome["lease_expanded"] == []
+
+
+def test_the_outcome_reads_the_latest_runs_lease_paths(store, card_id):
+    store.append_event(card_id, "lifecycle_started", {})
+    store.append_event(card_id, "lease_wanted", {"paths": ["old/path.py"]})
+    store.append_event(card_id, "worker_summary", {"text": "first try"})
+    # a run blocked on its lease writes no summary - its wanted paths still have to show
+    store.append_event(card_id, "lifecycle_started", {})
+    store.append_event(card_id, "lease_wanted", {"paths": ["src/a.py", "src/b.py"]})
+    store.append_event(card_id, "lease_wanted", {"paths": ["src/a.py", "src/c.py"]})
+    store.append_event(card_id, "lease_expanded", {"paths": ["tests/test_a.py"]})
+    outcome = card_outcome(store, card_id)
+    assert outcome["lease_wanted"] == ["src/a.py", "src/b.py", "src/c.py"]
+    assert outcome["lease_expanded"] == ["tests/test_a.py"]
+    assert outcome["summary"] == "first try"
+
+
+def test_the_outcome_skips_a_malformed_lease_event(store, card_id):
+    store.append_event(card_id, "lifecycle_started", {})
+    store.append_event(card_id, "lease_wanted", {"paths": "src/a.py"})
+    store.append_event(card_id, "lease_wanted", {})
+    store.append_event(card_id, "lease_expanded", {"paths": [None, 3, "", "src/ok.py"]})
+    outcome = card_outcome(store, card_id)
+    assert outcome["lease_wanted"] == []
+    assert outcome["lease_expanded"] == ["src/ok.py"]
+
+
+def test_the_outcome_counts_runs_turns_and_cost_across_attempts(store, card_id):
+    for cost, turns in ((0.5, 4), (1.25, 6)):
+        store.append_event(card_id, "lifecycle_started", {})
+        store.append_event(
+            card_id,
+            "result",
+            {"total_cost_usd": cost, "num_turns": turns, "modelUsage": {}, "result": "done"},
+        )
+        store.append_event(card_id, "worker_summary", {"text": "done"})
+    outcome = card_outcome(store, card_id)
+    assert outcome["runs"] == 2
+    assert outcome["turns"] == 10
+    assert outcome["cost_usd"] == 1.75
+    assert outcome["cost_estimated"] is False
+
+
+def test_a_never_run_outcome_has_no_runs(store, card_id):
+    outcome = card_outcome(store, card_id)
+    assert (outcome["runs"], outcome["turns"], outcome["cost_usd"]) == (0, 0, 0)
+
+
 def test_only_an_unblocked_checking_card_can_be_accepted(store, card_id):
     with pytest.raises(DecisionRefused):
         accept_card(store, card_id)

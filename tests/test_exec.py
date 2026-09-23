@@ -4,7 +4,11 @@ import subprocess
 import pytest
 
 from smortboard.exec.bash_guard import BASH_ESCAPE_PREFIX
-from smortboard.exec.leases import LEASE_CONFLICT_PREFIX, write_lease_settings
+from smortboard.exec.leases import (
+    LEASE_CONFLICT_PREFIX,
+    drop_legacy_guards,
+    write_lease_settings,
+)
 from smortboard.exec.runner import (
     DEFAULT_ALLOWED_TOOLS,
     DEFAULT_CARD_BUDGET_USD,
@@ -154,7 +158,9 @@ def test_create_worktree_twice_raises(tmp_path):
 
 
 def _run_hook(worktree, file_path):
-    settings_path = write_lease_settings(worktree, ["src/allowed.py"])
+    settings_path = write_lease_settings(
+        worktree.parent / "guards", ["src/allowed.py"], root=worktree.resolve()
+    )
     settings = json.loads(settings_path.read_text())
     command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     payload = json.dumps({"tool_input": {"file_path": str(file_path)}})
@@ -205,6 +211,42 @@ def test_bash_guard_takes_its_root_from_the_lease_too(tmp_path):
     settings_path = write_lease_settings(tmp_path / "wt", [], root=str(root))
     assert _guard(settings_path, 1, {"command": f"cat {root}/README.md"}).returncode == 0
     assert _guard(settings_path, 1, {"command": f"cat {tmp_path}/wt/README.md"}).returncode == 2
+
+
+def test_legacy_guards_leave_the_worktree_but_a_repos_own_claude_settings_stay(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text('{"permissions": {}}')
+    subprocess.run(["git", "-C", str(repo), "add", ".claude"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "own settings"], check=True)
+    tree = create_worktree(repo, "card-legacy")
+    for name in ("lease.json", "lease_guard.py", "bash_guard.py", "review-schema.json"):
+        (tree.path / ".claude" / name).write_text("board wrote this")
+
+    removed = drop_legacy_guards(tree.path)
+
+    assert sorted(removed) == [
+        "bash_guard.py",
+        "lease.json",
+        "lease_guard.py",
+        "review-schema.json",
+    ]
+    assert [p.name for p in (tree.path / ".claude").iterdir()] == ["settings.json"]
+    assert drop_legacy_guards(tree.path) == []
+
+
+def test_legacy_guards_take_the_emptied_claude_dir_with_them(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    tree = create_worktree(repo, "card-legacy")
+    (tree.path / ".claude").mkdir()
+    (tree.path / ".claude" / "settings.json").write_text("{}")
+
+    assert drop_legacy_guards(tree.path) == ["settings.json"]
+    assert not (tree.path / ".claude").exists()
 
 
 # -- runner: parsing and classification ---------------------------------------
@@ -563,29 +605,64 @@ def test_the_brief_says_the_card_may_format_not_only_check():
     assert "write form" not in plain
 
 
-def test_a_bash_written_reformat_outside_the_lease_still_classifies_lease_conflict():
-    """the write-form grant lets a formatter touch paths the Edit/Write hook never sees, so
-    permission_denials alone cannot carry this one - exec/backends.py's fetch-back path is the
-    other half of this contract (it flags an out-of-lease diff by putting LEASE_CONFLICT_PREFIX in
-    the result text), and this is the runner-side half: classify_result must still catch it with
-    no Edit/Write denial at all, the same as if the hook itself had refused it."""
+def test_a_summary_quoting_the_lease_prefix_is_not_a_lease_conflict():
+    """card 48e86bcf: a finished run's summary quoted the prefix in prose and the card blocked.
+    a bash-written change outside the lease is caught by the post-run committed-path check in
+    exec/backends.py, which sets LEASE_CONFLICT itself - it never needed the agent's own words"""
     result_event = {
         "type": "result",
         "subtype": "success",
         "is_error": False,
         "permission_denials": [],
-        "result": f"{LEASE_CONFLICT_PREFIX} billing.py was reformatted outside the lease",
+        "result": f"Verified: the hook prints {LEASE_CONFLICT_PREFIX} when a path is refused.",
     }
-    run_result = result_to_run_result(result_event)
-    assert run_result.is_error is False
-    assert run_result.blocked_reason_code == "LEASE_CONFLICT"
+    assert classify_result(result_event) is None
+    assert result_to_run_result(result_event).blocked_reason_code is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["You've hit your session limit · resets 3:40pm (UTC)", "Request rejected (429)"],
+)
+def test_a_usage_limit_wins_over_an_earlier_lease_denial(text):
+    """card b286983f: a Write was refused mid-run, then the session limit ended it - the limit is
+    what stopped the run, so it must park as USAGE_LIMIT and resume, not wait on a lease answer"""
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": True,
+        "api_error_status": 429,
+        "permission_denials": [
+            {
+                "tool_name": "Write",
+                "tool_use_id": "t1",
+                "tool_input": {"file_path": "/workspace/wowtomate/extract/restedxp.py"},
+            }
+        ],
+        "result": text,
+    }
+    assert classify_result(result_event) == "USAGE_LIMIT"
+
+
+def test_an_edit_denial_that_ends_in_a_question_stays_a_lease_conflict():
+    # the order below the usage limit is unchanged: a lease refusal still outranks the question
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "permission_denials": [
+            {"tool_name": "Edit", "tool_use_id": "t1", "tool_input": {"file_path": "/w/x.py"}}
+        ],
+        "result": "x.py is outside my lease - should I widen it?",
+    }
+    assert classify_result(result_event) == "LEASE_CONFLICT"
 
 
 # -- bash guard: refuses a command that reaches outside the worktree ----------
 
 
 def _run_bash_guard(worktree, command):
-    settings_path = write_lease_settings(worktree, ["src/*"])
+    settings_path = write_lease_settings(worktree.parent / "guards", ["src/*"], root=worktree)
     settings = json.loads(settings_path.read_text())
     bash_entry = next(e for e in settings["hooks"]["PreToolUse"] if e["matcher"] == "Bash")
     hook_command = bash_entry["hooks"][0]["command"]
