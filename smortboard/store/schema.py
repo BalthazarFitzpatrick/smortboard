@@ -469,6 +469,8 @@ _MIGRATIONS: list[str] = [
 
     PRAGMA foreign_keys = ON;
     """,
+    # 23: how far a card's writes may reach past its lease - null and strict are today's rule
+    """ALTER TABLE boards ADD COLUMN lease_mode TEXT;""",
 ]
 
 
