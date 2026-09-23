@@ -267,6 +267,8 @@ function renderCardStrip(card) {
         .forEach(c => panel.classList.add(c));
       // set before the fetch, so space and y/x can close this card while it is still loading
       openCard = {cardId: card.id, expander};
+      // the panel's own expander, which fitCardPanel shrinks to the content after each layout
+      panel._expander = expander;
       openCardPanel(panel, card.id);
     },
     onClose: () => { openCard = null; runCardClosedWatchers(); },
@@ -367,6 +369,16 @@ function wireCommentInput(input, panel, cardId) {
       }).then(() => openCardPanel(panel, cardId));
     }
   });
+}
+
+// the open card hugs its content instead of a fixed 90% of the screen with blank space under a
+// short card. from the first child's top to the last one's bottom, as laid out - offsetTop and
+// offsetHeight, since the panel opens under a transform that scales any rect read mid-animation
+function fitCardPanel(panel) {
+  const kids = [...panel.children];
+  if (!panel._expander || !kids.length) return;
+  const first = kids[0], last = kids[kids.length - 1];
+  panel._expander.fit(last.offsetTop + last.offsetHeight - first.offsetTop);
 }
 
 async function openCardPanel(panel, cardId) {

@@ -94,7 +94,7 @@ assert.deepEqual(overflowItems, ['edit', 'model', 'complexity', 'status', 'delet
 // ---- edit reuses the strip's own open-to-edit, nothing forked for it
 menus[0].pick('edit');
 assert.equal(backdrops().length, 1, 'edit should open the card, same as enter/space would');
-document._dispatch('keydown', {key: 'Escape', code: 'Escape', target: document.body});
+document._dispatch('keydown', {key: 'Escape', code: 'Escape', target: document.body, preventDefault() {}});
 assert.equal(backdrops().length, 0, 'closed back down before the next assertion');
 
 // ---- picking delete opens a confirm; nothing is deleted before that confirm is answered
