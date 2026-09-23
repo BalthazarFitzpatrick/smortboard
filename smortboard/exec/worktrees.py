@@ -134,16 +134,36 @@ def has_remote(repo_path: str | Path, remote: str = "origin") -> bool:
     return remote in result.stdout.split()
 
 
+# a fetch holds repo_lock, so a hung remote used to stall every card on the repo behind it
+GIT_FETCH_TIMEOUT_SECONDS = 60
+
+
+def _fetch(repo_path: str | Path, *args: str) -> subprocess.CompletedProcess:
+    """one `git fetch` under repo_lock, killed after GIT_FETCH_TIMEOUT_SECONDS. a timeout raises
+    WorktreeError; the lock is released either way"""
+    with repo_lock(repo_path):
+        try:
+            return subprocess.run(
+                ["git", "-C", str(Path(repo_path).resolve()), "fetch", *args],
+                capture_output=True,
+                text=True,
+                timeout=GIT_FETCH_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise WorktreeError(
+                f"git fetch {' '.join(args)} did not finish within {GIT_FETCH_TIMEOUT_SECONDS}s"
+            ) from exc
+
+
 def fetch_base(repo_path: str | Path, base: str, remote: str = "origin") -> bool:
     """fetches `base` from `remote`. True on success - never raises, so a network hiccup is the
-    caller's decision (fall back to the local base) rather than a card-stopping error."""
-    with repo_lock(repo_path):
-        result = subprocess.run(
-            ["git", "-C", str(Path(repo_path).resolve()), "fetch", remote, base],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+    caller's decision (fall back to the local base) rather than a card-stopping error. A remote
+    that hangs past GIT_FETCH_TIMEOUT_SECONDS is the same hiccup."""
+    try:
+        result = _fetch(repo_path, remote, base)
+    except WorktreeError:
+        return False
     return result.returncode == 0
 
 
@@ -168,16 +188,14 @@ def branch_diverged_from_origin(
     never land. This lets a caller check before reusing an on-disk worktree instead.
 
     None when nothing to compare: no remote, the branch was never pushed (normal for a card whose
-    first run has not reached a push yet), or the fetch itself failed - never blocks resuming
-    because a compare could not be made, only because one WAS made and found a real divergence.
+    first run has not reached a push yet), or the fetch itself failed or timed out - never blocks
+    resuming because a compare could not be made, only because one WAS made and found a real
+    divergence.
     """
-    with repo_lock(repo_path):
-        fetch = subprocess.run(
-            ["git", "-C", str(Path(repo_path).resolve()), "fetch", remote, branch],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+    try:
+        fetch = _fetch(repo_path, remote, branch)
+    except WorktreeError:
+        return None
     if fetch.returncode != 0:
         return None
     is_ancestor = subprocess.run(
@@ -215,19 +233,93 @@ def delete_branch(repo_path: str | Path, card_id: str) -> None:
         _run_git(Path(repo_path).resolve(), "branch", "-D", branch_name(card_id))
 
 
-def branch_diff(repo_path: str | Path, base: str, branch: str) -> str:
+def _merge_base(repo_path: str | Path, ref: str, branch: str) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "merge-base", ref, branch],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
+def _is_ancestor(repo_path: str | Path, older: str, newer: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "merge-base", "--is-ancestor", older, newer],
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _diff_start(repo_path: str | Path, base: str, branch: str) -> str:
+    """where the card's own changes begin: the newer of its merge bases with `base` and
+    `origin/<base>`.
+
+    Measured with a test: a reused branch merges origin/<base> before its worker runs, and when
+    the local base lagged origin, the merge base with the local base sat below every upstream
+    commit merged in - so they all read as the card's work in the diff the reviewer judged.
+    """
+    refs = [base] if base.startswith("origin/") else [base, f"origin/{base}"]
+    starts = [start for ref in refs if (start := _merge_base(repo_path, ref, branch))]
+    if not starts:
+        return base
+    newest = starts[0]
+    for start in starts[1:]:
+        if _is_ancestor(repo_path, newest, start):
+            newest = start
+    return newest
+
+
+def _glob_pathspecs(patterns: tuple[str, ...], magic: str) -> list[str]:
+    return [f":({magic})**/{pattern}" for pattern in patterns]
+
+
+def branch_diff(
+    repo_path: str | Path, base: str, branch: str, exclude: tuple[str, ...] = ()
+) -> str:
     """what the card actually changed - what the reviewer reads and what a rejection keeps.
 
-    Three dots: the diff against the merge base, so work that landed on `base` while the card was
-    running does not show up as something the card did.
+    Against the merge base, so work that landed on `base` (or on origin/<base>, once merged into
+    the branch) while the card was running does not show up as something the card did.
+    `exclude` holds file globs matched at any depth, e.g. "uv.lock" or "*.min.js".
     """
+    start = _diff_start(repo_path, base, branch)
+    pathspecs = ["--", *_glob_pathspecs(exclude, "exclude,glob")] if exclude else []
     result = subprocess.run(
-        ["git", "-C", str(repo_path), "diff", f"{base}...{branch}"],
+        ["git", "-C", str(repo_path), "diff", start, branch, *pathspecs],
         capture_output=True,
         text=True,
         check=False,
     )
     return result.stdout if result.returncode == 0 else ""
+
+
+def branch_changed_paths(
+    repo_path: str | Path, base: str, branch: str, patterns: tuple[str, ...]
+) -> list[str]:
+    """the paths matching `patterns` (globs, any depth) that the card changed - the other half of
+    branch_diff's `exclude`, so what was left out can still be named"""
+    if not patterns:
+        return []
+    start = _diff_start(repo_path, base, branch)
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_path),
+            "diff",
+            "--name-only",
+            start,
+            branch,
+            "--",
+            *_glob_pathspecs(patterns, "glob"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return [line for line in result.stdout.splitlines() if line] if result.returncode == 0 else []
 
 
 def repo_root_of_worktree(worktree_path: str | Path) -> Path:

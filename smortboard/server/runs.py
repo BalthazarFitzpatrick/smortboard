@@ -22,8 +22,9 @@ from typing import Any
 from smortboard import profiles
 from smortboard.actions import with_next
 from smortboard.exec.runner import ProcessHandle
-from smortboard.lifecycle import BOARD_AUTHOR, run_card_lifecycle
+from smortboard.lifecycle import BOARD_AUTHOR, LifecycleResult, _stopped, run_card_lifecycle
 from smortboard.store.api import Store
+from smortboard.store.errors import NotFoundError
 
 # how long a readiness answer is trusted before it is measured again. `docker info` takes seconds
 # to answer, and the board asks on every render
@@ -35,6 +36,23 @@ ORPHANED_NOTE = (
     "pull request was opened. Its worktree and any commits already fetched back are kept. If "
     "`docker ps` still lists a smortboard container for it, remove that first."
 )
+
+
+# enough of an unexpected error to say what broke, short enough for a card's note
+CRASH_ERROR_CHARS = 500
+
+
+def _block_crashed(store: Store, card_id: str, error: str) -> None:
+    """the run raised - the card is blocked CRASH with the error, rather than left showing doing
+    with nobody running it (run_ended is still written, so recover_orphaned_runs never sees it)"""
+    short = error if len(error) <= CRASH_ERROR_CHARS else error[:CRASH_ERROR_CHARS] + "..."
+    store.append_event(card_id, "run_crashed", {"error": short})
+    store.update_card(card_id, blocked_reason_code="CRASH", review_flag=True)
+    store.add_comment(
+        card_id,
+        author=BOARD_AUTHOR,
+        body=with_next(f"The run stopped on an unexpected error: {short}", "CRASH"),
+    )
 
 
 def _left_mid_run(events: list[dict[str, Any]]) -> bool:
@@ -246,9 +264,17 @@ class RunRegistry:
             state.refusal = result.refusal
         except Exception as exc:  # noqa: BLE001
             # a thread that dies silently leaves the card showing a phase it left long ago, so
-            # every failure becomes visible state rather than a traceback nobody reads
-            state.phase = "refused"
+            # every failure becomes visible state - on the card too, not only in memory
             state.error = f"{type(exc).__name__}: {exc}"
+            # a deliberate stop that broke a step on its way down is still a stop
+            stopping = self._is_stopping(state.card_id)
+            state.phase = "stopped" if stopping else "blocked"
+            state.blocked_reason_code = None if stopping else "CRASH"
+            with contextlib.suppress(sqlite3.Error, NotFoundError):
+                if stopping:
+                    _stopped(store, LifecycleResult(card_id=state.card_id, phase="stopped"))
+                else:
+                    _block_crashed(store, state.card_id, state.error)
         finally:
             state.finished_at = time.time()
             # the mark a restarted board reads to tell a finished run from one it orphaned

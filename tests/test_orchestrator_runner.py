@@ -251,7 +251,9 @@ def test_the_credential_travels_on_stdin_not_argv(tmp_path, monkeypatch):
 
     call = calls[0]
     joined = shlex.join(call["cmd"])
-    assert "-e" not in call["cmd"] and "--env" not in call["cmd"]
+    cmd = call["cmd"]
+    env = {cmd[i + 1].split("=", 1)[0] for i, arg in enumerate(cmd) if arg in ("-e", "--env")}
+    assert env <= {"BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS"}
     assert "s3cr3t-token" not in joined
     assert call["stdin"] == "s3cr3t-token\n"
 

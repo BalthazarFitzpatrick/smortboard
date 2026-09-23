@@ -213,8 +213,12 @@ def test_an_existing_board_migrates_to_strict(tmp_path):
 
 
 def test_the_reviewer_is_told_which_paths_the_soft_lease_reached():
-    prompt = _build_prompt(None, "diff --git a/x b/x", ["src/new.py", "tests/test_new.py"])
-    head, _, diff = prompt.partition("diff --git")
-    assert "src/new.py, tests/test_new.py" in head
-    assert "src/new.py" not in diff
+    """the instruction is trusted, the path names are worker-written, so they sit in the data"""
+    from smortboard.review.reviewer import DIFF_FRAMING
+
+    prompt = _build_prompt(None, "diff --git a/x b/x", expanded=["src/new.py", "tests/test_new.py"])
+    trusted, _, data = prompt.partition(DIFF_FRAMING)
+    assert "soft lease" in trusted
+    assert "src/new.py" not in trusted
+    assert "src/new.py, tests/test_new.py" in data
     assert "soft lease" not in _build_prompt(None, "diff --git a/x b/x")
