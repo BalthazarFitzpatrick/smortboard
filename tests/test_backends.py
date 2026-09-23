@@ -29,7 +29,7 @@ from smortboard.exec.backends import (
     require_card_runtime,
     write_container_guards,
 )
-from smortboard.exec.runner import RunResult, commands_preamble
+from smortboard.exec.runner import SYSTEM_PROMPT, RunResult, commands_preamble
 from smortboard.exec.worktrees import WorktreeError, create_worktree
 from smortboard.store.api import Store
 
@@ -717,3 +717,22 @@ def test_the_worker_budget_setting_caps_the_card_run(tmp_path):
         )
     assert "--max-budget-usd 5.0" in shlex.join(default)
     assert "--max-budget-usd 7.5" in shlex.join(capped)
+
+
+def test_the_screenshot_rule_reaches_only_a_repo_with_the_boards_own_ui(tmp_path):
+    """the board screenshots only smortboard's own ui, so any other repo reading the rule was noise"""
+    backend = ContainerBackend(image="img")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    cmd = backend._docker_command(plain, "prompt", tmp_path / "s.json", "sonnet", None)
+    assert "SCREENSHOT:" not in shlex.join(cmd)
+    own = tmp_path / "own"
+    (own / "smortboard" / "ui").mkdir(parents=True)
+    cmd = backend._docker_command(own, "prompt", tmp_path / "s.json", "sonnet", None)
+    assert "SCREENSHOT:" in shlex.join(cmd)
+
+
+def test_the_worker_prompt_carries_no_house_style_of_its_own():
+    """house style comes from the repo's CLAUDE.md or AGENTS.md; a node repo got python rules"""
+    assert "uv run" not in SYSTEM_PROMPT
+    assert "CLAUDE.md or AGENTS.md" in SYSTEM_PROMPT
