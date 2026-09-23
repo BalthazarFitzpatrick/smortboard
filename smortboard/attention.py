@@ -18,9 +18,11 @@ from typing import Any
 from smortboard import profiles
 from smortboard.actions import next_action, short_action
 from smortboard.budgets import spend_refusal
+from smortboard.exec.worktrees import default_branch
 from smortboard.labs.routing import role_ref
 from smortboard.lifecycle import BOARD_AUTHOR
 from smortboard.operator import AUTHOR_KEY
+from smortboard.review.rebase_guard import OUTDATED, ResetRefused, reset_to_base
 from smortboard.scheduler import (
     API_UNREACHABLE_MAX_RETRIES,
     card_reset,
@@ -45,6 +47,7 @@ RESUMABLE_REASONS = frozenset(
         "CRASH",
         "LEASE_CONFLICT",
         "MERGE_CONFLICT",
+        "OUTDATED",
     }
 )
 # USAGE_LIMIT clears on its own once the rate-limit window resets - answering it does not change
@@ -219,9 +222,10 @@ def answer_card(store: Store, runs: Any, card_id: str, message: str) -> dict[str
     Resumable reasons are the ones an answer can actually unstick: AGENT_QUESTION (he answers the
     question), TESTS_FAILED / BASE_RED / REVIEW_REJECTED / CRASH (a note the next run reads before trying
     again), LEASE_CONFLICT (the note says what to do instead - widening the lease itself is
-    Store.set_leases, since the guard reads the card's lease rows, never a note). USAGE_LIMIT is
-    not resumable here - it clears itself once the rate-limit window resets, and an answer changes
-    nothing about that.
+    Store.set_leases, since the guard reads the card's lease rows, never a note), OUTDATED (the
+    answer redoes the card on a fresh tree at the current base, see rebase_guard.reset_to_base).
+    USAGE_LIMIT is not resumable here - it clears itself once the rate-limit window resets, and an
+    answer changes nothing about that.
     Neither is DEPENDENCY_REJECTED - the dependency, not this card, is what needs fixing, and
     accept_card already un-blocks it automatically once that dependency is accepted after all.
     A review_flag with no reason code (a checking card waiting on accept/reject) is not a resumable
@@ -245,6 +249,14 @@ def answer_card(store: Store, runs: Any, card_id: str, message: str) -> dict[str
     refusal = spend_refusal(store, card)
     if refusal:
         raise AnswerRefused(refusal)
+    # an answer to OUTDATED is a decision to redo the card: its commits no longer rebase, so it
+    # restarts on a fresh tree at the current base, the old tip kept on a backup ref
+    if reason == OUTDATED and card.get("repo_id"):
+        repo = store.get_repo(card["repo_id"])
+        try:
+            reset_to_base(store, card_id, repo["path"], default_branch(repo))
+        except ResetRefused as exc:
+            raise AnswerRefused(f"not reset: {exc}") from exc
 
     store.add_comment(card_id, author=AUTHOR_KEY, body=message)
     store.update_card(card_id, blocked_reason_code=None, review_flag=False)

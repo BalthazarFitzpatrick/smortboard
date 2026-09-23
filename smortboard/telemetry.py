@@ -306,6 +306,8 @@ def _attempt_outcome(segment: list[dict[str, Any]]) -> str:
         return "blocked: CRASH"  # the board died under it, or the run raised - see server.runs
     if any(event["kind"] == "merge_conflict" for event in segment):
         return "blocked: MERGE_CONFLICT"
+    if any(event["kind"] == "rebase_conflict" for event in segment):
+        return "blocked: OUTDATED"
     for event in reversed(segment):
         if any(
             item["kind"] == "rate_limit" and item["rate_limit"]["status"] == "refused"

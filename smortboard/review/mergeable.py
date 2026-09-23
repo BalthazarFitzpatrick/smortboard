@@ -5,9 +5,9 @@ updated drifted 34 commits behind main while its PR waited in checking, and conf
 smortboard/store/api.py, ui/settings.js, tests/js/settings.mjs and
 tests/test_settings_and_decisions.py - all changed by other PRs merged while it waited.
 Dependencies only order runs and leases only stop two running cards overlapping; neither keeps a
-WAITING branch current. This module is what does: a non-destructive check for a sweep that must not
-disturb a worktree it does not own outright, and a real merge for the moment the board does own it
-(hand-over, or a sweep that already knows the merge is clean).
+WAITING branch current. Run start and the waiting-PR sweep now rebase instead (rebase_guard.py);
+this module keeps the non-destructive check and the real merge the hand-over, the landing and a
+stacked child's retarget still use.
 """
 
 from __future__ import annotations

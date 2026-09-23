@@ -66,6 +66,15 @@ from smortboard.review.merge_request import (
     open_merge_request,
 )
 from smortboard.review.mergeable import sync_with_base
+from smortboard.review.rebase_guard import (
+    OUTDATED,
+    outdated_note,
+    pending_reset,
+    push_over_superseded,
+    rebase_onto_base,
+    remote_superseded,
+    reset_briefing,
+)
 from smortboard.review.reviewer import (
     DEFAULT_REVIEW_BUDGET_USD,
     ReviewResult,
@@ -446,7 +455,8 @@ def _sync_and_retest(
             "MERGE_CONFLICT",
             f"Merging {base_ref} into {tree.branch} conflicts in: "
             f"{', '.join(merge_result.conflicting_files) or 'unknown files'}.\n\n"
-            "Resuming this card lets the worker merge the base branch and resolve them.",
+            "Resuming this card rebases it onto the base in a fresh tree. If that still "
+            "conflicts, the card turns OUTDATED.",
         )
     if always_test or (merge_result is not None and merge_result.merged):
         try:
@@ -464,6 +474,13 @@ def _sync_and_retest(
                 store, state, card_id, repo, base, gate, after_merging=base
             )
     return None
+
+
+def _stacked_on_unlanded(store: Store, card_id: str) -> bool:
+    """a stacked child's base is its unlanded parent's branch, not origin/<base> - the rebase guard
+    leaves it alone until the parent lands (rebase_guard's module docstring says why)"""
+    stack = active_stack(store, card_id)
+    return bool(stack) and not dependency_landed(store, store.get_card(stack["parent_id"]))
 
 
 def _integrate(store, state, card, tree, repo, base, url):
@@ -630,6 +647,8 @@ def _run_attempt(
             tree is not None
             and has_remote(repo["path"])
             and branch_diverged_from_origin(repo["path"], tree.branch)
+            # only this card's own pre-reset history on origin is not someone else's push
+            and not remote_superseded(repo["path"], card_id)
         ):
             return _refuse(
                 store,
@@ -661,30 +680,24 @@ def _run_attempt(
     )
     store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
 
-    # a reused branch is brought up to date BEFORE the worker and the gate, not only at handover:
+    # a reused branch is rebased onto its moved base in a fresh tree BEFORE the worker and gate:
     # measured 2026-09-19, three cards 28-59 commits behind development failed their gate on tests
-    # a later base commit had already fixed, and every re-run reused the same stale tree
-    conflict_note = None
-    # what "the card's own commits" are counted against: once origin/<base> is merged in, the local
-    # base can lag it, and the merged-in commits would read as the card's work
+    # a later base commit had already fixed. one that no longer rebases is outdated
     commit_base = base
-    if worktree_reused:
-        synced = sync_with_base(tree.path, base)
-        if synced is not None and synced.clean:
+    if worktree_reused and not _stacked_on_unlanded(store, card_id):
+        guarded = rebase_onto_base(store, card_id, repo["path"], base)
+        if guarded.outcome == "outdated":
+            return _block(store, state, OUTDATED, outdated_note(guarded))
+        if guarded.outcome == "push_refused":
+            return _refuse(
+                store,
+                state,
+                f"{tree.branch} moved on origin while the board rebased it onto origin/{base}, so "
+                "nothing was pushed or changed. Run this card again.",
+            )
+        if guarded.outcome in ("current", "rebased"):
+            # the card's own commits count from here - the local base can lag origin/<base>
             commit_base = f"origin/{base}"
-        if synced is not None and not synced.clean:
-            base_ref = f"origin/{base}"
-            store.append_event(
-                card_id,
-                "merge_conflict",
-                {"base_ref": base_ref, "files": synced.conflicting_files},
-            )
-            files = ", ".join(synced.conflicting_files) or "unknown files"
-            conflict_note = (
-                f"Merging {base_ref} into this branch conflicts in: {files}. Merge {base_ref} "
-                "yourself, resolve those files, then commit the merge - the test gate runs "
-                "against this branch, so it has to contain the base first."
-            )
 
     fingerprint = {
         "head": rev_parse(tree.path, "HEAD"),
@@ -702,10 +715,9 @@ def _run_attempt(
             "that failure. Change something first (merge the base, fix what the gate names, "
             "rebuild the image, add a note), then run it again.",
         )
-    # a conflict at the sync is the worker's to resolve, and a branch with no commits has nothing
-    # for a gate to test - both always run the worker
+    # a branch with no commits has nothing for a gate to test - it always runs the worker
     resume = None
-    if worktree_reused and conflict_note is None:
+    if worktree_reused:
         resume = resume_point(store, card_id, fingerprint)
         if resume is not None and not branch_has_commits(repo["path"], tree.branch, commit_base):
             resume = None
@@ -804,14 +816,20 @@ def _run_attempt(
         last_summary = run.result_text
         return None
 
+    # an answered OUTDATED card starts over at the base: none of its earlier commits are here
+    reset = pending_reset(store, card_id)
+
     # a resumed card (an inbox answer, or a re-run after a block) keeps this worktree and its
     # commits - the briefing is what lets the agent skip re-reading them to find out what it
     # already did. "off" turns it off board-wide; unset means on.
     briefing = None
     if configured.get("resume_briefing") != "off":
-        briefing = resume_briefing(store, card_id, worktree_reused=worktree_reused)
-    if conflict_note:
-        briefing = f"{briefing}\n\n{conflict_note}" if briefing else conflict_note
+        briefing = resume_briefing(
+            store, card_id, worktree_reused=worktree_reused and reset is None
+        )
+    if reset is not None:
+        note = reset_briefing(reset)
+        briefing = f"{note}\n\n{briefing}" if briefing else note
 
     if resume is None:
         phase("running")
@@ -947,6 +965,7 @@ def _run_attempt(
         state.blocked_reason_code = store.get_card(card_id)["blocked_reason_code"]
         return state
     target = integration_base(store, card_id, base)
+    push_over_superseded(store, card_id, repo["path"])
 
     try:
         request = open_merge_request(store, card_id, repo["path"], tree.branch, base=target)

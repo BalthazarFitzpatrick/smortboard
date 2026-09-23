@@ -44,13 +44,18 @@ _ACTIONS = {
         "Fix and accept the rejected card it depends on - this one un-blocks itself then.",
     ),
     "MERGE_CONFLICT": (
-        "resolve, then r",
-        "Its branch no longer merges cleanly with the base - resume it (n or r) so the worker "
-        "merges the base branch and resolves the conflict, then commits the result.",
+        "n or r",
+        "Its branch no longer merges cleanly with the base - resume it (n or r) and the board "
+        "rebases it onto the base in a fresh tree. If that still conflicts, it turns OUTDATED.",
     ),
     "API_UNREACHABLE": (
         "retrying",
         "The api was unreachable - the board is retrying it automatically with backoff.",
+    ),
+    "OUTDATED": (
+        "redo on fresh base",
+        "The base moved and its commits no longer rebase onto it. Answer in the inbox (n) to "
+        "redo it on a fresh tree at the current base - the old commits stay on a backup ref.",
     ),
     "refused": ("fix, then r", "Fix what the note says, then press r to run it again."),
     "stopped": ("press r", "Press r to run it again - its worktree and commits are kept."),
