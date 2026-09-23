@@ -184,10 +184,24 @@ def _image_for(repo: dict[str, Any] | None) -> str:
 
 
 def _build_prompt(
-    store: Store | None, diff: str, excluded: list[str] | tuple[str, ...] = ()
+    store: Store | None,
+    diff: str,
+    excluded: list[str] | tuple[str, ...] = (),
+    expanded: list[str] | None = None,
 ) -> str:
     header = active_prompt(store, "reviewer", REVIEW_PROMPT_HEADER)
-    # inside the markers: the names come from the branch, so they are data like the diff itself
+    # the instruction is the board's; the names come from the branch, so they sit inside the
+    # markers as data like the diff itself
+    if expanded:
+        header += (
+            "\nThis card's soft lease let it write outside its declared paths; they are listed at "
+            "the top of the diff. Judge whether each of those changes belongs to this card.\n"
+        )
+    outside = (
+        "Written outside the declared lease (soft lease): " + ", ".join(expanded) + "\n"
+        if expanded
+        else ""
+    )
     left_out = (
         "Changed, but left out of this diff (lockfiles and generated files): "
         + ", ".join(excluded)
@@ -195,7 +209,7 @@ def _build_prompt(
         if excluded
         else ""
     )
-    return header + DIFF_FRAMING + left_out + diff + f"\n{DIFF_END}\n"
+    return header + DIFF_FRAMING + outside + left_out + diff + f"\n{DIFF_END}\n"
 
 
 def _docker_command(
@@ -360,6 +374,7 @@ def run_review(
     on_process: Callable[[ProcessHandle], None] | None = None,
     head: str | None = None,
     excluded_paths: list[str] | tuple[str, ...] = (),
+    expanded: list[str] | None = None,
 ) -> ReviewResult:
     """runs the reviewer over `diff` in a throwaway container, and records the verdict.
 
@@ -390,10 +405,12 @@ def run_review(
 
     name = container_name("reviewer", card_id)
     if not adapter.capabilities.tool_allowlist:
+        # a dir of its own under the worker's guards: sharing one overwrote the worker's lease.json
+        # with this empty read-only lease, so a claude worker's next fix round refused every edit
         guards = adapter.guard_files(
             [],
             BashPolicy(
-                worktree_path=Path(settings_path).parent.parent,
+                out_dir=Path(settings_path).parent / "reviewer",
                 python=CONTAINER_PYTHON,
                 guard_dir=CONTAINER_GUARD_DIR,
                 root="/workspace",
@@ -404,7 +421,7 @@ def run_review(
         settings_path = guards.settings_path
     cmd = _docker_command(
         work_path,
-        _build_prompt(store, diff, excluded_paths),
+        _build_prompt(store, diff, excluded_paths, expanded),
         settings_path,
         model,
         repo,

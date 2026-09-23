@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, quote, unquote
 
 from smortboard import profiles
@@ -30,6 +31,7 @@ from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
     ORCHESTRATOR_PROMPT,
     OrchestratorRegistry,
+    card_text_warnings,
 )
 from smortboard.preflight import run_preflight
 from smortboard.prompts import ROLES
@@ -183,6 +185,12 @@ def _version() -> str:
         return version("smortboard")
     except PackageNotFoundError:
         return "0.0.0-dev"
+
+
+def _text_warnings(card: dict[str, Any]) -> list[str]:
+    """card text past the card text rules, told to the caller - the card is kept exactly as sent"""
+    criteria = [criterion["text"] for criterion in card["criteria"]]
+    return card_text_warnings({**card, "criteria": criteria})
 
 
 def _make_handler(
@@ -353,7 +361,7 @@ def _make_handler(
             elif path == "/api/cards" and method == "POST":
                 body = self._read_json()
                 card = store.create_card(**body)
-                self._send_json(201, card)
+                self._send_json(201, {**card, "warnings": _text_warnings(card)})
             elif "attachment_id" in params:
                 self._handle_get_attachment(params["card_id"], params["attachment_id"])
             elif path.endswith("/comments"):
@@ -454,7 +462,9 @@ def _make_handler(
             elif "profile_name" in params and method == "DELETE":
                 self._handle_remove_profile(params["profile_name"], params.get("lab"))
             elif "card_id" in params and method == "GET":
-                self._send_json(200, store.get_card(params["card_id"]))
+                # the board list's enrichment too, so the open card says what to do next
+                card = store.get_card(params["card_id"])
+                self._send_json(200, with_actions(store, [card])[0])
             elif "card_id" in params and method == "PATCH":
                 self._handle_patch_card(params["card_id"])
             elif "card_id" in params and method == "DELETE":
@@ -470,6 +480,8 @@ def _make_handler(
                 # clearing a value
                 if "merge_mode" in body:
                     store.set_board_merge_mode(params["board_id"], body["merge_mode"])
+                if "lease_mode" in body:
+                    store.set_board_lease_mode(params["board_id"], body["lease_mode"])
                 if "max_parallel" in body:
                     store.set_board_max_parallel(params["board_id"], body["max_parallel"])
                 if "daily_budget_usd" in body:
@@ -758,7 +770,9 @@ def _make_handler(
             if depends_on is not None:
                 store.set_dependencies(card_id, depends_on)
             card = store.update_card(card_id, **body) if body else store.get_card(card_id)
-            self._send_json(200, card)
+            # only a text edit is checked, so moving an old long card stays quiet
+            warnings = _text_warnings(card) if {"title", "description"} & set(body) else []
+            self._send_json(200, {**card, "warnings": warnings})
 
         def _handle_create_repo(self, board_id: str) -> None:
             """registers a repo on a board - the only way to make a card runnable.

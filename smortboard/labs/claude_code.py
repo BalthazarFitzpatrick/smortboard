@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.exec.commands import formatter_write_form
-from smortboard.exec.leases import LEASE_CONFLICT_PREFIX, write_lease_settings
+from smortboard.exec.leases import write_lease_settings
 from smortboard.labs.base import (
     BashPolicy,
     Capabilities,
@@ -159,11 +159,15 @@ def _agent_question_signal(result_event: dict[str, Any]) -> bool:
 
 def _lease_conflict_signal(result_event: dict[str, Any]) -> bool:
     """a lease refusal, per S3, is NOT a card failure — it still needs surfacing so the board can
-    decide whether to park the card or extend the lease"""
+    decide whether to park the card or extend the lease.
+
+    Only an Edit/Write denial counts, never the agent's own prose: a summary that merely quoted the
+    prefix once blocked a finished card. A denial entry carries tool_name, tool_use_id and
+    tool_input only - the hook's own text lands in the matching tool_result - and every Edit/Write
+    denial on the live board (14 of 14, 2026-09-23) was the lease hook's refusal.
+    """
     denials = result_event.get("permission_denials") or []
-    if any(d.get("tool_name") in ("Edit", "Write") for d in denials):
-        return True
-    return LEASE_CONFLICT_PREFIX in (result_event.get("result") or "")
+    return any(d.get("tool_name") in ("Edit", "Write") for d in denials)
 
 
 _SESSION_LIMIT_PATTERN = re.compile(
@@ -245,18 +249,25 @@ def _session_limit_text_signal(result_event: dict[str, Any]) -> bool:
     return bool(_SESSION_LIMIT_PATTERN.search(text))
 
 
+def _usage_limit_signal(result_event: dict[str, Any]) -> bool:
+    """the session-limit text, or the api's own 429 - every session-limit result on the live board
+    carried `api_error_status: 429`, some after an earlier lease denial in the same run."""
+    return result_event.get("api_error_status") == 429 or _session_limit_text_signal(result_event)
+
+
 def classify_result(result_event: dict[str, Any]) -> str | None:
     """maps one `result` stream event onto the store's blocked_reason_code vocabulary, or None
-    for a clean run. Order matters: a lease conflict is checked before is_error, since S3 showed
-    the run still completes `subtype: success` when it hits one. The session-limit text is checked
-    before is_error too - a run whose only output is that refusal text was seen classified CRASH
-    instead of USAGE_LIMIT, so nothing rotated."""
+    for a clean run. Order matters. The usage limit goes first: it is what ended the run, and card
+    b286983f's 429 was filed LEASE_CONFLICT over a Write denied earlier in the same run. A lease
+    conflict is checked before is_error, since S3 showed the run still completes `subtype:
+    success` when it hits one. The session-limit text is checked before is_error too - a run whose
+    only output is that refusal text was seen classified CRASH instead of USAGE_LIMIT."""
+    if _usage_limit_signal(result_event):
+        return "USAGE_LIMIT"
     if _lease_conflict_signal(result_event):
         return "LEASE_CONFLICT"
     if _agent_question_signal(result_event):
         return "AGENT_QUESTION"
-    if _session_limit_text_signal(result_event):
-        return "USAGE_LIMIT"
     if _api_unreachable_signal(result_event):
         return "API_UNREACHABLE"
     if result_event.get("is_error"):
@@ -430,12 +441,12 @@ class ClaudeCodeAdapter:
 
     def guard_files(self, lease: list[str], bash: BashPolicy) -> GuardFiles:
         path = write_lease_settings(
-            bash.worktree_path,
+            bash.out_dir,
             lease,
+            root=bash.root,
             remembered_globs=bash.remembered_globs,
             python=bash.python,
             guard_dir=bash.guard_dir,
-            root=bash.root,
         )
         return GuardFiles(path, tuple(path.parent.iterdir()))
 

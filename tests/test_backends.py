@@ -10,6 +10,7 @@ import json
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -196,24 +197,66 @@ def test_docker_command_uses_the_configured_image(tmp_path):
 
 def test_the_guards_are_mounted_read_only_outside_the_workspace(tmp_path):
     # the first real run crashed on this: a host path went to --settings and did not exist inside
-    settings_path = tmp_path / "wt" / ".claude" / "settings.json"
+    settings_path = write_container_guards(tmp_path / "guards", ["a.py"])
     cmd = ContainerBackend(image="img")._docker_command(
         tmp_path / "clone", "p", settings_path, "sonnet", None
     )
-    assert f"{settings_path.parent}:/smortboard:ro" in cmd
+    assert f"{tmp_path / 'guards'}:/smortboard:ro" in cmd
     assert "--settings /smortboard/settings.json" in cmd[-1]
     assert str(tmp_path) not in cmd[-1]
 
 
 def test_container_guards_are_written_as_the_container_sees_them(tmp_path):
-    settings_path = write_container_guards(tmp_path / "wt", ["a.py"])
+    settings_path = write_container_guards(tmp_path / "guards", ["a.py"])
     hooks = json.loads(settings_path.read_text())["hooks"]["PreToolUse"]
-    assert [h["hooks"][0]["command"] for h in hooks] == [
-        "python3 /smortboard/lease_guard.py",
-        "python3 /smortboard/bash_guard.py",
-    ]
+    commands = [h["hooks"][0]["command"] for h in hooks]
+    assert commands == ["python3 /smortboard/lease_guard.py", "python3 /smortboard/bash_guard.py"]
+    # every script a hook names is in the dir guard_mount puts at /smortboard - a hook whose
+    # command does not resolve exits 127, which does not block
+    for command in commands:
+        script = command.split(" ", 1)[1]
+        assert (tmp_path / "guards" / Path(script).relative_to("/smortboard")).is_file()
     assert json.loads((settings_path.parent / "lease.json").read_text())["root"] == "/workspace"
     assert str(tmp_path) not in settings_path.read_text()
+
+
+def test_container_guards_write_nothing_but_their_own_dir(tmp_path):
+    before = set(tmp_path.iterdir())
+    write_container_guards(tmp_path / "guards", ["a.py"], remembered_globs=["docs/**"])
+    assert set(tmp_path.iterdir()) - before == {tmp_path / "guards"}
+    assert (tmp_path / "guards").stat().st_mode & 0o777 == 0o755
+
+
+def _container_hook(settings_path, rel):
+    """runs the container's lease hook on the host: the script is the same, only its path differs"""
+    script = settings_path.parent / "lease_guard.py"
+    payload = json.dumps({"tool_input": {"file_path": f"/workspace/{rel}"}})
+    return subprocess.run(
+        [sys.executable, str(script)], input=payload, capture_output=True, text=True
+    )
+
+
+def test_a_remembered_glob_lets_the_container_hook_allow_a_write_outside_the_card_lease(tmp_path):
+    settings_path = write_container_guards(
+        tmp_path / "guards", ["src/**"], remembered_globs=["docs/**"]
+    )
+    assert _container_hook(settings_path, "src/a.py").returncode == 0
+    assert _container_hook(settings_path, "docs/notes.md").returncode == 0
+    refused = _container_hook(settings_path, "elsewhere.py")
+    assert refused.returncode == 2
+    assert "LEASE_CONFLICT:" in refused.stderr
+
+
+def test_the_generated_guard_scripts_lint_clean(tmp_path):
+    """card 05de2d52: the repo's ruff failed the gate on F541 in the board's own bash_guard.py"""
+    write_container_guards(tmp_path / "guards", ["a.py"])
+    result = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", "--isolated", "--no-cache", "--select", "F"]
+        + [str(tmp_path / "guards")],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout
 
 
 # -- clone-then-fetch round trip, with real git -------------------------------

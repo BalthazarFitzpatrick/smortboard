@@ -218,6 +218,30 @@ def test_reviewer_uses_its_labs_active_credential(tmp_path, monkeypatch, lab):
     assert calls[0]["lab"] == lab
 
 
+def test_a_codex_review_keeps_its_guards_apart_from_the_workers(tmp_path, monkeypatch):
+    """one shared dir let the reviewer's empty read-only lease overwrite the worker's lease.json,
+    so a claude worker's fix round after a codex review would refuse every edit"""
+    from smortboard import profiles
+    from smortboard.exec.backends import write_container_guards
+
+    profiles.add_profile("codex", "openai-test", lab="openai", kind="api_key")
+    profiles.set_active("codex", lab="openai")
+    calls = []
+    _wire(monkeypatch, capture=calls)
+    guards = tmp_path / "guards"
+    settings = write_container_guards(guards, ["src/**"])
+    worker_lease = (guards / "lease.json").read_text()
+
+    run_review(None, "card", DIFF, tmp_path / "wt", settings, REPO, model="openai/gpt-5.6-sol")
+
+    assert (guards / "lease.json").read_text() == worker_lease
+    cmd = calls[0]["cmd"]
+    mounts = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-v"]
+    assert f"{guards / 'reviewer'}:/smortboard:ro" in mounts
+    assert json.loads((guards / "reviewer" / "lease.json").read_text())["read_only"] is True
+    assert not (tmp_path / "wt").exists()  # nothing written into the work tree
+
+
 def test_no_docker_is_refused_rather_than_skipped(tmp_path, monkeypatch):
     _wire(monkeypatch, docker=False)
     with pytest.raises(ReviewUnavailable, match="Docker"):
