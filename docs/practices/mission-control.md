@@ -17,10 +17,11 @@ model. It reads fresh read-only clones of the board's repos with Read, Grep and 
 Write or Bash. It sees what each model has cost and passed on this board, and is told to prefer the
 cheapest model reaching clean pull requests on similar cards.
 
-!!! warning "The board makes the cards"
-    Mission control never writes to the board. The board builds cards from its structured reply. It
-    resolves repo names against its own repos instead of guessing, and drops any lease that covers
-    the whole repo or climbs out of it.
+> [!IMPORTANT]
+> **The board makes the cards.**
+> Mission control never writes to the board. The board builds cards from its structured reply. It
+> resolves repo names against its own repos instead of guessing, and drops any lease that covers
+> the whole repo or climbs out of it.
 
 ![Mission control drawer](../images/mission-control.jpg)
 
@@ -44,5 +45,7 @@ working card. A **note** sent here reaches a *running* agent between two tool ca
 Each run mints a fresh marker, so repo text cannot pose as you. The agent trusts only notes carrying
 it, and names anything else claiming authority mid-run as a suspected prompt injection.
 
-![A steered run: the brief, git log, reading one.txt, then at 9.2 seconds a note carrying the run's marker asks it to skip three.txt and end with PINEAPPLE. The note lands between two tool calls, the agent reads two.txt, and at 12.8 seconds its summary ends in PINEAPPLE, three.txt never opened, no injection flag raised, for $0.055.](../images/art-steering-dark.svg#only-dark)
-![A steered run: the brief, git log, reading one.txt, then at 9.2 seconds a note carrying the run's marker asks it to skip three.txt and end with PINEAPPLE. The note lands between two tool calls, the agent reads two.txt, and at 12.8 seconds its summary ends in PINEAPPLE, three.txt never opened, no injection flag raised, for $0.055.](../images/art-steering-light.svg#only-light)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="../images/art-steering-light.svg">
+  <img src="../images/art-steering-dark.svg" alt="A steered run: the brief, git log, reading one.txt, then at 9.2 seconds a note carrying the run&#x27;s marker asks it to skip three.txt and end with PINEAPPLE. The note lands between two tool calls, the agent reads two.txt, and at 12.8 seconds its summary ends in PINEAPPLE, three.txt never opened, no injection flag raised, for $0.055." width="100%">
+</picture>

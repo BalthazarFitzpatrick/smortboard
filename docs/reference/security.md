@@ -39,8 +39,10 @@ Agents here spend money and push code. The board keeps the browser and the agent
 
 ## Architecture
 
-![Architecture: one native smortboard process on 127.0.0.1 - request gate, http server, sqlite store, run registry, scheduler and orchestrator - plus the card token file; per card a hardened card container, a test gate with no network and a read-only reviewer; commits fetched back to the repo, then pushed to GitHub, where a person merges into main.](../images/art-architecture-dark.svg#only-dark)
-![Architecture: one native smortboard process on 127.0.0.1 - request gate, http server, sqlite store, run registry, scheduler and orchestrator - plus the card token file; per card a hardened card container, a test gate with no network and a read-only reviewer; commits fetched back to the repo, then pushed to GitHub, where a person merges into main.](../images/art-architecture-light.svg#only-light)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="../images/art-architecture-light.svg">
+  <img src="../images/art-architecture-dark.svg" alt="Architecture: one native smortboard process on 127.0.0.1 - request gate, http server, sqlite store, run registry, scheduler and orchestrator - plus the card token file; per card a hardened card container, a test gate with no network and a read-only reviewer; commits fetched back to the repo, then pushed to GitHub, where a person merges into main." width="100%">
+</picture>
 
 The board is one plain Python process: a stdlib HTTP server, SQLite, and plain JavaScript on
 [smortui](https://github.com/BalthazarFitzpatrick/smortui), pinned by commit, no build step. Only

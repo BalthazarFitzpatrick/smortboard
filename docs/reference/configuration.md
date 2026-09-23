@@ -30,24 +30,11 @@ Windows). See [Credential files](credentials.md).
 `o` opens three groups: how the board behaves, which lab and model each role runs on, and what it may
 spend.
 
-<div class="grid" markdown>
-
-<figure markdown="span">
-  ![General board settings: the mouse toggle, how many cards run at once globally and per board, strict or soft file leases per board, the resume briefing, the gate timeout and the mall cam interval](../images/settings-general.jpg)
-  <figcaption>general — how it behaves</figcaption>
-</figure>
-
-<figure markdown="span">
-  ![Labs and models: automatic credential profile rotation, whether to ask before switching to a fallback model on a usage limit, and a primary model, a fallback order and an effort for the worker, reviewer, orchestrator and fold](../images/settings-labs.jpg)
-  <figcaption>labs and models — who runs what</figcaption>
-</figure>
-
-<figure markdown="span">
-  ![Spend caps per run: a card run, a review, a mission control turn, a fold, and a per-card total across every run](../images/settings-cost.jpg)
-  <figcaption>cost control — what it may spend</figcaption>
-</figure>
-
-</div>
+<table><tr>
+<td width="33%"><img src="../images/settings-general.jpg" alt="General board settings: the mouse toggle, how many cards run at once globally and per board, strict or soft file leases per board, the resume briefing, the gate timeout and the mall cam interval" width="100%"><br><sub>general — how it behaves</sub></td>
+<td width="33%"><img src="../images/settings-labs.jpg" alt="Labs and models: automatic credential profile rotation, whether to ask before switching to a fallback model on a usage limit, and a primary model, a fallback order and an effort for the worker, reviewer, orchestrator and fold" width="100%"><br><sub>labs and models — who runs what</sub></td>
+<td width="33%"><img src="../images/settings-cost.jpg" alt="Spend caps per run: a card run, a review, a mission control turn, a fold, and a per-card total across every run" width="100%"><br><sub>cost control — what it may spend</sub></td>
+</tr></table>
 
 Each is a stored setting:
 

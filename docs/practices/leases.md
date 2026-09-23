@@ -5,10 +5,11 @@
 A lease is the paths a card may write, and no note or argument with the agent moves it. Small,
 non-overlapping leases are also what let cards run side by side.
 
-!!! warning "Overlap serialises, empty refuses"
-    Two cards in one repo whose leases could touch the same file never run at once, so overlap
-    silently serialises your board. An empty lease allows nothing: a card without one is refused,
-    not run.
+> [!IMPORTANT]
+> **Overlap serialises, empty refuses.**
+> Two cards in one repo whose leases could touch the same file never run at once, so overlap
+> silently serialises your board. An empty lease allows nothing: a card without one is refused,
+> not run.
 
 ## How it works
 

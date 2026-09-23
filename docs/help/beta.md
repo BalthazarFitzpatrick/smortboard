@@ -54,8 +54,9 @@ with the bug report template. The more of it you fill in, the faster the fix:
 - which board and card, plus evidence: a screenshot, the card's replay (`t`), its comments, or the
   output in the terminal smortboard runs in
 
-!!! warning "Keep credentials out"
-    Never paste your card token, your API key, or the contents of `~/.config/smortboard/`.
+> [!IMPORTANT]
+> **Keep credentials out.**
+> Never paste your card token, your API key, or the contents of `~/.config/smortboard/`.
 
 Read a transcript before attaching it: a card's event log holds whatever the agent saw in your repo.
 `smortboard export` ([Backup](../reference/backup.md)) attaches your whole board reproducibly. It
