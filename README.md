@@ -64,8 +64,11 @@ concepts below against something real.
 `uv run smortboard` (no `--demo`) starts your actual board on port 8000. Three things before a card
 can run:
 
-1. **A lab credential.** `shift`+`p`, add a profile, paste what `claude setup-token` or
-   `codex login` gives you. Never your own login; [Install](#install) says exactly what to paste.
+1. **A credential for the cards - never your own login.** Get one in your terminal:
+   `claude setup-token` prints a Claude token once; for Codex, `codex login` writes
+   `~/.codex/auth.json` (paste all of it) or use an OpenAI API key. Then on the board: `shift`+`p`,
+   add a profile, paste, and press **activate** on it. A fresh board lists an empty `default`
+   profile; remove it once yours is active. The board writes the file itself, at mode 600.
 2. **Docker running**, so a card has somewhere to execute.
 3. **A board and a repo.** `b` -> **from local repo** -> pick a clone of a GitHub repo with its
    default branch pushed. A private repo is enough: the board pushes card branches there and opens
@@ -132,8 +135,9 @@ on the first load and dropped from the address bar, so a tab opened by hand has 
 printed link. Keep the terminal open: closing it stops the board and any running card.
 
 **3. Give cards a credential**, in the board itself. Press `shift`+`p` for credential profiles, add
-one, and paste. The board writes the mode-600 file for you and refuses anything a file others could
-read.
+one, paste, and press **activate** on it. A fresh board starts with an empty `default` profile
+active; remove it once yours is. The board writes the mode-600 file for you and refuses a file
+others could read. There is nothing to create by hand.
 
 Cards never use your own login. What you paste is:
 
@@ -147,8 +151,7 @@ At run time the credential goes into the container over stdin, into a memory-bac
 with the container. Your own `~/.claude` and `~/.codex` are never mounted.
 
 Several profiles per lab are fine; the board rotates to the next one when the active profile hits
-its rate limit. The manual file layout, the OS credential store and the Windows and Linux paths are
-under [Card token](#card-token).
+its rate limit. Where the board keeps each credential is under [Card token](#card-token).
 
 **4. Keep `main` for people.** Agents, the board's and your own Claude Code or Codex sessions, merge
 into `development`. A person merges into `main`. One hook script,
@@ -268,12 +271,13 @@ merge mode (review required or free merge) and its lease mode (strict or soft).
 > A card is not a conversation. It is feature-sized, not edit-sized, and nothing you meant but did
 > not write reaches the agent.
 
-![A card opened over the board: what it is about, what it has done and what it needs down the left; its criteria, lease and history down the right](docs/images/hero-card.jpg)
+![A card opened over the board, one column: what it is about, what it has done, what it needs, then its details folded to one line each](docs/images/hero-card.jpg)
 
 Open a card and it reads top to bottom: **about** (what it is for), **done** (what the agent
 delivered, with the test and review verdicts), **needs** (the one thing it wants from you, if
-anything). Its criteria, lease and history sit on the right. The arrow keys move between those
-sections with the same highlight frame the board uses.
+anything), then **details**: criteria, lease, dependencies, attachments and history, each folded to
+one line. The panel is as tall as its content. The arrow keys move between those sections with the
+same highlight frame the board uses.
 
 <details>
 <summary><b>The details</b></summary>
@@ -563,7 +567,7 @@ and retried, never forced.
 |---|---|
 | **Work with it** | Nothing to do. Review when you get to it. |
 | **Encourages** | Reviewing on your schedule, not the agent's. |
-| **Pays off as** | No stale diffs, and conflicts surface as `MERGE_CONFLICT` with a file list, not at merge time. |
+| **Pays off as** | No stale diffs, and conflicts surface as `OUTDATED` with a file list, not at merge time. |
 
 <details>
 <summary><b>The details</b></summary>
@@ -990,7 +994,7 @@ this list was read from, so the two cannot drift.
 
 | Key | Action |
 |---|---|
-| arrows | move focus; up also exits to the board bar. In an open card: up/down within a column, left/right across |
+| arrows | move focus; up also exits to the board bar. In an open card: up/down between sections |
 | `enter` | open the focused card |
 | `space` | open the focused card, or close the open one |
 | `esc` | one level back: input -> panel -> closed |
@@ -1108,13 +1112,15 @@ thing it was built to do.
 - **Task checkboxes in a pull request** are not ticked during a run.
 
 **What will change.** Anything on the rough list. The database migrates itself forward on every open,
-so upgrading does not cost you your boards - but this is a `0.1.x`, and settings, defaults and the
+so upgrading does not cost you your boards - but this is a `0.x`, and settings, defaults and the
 shape of individual panels are expected to move. The concepts above - cards, leases, the two gates,
 the landing lock, and human-only merges into main - are the parts that are not going to.
 
-**Try it end to end.** [docs/beta-test-board.md](docs/beta-test-board.md) builds a small browser
-game from one mission-control prompt: 12-14 cards with dependency chains and parallel tracks, a
-test gate that needs nothing but Node, and a table of which board feature each step exercises.
+**Try it end to end.** `uv run smortboard seed-beta <empty folder>` makes a small browser-game repo
+and a board of 15 cards already written, with dependency chains, parallel tracks and a test gate
+that needs nothing but Node. [docs/beta-test-board.md](docs/beta-test-board.md) walks it, has the
+mission-control prompt if you would rather plan it yourself, and a table of which board feature
+each step exercises.
 
 ### Sending a report
 
@@ -1188,8 +1194,8 @@ mode.
 
 ### Card token
 
-Adding a profile with `shift`+`p` writes these files for you, at mode 600. This is what it writes,
-for when you would rather do it by hand or script it.
+`shift`+`p` is the whole setup: adding a profile writes its file at mode 600, and the board refuses
+to read one anyone else can. For reference, this is where they live:
 
 | What | Where |
 |---|---|
@@ -1201,26 +1207,8 @@ for when you would rather do it by hand or script it.
 token pulled out of that JSON is refused, which is measured in
 [the credential spike](docs/spikes/S7-codex-auth.md).
 
-- **macOS:**
-
-  ```bash
-  mkdir -p ~/.config/smortboard
-  (umask 077; pbpaste | tr -d '\r\n ' > ~/.config/smortboard/card_token)
-  ```
-
-- **Linux:** the macOS command with `wl-paste` (Wayland) or `xclip -selection clipboard -o`
-  (X11) in place of `pbpaste`.
-- **Windows (PowerShell):**
-
-  ```powershell
-  New-Item -ItemType Directory -Force "$env:APPDATA\smortboard" | Out-Null
-  (Get-Clipboard -Raw) -replace '\s', '' |
-    Set-Content -NoNewline -Encoding ascii "$env:APPDATA\smortboard\card_token"
-  ```
-
-- **By hand:** create the file, `chmod 600` it, then paste the token in with any editor.
-- **Elsewhere:** `SMORTBOARD_CARD_TOKEN_PATH` points at any file. Credentials are read only from
-  files; a missing file requires saving a token before running a card.
+- **Elsewhere:** `SMORTBOARD_CARD_TOKEN_PATH` moves the `default` profile's file. Credentials are
+  read only from these files.
 - **Several subscriptions, or both labs:** `shift`+`p`, one profile per credential, each under its
   own name. The board rotates to the next profile of the same lab when the active one is
   rate-limited; crossing to the other lab needs a fallback list per role, which is deliberate.
@@ -1311,7 +1299,7 @@ curl -s -X PATCH -H "$K" -H 'content-type: application/json' 127.0.0.1:8000/api/
 |---|---|
 | `this tab has no api key` at the top of the page | Open the link the board printed on start. |
 | `.../card_token is not mode 600 - refusing to read it` | `chmod 600 ~/.config/smortboard/card_token` |
-| An expired or revoked token (HTTP 401) | The card says how to renew it: `claude setup-token` again. |
+| An expired or revoked token (HTTP 401) | `claude setup-token` again, then in `shift`+`p` add it as a new profile, activate it, and remove the expired one. |
 | The gate fails on `Read-only file system` for a tool other than ruff or pytest | Give that tool its own cache flag - `--no-cache`, `-p no:cacheprovider`, or whatever it takes. |
 | A card fails a test its own diff never touches | Preflight (`h`) may show its repo image predates `uv.lock`; the next run rebuilds it, or rebuild it by hand from the repo's row. |
 | A card waits with `lease conflict with card <id>` | Two leases overlap; it starts when the other card finishes. |
