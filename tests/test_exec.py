@@ -795,6 +795,20 @@ def test_a_card_with_no_lease_gets_no_preamble():
     assert lease_preamble(None) == ""
 
 
+def test_a_soft_lease_is_said_so_the_agent_commits_what_it_may():
+    """measured on a real soft run: told only its lease, the agent wrote b/y.py past it, the hook let
+    it through, and it left the file uncommitted as out of lease"""
+    soft = lease_preamble(["a/**"], "soft")
+    assert "a/**" in soft
+    assert "SOFT LEASE" in soft
+    assert "commit" in soft
+    assert ".github/**" in soft and "CLAUDE.md" in soft  # the protected paths are named, readably
+    assert "**/" not in soft
+    strict = lease_preamble(["a/**"], "strict")
+    assert "SOFT" not in strict
+    assert strict == lease_preamble(["a/**"])
+
+
 def test_the_default_tools_include_search():
     """without Grep and Glob an agent reaches for `Bash grep` and is refused. one measured card
     spent ten of its thirty-two turns being denied reworded shell commands."""

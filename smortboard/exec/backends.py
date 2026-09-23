@@ -416,7 +416,8 @@ class ContainerBackend:
                     ),
                 )
                 settings_path = guards.settings_path
-            brief = WORKSPACE_PREAMBLE + lease_preamble(leases) + commands_preamble(repo) + prompt
+            lease_text = lease_preamble(leases, policy.get("mode", "strict"))
+            brief = WORKSPACE_PREAMBLE + lease_text + commands_preamble(repo) + prompt
             name = container_name("worker", card_id)
             # minted once per run: the same nonce goes into the system prompt (so the agent knows
             # what a genuine note looks like) and into the feeder (so that's what a real note
