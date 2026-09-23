@@ -14,6 +14,7 @@ from pathlib import Path
 from platformdirs import user_data_dir
 
 from smortboard.demo import make_demo_db
+from smortboard.seed_beta import BOARD_NAME, DAILY_BUDGET_USD, SeedRefused, next_steps, seed_beta
 from smortboard.server.access import KEY_QUERY, load_or_create_api_key
 from smortboard.server.app import build_server, start_background
 from smortboard.store import Store
@@ -133,6 +134,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "import", parents=[_db_flags], help="restore a bundle file into an empty board"
     )
     import_parser.add_argument("path", type=str, help="bundle file to read")
+    seed_parser = subparsers.add_parser(
+        "seed-beta",
+        parents=[_db_flags],
+        help="make a small game repo and a board with its cards, to beta-test smortboard",
+    )
+    seed_parser.add_argument("dir", type=str, help="an empty or new folder for the game's repo")
+    seed_parser.add_argument(
+        "--name", type=str, default=BOARD_NAME, help=f"board name (default: {BOARD_NAME})"
+    )
 
     return parser.parse_args(argv)
 
@@ -172,6 +182,28 @@ def _run_import(args: argparse.Namespace) -> None:
     print(f"imported {args.path} into {db_path}")
 
 
+def _run_seed_beta(args: argparse.Namespace) -> None:
+    if args.demo:
+        raise SystemExit(
+            "--demo has nowhere to keep a beta board - it is a fresh throwaway database discarded "
+            "when the process exits"
+        )
+    db_path = _resolve_db(args.db)
+    with Store(db_path) as store:
+        try:
+            result = seed_beta(store, args.dir, board_name=args.name)
+        except SeedRefused as exc:
+            raise SystemExit(f"nothing seeded: {exc}") from exc
+    print(
+        f"seeded board {result.board['name']} with {len(result.cards)} cards into {db_path}\n"
+        f"repo {result.repo['path']}: main and development, one starter commit\n"
+        f"daily budget ${DAILY_BUDGET_USD:.0f}, strict leases, every card on sonnet\n\n"
+        "a card finishes only once the repo has a github origin - private is enough:\n"
+        f"{next_steps(result)}\n\n"
+        "a board already running shows the new board after a page reload"
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     """cli entry point: parse args, open the store, and serve the board until interrupted."""
     args = parse_args(argv)
@@ -180,6 +212,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "import":
         _run_import(args)
+        return
+    if args.command == "seed-beta":
+        _run_seed_beta(args)
         return
     # --demo deliberately bypasses _resolve_db entirely: a demo must never be able to reach the
     # operator's own board, not through --db, not through SMORTBOARD_DB, not through the data dir
