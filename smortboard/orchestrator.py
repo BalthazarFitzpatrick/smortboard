@@ -549,23 +549,22 @@ def _mounts_description(repo_names: list[str], extra_basenames: list[str]) -> st
 
 
 # how long card text may be - a word count the model targets, never a length the board cuts to
-TITLE_WORDS = (8, 10)
+TITLE_MAX_WORDS = 8
 DESCRIPTION_MAX_WORDS = 20
 CRITERION_MAX_WORDS = 12
 
 # in the turn prompt, not ORCHESTRATOR_PROMPT, so an edited prompt can't drop them
 CARD_TEXT_RULES = (
-    "CARD TEXT RULES. The operator scans cards; write no prose.\n"
-    f"- title: {TITLE_WORDS[0]} to {TITLE_WORDS[1]} words, complete on its own. Write it that "
-    "short; never write a long title and rely on it being cut.\n"
-    f"- description: at most {DESCRIPTION_MAX_WORDS} words in total. What changes and why, one or "
-    "two plain sentences. No sections, no bullets.\n"
+    "CARD TEXT RULES. Operator scans cards; no prose.\n"
+    f"- title: at most {TITLE_MAX_WORDS} words, complete alone; never rely on it being cut.\n"
+    f"- description: at most {DESCRIPTION_MAX_WORDS} words. What changes, why. No sections, "
+    "headers, bullets.\n"
     f"- criteria: each at most {CRITERION_MAX_WORDS} words, one checkable fact.\n"
-    "- tasks: each a short imperative, about 6 words.\n"
-    "- complexity: rate each card's complexity: low, medium or high, by how much judgement and how "
-    "many files it needs.\n"
-    "Drop filler words (that, very, just, basically, in order to, note that). No markdown. Detail "
-    "the worker needs goes in criteria and tasks, tersely, not in the description."
+    "- tasks: each short imperative, about 6 words.\n"
+    "- complexity: rate each card low, medium or high, by judgement and files needed.\n"
+    "Telegram style: drop articles, filler, connectives, pronouns; keep exact names, numbers, "
+    'paths. "The fox dug his hole and was dreaming of a nicer den" -> "fox dug hole, dreams of '
+    'nicer den". No markdown. Worker detail goes in criteria and tasks, not description.'
 )
 
 
@@ -577,8 +576,8 @@ def card_text_warnings(spec: dict[str, Any]) -> list[str]:
     """notes for card text that runs past the rules - reported to the operator, never cut"""
     title = str(spec.get("title") or "").strip()
     notes = []
-    if _word_count(title) > TITLE_WORDS[1]:
-        notes.append(f"{_word_count(title)} words in the title (target {TITLE_WORDS[1]} at most)")
+    if _word_count(title) > TITLE_MAX_WORDS:
+        notes.append(f"{_word_count(title)} words in the title (max {TITLE_MAX_WORDS})")
     if _word_count(spec.get("description")) > DESCRIPTION_MAX_WORDS:
         words = _word_count(spec.get("description"))
         notes.append(f"{words} words in the description (max {DESCRIPTION_MAX_WORDS})")
