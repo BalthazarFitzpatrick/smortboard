@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.exec.commands import declares_formatter
+from smortboard.exec.leases import PROTECTED_GLOBS
 from smortboard.labs.base import LabAdapter, LabEvent, RunRequest, estimate_usage
 from smortboard.labs.claude_code import (
     DEFAULT_ALLOWED_TOOLS,
@@ -56,8 +57,8 @@ from smortboard.store.api import Store
 SYSTEM_PROMPT = (
     "You are a headless worker executing one card in its own git worktree, already checked out on "
     "its branch. Do not create or switch branches, and do not ask for permission to commit — "
-    "committing to this branch is expected. Writes outside your declared path lease are blocked by "
-    "a hook; if one is refused, do not retry it, note it and continue with the rest of the task.\n"
+    "committing to this branch is expected. A hook blocks every write your lease does not allow; "
+    "if one is refused, do not retry it, note it and continue with the rest of the task.\n"
     "A REFUSED COMMAND WILL NOT SUCCEED REWORDED. Your available tools are fixed for this run: if a "
     "shell command is denied, no variant of it will be permitted, so record what you could not do "
     "and move on rather than trying another spelling. Use Grep and Glob to search rather than "
@@ -112,7 +113,7 @@ def note_marker_paragraph(marker: str) -> str:
     )
 
 
-def lease_preamble(leases: list[str] | None) -> str:
+def lease_preamble(leases: list[str] | None, mode: str = "strict") -> str:
     """the card's path lease, told to the agent rather than only enforced against it.
 
     THIS IS NAVIGATION, NOT A WARNING. the lease says exactly which files the work touches, and an
@@ -124,10 +125,22 @@ def lease_preamble(leases: list[str] | None) -> str:
     if not leases:
         return ""
     listed = "\n".join(f"- {glob}" for glob in leases)
+    if mode != "soft":
+        return (
+            "The files this card may write, and the only ones a hook will permit:\n"
+            f"{listed}\n"
+            "Start there. Read what you need elsewhere, but the work belongs in those paths.\n\n"
+        )
+    # measured on a real soft run: told only its lease, the agent wrote b/y.py, the hook let it
+    # through, and it left the file uncommitted as "outside my lease" - soft has to be said
+    fenced = ", ".join(glob.removeprefix("**/") for glob in PROTECTED_GLOBS)
     return (
-        "The files this card may write, and the only ones a hook will permit:\n"
+        "Your lease, where this card's work belongs:\n"
         f"{listed}\n"
-        "Start there. Read what you need elsewhere, but the work belongs in those paths.\n\n"
+        "SOFT LEASE on this board: when the work needs it, also write and commit other repo files. "
+        f"A hook still refuses protected ones ({fenced}) and files another active card holds. "
+        "Commit what you write outside the lease like the rest; the operator and the reviewer see "
+        "each such path.\n\n"
     )
 
 
