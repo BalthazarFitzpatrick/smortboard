@@ -141,9 +141,9 @@ Human merges main. Before work that could end in a development merge, ask this s
 via AskUserQuestion: free or review. Record the explicit answer using
 `sh ~/.claude/hooks/session-merge-mode.sh <session_id> free|review` (SessionStart supplies the id).
 Read the same session state after compaction. A project preference is not consent.
-In review mode, finish tests and open the PR, then ask before each merge. Record only an explicit
-approval with `session-merge-mode.sh <session_id> approve <absolute_session_cwd> '<exact_command>'`.
-That approval is consumed before execution; a failed or changed command needs fresh approval. Never force-push to main.
+In review mode, finish tests and open the PR, then ask before each merge; a yes covers that one merge.
+The mode mirrors the board's merge modes and is kept by the agent; the local hook guards main only.
+Never force-push to main.
 
 **Scope.** Implement exactly what was asked — no unrequested extras; propose them in one line
 instead. If a second attempt at the same bug fails, stop and state the root cause before editing again.
