@@ -31,6 +31,10 @@ dev = [
     "pytest-xdist>=3.5",
     "pre-commit>=3.7",
 ]
+# the docs site only - not part of `uv sync --dev`, so the suite never installs it
+docs = [
+    "mkdocs-material>=9.5",
+]
 
 [build-system]
 requires = ["hatchling"]

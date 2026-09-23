@@ -4,7 +4,7 @@
 container, on its own branch. Board runs your tests, a second agent reviews the diff, pull request
 waits for you. `main` stays yours.
 
-![The board mid-sprint: cards in every state across the columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
+![The board mid-sprint: cards in every state across the columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](images/hero-board.jpg)
 
 ## What it does
 
@@ -15,18 +15,18 @@ a rate limit, rebasing a waiting pull request: the board does it.
 with a file lease, a model and its dependencies. `,` - talk to a running agent; the note lands
 between two tool calls, the run keeps going.
 
-![Both drawers open: a working agent's transcript on the left, the orchestrator planning cards on the right](docs/images/hero-agents.jpg)
+![Both drawers open: a working agent's transcript on the left, the orchestrator planning cards on the right](images/hero-agents.jpg)
 
 **Attention.** One column to watch. A question, failed tests, a rejected review - anything the board
 cannot retry itself - lands there and in the inbox `n`, each with its next step. Answer it, the card
 resumes.
 
-![The attention inbox: blocked cards oldest first, each with its reason, its next step and an answer box](docs/images/inbox.jpg)
+![The attention inbox: blocked cards oldest first, each with its reason, its next step and an answer box](images/inbox.jpg)
 
 **Usage and cost.** Rate-limit windows per subscription, spend per model, per card, per board. A
 daily budget per board, a cap per run. Limit hit: switch to the fallback model, or ask you first.
 
-![The usage panel: five-hour and seven-day windows per lab, spend by model](docs/images/usage.jpg)
+![The usage panel: five-hour and seven-day windows per lab, spend by model](images/usage.jpg)
 
 ## Setup: four steps
 
@@ -57,37 +57,36 @@ to mint a key.
 
 Look before you set up: `uv run smortboard --demo` - throwaway board, invented cards, port 8001.
 Practice run: `uv run smortboard seed-beta <empty folder>` - a small game repo and 15 written cards
-([walkthrough](https://balthazarfitzpatrick.github.io/smortboard/beta-test-board/)).
+([walkthrough](beta-test-board.md)).
 
 ## Best practices
 
 - **Write the card once, completely.** The agent gets the card and the repo, not your head.
-  Criteria a test can check. [Cards](https://balthazarfitzpatrick.github.io/smortboard/practices/cards/)
+  Criteria a test can check. [Cards](practices/cards.md)
 - **Keep leases narrow, and keep them apart.** Overlapping leases serialise the board; an empty
-  lease runs nothing. [Leases](https://balthazarfitzpatrick.github.io/smortboard/practices/leases/)
+  lease runs nothing. [Leases](practices/leases.md)
 - **Watch one column.** Attention holds everything that needs you; the rest runs itself.
-  [Attention and inbox](https://balthazarfitzpatrick.github.io/smortboard/practices/attention/)
+  [Attention and inbox](practices/attention.md)
 - **Let the two gates judge.** Your tests, then a second agent, before any pull request. An agent
-  saying the tests pass is not a pass. [The two gates](https://balthazarfitzpatrick.github.io/smortboard/practices/gates/)
+  saying the tests pass is not a pass. [The two gates](practices/gates.md)
 - **Main is yours.** The board lands on `development`; you merge `main`. A hook keeps agents off it.
-  [Landing](https://balthazarfitzpatrick.github.io/smortboard/practices/landing/) -
-  [protect main](https://balthazarfitzpatrick.github.io/smortboard/protect-main/)
+  [Landing](practices/landing.md) -
+  [protect main](protect-main.md)
 - **Plan in mission control, steer in workforce.**
-  [Mission control](https://balthazarfitzpatrick.github.io/smortboard/practices/mission-control/)
+  [Mission control](practices/mission-control.md)
 - **Budget before you run.** A daily budget per board, a model per role, a fallback in another lab.
-  [Cost](https://balthazarfitzpatrick.github.io/smortboard/practices/cost/) -
-  [labs](https://balthazarfitzpatrick.github.io/smortboard/practices/labs/)
+  [Cost](practices/cost.md) -
+  [labs](practices/labs.md)
 
 ## More
 
-[Docs](https://balthazarfitzpatrick.github.io/smortboard/) -
-[install in full](https://balthazarfitzpatrick.github.io/smortboard/get-started/install/) -
-[keyboard](https://balthazarfitzpatrick.github.io/smortboard/reference/keyboard/) -
-[configuration](https://balthazarfitzpatrick.github.io/smortboard/reference/configuration/) -
-[troubleshooting](https://balthazarfitzpatrick.github.io/smortboard/help/troubleshooting/) -
-[security](https://balthazarfitzpatrick.github.io/smortboard/reference/security/)
+[install in full](get-started/install.md) -
+[keyboard](reference/keyboard.md) -
+[configuration](reference/configuration.md) -
+[troubleshooting](help/troubleshooting.md) -
+[security](reference/security.md)
 
 **Public beta.** One user, daily, on macOS. Found a rough edge?
-[Beta and reporting](https://balthazarfitzpatrick.github.io/smortboard/help/beta/).
+[Beta and reporting](help/beta.md).
 
-[MIT](LICENSE)
+[MIT](https://github.com/BalthazarFitzpatrick/smortboard/blob/main/LICENSE)
