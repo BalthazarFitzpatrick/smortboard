@@ -123,24 +123,27 @@ and gitignored. Nothing in it is needed to work on this repo.
 
 ## Rules
 
-Work in a feature worktree, open a pull request against `development`, and let a human merge it.
-These hold on their own: an agent working here needs nothing but this file.
+These hold in this project even if `~/.claude/CLAUDE.md` isn't loaded (a teammate's machine, a
+stripped agent). The full version — with rationale — lives in the global playbook.
 
 **Git — never commit to `main`/`master`.** Not once, not for a hotfix. The only commit that lands
-on main is the initial scaffold. The human merges PRs and then works from `main`, so the checkout
-can change under you mid-turn: run `git branch --show-current` before *every* edit and commit, not
-just once at the start, and branch out if it says `main`.
+on main is the initial scaffold. All work happens in worktrees on feature branches, cut from
+`development` if it exists, else `main` — never in the main checkout, which the human switches at will.
 
 Before every commit, in order:
-1. `git branch --show-current` — if `main`/`master`, stop and branch first
-2. `git status` — confirm nothing sensitive is staged
-3. (Python) `uv run ruff check . --fix && uv run ruff format .`
+1. `git status` — confirm nothing sensitive is staged
+2. (Python) `uv run ruff check . --fix && uv run ruff format .`
 
 Commit messages: past tense, lowercase, no trailing period. Branches: `feature/`, `fix/`, `chore/`.
 Never commit `.env`, `*.key`, `*.pem`, `credentials*.yaml`, or anything that looks like a token.
-After `git push`, surface the create-pull-request URL from the remote output; if `gh pr create` is
-unavailable, print the compare URL instead of retrying. A human approves every merge. Never
-force-push to `main`.
+Open PRs with `gh pr create` (installed, authenticated) — real lowercase title, plain lowercase bullet body.
+Human merges main. Before work that could end in a development merge, ask this session's mode
+via AskUserQuestion: free or review. Record the explicit answer using
+`sh ~/.claude/hooks/session-merge-mode.sh <session_id> free|review` (SessionStart supplies the id).
+Read the same session state after compaction. A project preference is not consent.
+In review mode, finish tests and open the PR, then ask before each merge. Record only an explicit
+approval with `session-merge-mode.sh <session_id> approve <absolute_session_cwd> '<exact_command>'`.
+That approval is consumed before execution; a failed command needs fresh approval. Never force-push to main.
 
 **Scope.** Implement exactly what was asked — no unrequested extras; propose them in one line
 instead. If a second attempt at the same bug fails, stop and state the root cause before editing again.
