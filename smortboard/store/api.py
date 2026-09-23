@@ -100,6 +100,9 @@ _FALLBACK_KEYS = tuple(f"{role}_cross_lab_fallback" for role in ROLES)
 _EXTRA_SETTING_KEYS = ("mission_control_read_paths", *_FALLBACK_KEYS)
 _EFFORT_KEYS = tuple(f"{role}_effort" for role in ROLES)
 
+# the token counts a board_spend row carries (migration 23), in column order
+BOARD_SPEND_TOKENS = ("input_tokens", "output_tokens", "cached_tokens", "cache_creation_tokens")
+
 
 def _check_findings_route(value: str | None) -> None:
     if value is not None and value not in FINDINGS_ROUTES:
@@ -1320,17 +1323,35 @@ class Store:
         lab: str = "anthropic",
         model: str | None = None,
         cost_estimated: bool = False,
+        tokens: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         """a mission control or fold turn's cost - not tied to a card run, so it lives on its own
-        table rather than a card's events. see telemetry.board_spend_today, which sums these too."""
+        table rather than a card's events. see telemetry.board_spend_today, which sums these too.
+
+        `tokens` holds any of input_tokens, output_tokens, cached_tokens and cache_creation_tokens;
+        one left out stays null, unknown rather than zero."""
+        tokens = tokens or {}
         spend_id = _new_id()
         created_at = _now()
         self._conn.execute(
             """
-            INSERT INTO board_spend (id, board_id, role, cost_usd, created_at, lab, model, cost_estimated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO board_spend (
+                id, board_id, role, cost_usd, created_at, lab, model, cost_estimated,
+                input_tokens, output_tokens, cached_tokens, cache_creation_tokens
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (spend_id, board_id, role, cost_usd, created_at, lab, model, int(cost_estimated)),
+            (
+                spend_id,
+                board_id,
+                role,
+                cost_usd,
+                created_at,
+                lab,
+                model,
+                int(cost_estimated),
+                *(tokens.get(key) for key in BOARD_SPEND_TOKENS),
+            ),
         )
         self._conn.commit()
         row = self._conn.execute("SELECT * FROM board_spend WHERE id = ?", (spend_id,)).fetchone()

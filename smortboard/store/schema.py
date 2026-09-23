@@ -473,6 +473,14 @@ _MIGRATIONS: list[str] = [
 
     PRAGMA foreign_keys = ON;
     """,
+    # 23: a mission control or fold turn's tokens beside its cost, the same four counts a card
+    # run's usage events carry - null on rows from before, which recorded cost only
+    """
+    ALTER TABLE board_spend ADD COLUMN input_tokens INTEGER;
+    ALTER TABLE board_spend ADD COLUMN output_tokens INTEGER;
+    ALTER TABLE board_spend ADD COLUMN cached_tokens INTEGER;
+    ALTER TABLE board_spend ADD COLUMN cache_creation_tokens INTEGER;
+    """,
 ]
 
 

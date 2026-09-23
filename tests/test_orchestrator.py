@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from smortboard.orchestrator import OrchestratorRegistry, build_turn_prompt, run_orchestrator_turn
+from smortboard.orchestrator import OrchestratorRegistry, run_orchestrator_turn
 from smortboard.store.api import Store
 
 
@@ -350,7 +350,9 @@ def test_the_orchestrator_budget_setting_caps_the_turn(store, board):
 
 
 def test_the_card_text_rules_ride_in_every_turn_prompt():
-    prompt = build_turn_prompt({"repos": []}, "hi")
+    from smortboard.orchestrator import build_system_prompt
+
+    prompt = build_system_prompt("", {})
     assert "CARD TEXT RULES" in prompt
     assert "8 to 10 words" in prompt and "at most 20 words" in prompt
 

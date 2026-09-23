@@ -26,6 +26,7 @@ from smortboard.exec.leases import changed_paths_outside_lease, write_lease_sett
 from smortboard.exec.runner import (
     DEFAULT_CARD_BUDGET_USD,
     HEADLESS_RULES,
+    READING_RULES,
     SYSTEM_PROMPT,
     ProcessHandle,
     RunResult,
@@ -513,6 +514,7 @@ class ContainerBackend:
                 ),
                 system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT)
                 + HEADLESS_RULES
+                + READING_RULES
                 + note_marker_paragraph(note_marker or new_note_marker()),
                 stream_input=adapter.capabilities.live_steering,
                 effort=role_effort(store.get_settings(), "worker") if store is not None else None,

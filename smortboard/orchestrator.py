@@ -41,7 +41,7 @@ from smortboard.labs.routing import command_model, role_effort, role_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.prompts import active_prompt
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
-from smortboard.store.api import Store, _clean_leases, _is_catch_all
+from smortboard.store.api import BOARD_SPEND_TOKENS, Store, _clean_leases, _is_catch_all
 from smortboard.telemetry import board_evidence
 
 # where a screenshot lands inside the orchestrator's re-run container - mounted read-only, and
@@ -162,6 +162,9 @@ def _clean_model(raw: Any) -> tuple[str | None, str | None]:
 
 
 _MESSAGE_HISTORY = 20
+# each of those messages, cut past this many characters: measured on the live board, 6.8k of the
+# 15.6k characters in its last 20 bodies sat past the first 800
+_MESSAGE_BODY_LIMIT = 800
 # the operator's actual comment length is unbounded, but the snapshot's cards list stays short - see
 # _snapshot_card
 _BOARD_AUTHOR = "board"
@@ -197,7 +200,7 @@ def _real_runner(
     dir removed once the turn ends; a missing extra path becomes a board message, not a crash.
     `read_paths` is resolved once by the caller so the setting is not read a second time here.
 
-    Records the turn's cost (even on a failed or capped run) to board_spend via `store`, so mission
+    Records the turn's cost and tokens (even on a failed or capped run) to board_spend, so mission
     control and fold spend count toward the board's daily budget - see telemetry.board_spend_today.
     Fake runners used by tests bypass this entirely, since they never call `_real_runner`.
     """
@@ -309,6 +312,7 @@ def _real_runner(
             lab=lab,
             model=model_id,
             cost_estimated=result.cost_estimated,
+            tokens={key: getattr(result, key) for key in BOARD_SPEND_TOKENS},
         )
         return replace(result, lab=lab, model=model_id, profile=profile, role=role)
 
@@ -527,11 +531,18 @@ def build_board_snapshot(store: Store, board_id: str) -> dict[str, Any]:
         "cards": _snapshot_cards(store, board_id),
         "plan": store.get_plan(board_id),
         "messages": [
-            {"author": m["author"], "body": m["body"]}
+            {"author": m["author"], "body": _cap_body(m["body"])}
             for m in store.list_orchestrator_messages(board_id, limit=_MESSAGE_HISTORY)
         ],
         "evidence": board_evidence(store, board_id),
     }
+
+
+def _cap_body(body: str) -> str:
+    """one message body as the snapshot carries it - cut with a marker saying how much went"""
+    if len(body) <= _MESSAGE_BODY_LIMIT:
+        return body
+    return body[:_MESSAGE_BODY_LIMIT] + f" [... {len(body) - _MESSAGE_BODY_LIMIT} chars cut]"
 
 
 def _mounts_description(repo_names: list[str], extra_basenames: list[str]) -> str:
@@ -554,7 +565,7 @@ TITLE_WORDS = (8, 10)
 DESCRIPTION_MAX_WORDS = 20
 CRITERION_MAX_WORDS = 12
 
-# in the turn prompt, not ORCHESTRATOR_PROMPT, so an edited prompt can't drop them
+# in the system appendix, not ORCHESTRATOR_PROMPT, so an edited prompt can't drop them
 CARD_TEXT_RULES = (
     "CARD TEXT RULES. The operator scans cards; write no prose.\n"
     f"- title: {TITLE_WORDS[0]} to {TITLE_WORDS[1]} words, complete on its own. Write it that "
@@ -589,7 +600,7 @@ def card_text_warnings(spec: dict[str, Any]) -> list[str]:
     return [f'"{title}" runs long: {note}' for note in notes]
 
 
-# in the turn prompt rather than ORCHESTRATOR_PROMPT: a stored prompt replaces the code default
+# in the system appendix rather than ORCHESTRATOR_PROMPT: a stored prompt replaces the code default
 _LEDGER_RULES = (
     "Each repo carries `layout` (its folders with file counts) and `open_tasks` (the not-done tasks "
     "of its TASKS.jsonl ledger). To turn a ledger task into a card, set the card's `task_id` to "
@@ -614,16 +625,30 @@ _MANAGE_MODE_RULES = (
 )
 
 
-def build_turn_prompt(
-    snapshot: dict[str, Any], message: str, mounts: str = "", mode: str = "planning"
-) -> str:
+def build_system_prompt(base: str, catalog: dict[str, Any]) -> str:
+    """the turn's system prompt: the stored or default prompt, then what no edit may drop.
+
+    static across turns, so it caches; the per-turn snapshot follows it in the turn prompt. the
+    mode rules stay per turn - in here, a switch of mode would re-send the whole prefix uncached
+    """
     return (
-        "Board snapshot:\n"
-        + json.dumps(snapshot, indent=2)
+        base
+        + "\n\nAvailable model catalog (lab, model id, tier, preferred roles):\n"
+        + json.dumps(catalog)
         + "\n\n"
         + _LEDGER_RULES
         + "\n\n"
         + CARD_TEXT_RULES
+    )
+
+
+def build_turn_prompt(
+    snapshot: dict[str, Any], message: str, mounts: str = "", mode: str = "planning"
+) -> str:
+    # compact: the indent was 16% of the snapshot's characters, measured on the live board
+    return (
+        "Board snapshot:\n"
+        + json.dumps(snapshot, separators=(",", ":"))
         + "\n\n"
         + (_PLANNING_MODE_RULES if mode != "manage" else _MANAGE_MODE_RULES)
         + (f"\n\n{mounts}" if mounts else "")
@@ -739,12 +764,10 @@ def run_orchestrator_turn(
         store.add_orchestrator_message(board_id, AUTHOR_KEY, message)
 
     model = command_model(*role_ref(store.get_settings(), "orchestrator"))
-    system_prompt = active_prompt(store, "orchestrator", ORCHESTRATOR_PROMPT)
     usable = {row["lab"] for row in profiles.list_all_profiles() if row["present"]}
     available = {lab: data["models"] for lab, data in load_catalog().items() if lab in usable}
-    system_prompt += (
-        "\n\nAvailable model catalog (lab, model id, tier, preferred roles):\n"
-        + json.dumps(available)
+    system_prompt = build_system_prompt(
+        active_prompt(store, "orchestrator", ORCHESTRATOR_PROMPT), available
     )
     snapshot = build_board_snapshot(store, board_id)
     # read the operator's extra paths once, here: the description below and the runner's mounts both
