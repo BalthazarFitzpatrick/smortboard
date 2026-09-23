@@ -34,3 +34,36 @@ orchestrator module.
 
 `runner.build_command`'s `system_prompt` parameter defaults to `SYSTEM_PROMPT` so every caller that
 does not care about layering (tests, the non-container `run_card` path) keeps working unchanged.
+
+## What the board adds that a stored prompt cannot drop
+
+A stored override replaces the seed default whole, so anything a run depends on is appended outside
+it, in code, on every run:
+
+- **worker, system prompt:** `runner.HEADLESS_RULES` (nothing wakes a headless run, commit before
+  finishing), the READ NARROW rule (grep for line numbers, then read only that range, never re-read),
+  and the note-marker paragraph that tells the agent which marker a genuine operator note carries.
+- **worker, first message:** `backends.WORKSPACE_PREAMBLE`, the lease (`runner.lease_preamble`: the
+  paths the card may write), and `runner.commands_preamble`: "YOU CAN RUN EXACTLY" every shell
+  command the run is granted, word for word, plus the facts that used to cost refused turns - no
+  pipes or chains, no docker, never push, no installs, a failing test outside the lease gets noted.
+  It informs; the grants themselves come from the tool allowlist.
+- **reviewer:** the diff sits between `DIFF_FRAMING` and `DIFF_END` as untrusted data. File names
+  the worker wrote - lockfiles left out of the diff, paths a soft lease reached - go inside that
+  region, never in the trusted header. The header only carries the board's own instruction to judge
+  the soft-lease paths.
+- **orchestrator:** `build_system_prompt` appends the model catalog, `_LEDGER_RULES` and
+  `CARD_TEXT_RULES` to the system prompt, so they stay identical between turns and the provider can
+  cache them. The per-turn prompt carries only the snapshot (compact json, message bodies capped at
+  800 characters, the newest 20 finished cards as evidence) and the planning or manage mode rules.
+- **fold:** `consolidate.FOLD_PROMPT` is fixed in code; there is no stored fold role. Its turn prompt
+  carries `CARD_TEXT_RULES` too.
+
+## Flags that shape every run
+
+- `--tools`: the only tools a run loads - Read, Edit, Write, Glob, Grep and Bash for the worker;
+  Read, Grep and Glob for the reviewer, mission control and fold. `--allowedTools` and
+  `--disallowedTools` still decide permission; `--tools` decides what is loaded at all.
+- `--disable-slash-commands`: no skills or slash commands in any run.
+- `--effort`, only when `{role}_effort` is set (low, medium, high). Codex gets
+  `-c model_reasoning_effort` instead.

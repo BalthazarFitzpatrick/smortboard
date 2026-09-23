@@ -15,6 +15,11 @@
 >   opt-in that lands as soon as both gates pass. Neither ever writes `main`, `master` or `trunk`.
 >   Review mode stacks a dependent card on its unmerged parent's branch, up to three deep, so the
 >   queue keeps moving while nobody is watching.
+> - **Lease modes, usage-limit route, context trim** (2026-09-23). A board's lease is strict by default
+>   or soft, where a card may also write any unprotected path no other active card holds. A refused
+>   write no longer sinks committed work. On a usage limit the board switches to the fallback model by
+>   itself or asks first (`usage_limit_route`). Every run loads only its role's tools, with skills off,
+>   and an unchanged branch re-runs the gates without re-running the agent.
 
 ## Context
 
