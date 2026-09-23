@@ -1462,6 +1462,18 @@ class Store:
 
         _import(self._conn, path)
 
+    def export_text(self) -> str:
+        """the bundle export() writes, as text - what the board hands a browser to download"""
+        from smortboard.store.export import bundle_text
+
+        return bundle_text(self._conn)
+
+    def import_as_new(self, bundle: object) -> list[str]:
+        """adds a parsed bundle's boards beside the ones here, under fresh ids - see export.py"""
+        from smortboard.store.export import import_as_new
+
+        return import_as_new(self._conn, bundle)
+
     # -- landing lock: one holder per (repo_key, target), fifo queue behind it -------------
 
     def _evict_stale_landing(self, repo_key: str, target: str) -> str | None:

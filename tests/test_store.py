@@ -4,7 +4,13 @@ import stat
 
 import pytest
 
-from smortboard.store import BlockedReasonInvalidError, NotFoundError, Store, UnknownFieldError
+from smortboard.store import (
+    BlockedReasonInvalidError,
+    BundleError,
+    NotFoundError,
+    Store,
+    UnknownFieldError,
+)
 from smortboard.store.schema import STATUSES
 
 
@@ -173,6 +179,137 @@ def test_export_round_trips_to_an_identical_database(store, tmp_path):
         fresh.import_bundle(bundle_path)
 
     _assert_databases_identical(store, fresh_path)
+
+
+def test_export_round_trips_a_repos_remembered_lease_paths(store, tmp_path):
+    """a path approved for a whole repo was left out of the bundle, so a restore asked again"""
+    board = store.create_board("Phase 1")
+    repo = store.create_repo(board["id"], "smortboard", "/repo", "main")
+    store.remember_lease_paths(repo["id"], ["docs/**"])
+
+    bundle_path = tmp_path / "bundle.json"
+    store.export(bundle_path)
+
+    with Store(tmp_path / "fresh.sqlite3") as fresh:
+        fresh.import_bundle(bundle_path)
+        assert [row["path_glob"] for row in fresh.remembered_leases(repo["id"])] == ["docs/**"]
+
+
+def _populated_board(store, name="Phase 1"):
+    board = store.create_board(name)
+    repo = store.create_repo(board["id"], "smortboard", "/repo", "main")
+    store.remember_lease_paths(repo["id"], ["docs/**"])
+    upstream = store.create_card(
+        board["id"], repo["id"], "upstream", tasks=["t1"], criteria=["c1"], leases=["a/*"]
+    )
+    downstream = store.create_card(board["id"], repo["id"], "downstream")
+    store.add_dependency(downstream["id"], upstream["id"])
+    store.add_comment(upstream["id"], "operator", "hi")
+    store.append_event(upstream["id"], "created", {"n": 1})
+    store.add_attachment(upstream["id"], "a.txt", "text/plain", b"binary\x00data")
+    store.add_orchestrator_message(board["id"], "operator", "plan it")
+    store.set_plan(board["id"], "the plan")
+    store.add_board_spend(board["id"], "orchestrator", 0.25)
+    return board, repo, upstream, downstream
+
+
+def test_import_as_new_adds_a_copy_beside_the_boards_already_here(store):
+    board, repo, upstream, downstream = _populated_board(store)
+    before = [store.get_card(card["id"]) for card in (upstream, downstream)]
+    bundle = json.loads(store.export_text())
+
+    new_ids = store.import_as_new(bundle)
+
+    assert len(new_ids) == 1 and new_ids[0] != board["id"]
+    assert {b["id"] for b in store.list_boards()} == {board["id"], new_ids[0]}
+    assert [store.get_card(card["id"]) for card in (upstream, downstream)] == before
+    assert [r["id"] for r in store.list_repos(board["id"])] == [repo["id"]]
+
+    copy_repo = store.list_repos(new_ids[0])[0]
+    assert copy_repo["id"] != repo["id"] and copy_repo["path"] == "/repo"
+    assert [r["path_glob"] for r in store.remembered_leases(copy_repo["id"])] == ["docs/**"]
+    copies = {card["title"]: store.get_card(card["id"]) for card in store.list_cards(new_ids[0])}
+    assert set(copies) == {"upstream", "downstream"}
+    assert not {c["id"] for c in copies.values()} & {upstream["id"], downstream["id"]}
+    copy_up, copy_down = copies["upstream"], copies["downstream"]
+    assert copy_up["repo_id"] == copy_repo["id"]
+    assert copy_down["depends_on"] == [copy_up["id"]], "a dependency follows its card's new id"
+    assert [t["text"] for t in copy_up["tasks"]] == ["t1"]
+    assert [c["text"] for c in copy_up["criteria"]] == ["c1"]
+    assert [lease["path_glob"] for lease in copy_up["leases"]] == ["a/*"]
+    assert [c["body"] for c in copy_up["comments"]] == ["hi"]
+    assert [e["kind"] for e in store.list_events(copy_up["id"])] == ["created"]
+    attachment = copy_up["attachments"][0]
+    assert store.get_attachment_blob(attachment["id"]) == b"binary\x00data"
+    assert store.get_plan(new_ids[0]) == "the plan"
+    assert [m["body"] for m in store.list_orchestrator_messages(new_ids[0])] == ["plan it"]
+    assert len(store.list_board_spend(new_ids[0])) == 1
+
+
+def test_import_as_new_points_a_copied_stack_at_the_copied_parent(store):
+    """a stacked card's parent lives in an event payload - left as the old id, the checking sweep
+    resolves the copy's stack to the original card, or raises NotFoundError for a foreign bundle"""
+    _, _, upstream, downstream = _populated_board(store)
+    pr_url = f"https://github.com/o/r/pull/7?from=card/{upstream['id']}"
+    store.append_event(downstream["id"], "stacked_on", {"parent_id": upstream["id"], "url": pr_url})
+    bundle = json.loads(store.export_text())
+
+    [copy_board] = store.import_as_new(bundle)
+
+    copies = {card["title"]: card for card in store.list_cards(copy_board)}
+    [stacked] = [
+        e for e in store.list_events(copies["downstream"]["id"]) if e["kind"] == "stacked_on"
+    ]
+    assert stacked["payload"]["parent_id"] == copies["upstream"]["id"]
+    assert stacked["payload"]["url"] == pr_url, "only a whole-string id is swapped, never a url"
+
+
+def test_import_as_new_takes_a_board_with_no_repos_or_cards(store):
+    board = store.create_board("empty")
+    store.add_orchestrator_message(board["id"], "operator", "hello")
+    [copy_board] = store.import_as_new(json.loads(store.export_text()))
+    assert [m["body"] for m in store.list_orchestrator_messages(copy_board)] == ["hello"]
+
+
+def test_import_as_new_leaves_this_databases_settings_and_prompts_alone(store):
+    """settings and prompts are global config, not a board's - a bundle must not rewrite them"""
+    _populated_board(store)
+    bundle = json.loads(store.export_text())
+    bundle["settings"] = [{"key": "auto_switch_profiles", "value": "on"}]
+    bundle["prompts"] = [
+        {"role": "worker", "version": 1, "body": "from the bundle", "created_at": "2026-01-01"}
+    ]
+
+    store.import_as_new(bundle)
+
+    assert store.get_settings().get("auto_switch_profiles") != "on"
+    assert store.get_prompt("worker") is None
+
+
+def test_import_as_new_refuses_a_row_pointing_outside_the_bundle_and_adds_nothing(store):
+    """a row naming an id the bundle does not hold could attach to an existing board - refused,
+    and the boards and repos already inserted by then are rolled back with it"""
+    board, *_ = _populated_board(store)
+    bundle = json.loads(store.export_text())
+    bundle["cards"][0]["repo_id"] = "a-repo-this-bundle-does-not-hold"
+    boards_before = store.list_boards()
+
+    with pytest.raises(BundleError, match="not in the bundle's repos"):
+        store.import_as_new(bundle)
+
+    assert store.list_boards() == boards_before
+    assert len(store.list_cards(board["id"])) == 2
+    # the connection is left usable, not stuck in a half-open transaction
+    store.create_board("after the refusal")
+    assert len(store.list_boards()) == 2
+
+
+def test_import_as_new_refuses_something_that_is_not_a_bundle(store):
+    with pytest.raises(BundleError, match="not a smortboard bundle"):
+        store.import_as_new({"cards": []})
+    with pytest.raises(BundleError, match="no boards"):
+        store.import_as_new({"boards": []})
+    assert store.list_boards() == []
 
 
 def test_import_bundle_refuses_a_bundle_row_with_a_non_column_key(store, tmp_path):
