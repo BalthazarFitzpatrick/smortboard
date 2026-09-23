@@ -74,7 +74,7 @@ Practice run: `uv run smortboard seed-beta <empty folder>` - a small game repo a
   [protect main](protect-main.md)
 - **Plan in mission control, steer in workforce.**
   [Mission control](practices/mission-control.md)
-- **Budget before you run.** A daily budget per board, a model per role, a fallback per lab.
+- **Budget before you run.** A daily budget per board, a model per role, a fallback in another lab.
   [Cost](practices/cost.md) -
   [labs](practices/labs.md)
 
