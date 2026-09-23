@@ -299,7 +299,7 @@ def run_fold_turn(
     )
     prompt = (
         "Board snapshot:\n"
-        + json.dumps(snapshot, indent=2)
+        + json.dumps(snapshot, separators=(",", ":"))
         + f"\n\n{mounts}\n\n{CARD_TEXT_RULES}\n\nPropose the groups of todo cards to fold."
     )
     run = runner or _real_runner(

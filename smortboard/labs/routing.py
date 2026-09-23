@@ -1,6 +1,7 @@
 """resolve role and card choices without changing legacy stored settings"""
 
 from smortboard.labs.catalog import load_catalog, parse_ref, resolve_ref
+from smortboard.store.schema import EFFORT_LEVELS
 
 
 def role_ref(settings: dict, role: str, card: dict | None = None) -> tuple[str, str]:
@@ -22,6 +23,12 @@ def role_ref(settings: dict, role: str, card: dict | None = None) -> tuple[str, 
         tier = "deep" if role in ("orchestrator", "fold") else "standard"
         preferred = next((row for row in rows if row.get("tier") == tier), rows[0])
     return lab, preferred["id"]
+
+
+def role_effort(settings: dict, role: str) -> str | None:
+    """the operator's effort for one role, or None - which passes no flag, the cli's default"""
+    value = settings.get(f"{role}_effort")
+    return value if value in EFFORT_LEVELS else None
 
 
 def command_model(lab: str, model: str) -> str:

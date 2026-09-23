@@ -29,7 +29,7 @@ from smortboard.exec.backends import (
     require_card_runtime,
     write_container_guards,
 )
-from smortboard.exec.runner import RunResult
+from smortboard.exec.runner import RunResult, commands_preamble
 from smortboard.exec.worktrees import WorktreeError, create_worktree
 from smortboard.store.api import Store
 
@@ -152,7 +152,7 @@ def test_the_credential_reaches_the_container_only_through_stdin(tmp_path, monke
 
     assert seen["token_line"] == "s3cret\n"
     # the working directory is told first, so the agent does not go looking for its files
-    assert seen["stream_prompt"] == WORKSPACE_PREAMBLE + "prompt"
+    assert seen["stream_prompt"] == WORKSPACE_PREAMBLE + commands_preamble(None) + "prompt"
     assert seen["stream_prompt"].startswith("Your working directory is /workspace")
     assert "s3cret" not in seen["cmd"]
 

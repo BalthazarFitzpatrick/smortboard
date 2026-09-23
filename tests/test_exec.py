@@ -528,9 +528,11 @@ def test_allowed_tools_grant_the_lint_command_part_by_part():
 def test_the_brief_names_the_exact_test_and_lint_commands():
     repo = {"test_command": "uv run pytest", "lint_command": "uv run ruff check ."}
     brief = commands_preamble(repo)
-    assert "Run the tests with: uv run pytest" in brief
-    assert "Run the linter with: uv run ruff check ." in brief
-    assert commands_preamble({}) == ""
+    assert "Run tests with: uv run pytest" in brief
+    assert "Run lint with: uv run ruff check ." in brief
+    # no declared command still names the one grant every card has, git
+    bare = commands_preamble({})
+    assert "- git *" in bare and "Run tests" not in bare
 
 
 # -- the declared formatter's write form is admitted, scoped to what was declared -------

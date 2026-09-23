@@ -15,6 +15,7 @@ from smortboard.store.schema import (
     BACKUP_RETENTION_DAYS,
     BLOCKED_REASON_CODES,
     DEFAULT_FINDINGS_ROUTE,
+    EFFORT_LEVELS,
     FINDINGS_ROUTES,
     STATUSES,
     migrate,
@@ -74,6 +75,11 @@ _SETTING_KEYS = (
     "orchestrator_budget_usd",
     "fold_budget_usd",
     "card_total_budget_usd",
+    # per-role reasoning effort, see schema.EFFORT_LEVELS - unset passes no flag
+    "worker_effort",
+    "reviewer_effort",
+    "orchestrator_effort",
+    "fold_effort",
 )
 
 # per-run dollar caps an operator may set; unset falls back to each role's own default.
@@ -92,6 +98,10 @@ SPEND_CAP_KEYS = (
 # tolerant reader as a list, and the settings panel (o) replaces it whole with a list of paths
 _FALLBACK_KEYS = tuple(f"{role}_cross_lab_fallback" for role in ROLES)
 _EXTRA_SETTING_KEYS = ("mission_control_read_paths", *_FALLBACK_KEYS)
+_EFFORT_KEYS = tuple(f"{role}_effort" for role in ROLES)
+
+# the token counts a board_spend row carries (migration 24), in column order
+BOARD_SPEND_TOKENS = ("input_tokens", "output_tokens", "cached_tokens", "cache_creation_tokens")
 
 
 def _check_findings_route(value: str | None) -> None:
@@ -112,6 +122,12 @@ def _check_image(value: Any) -> None:
 def _check_model(value: Any) -> None:
     if value is not None and not (isinstance(value, str) and _MODEL_NAME.match(value)):
         raise ValueError(f"model must be a model name or null, not {value!r}")
+
+
+def _check_effort(key: str, value: Any) -> None:
+    # reaches claude or codex argv, so only the named levels pass
+    if value is not None and value not in EFFORT_LEVELS:
+        raise ValueError(f"{key} must be one of {EFFORT_LEVELS} or null, not {value!r}")
 
 
 def _model_pair(lab: Any, model: Any) -> tuple[str | None, str | None]:
@@ -770,6 +786,8 @@ class Store:
                 _check_positive_int(key, value)
             if key in SPEND_CAP_KEYS:
                 _check_positive_number(key, value)
+            if key in _EFFORT_KEYS:
+                _check_effort(key, value)
             stored = value
             if key == "mission_control_read_paths" or key in _FALLBACK_KEYS:
                 if isinstance(value, str):
@@ -1315,17 +1333,35 @@ class Store:
         lab: str = "anthropic",
         model: str | None = None,
         cost_estimated: bool = False,
+        tokens: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         """a mission control or fold turn's cost - not tied to a card run, so it lives on its own
-        table rather than a card's events. see telemetry.board_spend_today, which sums these too."""
+        table rather than a card's events. see telemetry.board_spend_today, which sums these too.
+
+        `tokens` holds any of input_tokens, output_tokens, cached_tokens and cache_creation_tokens;
+        one left out stays null, unknown rather than zero."""
+        tokens = tokens or {}
         spend_id = _new_id()
         created_at = _now()
         self._conn.execute(
             """
-            INSERT INTO board_spend (id, board_id, role, cost_usd, created_at, lab, model, cost_estimated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO board_spend (
+                id, board_id, role, cost_usd, created_at, lab, model, cost_estimated,
+                input_tokens, output_tokens, cached_tokens, cache_creation_tokens
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (spend_id, board_id, role, cost_usd, created_at, lab, model, int(cost_estimated)),
+            (
+                spend_id,
+                board_id,
+                role,
+                cost_usd,
+                created_at,
+                lab,
+                model,
+                int(cost_estimated),
+                *(tokens.get(key) for key in BOARD_SPEND_TOKENS),
+            ),
         )
         self._conn.commit()
         row = self._conn.execute("SELECT * FROM board_spend WHERE id = ?", (spend_id,)).fetchone()
