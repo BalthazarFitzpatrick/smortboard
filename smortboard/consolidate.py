@@ -56,14 +56,18 @@ FOLD_PROMPT = (
     "Return JSON matching the schema. `groups` may be empty; then say why in `summary`."
 )
 
+# strict at every level, as the reviewer's: codex's --output-schema refuses a schema without
+# additionalProperties false or with an optional property
 FOLD_JSON_SCHEMA = {
     "type": "object",
+    "additionalProperties": False,
     "properties": {
         "summary": {"type": "string"},
         "groups": {
             "type": "array",
             "items": {
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "cards": {"type": "array", "items": {"type": "string"}},
                     "title": {"type": "string"},

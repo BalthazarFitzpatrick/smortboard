@@ -77,8 +77,12 @@ ORCHESTRATOR_PROMPT = (
     "Return JSON matching the schema. `cards` may be empty - most turns are conversation."
 )
 
+# strict at every level, as the reviewer's: codex's --output-schema refuses a schema without
+# additionalProperties false or with an optional property. optional values are required but
+# nullable, and the board reads a null exactly like a missing key
 ORCHESTRATOR_JSON_SCHEMA = {
     "type": "object",
+    "additionalProperties": False,
     "properties": {
         "reply": {"type": "string"},
         "plan": {"type": "string"},
@@ -87,6 +91,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "title": {"type": "string"},
                     "description": {"type": "string"},
