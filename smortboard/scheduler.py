@@ -34,21 +34,14 @@ from pathlib import Path
 from typing import Any
 
 from smortboard import profiles, telemetry
-from smortboard.actions import with_next
 from smortboard.budgets import spend_refusal
-from smortboard.exec.worktrees import (
-    branch_name,
-    default_branch,
-    fetch_base,
-    has_remote,
-    worktree_path,
-)
+from smortboard.exec.worktrees import default_branch, fetch_base, has_remote
 from smortboard.labs.events import neutral_events
 from smortboard.labs.routing import role_ref, run_ref
 from smortboard.lifecycle import RUNTIME_NOT_READY
 from smortboard.review.integrate import integration_lock
 from smortboard.review.merge_request import PullRequestState, pr_view
-from smortboard.review.mergeable import check_mergeable, merge_branch, push_branch
+from smortboard.review.rebase_guard import flag_outdated, rebase_onto_base
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
 from smortboard.store.schema import DEFAULT_USAGE_LIMIT_ROUTE
@@ -278,9 +271,10 @@ def _sweep_checking_prs(
 
     Measured 2026-09-14 (card 59727ba3, PR #112): a branch cut once at the start of a run and
     never updated drifted 34 commits behind main while its PR waited, and conflicted in four files
-    other PRs had since touched. Behind but still mergeable: merges base in and pushes, so the PR
-    stays current. Behind and conflicting: blocks the card MERGE_CONFLICT with the files, same as
-    lifecycle.py does at hand-over - never touches the pull request either way.
+    other PRs had since touched. Behind: the card's own commits are rebased onto the base in a
+    fresh tree and force-pushed with a lease (review/rebase_guard.py), so the PR stays current. A
+    rebase that conflicts blocks the card OUTDATED with the files and moves nothing - the same
+    guard lifecycle.py runs at run start. A stacked card is skipped until its parent lands.
     """
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for card in store.list_cards(board_id):
@@ -319,41 +313,16 @@ def _sweep_repo(store, key, cards, now):
         return
     if sha == _last_base_sha.get(key) and now - _last_sweep[key] < _SWEEP_INTERVAL_SECONDS:
         return
-    base_ref = f"origin/{base}"
     for card in cards:
         card = store.get_card(card["id"])
         if card["status"] != "checking" or card.get("blocked_reason_code"):
             continue
-        tree = worktree_path(path, card["id"])
-        if not tree.exists():
-            continue
-        branch = branch_name(card["id"])
-        check = check_mergeable(tree, branch, base_ref)
-        if not check.behind:
-            continue
-        if not check.clean:
-            _flag_merge_conflict(store, card["id"], branch, base_ref, check.conflicting_files)
-            continue
-        merged = merge_branch(tree, base_ref)
-        if not merged.clean:
-            _flag_merge_conflict(store, card["id"], branch, base_ref, merged.conflicting_files)
-        elif merged.merged:
-            push_branch(tree, branch)
+        # a refused push is retried by the next sweep; a conflict waits for the operator
+        result = rebase_onto_base(store, card["id"], path, base, fetched=True)
+        if result.outcome == "outdated":
+            flag_outdated(store, card["id"], result)
     _last_base_sha[key] = sha
     _last_sweep[key] = now
-
-
-def _flag_merge_conflict(
-    store: Store, card_id: str, branch: str, base_ref: str, files: list[str]
-) -> None:
-    store.append_event(card_id, "merge_conflict", {"base_ref": base_ref, "files": files})
-    store.update_card(card_id, blocked_reason_code="MERGE_CONFLICT", review_flag=True)
-    note = with_next(
-        f"Merging {base_ref} into {branch} now conflicts in: {', '.join(files) or 'unknown files'}."
-        "\n\nResuming this card lets the worker merge the base branch and resolve them.",
-        "MERGE_CONFLICT",
-    )
-    store.add_comment(card_id, author=_BOARD_AUTHOR, body=note)
 
 
 def _lease_globs(card: dict[str, Any]) -> list[str]:

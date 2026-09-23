@@ -10,10 +10,12 @@ every unit test passed, because each layer's own tests fake the layers around it
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from smortboard import lifecycle
+from smortboard.attention import answer_card
 from smortboard.exec import backends
 from smortboard.exec.backends import ContainerBackend
 from smortboard.exec.runner import RunResult
@@ -170,32 +172,58 @@ def test_a_stale_branch_is_current_with_the_base_before_the_worker_and_the_gate(
     assert world.lease_events()[-1]["passed"] is True
 
 
-def test_a_conflicting_base_is_handed_to_the_worker_and_its_merge_is_not_a_lease_violation(
+class _SyncRuns:
+    """RunRegistry's get/start, running the card inline so an answer can be followed to its end"""
+
+    def __init__(self, world):
+        self.world, self.result = world, None
+
+    def get(self, card_id):
+        return None
+
+    def start(self, card_id):
+        self.result = self.world.run()
+        return SimpleNamespace(as_dict=lambda: {"card_id": card_id})
+
+
+def test_a_conflicting_base_blocks_outdated_and_an_answer_redoes_it_on_a_fresh_tree(
     world, monkeypatch
 ):
-    """the live-board failure: the base and the card both changed src/a.py, so the worker was told
-    to merge it, and the lease check then blamed the card for every file the base brought"""
+    """the base and the card both changed src/a.py. measured 2026-09-19, handing that to the worker
+    as a merge also broke the lease check; the operator's call 2026-09-23 is that a card which no
+    longer rebases is outdated, and an answer redoes it on a fresh tree at the current base"""
     world.move_base({"src/a.py": "a = 9\n", "README.md": "base moved on\n", "docs/x.md": "x\n"})
+    branch = f"card/{world.card_id}"
+    old_tip = git(world.repo_path, "rev-parse", branch)
+    ran = []
+    _agent(monkeypatch, world, ran.append)
 
-    def _merge_and_resolve(clone):
-        merged = subprocess.run(
-            ["git", "-C", str(clone), "merge", "--no-edit", "origin/main"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        world.seen["agent_merge_output"] = merged.stdout + merged.stderr
-        if merged.returncode:
-            (clone / "src/a.py").write_text("a = 10\n")
-            git(clone, "add", "src/a.py")
-            git(clone, "commit", "-q", "--no-edit")
+    blocked = world.run()
 
-    _agent(monkeypatch, world, _merge_and_resolve)
+    assert blocked.blocked_reason_code == "OUTDATED", world.notes()
+    assert ran == []  # decided before any worker spend
+    assert git(world.repo_path, "rev-parse", branch) == old_tip
+    assert "src/a.py" in world.notes()
 
-    result = world.run()
+    def _redo(clone):
+        world.seen["a_at_start"] = (clone / "src/a.py").read_text()
+        (clone / "src/a.py").write_text("a = 10\n")
+        git(clone, "commit", "-qam", "redone on the moved base")
 
-    assert "src/a.py" in world.seen["prompt"]  # the conflict reached the worker as a note
-    assert result.phase == "opened", world.notes()
+    _agent(monkeypatch, world, _redo)
+    runs = _SyncRuns(world)
+    answer_card(world.store, runs, world.card_id, "redo it on top of the new a")
+
+    assert runs.result.phase == "opened", world.notes()
+    assert world.seen["a_at_start"] == "a = 9\n"  # the worker started from the moved base
+    assert "no longer rebased" in world.seen["prompt"]
+    backups = git(
+        world.repo_path,
+        "for-each-ref",
+        "--format=%(objectname)",
+        f"refs/smortboard/outdated/{world.card_id}/",
+    )
+    assert backups.split() == [old_tip]  # nothing the first attempt did is lost
     assert world.lease_events()[-1]["passed"] is True, world.lease_events()[-1]
     assert "README.md" in world.seen["gate_tree_files"]
 

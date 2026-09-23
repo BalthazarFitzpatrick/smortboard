@@ -294,7 +294,7 @@ rating of low, medium or high used for cost analysis.
 > is exactly what the resume briefing needs to restart it.
 
 <details>
-<summary><b>The ten reason codes</b></summary>
+<summary><b>The eleven reason codes</b></summary>
 
 | Code | What happened |
 |---|---|
@@ -304,6 +304,7 @@ rating of low, medium or high used for cost analysis.
 | `REVIEW_REJECTED` | the reviewer refused the diff |
 | `LEASE_CONFLICT` | it committed a path outside its lease, or a refused write left it with nothing committed |
 | `MERGE_CONFLICT` | its branch no longer merges cleanly with the base |
+| `OUTDATED` | the base moved under it and its commits no longer rebase onto it; answering redoes it on a fresh tree, the old commits kept on a backup ref |
 | `DEPENDENCY_REJECTED` | a card this one depends on was rejected |
 | `USAGE_LIMIT` | the credential hit its rate limit |
 | `API_UNREACHABLE` | the API was unreachable; the board retries this one itself, with backoff |
@@ -562,8 +563,9 @@ the base branch's own commit.
 
 The board fetches each repo's base on a background timer and compares it to the last sha it saw.
 Unchanged means there is nothing to do and no branch is touched. When it moves, every card waiting in
-checking on that repo gets the base merged into its branch and pushed. A branch that now conflicts
-blocks its card `MERGE_CONFLICT` with the file list instead, and the pull request is left alone. The
+checking on that repo has its own commits rebased onto the base in a fresh tree and force-pushed with
+a lease, so a push someone else made is never overwritten. A rebase that conflicts blocks its card
+`OUTDATED` with the file list instead, and the branch and pull request are left alone. The
 board's own landings trigger the same sweep directly, so a stack moves within seconds rather than
 waiting for the next poll.
 
