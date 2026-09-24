@@ -157,7 +157,7 @@ assert.equal(listMenus.at(-1).opts.title, 'choose lab');
 listMenus.at(-1).pick('openai');
 assert.equal(labButton.textContent, 'openai');
 const kindButton = mod.pr.listEl.querySelector('.profile-add-kind');
-assert.equal(kindButton.textContent, 'ChatGPT login JSON');
+assert.equal(kindButton.textContent, 'chatgpt login json');
 assert.ok(kindButton.classList.contains('toggle'), 'the OpenAI credential picker uses the smortui toggle convention');
 kindButton.onclick();
 assert.deepEqual(listMenus.at(-1).opts.items.map(item => item.id), ['auth_json', 'api_key']);

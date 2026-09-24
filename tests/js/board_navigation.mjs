@@ -131,7 +131,7 @@ const acting = mod.renderCardStrip({id: 'w1', title: 't', status: 'doing', block
 assert.ok(acting.innerHTML.includes('class="card-action card-action-attention" title="LEASE_CONFLICT">widen or answer'),
   'the strip footer shows the short action, coloured for attention');
 const plain = mod.renderCardStrip({id: 'w2', title: 't', status: 'todo'});
-assert.ok(plain.innerHTML.includes('<span class="card-action card-action-quiet" title="">Run</span>'),
+assert.ok(plain.innerHTML.includes('<span class="card-action card-action-quiet" title="">run</span>'),
   'a quiet card still shows its status note');
 
 // ---- the overview no longer shows the short-id (9bd5a207) - it moved into the opened detail

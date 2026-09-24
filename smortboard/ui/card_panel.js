@@ -137,17 +137,17 @@ function cardClasses(card) {
 // a Map, not a plain object: blocked_reason_code is a server string, and a Map has no prototype
 // chain for a stray value like "constructor" to fall through into
 const CTA_BLOCKED_LABELS = new Map([
-  ['CRASH', 'Investigate crash'],
-  ['USAGE_LIMIT', 'Resume run'],
-  ['LEASE_CONFLICT', 'Fix leases'],
-  ['AGENT_QUESTION', 'Answer question'],
-  ['TESTS_FAILED', 'Review failure'],
-  ['BASE_RED', 'Fix the base'],
-  ['REVIEW_REJECTED', 'Review findings'],
-  ['DEPENDENCY_REJECTED', 'Review dependency'],
-  ['MERGE_CONFLICT', 'Resume to rebase'],
-  ['API_UNREACHABLE', 'Retrying automatically'],
-  ['OUTDATED', 'Redo on fresh base'],
+  ['CRASH', 'investigate crash'],
+  ['USAGE_LIMIT', 'resume run'],
+  ['LEASE_CONFLICT', 'fix leases'],
+  ['AGENT_QUESTION', 'answer question'],
+  ['TESTS_FAILED', 'review failure'],
+  ['BASE_RED', 'fix the base'],
+  ['REVIEW_REJECTED', 'review findings'],
+  ['DEPENDENCY_REJECTED', 'review dependency'],
+  ['MERGE_CONFLICT', 'resume to rebase'],
+  ['API_UNREACHABLE', 'retrying automatically'],
+  ['OUTDATED', 'redo on fresh base'],
 ]);
 
 // the one action a card wants next, off the same status and reason code cardClasses reads - never
@@ -159,14 +159,14 @@ function ctaFor(card) {
     return {label: card.next || 'retrying automatically', action: 'open', attention: false};
   }
   if (card.blocked_reason_code) {
-    return {label: CTA_BLOCKED_LABELS.get(card.blocked_reason_code) || 'Needs attention', action: 'open', attention: true};
+    return {label: CTA_BLOCKED_LABELS.get(card.blocked_reason_code) || 'needs attention', action: 'open', attention: true};
   }
-  if (card.review_flag) return {label: 'Needs attention', action: 'open', attention: true};
-  if (card.status === 'doing') return {label: 'Running…', action: 'stop', attention: false};
-  if (card.status === 'checking') return {label: 'Review PR', action: 'open', attention: false};
-  if (card.status === 'accepted') return {label: 'View', action: 'open', attention: false};
-  if (card.status === 'rejected') return {label: 'Rerun', action: 'run', attention: false};
-  return {label: 'Run', action: 'run', attention: false};
+  if (card.review_flag) return {label: 'needs attention', action: 'open', attention: true};
+  if (card.status === 'doing') return {label: 'running…', action: 'stop', attention: false};
+  if (card.status === 'checking') return {label: 'review pr', action: 'open', attention: false};
+  if (card.status === 'accepted') return {label: 'view', action: 'open', attention: false};
+  if (card.status === 'rejected') return {label: 'rerun', action: 'run', attention: false};
+  return {label: 'run', action: 'run', attention: false};
 }
 
 // the first 8 chars of the id - short enough to say in conversation, long enough not to collide
