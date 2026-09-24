@@ -122,6 +122,9 @@ def _first_commit(root: Path, git: _Git, steps: list[str], starter: bool) -> Non
     if not (root / ".git").exists():
         git.must("init", "-q", "-b", "main")
         steps.append("git init")
+    else:
+        # an empty clone's unborn branch is whatever git's default is - the first commit is on main
+        git.must("symbolic-ref", "HEAD", "refs/heads/main")
     # the same ignores the preview used, whatever the folder's own .gitignore says - what the
     # operator confirmed is exactly what is committed, and a .env never is
     with tempfile.TemporaryDirectory() as tmp:
@@ -209,11 +212,11 @@ def prepare(
     if not has_origin:
         full = _create_origin(root, git, runner, result.steps)
         result.created_origin = True
-        if default != DEVELOPMENT:
-            result.push_main = (
-                f"git -C {shlex.quote(str(root))} push -u origin {default} && "
-                f"gh repo edit {full} --default-branch {default}"
-            )
+    # main only reaches GitHub by the operator's hand: owed when the board made the origin, or
+    # made the first commit of a repo (an empty clone) whose origin never had one
+    if default != DEVELOPMENT and (full is not None or not has_commit):
+        edit = f" && gh repo edit {full} --default-branch {default}" if full else ""
+        result.push_main = f"git -C {shlex.quote(str(root))} push -u origin {default}{edit}"
     if not dev_on_origin:
         try:
             _push_development(git, result.steps)

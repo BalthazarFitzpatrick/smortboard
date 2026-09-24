@@ -258,3 +258,14 @@ def test_a_fresh_folder_with_a_bad_name_is_refused_before_anything_is_written(tm
     with pytest.raises(SetupRefused, match="rename the folder"):
         prepare(folder, runner=gh)
     assert list(folder.iterdir()) == []
+
+
+def test_an_empty_clone_gets_its_first_commit_and_owes_the_push_of_main(tmp_path, gh):
+    bare = gh.remotes / "empty.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    clone = tmp_path / "empty"
+    subprocess.run(["git", "clone", "-q", str(bare), str(clone)], check=True)
+    result = prepare(clone, runner=gh)
+    assert result.push_main == f"git -C {clone.resolve()} push -u origin main"
+    assert _remote_heads(bare) == ["development"]
+    _never_pushed_main(gh)
