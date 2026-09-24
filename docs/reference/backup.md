@@ -7,7 +7,8 @@ uv run smortboard export backup.json   # writes the board to a file
 uv run smortboard import backup.json   # reads it back into an empty database
 ```
 
-Both run without a server: the way to get a board out, or back in, when the UI will not start.
+**Both run without a server.** That is the way to get a board out, or back in, when the UI will
+not start.
 
 - Both respect `--db` and `SMORTBOARD_DB` exactly like the server, so a bundle round-trips through
   whichever database you point them at.
@@ -17,7 +18,7 @@ Both run without a server: the way to get a board out, or back in, when the UI w
 
 ## From the browser
 
-While the board runs, the **backup** section of settings (`o`) does the same:
+**While the board runs, the backup section in `o` does the same:**
 
 | Button | Does |
 |---|---|
@@ -30,7 +31,7 @@ under the original ids is still `smortboard import`, into an empty database.
 
 ## What a bundle contains
 
-Everything a board's own database holds, as one plain-text JSON file:
+**Everything the database holds, as one plain-text JSON file:**
 
 - every board, repo registration and the paths remembered for it
 - every card and its tasks, criteria, leases, dependencies and comments
@@ -41,6 +42,6 @@ Everything a board's own database holds, as one plain-text JSON file:
 
 ## What a bundle never contains
 
-Your card token, your API key, any Claude credential profile name or token, or anything else under
-`~/.config/smortboard/`. None of it is ever written to the database a bundle is built from, so
-export has nothing to strip. A bundle is safe to attach to a public bug report as it stands.
+**No credential of any kind.** Not your card token, your API key, any credential profile's name or
+token, or anything else under `~/.config/smortboard/`. None of it is ever written to the database,
+so export has nothing to strip. A bundle is safe to attach to a public bug report as it stands.

@@ -6,13 +6,13 @@ uv run ruff check . && uv run ruff format --check .
 uv run pytest -q          # includes the js suite (tests/js/*.mjs) when node is installed
 ```
 
-The suite runs in parallel by default (`-n auto`). It is over a thousand small I/O-bound tests:
-measured 2026-09-18, 129 seconds on one process and 24 seconds under `-n auto` on ten cores. Pass `-n0` for one test's output
-in order, or a debugger.
+**The suite runs in parallel by default (`-n auto`).** It is over a thousand small I/O-bound tests:
+measured 2026-09-18, 129 seconds on one process and 24 seconds under `-n auto` on ten cores. Pass
+`-n0` for one test's output in order, or a debugger.
 
 ## The loop
 
-Commit as often as the work wants.
+**Commit as often as the work wants.**
 
 | When | What runs |
 |---|---|
@@ -26,8 +26,8 @@ small commits into an afternoon of waiting.
 
 ## CI
 
-Neither suite calls a model. CI runs the same checks on every pull request; they must pass before
-anything reaches `main`. A markdown-only change skips the toolchain and the suite but still reports,
+**No test calls a model.** CI runs the same checks on every pull request, and they must pass
+before anything reaches `main`. A markdown-only change skips the toolchain and the suite but still reports,
 so a docs pull request never waits on a required check that never starts. A second push to a branch
 cancels the run it superseded.
 

@@ -1,6 +1,6 @@
 # Security
 
-Agents here spend money and push code. The board keeps the browser and the agents in their lane.
+**Agents here spend money and push code. The board keeps the browser and the agents in their lane.**
 
 ## The board itself
 
@@ -35,7 +35,8 @@ Agents here spend money and push code. The board keeps the browser and the agent
   for every run.
 - **Proof from outside the agent.** Tests re-run offline, the reviewer can only read, and only a
   note carrying the run's own marker counts as you.
-- **No merge path** exists in the code.
+- **No path to `main`.** The board lands a card on `development` itself, but `integrate` and the
+  push both refuse `main`, `master` and `trunk`, and `gh pr merge` is not on the allowlist.
 
 ## Architecture
 
