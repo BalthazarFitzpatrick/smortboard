@@ -3,7 +3,7 @@
 Each of the three roles - orchestrator, worker, reviewer - has a seed default living in its own
 module's code (runner.SYSTEM_PROMPT, reviewer.REVIEW_PROMPT_HEADER, orchestrator.ORCHESTRATOR_PROMPT).
 A stored prompt overrides the seed; every save is a new version, so history is kept rather than
-overwritten. See docs/PROMPTS.md.
+overwritten. See docs/prompts.md.
 
 Lives in its own module, not store/api.py, so runner/reviewer/orchestrator can import it without
 each other - importing Store here instead would have made every one of them import the others.

@@ -6,7 +6,7 @@ so it runs like a card does: in a throwaway container, the card credential hande
 never as an env var. See docker_available/read_card_token in backends.py, reused rather than
 reinvented here.
 
-It answers exactly four questions about the diff, per docs/PLAN.md Phase 3, and no others:
+It answers exactly four questions about the diff, per docs/plan.md Phase 3, and no others:
 vulnerabilities, leaked credentials, best practices, efficient coding. IT DOES NOT JUDGE
 ACCEPTANCE CRITERIA - that is the test gate's job, from criteria written before the work started.
 A reviewer that also judged "did it meet the criteria" would be judging a target the same run
