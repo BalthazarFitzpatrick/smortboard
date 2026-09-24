@@ -35,7 +35,7 @@ backup and the mouse. Labs and models: what a usage limit does, and the lab, mod
 effort per role. Cost control: spend caps per run and per card.
 
 <table><tr>
-<td width="33%"><img src="../images/settings-general.jpg" alt="General settings: the mouse, soft file leases and free merge switched on or off for every board, folders mission control can read, how many cards run at once, the mall cam interval and backup" width="100%"><br><sub>general: how it behaves</sub></td>
+<td width="33%"><img src="../images/settings-general.jpg" alt="General settings: soft file leases and free merge enabled or disabled for every board, folders mission control can read, where new repos go, how many cards run at once, the mall cam interval, backup and the mouse" width="100%"><br><sub>general: how it behaves</sub></td>
 <td width="33%"><img src="../images/settings-labs.jpg" alt="Labs and models: what a usage limit does - wait for the reset, ask, or switch by itself - and a primary model, a fallback order and an effort for the worker, reviewer, orchestrator and fold" width="100%"><br><sub>labs and models: who runs what</sub></td>
 <td width="33%"><img src="../images/settings-cost.jpg" alt="Spend caps per run: a card run, a review, a mission control turn, a fold, and a per-card total across every run" width="100%"><br><sub>cost control: what it may spend</sub></td>
 </tr></table>

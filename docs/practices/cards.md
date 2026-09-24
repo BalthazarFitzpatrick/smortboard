@@ -29,7 +29,7 @@ a queue you can leave running, and one can run hot while another stays cautious.
 
 ### The card
 
-![A card opened over the board, one column: what it is about, what it has done, what it needs, then its details folded to one line each](../images/hero-card.jpg)
+![A card opened over the board as a 2x2: what it is about and what it has done on top, what it needs and its details folded to one line each below](../images/hero-card.jpg)
 
 An open card is its title over a two-by-two grid:
 
