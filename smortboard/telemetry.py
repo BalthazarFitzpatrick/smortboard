@@ -403,6 +403,10 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
         "reviewer_model": _main_model(reviewer_spend),
         "worker_cost_usd": None if unknown["worker"] else round(worker_cost, 6),
         "reviewer_cost_usd": None if unknown["reviewer"] else round(reviewer_cost, 6),
+        "worker_known_cost_usd": round(worker_cost, 6),
+        "reviewer_known_cost_usd": round(reviewer_cost, 6),
+        "worker_unknown_costs": unknown["worker"],
+        "reviewer_unknown_costs": unknown["reviewer"],
         "worker_cost_estimated": estimates["worker"],
         "reviewer_cost_estimated": estimates["reviewer"],
         "cost_usd": None if any(unknown.values()) else round(worker_cost + reviewer_cost, 6),
@@ -431,7 +435,8 @@ def card_telemetry(store: Store, card_id: str) -> dict[str, Any]:
 def _telemetry_for(store: Store, card: dict[str, Any]) -> dict[str, Any]:
     attempts = [_summarize_attempt(s) for s in _attempts(store.list_events(card["id"]))]
     total_cost = cost_sum(a["cost_usd"] for a in attempts)
-    refusal_cost = cost_sum(a["cost_usd"] for a in attempts if a["refusal_count"])
+    refused = [a for a in attempts if a["refusal_count"]]
+    refusal_cost = cost_sum(a["cost_usd"] for a in refused)
     return {
         "card_id": card["id"],
         "title": card["title"],
@@ -450,6 +455,8 @@ def _telemetry_for(store: Store, card: dict[str, Any]) -> dict[str, Any]:
             # the waste signal: what got spent on a run that also hit a permission denial,
             # whether or not the denial ended up mattering to the outcome
             "refusal_cost_usd": refusal_cost,
+            "refusal_known_cost_usd": round(sum(a["known_cost_usd"] for a in refused), 6),
+            "refusal_unknown_costs": sum(a["unknown_costs"] for a in refused),
         },
     }
 
@@ -499,9 +506,22 @@ def board_spend_today(store: Store, board_id: str, *, today: str | None = None) 
     return cost_sum(costs)
 
 
+def _known_split(values) -> tuple[float, int]:
+    """the sum of the costs that were recorded, and how many were not - one run with no price
+    must not blank out every total above it"""
+    values = list(values)
+    return round(sum(v for v in values if v is not None), 6), sum(v is None for v in values)
+
+
+def _add_known(row: dict[str, Any], prefix: str, known: float, unknown: int) -> None:
+    row[f"{prefix}known_cost_usd"] = round(row.get(f"{prefix}known_cost_usd", 0.0) + known, 6)
+    row[f"{prefix}unknown_costs"] = row.get(f"{prefix}unknown_costs", 0) + unknown
+
+
 def _board_overview_row(store: Store, board: dict[str, Any]) -> dict[str, Any]:
     """one board's spend rolled up across all its cards - same attempt data board_costs reads,
-    just summed rather than listed per card."""
+    just summed rather than listed per card. every *_cost_usd is None once any run in it has no
+    price; the matching *known_cost_usd / *unknown_costs pair keeps what is known"""
     cost_usd = 0.0
     runs = 0
     accepted = 0
@@ -509,7 +529,10 @@ def _board_overview_row(store: Store, board: dict[str, Any]) -> dict[str, Any]:
     refusal_cost_usd = 0.0
     worker_cost_usd = 0.0
     reviewer_cost_usd = 0.0
-    spend_by_model: dict[str, float] = {}
+    known: dict[str, Any] = {}
+    for prefix in ("", "worker_", "reviewer_", "refusal_"):
+        _add_known(known, prefix, 0.0, 0)
+    spend_by_model: dict[str, dict[str, Any]] = {}
     model_estimates: dict[str, bool] = {}
     role_estimates = {"worker": False, "reviewer": False}
     cost_estimated = False
@@ -518,33 +541,33 @@ def _board_overview_row(store: Store, board: dict[str, Any]) -> dict[str, Any]:
     for card in cards:
         telemetry = _telemetry_for(store, card)
         attempts = telemetry["attempts"]
-        cost_estimated |= telemetry["totals"]["cost_estimated"]
-        cost_usd = cost_sum([cost_usd, telemetry["totals"]["cost_usd"]])
-        runs += telemetry["totals"]["attempts"]
-        refusal_cost_usd = cost_sum([refusal_cost_usd, telemetry["totals"]["refusal_cost_usd"]])
+        totals = telemetry["totals"]
+        cost_estimated |= totals["cost_estimated"]
+        cost_usd = cost_sum([cost_usd, totals["cost_usd"]])
+        _add_known(known, "", totals["known_cost_usd"], totals["unknown_costs"])
+        runs += totals["attempts"]
+        refusal_cost_usd = cost_sum([refusal_cost_usd, totals["refusal_cost_usd"]])
+        _add_known(
+            known, "refusal_", totals["refusal_known_cost_usd"], totals["refusal_unknown_costs"]
+        )
         if card.get("status") == "accepted":
             accepted += 1
         for attempt in attempts:
             for role in role_estimates:
                 estimated = attempt[f"{role}_cost_estimated"]
                 role_estimates[role] |= estimated
+                role_known = attempt[f"{role}_known_cost_usd"]
+                role_unknown = attempt[f"{role}_unknown_costs"]
+                _add_known(known, f"{role}_", role_known, role_unknown)
                 if model := attempt[f"{role}_model"]:
                     model_estimates[model] = model_estimates.get(model, False) or estimated
+                    entry = spend_by_model.setdefault(model, {"cost_usd": 0.0})
+                    entry["cost_usd"] = cost_sum([entry["cost_usd"], attempt[f"{role}_cost_usd"]])
+                    _add_known(entry, "", role_known, role_unknown)
             if attempt["outcome"] == "pull request":
                 prs_opened += 1
             worker_cost_usd = cost_sum([worker_cost_usd, attempt["worker_cost_usd"]])
             reviewer_cost_usd = cost_sum([reviewer_cost_usd, attempt["reviewer_cost_usd"]])
-            if attempt["worker_model"]:
-                spend_by_model[attempt["worker_model"]] = cost_sum(
-                    [spend_by_model.get(attempt["worker_model"], 0.0), attempt["worker_cost_usd"]]
-                )
-            if attempt["reviewer_model"]:
-                spend_by_model[attempt["reviewer_model"]] = cost_sum(
-                    [
-                        spend_by_model.get(attempt["reviewer_model"], 0.0),
-                        attempt["reviewer_cost_usd"],
-                    ]
-                )
 
     return {
         "board_id": board["id"],
@@ -558,31 +581,33 @@ def _board_overview_row(store: Store, board: dict[str, Any]) -> dict[str, Any]:
         "refusal_cost_usd": refusal_cost_usd,
         "worker_cost_usd": worker_cost_usd,
         "reviewer_cost_usd": reviewer_cost_usd,
+        **known,
         "worker_cost_estimated": role_estimates["worker"],
         "reviewer_cost_estimated": role_estimates["reviewer"],
         "spend_by_model": [
-            {"model": model, "cost_usd": cost, "cost_estimated": model_estimates.get(model, False)}
-            for model, cost in spend_by_model.items()
+            {"model": model, **entry, "cost_estimated": model_estimates.get(model, False)}
+            for model, entry in spend_by_model.items()
         ],
-        "cost_per_pr_usd": round(cost_usd / prs_opened, 6)
-        if prs_opened and cost_usd is not None
-        else None,
+        **_per_pr(cost_usd, known["known_cost_usd"], prs_opened),
+    }
+
+
+def _per_pr(cost_usd: float | None, known_cost_usd: float, prs: int) -> dict[str, Any]:
+    return {
+        "cost_per_pr_usd": round(cost_usd / prs, 6) if prs and cost_usd is not None else None,
+        "known_cost_per_pr_usd": round(known_cost_usd / prs, 6) if prs and known_cost_usd else None,
     }
 
 
 def _sum_spend_by_model(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    totals: dict[str, float] = {}
-    estimates = {}
+    totals: dict[str, dict[str, Any]] = {}
     for row in rows:
         for entry in row["spend_by_model"]:
-            totals[entry["model"]] = cost_sum([totals.get(entry["model"], 0.0), entry["cost_usd"]])
-            estimates[entry["model"]] = (
-                estimates.get(entry["model"], False) or entry["cost_estimated"]
-            )
-    return [
-        {"model": model, "cost_usd": cost, "cost_estimated": estimates[model]}
-        for model, cost in totals.items()
-    ]
+            total = totals.setdefault(entry["model"], {"cost_usd": 0.0, "cost_estimated": False})
+            total["cost_usd"] = cost_sum([total["cost_usd"], entry["cost_usd"]])
+            _add_known(total, "", entry["known_cost_usd"], entry["unknown_costs"])
+            total["cost_estimated"] |= entry["cost_estimated"]
+    return [{"model": model, **total} for model, total in totals.items()]
 
 
 def _card_prs_opened(telemetry: dict[str, Any]) -> int:
@@ -595,21 +620,33 @@ def _empty_group() -> dict[str, Any]:
     return {
         "cards": 0,
         "cost_usd": 0.0,
+        "known_cost_usd": 0.0,
+        "unknown_costs": 0,
         "cost_estimated": False,
         "prs": 0,
         "cost_per_card_usd": None,
         "cost_per_pr_usd": None,
+        "known_cost_per_card_usd": None,
+        "known_cost_per_pr_usd": None,
     }
 
 
-def _add_to_group(group: dict[str, Any], cost: float, prs: int, estimated: bool = False) -> None:
+def _add_to_group(
+    group: dict[str, Any], totals: dict[str, Any], prs: int, estimated: bool = False
+) -> None:
     group["cards"] += 1
-    group["cost_usd"] = cost_sum([group["cost_usd"], cost])
+    group["cost_usd"] = cost_sum([group["cost_usd"], totals["cost_usd"]])
+    _add_known(group, "", totals["known_cost_usd"], totals["unknown_costs"])
     group["prs"] += prs
     group["cost_estimated"] |= estimated
 
 
 def _finalize_group(group: dict[str, Any]) -> None:
+    known = group["known_cost_usd"]
+    if known and group["cards"]:
+        group["known_cost_per_card_usd"] = round(known / group["cards"], 6)
+    if known and group["prs"]:
+        group["known_cost_per_pr_usd"] = round(known / group["prs"], 6)
     if group["cost_usd"] is None:
         return
     group["cost_usd"] = round(group["cost_usd"], 6)
@@ -629,14 +666,14 @@ def _cost_outcome_groups(store: Store) -> dict[str, Any]:
     for board in store.list_boards():
         for card in store.list_cards(board["id"]):
             telemetry = _telemetry_for(store, card)
-            cost = telemetry["totals"]["cost_usd"]
+            totals = telemetry["totals"]
             prs = _card_prs_opened(telemetry)
-            estimated = telemetry["totals"]["cost_estimated"]
-            _add_to_group(groups["total"], cost, prs, estimated)
+            estimated = totals["cost_estimated"]
+            _add_to_group(groups["total"], totals, prs, estimated)
             if card.get("status") == "accepted":
-                _add_to_group(groups["accepted"], cost, prs, estimated)
+                _add_to_group(groups["accepted"], totals, prs, estimated)
             elif card.get("status") == "rejected":
-                _add_to_group(groups["refused"], cost, prs, estimated)
+                _add_to_group(groups["refused"], totals, prs, estimated)
     for group in groups.values():
         _finalize_group(group)
     return groups
@@ -647,7 +684,10 @@ def boards_overview(store: Store) -> dict[str, Any]:
     data. card spend and mission control/fold turn spend (board_spend) are kept apart, so the
     per-card and per-pr numbers stay about card work"""
     rows = [_board_overview_row(store, board) for board in store.list_boards()]
-    rows.sort(key=lambda r: r["cost_usd"] or 0, reverse=True)
+    rows.sort(key=lambda r: r["known_cost_usd"], reverse=True)
+    turn_costs = [
+        s["cost_usd"] for b in store.list_boards() for s in store.list_board_spend(b["id"])
+    ]
 
     totals = {
         "board_id": None,
@@ -664,20 +704,23 @@ def boards_overview(store: Store) -> dict[str, Any]:
         "worker_cost_estimated": any(r["worker_cost_estimated"] for r in rows),
         "reviewer_cost_estimated": any(r["reviewer_cost_estimated"] for r in rows),
         "spend_by_model": _sum_spend_by_model(rows),
-        "turn_cost_usd": cost_sum(
-            s["cost_usd"] for b in store.list_boards() for s in store.list_board_spend(b["id"])
-        ),
+        "turn_cost_usd": cost_sum(turn_costs),
         "turn_cost_estimated": any(
             s["cost_estimated"]
             for b in store.list_boards()
             for s in store.list_board_spend(b["id"])
         ),
     }
-    total_prs = totals["pull_requests_opened"]
-    totals["cost_per_pr_usd"] = (
-        round(totals["cost_usd"] / total_prs, 6)
-        if total_prs and totals["cost_usd"] is not None
-        else None
+    for prefix in ("", "worker_", "reviewer_", "refusal_"):
+        _add_known(
+            totals,
+            prefix,
+            sum(r[f"{prefix}known_cost_usd"] for r in rows),
+            sum(r[f"{prefix}unknown_costs"] for r in rows),
+        )
+    _add_known(totals, "turn_", *_known_split(turn_costs))
+    totals.update(
+        _per_pr(totals["cost_usd"], totals["known_cost_usd"], totals["pull_requests_opened"])
     )
 
     return {
