@@ -145,6 +145,11 @@ In review mode, finish tests and open the PR, then ask before each merge; a yes 
 The mode mirrors the board's merge modes and is kept by the agent; the local hook guards main only.
 Never force-push to main.
 
+**Lowercase.** Everything you produce is lowercase, in text and code: replies, docs and headings,
+comments, commits, PR text, release notes, UI strings, log messages. Case stays only where it
+carries meaning — identifiers a language or tool dictates (class names, constants, env vars),
+existing names quoted verbatim, text quoted from others.
+
 **Releases.** Once the human has merged into `main`, draft a release unasked: next tag (pre-1.0:
 minor for features or a changed default, patch for fixes only), notes in their voice via
 `write-like-fabs` — an Upgrading section first (backup, migrations, changed defaults, rebuilds),
