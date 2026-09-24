@@ -3,7 +3,7 @@
 **Write the card once, completely.**
 
 The agent has only what you write: a short title, criteria your tests can check, a lease. Size it to
-one pull request, decide it before it starts, then leave it; it finishes unattended, and the history
+one pull request, decide it before it starts, then leave it. It finishes unattended, and the history
 reads like a changelog.
 
 > [!IMPORTANT]
@@ -19,28 +19,29 @@ reads like a changelog.
 
 ### Board
 
-A named set of cards and the repos they work in, one or several. Use one board per repo, or per
-product when the work crosses repos. `1`-`9` jump between boards.
+A named set of cards and the repos they work in, one or several. One board per repo, or per product
+when the work crosses repos. `1`-`9` jump between boards.
 
-Each board has its own parallelism cap, daily spend budget, merge mode (review required or free
-merge, see [landing](landing.md)) and lease mode (strict or soft, see [leases](leases.md)), all in `shift`+`o`. So each
-board is a queue you can leave running, and one can run hot while another stays cautious.
+Each board has its own settings in `shift`+`o`: merge mode (review or free, see
+[landing](landing.md)), file lease (strict or soft, see [leases](leases.md)), cards at once and a
+daily budget. Free and soft are only on offer while their switch in `o` is enabled. So each board is
+a queue you can leave running, and one can run hot while another stays cautious.
 
 ### The card
 
-![A card opened over the board, one column: what it is about, what it has done, what it needs, then its details folded to one line each](../images/hero-card.jpg)
+![A card opened over the board as a 2x2: what it is about and what it has done on top, what it needs and its details folded to one line each below](../images/hero-card.jpg)
 
-An open card reads top to bottom:
+An open card is its title over a two-by-two grid:
 
-| Section | Holds |
-|---|---|
-| **about** | what it is for |
-| **done** | what the agent delivered, with the test and review verdicts |
-| **needs** | the one thing it wants from you, if anything |
-| **details** | criteria, lease, dependencies, attachments and history, one line each |
+| | left | right |
+|---|---|---|
+| **top** | **about**: what it is for | **done**: what the agent delivered, with the test and review verdicts |
+| **bottom** | **needs**: the one thing it wants from you, if anything | **details**: criteria, lease, dependencies, attachments and history, one line each |
 
-The panel is as tall as its content. Arrow keys move between sections with the board's highlight
-frame.
+Every cell is one height; a longer section fades out at the bottom. Arrow keys move between sections
+with the board's highlight frame. `space` on a section pops it out whole over the card, folds open.
+The needs popout keeps its note field: `/` types, `enter` sends. `space` or `escape` closes the
+popout; `space` on the title closes the card.
 
 A card holds a title, a description, **acceptance criteria**, a task list, **leases** (the paths its
 agent may write), dependencies on other cards, optionally a **model**, and a **complexity** of low,
@@ -95,6 +96,7 @@ State shows on the edge, not as a fill.
 | Edge | Means |
 |---|---|
 | **blue** | an agent is working it |
+| **grey**, slow pulse | queued by `w`, not started yet |
 | **vanilla**, stepped glow | it needs you |
 | **lichen** | accepted |
 | **red** | rejected |
@@ -106,7 +108,7 @@ The blue is cold on purpose, so no pair collapses under red-green colour blindne
 **A brief that stands alone.** The agent gets the card and the repo, not your afternoon. What lives
 only in your head goes in the description: why this approach and not the obvious one, the constraint
 that makes the simple version wrong, the file that looks relevant and is not. Otherwise it gets
-rediscovered expensively, or not at all.
+rediscovered at a cost, or not at all.
 
 **Criteria a machine can check.** The reviewer does not judge them; only the test command does (see
 [the two gates](gates.md)). "Handles errors gracefully" is not a criterion. "Returns 400 with

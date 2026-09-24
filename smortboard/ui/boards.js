@@ -178,13 +178,14 @@ function renderBoardRow(board) {
   const row = document.createElement('div');
   row.className = 'board-row';
   row.dataset.boardId = board.id;
-  if (board.id === currentBoardId) row.classList.add('on');
 
   const name = panelButton('board-name', board.name, async () => {
     activateTab(board.id);
     await onBoardEnter(board.id);
     renderBoardsPanel();
   });
+  // the open board is the selected button, .toggle.on - the one selected look
+  if (board.id === currentBoardId) name.classList.add('on');
   const del = panelButton('board-delete', 'delete', () => armBoardDelete(board.id));
 
   row.append(name, del);
@@ -478,7 +479,7 @@ function renderPushMain(command) {
 function renderRepoRow(repo) {
   const row = document.createElement('div');
   // renderRepoList only ever loads repos for currentBoardId, so every row rendered here belongs
-  // to the open board - same "opened" look boards.on gives the board row itself
+  // to the open board. `on` marks that; it draws nothing, the board's own button carries the look
   row.className = 'repo-row on';
   row.dataset.repoId = repo.id;
 

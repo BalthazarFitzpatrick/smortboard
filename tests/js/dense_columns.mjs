@@ -1001,10 +1001,23 @@ function focusLook(strip, focusedEl = strip) {
 }
 
 // the :has() rules that hide indicate.js's marker, and whether one of them covers `strip` focused
+// a selector list split at its own commas only - a :has(a, b) keeps its comma inside
+function topLevelSelectors(list) {
+  const parts = [];
+  let depth = 0, start = 0;
+  [...list].forEach((ch, i) => {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (ch === ',' && depth === 0) { parts.push(list.slice(start, i)); start = i + 1; }
+  });
+  parts.push(list.slice(start));
+  return parts.map(part => part.trim());
+}
+
 function markerHiddenFor(strip) {
-  return sheet.some(([list, body]) => /opacity:\s*0\b/.test(body) && list.split(',').some(sel => {
+  return sheet.some(([list, body]) => /opacity:\s*0\b/.test(body) && topLevelSelectors(list).some(sel => {
     const has = sel.match(/:has\(([^()]*)\)\s+\.focus-marker$/);
-    return has && selectorMatches(strip, has[1], strip);
+    return has && topLevelSelectors(has[1]).some(inner => selectorMatches(strip, inner, strip));
   }));
 }
 

@@ -422,7 +422,8 @@ function renderReadPathRow(path) {
   const label = document.createElement('span');
   label.className = 'board-name field-label';
   label.textContent = path;
-  const remove = document.createElement('span');
+  const remove = document.createElement('button');
+  remove.type = 'button';
   remove.className = 'toggle board-delete';
   remove.textContent = 'remove';
   remove.onclick = () => removeReadPath(path);
@@ -501,12 +502,14 @@ function buildReadPathsSection() {
   input.type = 'text';
   input.className = 'board-name-input text-field';
   input.placeholder = '~/Documents/screenshots';
-  const add = document.createElement('span');
+  const add = document.createElement('button');
+  add.type = 'button';
   add.className = 'toggle';
   add.textContent = 'add';
   add.onclick = () => addReadPath();
   // the same folder picker boards use, so a path is chosen rather than typed
-  const browse = document.createElement('span');
+  const browse = document.createElement('button');
+  browse.type = 'button';
   browse.className = 'toggle';
   browse.textContent = 'browse';
   browse.onclick = () => openFolderPicker(browse, {
@@ -575,7 +578,8 @@ function buildReposHomeSection() {
   input.type = 'text';
   input.className = 'board-name-input text-field settings-repos-home-input';
   input.placeholder = 'home folder';
-  const browse = document.createElement('span');
+  const browse = document.createElement('button');
+  browse.type = 'button';
   browse.className = 'toggle';
   browse.textContent = 'browse';
   browse.onclick = () => openFolderPicker(browse, {
@@ -1095,7 +1099,8 @@ function toggleSettingsPanel() {
 // lives in board.js's bar corner, between the queue status and the attention count
 
 function buildSettingsButton() {
-  const btn = document.createElement('div');
+  const btn = document.createElement('button');
+  btn.type = 'button';
   btn.className = 'toggle settings-button';
   btn.textContent = 'settings';
   btn.title = 'settings (o)';

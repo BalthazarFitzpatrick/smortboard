@@ -1,7 +1,7 @@
 # Mission control and workforce
 
-**Plan in mission control, steer in workforce.** One conversation yields cards with leases, a model
-and a complexity each. Then leave the agents alone unless something is off.
+**Plan in mission control, steer in workforce.** One conversation gives you cards, each with a
+lease, a model and a complexity. Then leave the agents alone unless something is off.
 
 ## How it works
 
@@ -12,10 +12,10 @@ and a complexity each. Then leave the agents alone unless something is off.
 
 ### Mission control
 
-It replies conversationally and proposes cards, each with leases, a complexity and a suggested
+**It replies in conversation and proposes cards**, each with leases, a complexity and a suggested
 model. It reads fresh read-only clones of the board's repos with Read, Grep and Glob only: no Edit,
 Write or Bash. It sees what each model has cost and passed on this board, and is told to prefer the
-cheapest model reaching clean pull requests on similar cards.
+cheapest model that reaches clean pull requests on similar cards.
 
 > [!IMPORTANT]
 > **The board makes the cards.**
@@ -27,9 +27,9 @@ cheapest model reaching clean pull requests on similar cards.
 
 ### Folding
 
-`f`, the other board-level turn, proposes which `todo` cards one agent should do as one card. The
-board creates the merged card, re-points dependencies at it and deletes the originals restorably, so
-a fold is not a one-way door.
+**`f` proposes which `todo` cards one agent should do as one card.** It is the other board-level
+turn. The board creates the merged card, re-points dependencies at it and deletes the originals
+restorably, so a fold is not a one-way door.
 
 - Only `todo` cards fold. A running card holds a branch and a run; folding would orphan both.
 - A group past four cards or twelve criteria is refused, whatever the model said, so a fold never
@@ -37,7 +37,7 @@ a fold is not a one-way door.
 
 ### Workforce
 
-`,` is a terminal onto the focused card's agent. With no card focused it rotates through every
+**`,` is a terminal onto the focused card's agent.** With no card focused it rotates through every
 working card. A **note** sent here reaches a *running* agent between two tool calls.
 
 ![Workforce drawer pinned to one card](../images/workforce.jpg)

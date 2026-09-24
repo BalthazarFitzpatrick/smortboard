@@ -49,8 +49,9 @@ function sinceLabel(iso, now = Date.now()) {
 
 function buildIndicator() {
   // lives in board.js's bar corner, beside the queue status and settings, never inside #board-bar
-  const el = document.createElement('div');
-  el.className = 'attention-indicator dim';
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'toggle attention-indicator dim';
   el.title = 'attention inbox (n)';
   el.onclick = () => openInboxPanel();
   barCorner().appendChild(el);
@@ -133,16 +134,22 @@ function buildInboxDom() {
   const panel = document.createElement('div');
   panel.className = 'panel-floating inbox-panel';
 
+  // the head every panel wears, then the paged panels' shared scope row (layout.css .pager-*)
+  const title = document.createElement('div');
+  title.className = 'popup-title';
+  title.textContent = 'attention inbox';
   const header = document.createElement('div');
-  header.className = 'inbox-header';
-  const prev = document.createElement('span');
-  prev.className = 'inbox-nav toggle inbox-prev';
+  header.className = 'pager-header';
+  const prev = document.createElement('button');
+  prev.type = 'button';
+  prev.className = 'pager-nav toggle inbox-prev';
   prev.textContent = '←';
   prev.onclick = () => cycleScope(-1);
   const label = document.createElement('span');
-  label.className = 'inbox-scope-label';
-  const next = document.createElement('span');
-  next.className = 'inbox-nav toggle inbox-next';
+  label.className = 'pager-label';
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.className = 'pager-nav toggle inbox-next';
   next.textContent = '→';
   next.onclick = () => cycleScope(1);
   header.append(prev, label, next);
@@ -151,13 +158,19 @@ function buildInboxDom() {
   list.className = 'inbox-list';
   list.tabIndex = -1;
 
-  panel.append(header, list);
+  panel.append(title, hDivider(), header, hDivider(), list);
   backdrop.appendChild(panel);
   backdrop.addEventListener('mousedown', evt => { if (evt.target === backdrop) closeInboxPanel(); });
 
   Object.assign(ib, {backdrop, panel, headerLabel: label, listEl: list});
   wireInboxListFocus(list);
   return backdrop;
+}
+
+function hDivider() {
+  const rule = document.createElement('div');
+  rule.className = 'h-divider';
+  return rule;
 }
 
 function hazardPlaceholder(text) {
@@ -201,7 +214,8 @@ function buildSummary(row) {
 // summary of what it needs - the lease/answer controls only show up once this card has focus
 function buildInboxCard(row, idx, focused) {
   const card = document.createElement('div');
-  card.className = 'row card card-strip card-attention inbox-card focus-glow';
+  // focus-glow-within: the card stays lit while focus sits on one of its controls or its field
+  card.className = 'row card card-strip card-attention inbox-card focus-glow focus-glow-within';
   card.tabIndex = -1;
   card.dataset.cardId = row.card_id;
   card.dataset.idx = String(idx);
@@ -216,9 +230,11 @@ function buildInboxCard(row, idx, focused) {
   since.textContent = sinceLabel(row.since);
   reasonRow.append(reason, since);
 
-  const title = document.createElement('div');
-  title.className = focused ? 'inbox-title inbox-control' : 'inbox-title';
+  const title = document.createElement('button');
+  title.type = 'button';
+  title.className = focused ? 'toggle inbox-title inbox-control' : 'toggle inbox-title';
   title.tabIndex = -1;
+  title.title = row.title;
   title.textContent = row.title;
   title.onclick = () => {
     // A GLANCE, NOT A DEPARTURE. the inbox is a queue you work through, so opening a card from it
@@ -340,7 +356,8 @@ function buildLeaseApproveRow(row) {
 
 // reuses the `toggle` class other inbox controls already use as a button
 function leaseButton(name, label) {
-  const button = document.createElement('span');
+  const button = document.createElement('button');
+  button.type = 'button';
   button.className = `${name} toggle inbox-control`;
   button.tabIndex = -1;
   button.textContent = label;
@@ -374,7 +391,8 @@ function buildFallbackRetryRow(row) {
   const wrap = document.createElement('div');
   wrap.className = 'inbox-answer-row';
 
-  const button = document.createElement('span');
+  const button = document.createElement('button');
+  button.type = 'button';
   button.className = 'inbox-retry toggle inbox-control';
   button.tabIndex = -1;
   button.textContent = `retry on ${row.fallback}`;
@@ -554,7 +572,7 @@ async function sendAnswer(cardId, input, status) {
 
 async function loadInbox() {
   clearChildren(ib.listEl);
-  ib.listEl.appendChild(hazardPlaceholder('loading...'));
+  ib.listEl.appendChild(waitingPlaceholder('loading'));
   try {
     ib.rows = await api('/api/attention');
   } catch (err) {

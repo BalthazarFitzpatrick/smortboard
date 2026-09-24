@@ -11,14 +11,14 @@ docker build -f docker/card.Dockerfile -t smortboard-card:latest .
 uv run smortboard --demo
 ```
 
-That prints and opens `http://127.0.0.1:8001/ui/index.html?key=...`: a throwaway board with three
+It prints and opens `http://127.0.0.1:8001/ui/index.html?key=...`: a throwaway board with three
 invented projects and cards in every state. Port 8001 keeps it off your real board. `--demo` ignores
 `--db` and `SMORTBOARD_DB`, never reads the user data dir, and writes only to a fresh file in a
 temp directory that dies with the process.
 
-Its runs and pull requests are seeded history: `r` there would need Docker and a real repo. Use it
-to learn the [keys](../reference/keyboard.md) and to read the [best practices](../practices/cards.md)
-against something real.
+**Its runs and pull requests are seeded history.** `r` there would need Docker and a real repo. Use
+it to learn the [keys](../reference/keyboard.md) and to read the
+[best practices](../practices/cards.md) against something real.
 
 ## Your real board
 
@@ -26,13 +26,13 @@ against something real.
 
 ### 1. A credential for the cards
 
-Get one in your terminal:
+In your terminal:
 
 - **Claude:** `claude setup-token` prints a token once.
 - **Codex:** `codex login` writes `~/.codex/auth.json` (paste all of it). Or use an OpenAI API key.
 
-On the board: `shift`+`p`, add a profile, paste, press **activate**. Remove the empty `default`
-profile once yours is active. The board writes the file itself, at mode 600.
+On the board: `shift`+`p`, add a profile, paste, **activate**. Remove the empty `default` profile
+once yours is active. The board writes the file itself, at mode 600.
 
 ### 2. Docker, running
 
@@ -40,8 +40,9 @@ A card executes in it.
 
 ### 3. A board and a repo
 
-`b` -> **new board** -> pick a folder, or type a new folder's name. The board looks at it and adds
-only what is missing:
+`b` -> **new board** -> pick a folder, or name a new one. The picker opens in **where new repos go**
+(`o`, general), or your home folder when that is unset. The board looks at the folder and adds only
+what is missing:
 
 | The folder | The board | You |
 |---|---|---|
@@ -50,18 +51,23 @@ only what is missing:
 | a repo without GitHub | `development` if missing, a private GitHub repo, `development` pushed | the command |
 | a repo on GitHub | fetches or creates `development`, pushes it if missing | nothing |
 
-The board never pushes `main`: the command it shows (`git push -u origin main && gh repo edit
+**The board never pushes `main`.** The command it shows (`git push -u origin main && gh repo edit
 --default-branch main`) is yours to run once. Cards land on `development`. **from online repo**
-clones one of your GitHub repos and does the same. `gh` must be logged in (`gh auth login`).
+clones one of your GitHub repos into a folder you pick, starting in the same place, and does the
+same. `gh` must be logged in (`gh auth login`).
 
-**Tests are required.** Cards write them - every criterion gets one - and the gate runs them. When
-you add the repo, the board reads its committed files:
+Each repo row then shows its base branch, its folder and its `origin`, or "no origin" when it has
+none, with labelled **tests**, **lint** and **image** fields you can edit. **add a repo by hand**,
+folded behind its button, is for a second repo on a board.
 
-- **Has tests:** it stores the command that runs them - `uv run --no-sync pytest -q` for Python,
-  `npm test` or `node --test` for Node. Change it on the repo's row if it guessed wrong.
-- **Has none:** it says so, with two ways forward: **ask mission control** (it opens `.` with a
-  request for a first card that adds a test suite; `/` then `enter` sends it), or **use my own
-  command**.
+**Tests are required.** Cards write them, one per criterion, and the gate runs them. When you add
+the repo, the board reads its committed files:
+
+- **Has tests:** it stores the command that runs them: `uv run --no-sync pytest -q` for Python,
+  `npm test` or `node --test` for Node. Fix it in the repo's **tests** field if it guessed wrong.
+- **Has none:** it says so, with two ways forward. **ask mission control** opens `.` with a request
+  for a first card that adds a test suite; `/` then `enter` sends it. **use my own command** puts
+  you in the **tests** field.
 - **New repo, nothing to detect:** mission control's first card sets up the tests and names the
   command, and the board stores it.
 
@@ -83,15 +89,15 @@ There is no switch to turn tests off: the gate refuses a card on a repo without 
 
 ## Your first card
 
-1. `.` and tell [mission control](../practices/mission-control.md) what you want built. It answers
-   with a plan and proposed cards.
-2. Focus a card and press `r` (it asks once), or `w` to run the whole board.
+1. `.` and tell [mission control](../practices/mission-control.md) what to build. It answers with a
+   plan and proposed cards.
+2. Focus a card and `r` (it asks once), or `w` to run the whole board.
 3. Anything that needs you lands in the [inbox](../practices/attention.md), `n`. Boards default to
-   review-required: read the pull request, then `y` accepts it and lands it on an unprotected base.
+   review-required: read the pull request, then `y` accepts it and lands it on the unprotected base.
    Main stays yours.
 
 ## Practice run
 
 `uv run smortboard seed-beta <empty folder>` makes a small browser game on a private GitHub repo
-and a board of 15 cards written for it - the same setup as new board, so you run the one push-main
+and a board of 15 cards written for it. Same setup as new board, so you run the one push-main
 command it prints. [Practice board](../beta-test-board.md) takes it to a green `h` and `w`.

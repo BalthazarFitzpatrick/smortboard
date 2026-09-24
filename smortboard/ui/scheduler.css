@@ -5,7 +5,6 @@
 
 .schedule-status {
   order: 1;
-  font-size: var(--font-size, 13px);
   color: var(--text-dim);
   white-space: nowrap;
 }

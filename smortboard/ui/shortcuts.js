@@ -78,14 +78,16 @@ function shortcutPageSection(index) {
 function shortcutPagerSection(index, turnPage) {
   const header = document.createElement('div');
   header.className = 'pager-header';
-  const prev = document.createElement('span');
+  const prev = document.createElement('button');
+  prev.type = 'button';
   prev.className = 'pager-nav toggle';
   prev.textContent = '←';
   prev.onclick = () => turnPage(-1);
   const label = document.createElement('span');
   label.className = 'pager-label';
   label.textContent = `${BINDING_GROUPS[index][1]} (${index + 1}/${BINDING_GROUPS.length})`;
-  const next = document.createElement('span');
+  const next = document.createElement('button');
+  next.type = 'button';
   next.className = 'pager-nav toggle';
   next.textContent = '→';
   next.onclick = () => turnPage(1);
@@ -282,18 +284,60 @@ function panelStops(surface) {
   return stops;
 }
 
-// up/down step between a panel's fields and buttons - the cursor is how the model reaches one of
-// settings' many fields, since / never guesses between them. a menu keeps its own arrows, and the
-// open card walks its sections itself, so both step fields only
+// pure: the stop an arrow lands on, from each stop's box {top, bottom, left, right}. up/down go to
+// the nearest row above or below and the stop in it closest across; left/right stay in the row. a
+// box with no size (no layout yet, or the test stub) falls back to reading order for up/down
+function computePanelMove(boxes, index, direction) {
+  const here = boxes[index];
+  const laidOut = boxes.every(b => b && b.bottom > b.top);
+  if (!here || !laidOut) {
+    if (direction !== 'up' && direction !== 'down') return index;
+    const next = index + (direction === 'down' ? 1 : -1);
+    return next >= 0 && next < boxes.length ? next : index;
+  }
+  const middle = b => (b.left + b.right) / 2;
+  const sameRow = b => Math.min(b.bottom, here.bottom) - Math.max(b.top, here.top) > 0;
+  const pick = candidates => candidates.length ? candidates[0].i : index;
+  const all = boxes.map((b, i) => ({b, i})).filter(({i}) => i !== index);
+  if (direction === 'left' || direction === 'right') {
+    const side = direction === 'right' ? 1 : -1;
+    return pick(all.filter(({b}) => sameRow(b) && side * (middle(b) - middle(here)) > 0)
+      .sort((a, c) => side * (middle(a.b) - middle(c.b))));
+  }
+  const below = direction === 'down';
+  const beyond = all.filter(({b}) => !sameRow(b) && (below ? b.top >= here.top : b.bottom <= here.bottom));
+  if (!beyond.length) return index;
+  // the nearest row that way, then the stop in it closest to where the cursor already is across
+  const rowEdge = below ? Math.min(...beyond.map(({b}) => b.top)) : Math.max(...beyond.map(({b}) => b.bottom));
+  const row = beyond.filter(({b}) => (below ? b.top - rowEdge : rowEdge - b.bottom) < 4);
+  // a stop overlapping this one across wins by its left edge (a wide row lands on its first
+  // button); with no overlap, the nearest middle
+  const across = b => (Math.min(b.right, here.right) - Math.max(b.left, here.left) > 0
+    ? Math.abs(b.left - here.left) : 10000 + Math.abs(middle(b) - middle(here)));
+  return pick(row.sort((a, c) => across(a.b) - across(c.b)));
+}
+
+function stopBox(el) {
+  const r = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
+  return r ? {top: r.top, bottom: r.bottom, left: r.left, right: r.right} : null;
+}
+
+// the arrows inside a panel step between its fields and buttons - the cursor is how the model
+// reaches one of settings' many fields, since / never guesses between them. a menu keeps its own
+// arrows, and the open card walks its sections itself, so both step fields in reading order
 function movePanelField(evt) {
   const surface = topSurface();
   if (!surface) return false;
   const own = surface.classList?.contains('menu-panel') || surface.classList?.contains('expand-panel');
-  const fields = own ? surfaceFields(surface) : panelStops(surface);
-  if (fields.length < 2) return false;
-  const at = fields.indexOf(document.activeElement);
-  const dir = evt.code === 'ArrowDown' ? 1 : -1;
-  const next = fields[at === -1 ? 0 : Math.min(fields.length - 1, Math.max(0, at + dir))];
+  const stops = own ? surfaceFields(surface) : panelStops(surface);
+  if (stops.length < 2) return false;
+  const direction = {ArrowDown: 'down', ArrowUp: 'up', ArrowLeft: 'left', ArrowRight: 'right'}[evt.code];
+  const at = stops.indexOf(document.activeElement);
+  let to;
+  if (at === -1) to = direction === 'down' || direction === 'up' ? 0 : -1;
+  else if (own) to = direction === 'down' ? Math.min(stops.length - 1, at + 1) : direction === 'up' ? Math.max(0, at - 1) : at;
+  else to = computePanelMove(stops.map(stopBox), at, direction);
+  const next = stops[to];
   if (!next || next === document.activeElement) return false;
   evt.preventDefault();
   next.focus();
@@ -318,7 +362,11 @@ document.addEventListener('keydown', evt => {
   }
   // up/down inside a panel are the panel's own: they step between its fields rather than moving
   // the card focus sitting behind it
-  if ((evt.code === 'ArrowDown' || evt.code === 'ArrowUp') && surfaceOverBoard() && !evt.defaultPrevented
+  // left/right too, off a field - in one they move the caret, which is what typing needs
+  const vertical = evt.code === 'ArrowDown' || evt.code === 'ArrowUp';
+  const sideways = (evt.code === 'ArrowLeft' || evt.code === 'ArrowRight')
+    && !evt.target.matches?.('input, textarea');
+  if ((vertical || sideways) && surfaceOverBoard() && !evt.defaultPrevented
       && !evt.target.matches?.('textarea') && movePanelField(evt)) return;
   // re-entry hands focus to a card, which is the wrong place while a panel stands over the board
   const recovered = surfaceOverBoard() ? false : reenterIfFocusLost();

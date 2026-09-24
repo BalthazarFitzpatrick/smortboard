@@ -1,7 +1,7 @@
 # Beta and reporting
 
-One user so far. The core runs daily on real repos; everything around it has seen one person, one
-machine, one set of habits.
+**One user so far.** The core runs daily on real repos. Everything around it has seen one person,
+one machine and one set of habits.
 
 ## What is solid
 
@@ -9,7 +9,7 @@ machine, one set of habits.
 - the containment and the guards
 - the landing lock, including from outside the board
 - cost accounting and the spend caps
-- hours of unattended running without supervision, which is what it was built for
+- hours of unattended running, which is what it was built for
 
 ## What is rough
 
@@ -27,8 +27,8 @@ machine, one set of habits.
 
 ## What will change
 
-Anything on the rough list. The database migrates itself forward on every open, so upgrades keep
-your boards. But this is `0.x`: settings, defaults and panel shapes will move.
+**Anything on the rough list.** The database migrates itself forward on every open, so upgrades
+keep your boards. But this is `0.x`: settings, defaults and panel shapes will move.
 
 What will not: [cards](../practices/cards.md), [leases](../practices/leases.md),
 [the two gates](../practices/gates.md), [the landing lock](../practices/landing.md), and human-only
@@ -37,14 +37,14 @@ merges into main.
 ## Try it end to end
 
 `uv run smortboard seed-beta <empty folder>` makes a small browser game on a private GitHub repo
-and a board of 15 cards already written: dependency chains, parallel tracks, and a test gate that needs nothing but Node.
-[Practice board](../beta-test-board.md) walks it. It also has the mission-control prompt, if you
-would rather plan it yourself, and a table of which board feature each step exercises.
+and a board of 15 cards already written: dependency chains, parallel tracks, and a test gate that
+needs nothing but Node. [Practice board](../beta-test-board.md) walks it, with the mission control
+prompt if you would rather plan it yourself, and a table of which feature each step exercises.
 
 ## Sending a report
 
-File bugs at
-**[github.com/BalthazarFitzpatrick/smortboard/issues](https://github.com/BalthazarFitzpatrick/smortboard/issues)**
+**File bugs at
+[github.com/BalthazarFitzpatrick/smortboard/issues](https://github.com/BalthazarFitzpatrick/smortboard/issues)**
 with the bug report template. The more of it you fill in, the faster the fix:
 
 - the version (`uv run smortboard --version`) and your operating system

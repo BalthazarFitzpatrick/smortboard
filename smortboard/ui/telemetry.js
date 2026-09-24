@@ -151,7 +151,7 @@ function openTelemetryPanel() {
     const cardId = actionableCardId();
     const menu = new Menu({
       title: cardId ? 'telemetry' : 'costs',
-      sections: [{kind: 'list', items: [], empty: 'loading...'}],
+      sections: [{kind: 'node', node: waitingPlaceholder('loading')}],
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyI') openOverlay = null; },
     });
     menu.openAt({x: window.innerWidth / 2 - 200, y: 80});

@@ -109,9 +109,9 @@ assert.ok(!html1.includes('data-section="workstream"'), 'the workstream section 
 // dependencies and attachments fold under details only when there are any
 const linked = mod.cardPanelHtml({...card, depends_on: ['abcdef0123'], attachments: [{filename: 'shot.png'}]}, outcome);
 const linkedDetails = sectionOf(linked, 'details');
-assert.ok(linkedDetails.includes('<summary>dependencies - 1</summary>') && linkedDetails.includes('card abcdef01'),
+assert.ok(linkedDetails.includes('<summary class="focus-glow focus-glow-soft">dependencies - 1</summary>') && linkedDetails.includes('card abcdef01'),
   'a dependency off this board shows by short id, folded');
-assert.ok(linkedDetails.includes('<summary>attachments - 1</summary>') && linkedDetails.includes('shot.png'));
+assert.ok(linkedDetails.includes('<summary class="focus-glow focus-glow-soft">attachments - 1</summary>') && linkedDetails.includes('shot.png'));
 assert.ok(!sectionOf(html1, 'details').includes('dependencies'), 'no dependency fold without dependencies');
 
 // ---- the head: one meta line over the title - id, status, block reason in words, model, spend
@@ -137,7 +137,7 @@ assert.ok(!sectionOf(mod.cardPanelHtml(card, outcome), 'title').includes('runs')
 assert.ok(sectionOf(html1, 'details').includes('<div class="empty">no lease - it will not run</div>'),
   'a card with no lease says so out loud, not behind a fold');
 const leased = sectionOf(mod.cardPanelHtml({...card, leases: [{path_glob: 'src/**'}, {path_glob: 'tests/**'}]}, outcome), 'details');
-assert.ok(leased.includes('<summary>lease - 2</summary>'), 'the lease folds behind its count');
+assert.ok(leased.includes('<summary class="focus-glow focus-glow-soft">lease - 2</summary>'), 'the lease folds behind its count');
 assert.ok(leased.includes('<span class="card-path">src/**</span>, <span class="card-path">tests/**</span>'), 'a lease is one line of globs');
 
 // ---- the worker's closing block: DONE lines under done, ACTION, WHY and NOT DONE under needs
@@ -179,7 +179,7 @@ assert.equal(count(onceBlock, 'Keyed the endpoint'), 1, 'nor with one');
 // ---- a summary with no block falls back: the text folded under done, reason and next under needs
 const crashed = {...card, status: 'doing', blocked_reason_code: 'CRASH', next_action: 'Check the note for what broke.'};
 const fallback = mod.cardPanelHtml(crashed, {...outcome, summary: 'older run, plain prose'});
-assert.ok(sectionOf(fallback, 'done').includes('<details class="card-fold"><summary>agent summary - 22 chars</summary>'),
+assert.ok(sectionOf(fallback, 'done').includes('<details class="card-fold"><summary class="focus-glow focus-glow-soft">agent summary - 22 chars</summary>'),
   'the whole summary folds under done');
 assert.ok(sectionOf(fallback, 'done').includes('older run, plain prose'));
 assert.ok(!sectionOf(fallback, 'needs').includes('blocked: crash'), 'the reason lives in the head line, not again under needs');
@@ -209,12 +209,12 @@ const retrying = sectionOf(mod.cardPanelHtml(
 ), 'needs');
 assert.ok(retrying.includes('nothing, board on it - retry at 21:40 UTC'), 'a card the board is retrying needs nothing either');
 assert.ok(!retrying.includes('data-accent'));
-assert.ok(sectionOf(html1, 'needs').includes('<input class="comment-input text-field"'), "the card's one text entry sits in needs");
+assert.ok(sectionOf(html1, 'needs').includes('<input class="comment-input text-field focus-glow focus-glow-soft"'), "the card's one text entry sits in needs");
 
 // ---- history: one line per note, time and headline, the operator's own marked "you"
 const commented = mod.cardPanelHtml({...card, comments: [{author: 'operator', body: 'a\nb', created_at: '2026-09-14T12:00:00+00:00'}]}, outcome);
 const history = sectionOf(commented, 'details');
-assert.ok(history.includes('<summary>history - 1</summary>'), 'history folds behind its count');
+assert.ok(history.includes('<summary class="focus-glow focus-glow-soft">history - 1</summary>'), 'history folds behind its count');
 assert.ok(/<time>09-14 \d\d:\d\d<\/time>/.test(history), 'a short time leads the line');
 assert.ok(history.includes('<span class="history-head history-you">you: a</span>'), 'an operator line reads as you');
 assert.ok(history.includes('<div class="comment-body">b</div>'), 'the body is folded behind the headline');
@@ -225,7 +225,7 @@ const boardNoted = sectionOf(mod.cardPanelHtml(
   outcome,
 ), 'details');
 assert.ok(boardNoted.includes('<span class="history-head">tests failed: test_x</span>'), 'a board note leads with its one-liner');
-assert.ok(boardNoted.includes('<details class="history-note"><summary class="history-line">'),
+assert.ok(boardNoted.includes('<details class="history-note"><summary class="history-line focus-glow focus-glow-soft">'),
   'the rest of a board note is closed behind details by default');
 assert.ok(boardNoted.includes('full output here'), 'the full body is still there, just folded');
 
@@ -348,7 +348,7 @@ const detailHtml = mod.cardPanelHtml(detailCard, {});
 const about = sectionOf(detailHtml, 'about');
 assert.ok(sectionOf(detailHtml, 'title').includes('abcdef01'), 'the head shows the short-id');
 assert.ok(about.includes('<div class="card-lead">keep it short and the rest of it too</div>'), 'about leads with the summary');
-assert.ok(about.includes(`<summary>full brief - ${detailCard.description.length} chars</summary>`), 'the full brief is folded, sized');
+assert.ok(about.includes(`<summary class="focus-glow focus-glow-soft">full brief - ${detailCard.description.length} chars</summary>`), 'the full brief is folded, sized');
 assert.ok(about.includes('SCOPE:'), 'the folded brief is the whole description');
 assert.ok(about.includes('<li>[x] first step</li>'), 'tasks sit under about');
 const longAbout = sectionOf(mod.cardPanelHtml({...detailCard, description: longLine}, {}), 'about');

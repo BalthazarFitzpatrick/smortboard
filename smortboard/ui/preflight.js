@@ -131,7 +131,7 @@ function renderPreflight() {
 async function loadPreflight() {
   clearChildren(pf.listEl);
   pf.summaryEl.textContent = 'checking...';
-  pf.listEl.appendChild(hazardPlaceholder('checking...'));
+  pf.listEl.appendChild(waitingPlaceholder('checking'));
   try {
     pf.checks = await api('/api/preflight');
   } catch (err) {
