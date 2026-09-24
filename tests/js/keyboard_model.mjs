@@ -384,4 +384,17 @@ mod.setMouseEnabled(false);
   assert.equal(mod.computePanelMove(flat, 0, 'right'), 0);
 }
 
+// ---- space presses a focused menu row, the same as enter (the new-board folder picker) ------------
+{
+  const panel = element('div', 'menu-panel');
+  const row = element('div', 'toggle menu-item');
+  panel.appendChild(row);
+  document.body.appendChild(panel);
+  let clicks = 0;
+  row.click = () => { clicks++; };
+  document._dispatch('keydown', {code: 'Space', key: ' ', target: row, preventDefault() {}});
+  assert.equal(clicks, 1, 'space on a menu row presses it');
+  panel.remove();
+}
+
 console.log('ok');
