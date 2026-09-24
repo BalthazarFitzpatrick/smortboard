@@ -15,21 +15,25 @@ with fix rounds and retries. Keep the worker on sonnet and set a board daily bud
 
 ## Fast path: seed it (2 minutes)
 
-One command makes the repo and a board with 15 cards already written. You skip sections 1 to 3 and
-test running rather than planning:
+One command makes the repo, its private GitHub origin and a board with 15 cards already written. You
+skip sections 1 to 3 and test running rather than planning:
 
 ```bash
 uv run smortboard seed-beta ~/Documents/dev/comet-catcher
-gh repo create comet-catcher --private --source ~/Documents/dev/comet-catcher --push
-git -C ~/Documents/dev/comet-catcher push -u origin development
+# run the one command it prints, then
 uv run smortboard
 ```
 
+The seed commits the scaffold on `main`, branches `development`, creates a private GitHub repo named
+after the folder and pushes `development` to it. `gh` has to be logged in (`gh auth login`). It
+never pushes `main`. That is the one command it prints for you: it pushes `main` and makes it the
+repo's default branch on GitHub. Run it once.
+
 Then `h` until every row is green, and `w`. The seed sets the repo's base to `development`, its test
-command to `node --test`, strict leases, a $30 daily budget and sonnet on every card. It never
-touches GitHub: the two lines after it are yours, and a private repo is enough. A folder that is not
-empty, or a board already named `comet-catcher`, is refused before anything is written (`--name`
-picks another name).
+command to `node --test`, strict leases, a $30 daily budget and sonnet on every card. A folder that
+is not empty, or a board already named `comet-catcher`, is refused before anything is written
+(`--name` picks another name). When `gh` refuses, because it is not logged in or the repo name is
+taken, the seed takes its folder back out and adds nothing to the board.
 
 The seeded cards have the shape section 3 asks mission control for. Take sections 1 to 3 instead
 when mission control's planning is what you want to test.
@@ -72,8 +76,11 @@ printf '# Comet Catcher\n\nA browser game built card by card on smortboard.\n' >
 touch server/.gitkeep public/js/.gitkeep public/css/.gitkeep
 
 git add -A && git commit -m "initial project scaffold"
-gh repo create smort-arcade --private --source . --push
-git switch -c development && git push -u origin development
+git branch development
+gh repo create smort-arcade --private --source . --remote origin
+git push -u origin development
+# main is yours: push it and make it the default branch on GitHub
+git push -u origin main && gh repo edit --default-branch main
 ```
 
 ## 2. Set up the board

@@ -1,21 +1,23 @@
 """`smortboard seed-beta <dir>`: a real, runnable board to beta-test smortboard front to back.
 
-Makes a small git repo for Comet Catcher (docs/beta-test-board.md) and adds a board for it with
-its cards already written, so the first run skips mission control. Unlike --demo this goes into
-the operator's own database and survives a restart, and its cards really run.
+Writes the Comet Catcher scaffold (docs/beta-test-board.md) into a new folder, makes it ready the
+same way a new board's folder is (repo_setup: first commit, development, a private GitHub origin,
+development pushed), and adds a board for it with its cards already written, so the first run skips
+mission control. Unlike --demo this goes into the operator's own database and survives a restart,
+and its cards really run.
 
-It never touches GitHub. A card only finishes (pull request, accept, landing, stacking) once the
-repo has a GitHub origin, and creating one is the operator's step: the command prints it.
+It never pushes main. Pushing main and making it GitHub's default is the operator's one step: the
+command prints it.
 """
 
 from __future__ import annotations
 
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from smortboard.repo_setup import Runner, SetupRefused, SetupResult, default_runner, prepare
 from smortboard.store.api import Store
 from smortboard.store.repo_validation import validate_repo
 
@@ -327,26 +329,14 @@ class SeedResult:
     board: dict[str, Any]
     repo: dict[str, Any]
     cards: list[dict[str, Any]]
+    setup: SetupResult
 
 
-def _git(repo_dir: Path, *args: str) -> None:
-    result = subprocess.run(
-        ["git", "-C", str(repo_dir), *args], capture_output=True, text=True, check=False
-    )
-    if result.returncode != 0:
-        raise SeedRefused(f"git {' '.join(args)} failed: {result.stderr.strip()}")
-
-
-def _make_repo(repo_dir: Path) -> None:
-    """the starter commit on main, and development cut from it as the board's base"""
+def _write_scaffold(repo_dir: Path) -> None:
     for rel, text in SCAFFOLD.items():
         path = repo_dir / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
-    _git(repo_dir, "init", "-q", "-b", "main")
-    _git(repo_dir, "add", "-A")
-    _git(repo_dir, "commit", "-q", "-m", "initial project scaffold")
-    _git(repo_dir, "branch", BASE_BRANCH)
 
 
 def _undo_repo(repo_dir: Path, created_dir: bool) -> None:
@@ -360,9 +350,15 @@ def _undo_repo(repo_dir: Path, created_dir: bool) -> None:
             child.unlink(missing_ok=True)
 
 
-def seed_beta(store: Store, repo_dir: str | Path, board_name: str = BOARD_NAME) -> SeedResult:
-    """makes the repo at `repo_dir` and the board for it. refuses, writing nothing, when the
-    folder is not empty or a board of that name exists"""
+def seed_beta(
+    store: Store,
+    repo_dir: str | Path,
+    board_name: str = BOARD_NAME,
+    *,
+    runner: Runner = default_runner,
+) -> SeedResult:
+    """makes the repo at `repo_dir`, its private GitHub origin, and the board for it. refuses,
+    writing nothing, when the folder is not empty or a board of that name exists"""
     repo_dir = Path(repo_dir).expanduser().resolve()
     if any(board["name"] == board_name for board in store.list_boards()):
         raise SeedRefused(f"a board named {board_name!r} already exists - pass --name")
@@ -374,10 +370,12 @@ def seed_beta(store: Store, repo_dir: str | Path, board_name: str = BOARD_NAME) 
     created_dir = not repo_dir.exists()
     repo_dir.mkdir(parents=True, exist_ok=True)
     try:
-        _make_repo(repo_dir)
-    except (SeedRefused, OSError):
+        _write_scaffold(repo_dir)
+        # the scaffold is the first commit, so the folder's files are confirmed up front
+        setup = prepare(repo_dir, confirm=True, runner=runner)
+    except (SetupRefused, OSError) as exc:
         _undo_repo(repo_dir, created_dir)
-        raise
+        raise SeedRefused(str(exc)) from exc
 
     path = validate_repo(repo_dir.name, str(repo_dir), BASE_BRANCH)
     position = max((board["position"] for board in store.list_boards()), default=-1) + 1
@@ -408,18 +406,18 @@ def seed_beta(store: Store, repo_dir: str | Path, board_name: str = BOARD_NAME) 
         )
         ids[spec["key"]] = card["id"]
         cards.append(card)
-    return SeedResult(board=store.get_board(board["id"]), repo=repo, cards=cards)
+    return SeedResult(board=store.get_board(board["id"]), repo=repo, cards=cards, setup=setup)
 
 
 def next_steps(result: SeedResult) -> str:
-    """what the operator runs after the seed - the GitHub half is theirs"""
-    path = result.repo["path"]
-    name = result.repo["name"]
+    """what the operator runs after the seed - pushing main is theirs, the board never does"""
+    lines = []
+    if result.setup.push_main:
+        lines += ["one step is yours - run this once:", f"  {result.setup.push_main}", "", "then:"]
     return "\n".join(
         [
-            f"  1. gh repo create {name} --private --source {path} --push",
-            f"  2. git -C {path} push -u origin {BASE_BRANCH}",
-            "  3. uv run smortboard, open the board, press h until every row is green",
-            "  4. w runs the whole board. docs/beta-test-board.md says what each part exercises",
+            *lines,
+            "  1. uv run smortboard, open the board, press h until every row is green",
+            "  2. w runs the whole board. docs/beta-test-board.md says what each part exercises",
         ]
     )
