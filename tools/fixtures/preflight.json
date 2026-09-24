@@ -20,30 +20,30 @@
     "group": "machine",
     "label": "card token",
     "status": "ok",
-    "detail": "a token file is present at ~/.config/smortboard/tokens/weekday.",
+    "detail": "a token file is present at ~/.config/smortboard/tokens/work.",
     "fix": ""
   },
   {
-    "id": "profile-weekday",
+    "id": "profile-work",
     "group": "machine",
-    "label": "anthropic profile: weekday (active)",
+    "label": "anthropic profile: work (active)",
     "status": "ok",
-    "detail": "present at ~/.config/smortboard/tokens/weekday, mode 600.",
+    "detail": "present at ~/.config/smortboard/tokens/work, mode 600.",
     "fix": "",
     "lab": "anthropic",
     "kind": "oauth",
-    "profile": "weekday"
+    "profile": "work"
   },
   {
-    "id": "profile-weekend",
+    "id": "profile-personal",
     "group": "machine",
-    "label": "anthropic profile: weekend",
+    "label": "anthropic profile: personal",
     "status": "ok",
-    "detail": "present at ~/.config/smortboard/tokens/weekend, mode 600.",
+    "detail": "present at ~/.config/smortboard/tokens/personal, mode 600.",
     "fix": "",
     "lab": "anthropic",
     "kind": "oauth",
-    "profile": "weekend"
+    "profile": "personal"
   },
   {
     "id": "gh",

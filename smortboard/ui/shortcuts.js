@@ -14,7 +14,7 @@ const BINDINGS = [
   {code: 'ArrowLeft', label: 'left', action: 'move focus left', group: 'cards'},
   {code: 'ArrowRight', label: 'right', action: 'move focus right', group: 'cards'},
   {code: 'Enter', label: 'enter', action: 'open the focused card', group: 'cards'},
-  {code: 'Space', label: 'space', action: 'open the focused card, or close the open one', group: 'cards'},
+  {code: 'Space', label: 'space', action: 'open the focused card, or close it. on an open card: pop the focused section out, or back', group: 'cards'},
   {code: 'Escape', label: 'esc', action: 'one level back: input -> panel -> closed', group: 'cards'},
   {code: 'KeyR', label: 'r', action: 'run the focused card, with confirmation', group: 'cards'},
   {code: 'KeyK', label: 'k', action: 'stop the focused card if it is running', group: 'cards'},
