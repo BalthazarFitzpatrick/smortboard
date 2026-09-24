@@ -183,6 +183,16 @@ body {
 /* QUEUED, NOT RUNNING: the scheduler is holding this card and no agent has it yet, so it wears the
    plain grey edge - stated rather than left to the default, so no later state class colours it */
 .card-strip.card-pending, .expand-panel.card-pending { border-color: var(--grey-border); }
+/* queued, not started: a slow blue breath on the edge, no drifting glow - a column of them stays calm */
+.card-strip.card-pending {
+  --ambient-pulse-color: var(--fill-good);
+  --ambient-pulse-ms: 5200ms;
+  --ambient-pulse-min: 0.15;
+  --ambient-pulse-max: 0.75;
+  --ambient-pulse-reach: 0px;
+  --ambient-pulse-blur: 0px;
+  --ambient-pulse-spread: 0px;
+}
 .card-panel.card-pending [data-section="title"] { border-left-color: var(--grey-border); }
 .card-strip.card-working { border-color: var(--fill-good); }
 .card-strip.card-rejected { border-color: var(--fill-warn); }

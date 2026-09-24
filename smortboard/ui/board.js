@@ -14,11 +14,10 @@ const STATUSES = ['todo', 'doing', 'checking', 'accepted', 'rejected'];
 // out by isAttentionCard (columns.js) rather than driven by card.status
 const COLUMNS = ['todo', 'doing', 'attention', 'checking', 'accepted', 'rejected'];
 
-// which column a card actually renders in: a card the queue is holding shows in doing as pending
-// whatever its stored status says, then attention wins over its own real status - excluding a
-// card the board is already retrying itself (isAttentionCard already reads handled_by_board)
+// which column a card actually renders in: attention wins over its own real status - excluding a
+// card the board is already retrying itself (isAttentionCard reads handled_by_board). a queued card
+// stays where it is and breathes there; doing is only what an agent holds this instant
 function columnFor(card) {
-  if (isPendingCard(card)) return 'doing';
   return isAttentionCard(card) ? 'attention' : card.status;
 }
 
@@ -144,6 +143,9 @@ async function onBoardEnter(boardId) {
   const cards = await api(`/api/boards/${boardId}/cards`);
   renderBuckets(cards);
   followedCardStates = new Map(cards.map(c => [c.id, `${c.status}|${c.updated_at}`]));
+  // the schedule poll only ran from w and followed whichever board was current, so a board switch
+  // polled the other board, cleared the queue marks and stopped - read this board's queue on entry
+  if (typeof restartSchedulePoll === 'function') restartSchedulePoll();
   // resumes this board's send queue (a reload landed here with something still unsent) whether or
   // not mission control is open - a message keeps retrying in the background either way.
   // guarded: messageQueue.js is a separate script (see index.html's load order) and some isolated
