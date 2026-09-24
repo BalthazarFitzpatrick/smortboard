@@ -54,7 +54,7 @@ const src = [uiBase('menu.js'), uiBase('buckets.js'), uiBase('expand.js'), uiBas
   smort('chat.js'), smort('shortcuts.js'), smort('board.js'), smort('settings.js'),
   smort('boards.js')].join('\n;\n');
 const mod = new Function('makeDrawer', `${src}
-;return {renderCardStrip, st, bp, pe, BINDINGS, surfaceOverBoard, topSurface, surfaceFields, panelStops,
+;return {renderCardStrip, st, bp, pe, BINDINGS, surfaceOverBoard, topSurface, surfaceFields, panelStops, computePanelMove,
   setMouseEnabled, mouseAffordances, focusFirstCardSection, wireCommentInput,
   setBoard: id => { currentBoardId = id; },
   setOpenCard: value => { openCard = value; },
@@ -361,6 +361,27 @@ mod.setMouseEnabled(false);
   assert.equal(document.activeElement, rows[0], 'escape from the box steps back onto the card');
 
   backdrop.remove();
+}
+
+// ---- inside a panel the arrows follow the layout: two buttons side by side are one row -----------
+{
+  const box = (top, left, w = 100, h = 30) => ({top, bottom: top + h, left, right: left + w});
+  // new board | from online repo, then a board row (name | delete), then the name field
+  const boxes = [box(0, 0), box(0, 120), box(50, 0, 400), box(50, 420), box(100, 0, 520)];
+  assert.equal(mod.computePanelMove(boxes, 0, 'right'), 1, 'right walks along the row');
+  assert.equal(mod.computePanelMove(boxes, 1, 'left'), 0);
+  assert.equal(mod.computePanelMove(boxes, 1, 'right'), 1, 'the end of a row stays put');
+  assert.equal(mod.computePanelMove(boxes, 0, 'down'), 2, 'down leaves the row for the next one');
+  assert.equal(mod.computePanelMove(boxes, 1, 'down'), 2, 'from either button of the pair');
+  assert.equal(mod.computePanelMove(boxes, 3, 'down'), 4);
+  assert.equal(mod.computePanelMove(boxes, 4, 'up'), 2, 'up lands on the stop closest across');
+  assert.equal(mod.computePanelMove(boxes, 2, 'up'), 0);
+  assert.equal(mod.computePanelMove(boxes, 3, 'up'), 1, 'delete goes up to the button above it');
+  assert.equal(mod.computePanelMove(boxes, 0, 'up'), 0, 'the top row stays put');
+  // no layout (the stub): up/down keep reading order, left/right do nothing
+  const flat = boxes.map(() => ({top: 0, bottom: 0, left: 0, right: 0}));
+  assert.equal(mod.computePanelMove(flat, 0, 'down'), 1);
+  assert.equal(mod.computePanelMove(flat, 0, 'right'), 0);
 }
 
 console.log('ok');
