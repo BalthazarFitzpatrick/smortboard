@@ -39,6 +39,7 @@ from smortboard.preflight import run_preflight
 from smortboard.prompts import ROLES
 from smortboard.pulls import open_pull_requests
 from smortboard.repo_image import build_repo_image
+from smortboard.repo_tests import RepoTests, detect_tests
 from smortboard.review.decide import DecisionRefused, accept_card, reject_card
 from smortboard.review.landing import DEFAULT_TTL_S as DEFAULT_LANDING_TTL_S
 from smortboard.review.landing import resolve_repo_key
@@ -209,6 +210,12 @@ def _text_warnings(card: dict[str, Any]) -> list[str]:
     """card text past the card text rules, told to the caller - the card is kept exactly as sent"""
     criteria = [criterion["text"] for criterion in card["criteria"]]
     return card_text_warnings({**card, "criteria": criteria})
+
+
+def _tests_reply(repo: dict[str, Any], tests: RepoTests) -> dict[str, Any]:
+    """what the boards panel needs to ask for tests up front: the command stored on the repo, which
+    a request's own command wins over detection for, and whether any test exists yet"""
+    return {"command": repo["test_command"], "has_tests": tests.has_tests}
 
 
 def _make_handler(
@@ -826,16 +833,18 @@ def _make_handler(
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
+            # a blank command is none given, so the repo's own stack fills it
+            tests = detect_tests(expanded_path, default_branch)
             repo = store.create_repo(
                 board_id,
                 name=name,
                 path=expanded_path,
                 default_branch=default_branch,
-                test_command=body.get("test_command"),
+                test_command=body.get("test_command") or tests.command,
                 image=body.get("image"),
                 lint_command=body.get("lint_command"),
             )
-            self._send_json(201, repo)
+            self._send_json(201, {**repo, "tests": _tests_reply(repo, tests)})
 
         def _handle_board_from_repo(self) -> None:
             """a board named after a local repo, with that repo registered on it - the boards
@@ -853,11 +862,16 @@ def _make_handler(
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
+            tests = detect_tests(expanded_path, branch)
             board = store.create_board(name=path.name)
             repo = store.create_repo(
-                board["id"], name=path.name, path=expanded_path, default_branch=branch
+                board["id"],
+                name=path.name,
+                path=expanded_path,
+                default_branch=branch,
+                test_command=body.get("test_command") or tests.command,
             )
-            self._send_json(201, {"board": board, "repo": repo})
+            self._send_json(201, {"board": board, "repo": repo, "tests": _tests_reply(repo, tests)})
 
         def _handle_patch_repo(self, repo_id: str) -> None:
             # path still means re-registering. default_branch is editable because a base branch

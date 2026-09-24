@@ -451,6 +451,18 @@ def _init_repo(path, branch="main"):
     )
 
 
+def _commit_files(path, files):
+    for name, text in files.items():
+        (path / name).parent.mkdir(parents=True, exist_ok=True)
+        (path / name).write_text(text)
+    subprocess.run(["git", "-C", str(path), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "-c", "user.email=t@t.com", "-c", "user.name=t"]
+        + ["commit", "-q", "-m", "files"],
+        check=True,
+    )
+
+
 def test_register_repo_round_trips(running_server, tmp_path):
     repo_path = tmp_path / "repo"
     _init_repo(repo_path)
@@ -467,6 +479,41 @@ def test_register_repo_round_trips(running_server, tmp_path):
     status, repos = _request(f"{running_server}/api/boards/{board['id']}/repos")
     assert status == 200
     assert len(repos) == 1
+
+
+def test_register_repo_fills_a_blank_test_command_from_the_repo(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    _commit_files(repo_path, {"pyproject.toml": "[project]\nname = 'x'\n"})
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    status, repo = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "x", "path": str(repo_path), "default_branch": "main", "test_command": ""},
+    )
+    assert status == 201
+    assert repo["test_command"] == "uv run --no-sync pytest -q"
+    assert repo["tests"] == {"command": "uv run --no-sync pytest -q", "has_tests": False}
+
+
+def test_register_repo_keeps_an_explicit_test_command(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    _commit_files(repo_path, {"pyproject.toml": "", "tests/test_a.py": "def test_a(): pass\n"})
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    status, repo = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {
+            "name": "x",
+            "path": str(repo_path),
+            "default_branch": "main",
+            "test_command": "make check",
+        },
+    )
+    assert status == 201
+    assert repo["test_command"] == "make check"
+    assert repo["tests"] == {"command": "make check", "has_tests": True}
 
 
 def test_register_repo_missing_path_is_400_with_actionable_message(running_server, tmp_path):
@@ -603,8 +650,30 @@ def test_board_from_a_local_repo_registers_it(running_server, tmp_path):
     assert status == 201
     assert body["board"]["name"] == "myrepo"
     assert body["repo"]["default_branch"] == "main"
+    # an unknown stack gets no command, and says there is nothing to run yet
+    assert body["tests"] == {"command": None, "has_tests": False}
     _, repos = _request(f"{running_server}/api/boards/{body['board']['id']}/repos")
     assert [r["name"] for r in repos] == ["myrepo"]
+
+
+@pytest.mark.parametrize(
+    ("files", "has_tests"),
+    [
+        ({"pyproject.toml": ""}, False),
+        ({"pyproject.toml": "", "tests/test_a.py": "def test_a(): pass\n"}, True),
+    ],
+)
+def test_board_from_a_python_repo_stores_its_test_command(
+    running_server, tmp_path, files, has_tests
+):
+    _init_repo(tmp_path / "myrepo")
+    _commit_files(tmp_path / "myrepo", files)
+    status, body = _request(
+        f"{running_server}/api/boards/from-repo", "POST", {"path": str(tmp_path / "myrepo")}
+    )
+    assert status == 201
+    assert body["repo"]["test_command"] == "uv run --no-sync pytest -q"
+    assert body["tests"] == {"command": "uv run --no-sync pytest -q", "has_tests": has_tests}
 
 
 def test_board_from_a_plain_folder_is_400_and_creates_no_board(running_server, tmp_path):
