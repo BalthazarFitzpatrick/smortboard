@@ -386,7 +386,7 @@ def test_readiness_says_what_is_missing_rather_than_just_no(monkeypatch):
     monkeypatch.setattr("smortboard.exec.backends.card_token_available", lambda p=None: False)
     answer = runs_module.Readiness().check()
     assert answer["ready"] is False
-    assert any("Docker" in m for m in answer["missing"])
+    assert any("docker" in m for m in answer["missing"])
     assert any("setup-token" in m for m in answer["missing"])
 
 

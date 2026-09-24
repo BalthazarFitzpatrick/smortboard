@@ -149,7 +149,7 @@ def record_fallback(
     store.add_comment(
         card_id,
         author=_BOARD_AUTHOR,
-        body=f"Retrying {role} on {target_lab}/{target_model}; {from_lab} was limited{until}.",
+        body=f"retrying {role} on {target_lab}/{target_model}; {from_lab} was limited{until}.",
     )
 
 
@@ -445,7 +445,7 @@ def _dependency_wait(store: Store, card: dict[str, Any], repo_path: str | Path) 
         state = _cached_pr_view(repo_path, url)
         if state.error:
             return (
-                f"could not ask GitHub about dependency ‘{dep['title']}’s pull request: "
+                f"could not ask github about dependency ‘{dep['title']}’s pull request: "
                 f"{state.error}"
             )
         if state.merged:
@@ -829,8 +829,8 @@ class BoardScheduler:
             files = payload.get("files") or []
             store.append_event(card_id, "merge_conflict_auto_resume", {"files": files})
             note = (
-                f"Resuming automatically: merge {base_ref} into this branch and resolve the "
-                f"conflicts in: {', '.join(files) or 'the listed files'}. Then commit the result."
+                f"resuming automatically: merge {base_ref} into this branch and resolve the "
+                f"conflicts in: {', '.join(files) or 'the listed files'}. then commit the result."
             )
             # still blocked - the operator sees it in the inbox like any other refusal
             with contextlib.suppress(AnswerRefused):

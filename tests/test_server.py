@@ -780,7 +780,7 @@ def test_board_from_an_empty_folder_sets_it_up_on_development(running_server, tm
     assert status == 201
     assert body["board"]["name"] == "fresh"
     assert body["repo"]["default_branch"] == "development"
-    assert "created private GitHub repo tester/fresh" in body["setup"]["steps"]
+    assert "created private github repo tester/fresh" in body["setup"]["steps"]
     # main is the operator's to push: the reply carries the command, the origin only development
     assert "push -u origin main" in body["setup"]["push_main"]
     assert "gh repo edit tester/fresh --default-branch main" in body["setup"]["push_main"]
@@ -820,7 +820,7 @@ def test_a_new_folder_github_would_refuse_is_never_made(running_server, tmp_path
         {"path": str(tmp_path), "new_folder": "my project!"},
     )
     assert status == 400
-    assert "GitHub repo name" in body["error"]
+    assert "github repo name" in body["error"]
     assert not (tmp_path / "my project!").exists()
 
 

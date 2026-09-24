@@ -215,7 +215,7 @@ def _real_runner(
         prompt: str, model: str, budget_usd: float, screenshot_path: Path | None
     ) -> RunResult:
         if not docker_available():
-            raise RuntimeError("Docker is not running, and the orchestrator runs in a container.")
+            raise RuntimeError("docker is not running, and the orchestrator runs in a container.")
         lab, model_id = parse_ref(model)
         adapter = get_adapter(lab)
         profile = profiles.active_profile(lab=lab)
@@ -357,7 +357,7 @@ def _real_runner(
             store.add_orchestrator_message(
                 board_id,
                 _BOARD_AUTHOR,
-                f"Retrying {role} on {target_lab}/{target_model}; {lab} reached its usage limit.",
+                f"retrying {role} on {target_lab}/{target_model}; {lab} reached its usage limit.",
             )
             model = command_model(target_lab, target_model)
         # a turn that answered through its schema and only then hit a limit still answered
@@ -747,7 +747,7 @@ def _resolve_repo(store: Store, board_id: str, name: str | None) -> tuple[str | 
     for repo in store.list_repos(board_id):
         if repo["name"] == name:
             return repo["id"], None
-    return None, f'Repo "{name}" was not found on this board, so the card has no repo.'
+    return None, f'repo "{name}" was not found on this board, so the card has no repo.'
 
 
 def _apply_test_commands(store: Store, board_id: str, proposed: list[Any]) -> list[str]:

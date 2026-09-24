@@ -48,7 +48,7 @@ class CodexAdapter:
             cmd += ["--dangerously-bypass-hook-trust"]
         if req.json_schema is not None or req.schema_path is not None:
             if req.schema_path is None:
-                raise ValueError("Codex structured output requires a mounted schema_path")
+                raise ValueError("codex structured output requires a mounted schema_path")
             cmd += ["--output-schema", str(req.schema_path)]
         cmd.append(req.prompt)
         return cmd

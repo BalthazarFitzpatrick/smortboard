@@ -387,7 +387,7 @@ def run_review(
     REVIEW_DIFF_EXCLUDES); `head` is recorded with the verdict.
     """
     if not docker_available():
-        raise ReviewUnavailable("Docker is not running, and the reviewer runs in a container.")
+        raise ReviewUnavailable("docker is not running, and the reviewer runs in a container.")
     from smortboard import profiles
 
     lab, model_id = parse_ref(model)

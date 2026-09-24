@@ -125,11 +125,11 @@ def run_test_gate(
     command = (repo or {}).get("test_command")
     if not command:
         raise NoTestCommand(
-            "This repo declares no test_command, so there is nothing to check the card against. "
-            "Set one on the repo - it is also what scopes the card's own Bash allowlist."
+            "this repo declares no test_command, so there is nothing to check the card against. "
+            "set one on the repo - it is also what scopes the card's own Bash allowlist."
         )
     if not docker_available():
-        raise GateUnavailable("Docker is not running, and the gate runs the suite in a container.")
+        raise GateUnavailable("docker is not running, and the gate runs the suite in a container.")
 
     work_path = Path(work_path)
     name = container_name("gate", card_id)

@@ -93,8 +93,8 @@ def _gh(args: list[str], cwd: str | Path) -> subprocess.CompletedProcess:
     if tuple(args[:2]) not in ALLOWED_GH_COMMANDS:
         raise MergeRequestUnavailable(
             f"gh {' '.join(args[:2])} is not something the board may run. "
-            f"Allowed: {sorted(' '.join(a) for a in ALLOWED_GH_COMMANDS)}. "
-            "Merging is the operator's, never the board's."
+            f"allowed: {sorted(' '.join(a) for a in ALLOWED_GH_COMMANDS)}. "
+            "merging is the operator's, never the board's."
         )
     return _run(["gh", *args], cwd=cwd)
 
@@ -149,12 +149,12 @@ def _gh_ready(repo_path: str | Path) -> None:
     is pushed, so a missing tool is a clear refusal rather than a half-finished push"""
     if shutil.which("gh") is None:
         raise MergeRequestUnavailable(
-            "gh is not installed. The board opens pull requests with it; install the GitHub CLI "
+            "gh is not installed. the board opens pull requests with it; install the github cli "
             "and run `gh auth login`."
         )
     result = _run(["gh", "auth", "status"], cwd=repo_path)
     if result.returncode != 0:
-        raise MergeRequestUnavailable("gh is installed but not authenticated. Run `gh auth login`.")
+        raise MergeRequestUnavailable("gh is installed but not authenticated. run `gh auth login`.")
     remote = _run(["git", "-C", str(repo_path), "remote"])
     if not remote.stdout.strip():
         raise MergeRequestUnavailable(
@@ -205,15 +205,15 @@ def _body(card: dict[str, Any], evidence: _CardEvidence, branch: str) -> str:
     lines: list[str] = []
 
     if evidence.tests is not None:
-        verdict = "passed" if evidence.tests.get("passed") else "FAILED"
-        lines.append(f"Tests: {verdict} - `{evidence.tests.get('command', '')}`")
+        verdict = "passed" if evidence.tests.get("passed") else "failed"
+        lines.append(f"tests: {verdict} - `{evidence.tests.get('command', '')}`")
     else:
-        lines.append("Tests: not run")
+        lines.append("tests: not run")
 
     if evidence.review is not None:
         findings = evidence.review.get("findings") or []
-        verdict = "approved" if evidence.review.get("approved") else "REJECTED"
-        lines.append(f"Review: {verdict}, {len(findings)} finding(s)")
+        verdict = "approved" if evidence.review.get("approved") else "rejected"
+        lines.append(f"review: {verdict}, {len(findings)} finding(s)")
         for finding in findings:
             where = finding.get("file") or "?"
             if finding.get("line"):
@@ -223,25 +223,25 @@ def _body(card: dict[str, Any], evidence: _CardEvidence, branch: str) -> str:
                 f"in {where} - {finding.get('message', '')}"
             )
     else:
-        lines.append("Review: not run")
+        lines.append("review: not run")
 
     shot = latest_screenshot(card)
     if shot is not None:
         lines.append(
-            f"Screenshot: [{shot['filename']}](/api/cards/{card['id']}/attachments/{shot['id']}) "
+            f"screenshot: [{shot['filename']}](/api/cards/{card['id']}/attachments/{shot['id']}) "
             "- open it from the board that ran this card"
         )
 
     if card.get("description"):
-        lines += ["", "## What the card asked for", "", str(card["description"])]
+        lines += ["", "## what the card asked for", "", str(card["description"])]
 
     if evidence.criteria:
-        lines += ["", "## Acceptance criteria", ""]
+        lines += ["", "## acceptance criteria", ""]
         lines += [f"- {text}" for text in evidence.criteria]
 
     if evidence.tasks:
         # plain list, no box, no done mark. nothing here ticks a task
-        lines += ["", "## Tasks", ""]
+        lines += ["", "## tasks", ""]
         lines += [f"- {task.get('text', '')}" for task in evidence.tasks]
 
     cost = f"{evidence.cost_usd:.2f}" if evidence.cost_usd is not None else "unknown"
@@ -249,9 +249,9 @@ def _body(card: dict[str, Any], evidence: _CardEvidence, branch: str) -> str:
         "",
         "---",
         "",
-        f"Branch `{branch}`, opened by smortboard. Cost ${cost} over "
+        f"branch `{branch}`, opened by smortboard. cost ${cost} over "
         f"{evidence.turns if evidence.turns is not None else '?'} turns.",
-        "Review mode waits for acceptance; free mode lands on unprotected bases automatically.",
+        "review mode waits for acceptance; free mode lands on unprotected bases automatically.",
     ]
     return "\n".join(lines)
 
@@ -406,7 +406,7 @@ def close_merge_request(repo_path: str | Path, url: str) -> str | None:
     """
     if shutil.which("gh") is None:
         return "gh is not installed"
-    result = _gh(["pr", "close", url, "--comment", "Rejected on the board."], cwd=repo_path)
+    result = _gh(["pr", "close", url, "--comment", "rejected on the board."], cwd=repo_path)
     return None if result.returncode == 0 else result.stderr.strip() or "gh pr close failed"
 
 
