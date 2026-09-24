@@ -69,7 +69,12 @@ const COST_COLUMNS = ['board', 'share', 'spend', 'runs', 'accepted', 'prs', 'per
 function boardCostRow(row, share) {
   const line = document.createElement('div');
   line.className = 'cost-row';
-  const name = costCell(row.board_name, 'cost-name');
+  // a real button: tab and the arrows reach it, enter and space press it
+  const name = document.createElement('button');
+  name.type = 'button';
+  name.className = 'toggle cost-name';
+  name.title = row.board_name;
+  name.textContent = row.board_name;
   name.onclick = () => jumpToBoard(row.board_id);
   const perPr = row.known_cost_per_pr_usd ?? row.cost_per_pr_usd;
   const refused = knownSpend(row, 'refusal_') || row.refusal_unknown_costs;
@@ -277,8 +282,8 @@ function costOptimisationCard(data) {
   return card;
 }
 
-// ---- cost / cost-optimisation header - same fixed-row, arrows-either-side shape inbox.js's
-// scope header uses (inbox.css's .inbox-header/.inbox-nav/.inbox-scope-label, reused as-is) -----
+// ---- cost / cost-optimisation header - the paged panels' shared arrows-either-side row
+// (layout.css .pager-header/.pager-nav/.pager-label), the same one the inbox and shortcuts use ---
 
 const COSTS_VIEWS = ['cost', 'cost optimisation'];
 
@@ -296,16 +301,18 @@ function costsHazardNode(text) {
 
 function costsHeaderNode() {
   const header = document.createElement('div');
-  header.className = 'inbox-header';
-  const prev = document.createElement('span');
-  prev.className = 'inbox-nav toggle';
+  header.className = 'pager-header';
+  const prev = document.createElement('button');
+  prev.type = 'button';
+  prev.className = 'pager-nav toggle';
   prev.textContent = '←';
   prev.onclick = () => cycleCostsView(-1);
   const label = document.createElement('span');
-  label.className = 'inbox-scope-label';
+  label.className = 'pager-label';
   label.textContent = COSTS_VIEWS[cv.view];
-  const next = document.createElement('span');
-  next.className = 'inbox-nav toggle';
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.className = 'pager-nav toggle';
   next.textContent = '→';
   next.onclick = () => cycleCostsView(1);
   header.append(prev, label, next);
@@ -313,13 +320,13 @@ function costsHeaderNode() {
 }
 
 function costsOverviewNode() {
-  if (!cv.overview) return costsHazardNode('loading...');
+  if (!cv.overview) return waitingPlaceholder('loading');
   if (cv.overview.error) return costsHazardNode(`could not load costs: ${cv.overview.error}`);
   return costsOverviewSections(cv.overview)[0].node;
 }
 
 function costsOptimisationNode() {
-  if (!cv.optimisation) return costsHazardNode('loading...');
+  if (!cv.optimisation) return waitingPlaceholder('loading');
   if (cv.optimisation.error) return costsHazardNode(`could not load costs: ${cv.optimisation.error}`);
   return costOptimisationCard(cv.optimisation);
 }
@@ -329,6 +336,7 @@ function renderCostsPanel() {
   const wrap = document.createElement('div');
   wrap.className = 'costs-view';
   wrap.appendChild(costsHeaderNode());
+  wrap.appendChild(textLine('', 'h-divider'));
   const body = document.createElement('div');
   body.className = 'costs-view-body';
   body.appendChild(cv.view === 0 ? costsOverviewNode() : costsOptimisationNode());
@@ -378,7 +386,7 @@ function openCostsOverviewPanel() {
     cv.optimisationLoaded = false;
     const menu = new Menu({
       title: 'cost overview',
-      sections: [{kind: 'node', node: costsHazardNode('loading...')}],
+      sections: [{kind: 'node', node: waitingPlaceholder('loading')}],
       onDismiss: () => {
         document.removeEventListener('keydown', onCostsKey, {capture: true});
         cv.menu = null;

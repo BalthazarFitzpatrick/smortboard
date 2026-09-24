@@ -15,8 +15,12 @@
 .cost-row { display: contents; }
 .cost-rows .cost-head { color: var(--text-dim); }
 .cost-rows .num { text-align: right; white-space: nowrap; }
-.cost-rows .cost-name { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cost-rows .cost-name:hover { color: var(--cream); }
+/* a .toggle that goes to the board; block, not flex, so a long name ellipsises (see .inbox-title) */
+.cost-rows .cost-name {
+  display: block; text-align: left; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  line-height: calc(var(--row-height) - 4px);
+}
 .cost-rows .progress-row { margin: 0; }
 .cost-foot { flex-direction: column; align-items: flex-start; gap: 4px; }
 .cost-foot .cost-note { color: var(--text-dim); }
@@ -28,16 +32,16 @@
 .cost-groups-grid { display: flex; gap: 14px; margin-top: 4px; }
 .cost-group {
   flex: 1 1 0; display: flex; flex-direction: column; gap: 2px;
-  border: 1px solid var(--cream); padding: 8px 10px; font-variant-numeric: tabular-nums;
+  border: 2px solid var(--grey-border); padding: 8px 10px; font-variant-numeric: tabular-nums;
 }
-.cost-group-title { color: var(--text-dim); text-transform: uppercase; font-size: 0.85em; }
+.cost-group-title { color: var(--text-dim); }
 .cost-group-figure { font-weight: 600; }
-.cost-group-counts { color: var(--text-dim); font-size: 0.85em; }
+.cost-group-counts { color: var(--text-dim); }
 .cost-group-accepted { border-color: var(--status-good); }
 .cost-group-refused { border-color: var(--fill-warn); }
 
-/* the cost / cost-optimisation switcher - the header comes from inbox.css's .inbox-header/-nav/
-   -scope-label as-is; this file only owns the body underneath it and the optimisation tables */
+/* the cost / cost-optimisation switcher - the header is layout.css's shared .pager-header; this
+   file only owns the body underneath it and the optimisation tables */
 .costs-view { display: flex; flex-direction: column; gap: 0; }
 .costs-view-body { padding: var(--inset, 12px) var(--inset-x, 14px); }
 .opt-card { gap: 14px; }

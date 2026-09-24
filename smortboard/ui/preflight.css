@@ -28,9 +28,6 @@
 
 .preflight-group-label {
   color: var(--text-dim);
-  text-transform: uppercase;
-  font-size: calc(var(--font-size, 13px) - 2px);
-  letter-spacing: 0.04em;
   margin-top: 6px;
 }
 .preflight-group:first-child .preflight-group-label { margin-top: 0; }
@@ -48,9 +45,10 @@
   gap: 10px;
 }
 
+/* the same 6px dot as the card's run timeline */
 .preflight-dot {
-  width: 9px;
-  height: 9px;
+  width: 6px;
+  height: 6px;
   flex: 0 0 auto;
   border-radius: 50%;
 }
@@ -58,19 +56,17 @@
 .preflight-dot-warn { background: var(--fill-attention); }
 .preflight-dot-fail { background: var(--fill-warn); }
 
-.preflight-label { color: var(--cream); font-weight: 600; }
+.preflight-label { color: var(--cream); }
 
 .preflight-detail {
-  padding-left: 19px;
+  padding-left: 16px;
   color: var(--text);
 }
 
 /* the board's own monospace, so a fix line can be copied verbatim */
 .preflight-fix {
-  margin-left: 19px;
+  margin-left: 16px;
   padding: 6px 8px;
-  font-family: ui-monospace, "SF Mono", monospace;
-  font-size: calc(var(--font-size, 13px) - 1px);
   color: var(--cream);
   background: var(--bg);
   border: 2px solid var(--grey-border);

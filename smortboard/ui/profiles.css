@@ -23,7 +23,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-bottom: 1px solid var(--grey-border);
+  border-bottom: 2px solid var(--grey-border);
 }
 
 .profile-row-head {
@@ -33,7 +33,7 @@
   flex-wrap: wrap;
 }
 
-.profile-name { color: var(--cream); font-weight: 600; }
+.profile-name { color: var(--cream); }
 .profile-name.profile-active { color: var(--lichen-milk); }
 
 .profile-active-label { color: var(--lichen-milk); }
@@ -58,7 +58,7 @@
 .profile-add-name { flex: 0 1 140px; }
 .profile-add-token { flex: 1 1 180px; }
 
-.profile-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.profile-status { color: var(--text-dim); }
 .profile-status.profile-error { color: var(--status-warn); }
 
 /* credential pickers opened from profiles sit over the profile backdrop */

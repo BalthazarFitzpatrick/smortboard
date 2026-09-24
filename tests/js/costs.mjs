@@ -121,7 +121,7 @@ assert.match(text, /anthropic - opus \$0\.88, claude-sonnet-4 \$0\.13/);
 // ---- clicking a board's name jumps to it: same switch-and-render a tab click does ---------------
 
 const walk = (node, out = []) => { out.push(node); (node.children || []).forEach(c => walk(c, out)); return out; };
-const nameCell = walk(menu.sections[0].node).find(n => n.className === 'cost-name' && n.textContent === 'pricey board');
+const nameCell = walk(menu.sections[0].node).find(n => n.classList?.contains('cost-name') && n.textContent === 'pricey board');
 mod.setCurrentBoardId('b2');
 responses.set('/api/boards/b1/cards', stubJson(200, []));
 nameCell.onclick();
@@ -220,7 +220,7 @@ responses.set('/api/costs/optimisation', stubJson(200, {
 mod.openCostsOverviewPanel();
 await new Promise(r => setTimeout(r, 0));
 const menu2 = mod.overlayRef().menu;
-const findHeaderLabel = () => walk(menu2.sections[0].node).find(n => n.className === 'inbox-scope-label');
+const findHeaderLabel = () => walk(menu2.sections[0].node).find(n => n.className === 'pager-label');
 assert.equal(findHeaderLabel().textContent, 'cost', 'the panel opens on the cost view');
 
 // right arrow key switches to optimisation and triggers the lazy load
@@ -243,7 +243,7 @@ press('ArrowLeft');
 assert.equal(findHeaderLabel().textContent, 'cost', 'ArrowLeft switches back to cost');
 
 // the two arrow buttons do the same thing as the keys
-const headerNav = walk(menu2.sections[0].node).filter(n => n.className === 'inbox-nav toggle');
+const headerNav = walk(menu2.sections[0].node).filter(n => n.className === 'pager-nav toggle');
 headerNav[1].onclick();
 assert.equal(findHeaderLabel().textContent, 'cost optimisation', 'the -> button switches views');
 headerNav[0].onclick();

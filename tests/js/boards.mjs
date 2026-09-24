@@ -89,7 +89,7 @@ await flush(); await flush();
 assert.ok(mod.bp.backdrop.parentNode, 'the panel is attached once opened');
 assert.equal(mod.bp.boardListEl.querySelectorAll('.board-row').length, 1, 'the one existing board renders');
 assert.equal(mod.bp.boardListEl.querySelector('.board-name').textContent, 'alpha');
-assert.ok(mod.bp.boardListEl.querySelector('.board-row').classList.contains('on'),
+assert.ok(mod.bp.boardListEl.querySelector('.board-row .board-name').classList.contains('on'),
   'the open board carries the opened treatment');
 assert.equal(mod.bp.repoListEl.querySelectorAll('.repo-row').length, 0, 'no repos yet on this board');
 
@@ -112,8 +112,8 @@ assert.equal(mod.boardsRef().length, 2, 'the board bar list now has both boards'
 assert.equal(mod.bp.boardListEl.querySelectorAll('.board-row').length, 2, 'the panel list also refreshed');
 assert.equal(mod.bp.boardNameInput.value, '', 'the name input clears after a successful create');
 const [rowA, rowB] = [...mod.bp.boardListEl.querySelectorAll('.board-row')];
-assert.ok(!rowA.classList.contains('on'), 'the opened treatment leaves the old board');
-assert.ok(rowB.classList.contains('on'), 'the opened treatment moves to the newly created board');
+assert.ok(!rowA.querySelector('.board-name').classList.contains('on'), 'the opened treatment leaves the old board');
+assert.ok(rowB.querySelector('.board-name').classList.contains('on'), 'the opened treatment moves to the newly created board');
 
 // ---- registering a repo refreshes the repo list under the current board ---------------------------
 Object.keys(mod.bp.repoFields).forEach(k => { mod.bp.repoFields[k].value = ''; });

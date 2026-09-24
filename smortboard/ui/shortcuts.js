@@ -78,14 +78,16 @@ function shortcutPageSection(index) {
 function shortcutPagerSection(index, turnPage) {
   const header = document.createElement('div');
   header.className = 'pager-header';
-  const prev = document.createElement('span');
+  const prev = document.createElement('button');
+  prev.type = 'button';
   prev.className = 'pager-nav toggle';
   prev.textContent = '←';
   prev.onclick = () => turnPage(-1);
   const label = document.createElement('span');
   label.className = 'pager-label';
   label.textContent = `${BINDING_GROUPS[index][1]} (${index + 1}/${BINDING_GROUPS.length})`;
-  const next = document.createElement('span');
+  const next = document.createElement('button');
+  next.type = 'button';
   next.className = 'pager-nav toggle';
   next.textContent = '→';
   next.onclick = () => turnPage(1);
