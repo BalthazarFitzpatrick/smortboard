@@ -121,7 +121,7 @@ assert.match(text, /anthropic - opus \$0\.88, claude-sonnet-4 \$0\.13/);
 // ---- clicking a board's name jumps to it: same switch-and-render a tab click does ---------------
 
 const walk = (node, out = []) => { out.push(node); (node.children || []).forEach(c => walk(c, out)); return out; };
-const nameCell = walk(menu.sections[0].node).find(n => n.className === 'cost-name' && n.textContent === 'pricey board');
+const nameCell = walk(menu.sections[0].node).find(n => n.classList?.contains('cost-name') && n.textContent === 'pricey board');
 mod.setCurrentBoardId('b2');
 responses.set('/api/boards/b1/cards', stubJson(200, []));
 nameCell.onclick();

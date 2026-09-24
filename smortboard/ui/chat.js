@@ -94,12 +94,14 @@ function terminalDom(promptGlyph) {
   const cycle = document.createElement('span');
   cycle.className = 'terminal-cycle';
   cycle.hidden = true;
-  const prev = document.createElement('span');
+  const prev = document.createElement('button');
+  prev.type = 'button';
   prev.className = 'terminal-prev toggle';
   prev.textContent = '<';
   const count = document.createElement('span');
   count.className = 'terminal-count';
-  const next = document.createElement('span');
+  const next = document.createElement('button');
+  next.type = 'button';
   next.className = 'terminal-next toggle';
   next.textContent = '>';
   cycle.append(prev, count, next);
@@ -118,7 +120,9 @@ function terminalDom(promptGlyph) {
   // ui_base's count badge, reused as the new-messages pill rather than a primitive of our own
   const jump = document.createElement('button');
   jump.type = 'button';
-  jump.className = 'terminal-jump count-badge';
+  jump.className = 'toggle terminal-jump';
+  jump.textContent = 'new lines';
+
   jump.setAttribute('aria-label', 'jump to the newest line');
   initFollow(log, jump);
 

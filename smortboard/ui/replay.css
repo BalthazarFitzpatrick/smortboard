@@ -23,20 +23,17 @@
 .replay-rail {
   flex: 0 0 280px; overflow-y: auto; border-right: 2px solid var(--grey-border); padding-right: 10px;
 }
-.replay-step {
-  display: flex; align-items: baseline; gap: 8px; padding: 5px 6px; cursor: pointer;
-  border-left: 2px solid transparent;
-}
-.replay-step:hover { color: var(--cream); }
-.replay-step.on { background: var(--bg); border-left-color: var(--cream); }
+.replay-rail { display: flex; flex-direction: column; gap: 4px; }
+/* a step is a .toggle: selected is .toggle.on, hover and focus are ui_base's */
+.replay-step { justify-content: flex-start; gap: 8px; width: 100%; }
+/* the same small round dot as the card's own run timeline */
 .replay-marker {
-  flex: 0 0 auto; width: 9px; height: 9px; border: 2px solid var(--grey-border);
-  background: var(--panel-row);
+  flex: 0 0 auto; width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%;
+  border: 1.5px solid var(--grey-border); background: var(--panel-row);
 }
 .replay-marker-ok { border-color: var(--lichen-milk); background: var(--lichen-milk); }
 .replay-marker-fail { border-color: var(--fill-warn); background: var(--fill-warn); }
-/* the same small round dot as the card's own run timeline */
-.replay-marker { width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%; border-width: 1.5px; }
+
 .replay-step-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .replay-detail { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding-left: 14px; }

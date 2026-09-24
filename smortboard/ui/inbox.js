@@ -49,8 +49,10 @@ function sinceLabel(iso, now = Date.now()) {
 
 function buildIndicator() {
   // lives in board.js's bar corner, beside the queue status and settings, never inside #board-bar
-  const el = document.createElement('div');
-  el.className = 'attention-indicator dim';
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'toggle attention-indicator dim';
+
   el.title = 'attention inbox (n)';
   el.onclick = () => openInboxPanel();
   barCorner().appendChild(el);
@@ -135,13 +137,15 @@ function buildInboxDom() {
 
   const header = document.createElement('div');
   header.className = 'inbox-header';
-  const prev = document.createElement('span');
+  const prev = document.createElement('button');
+  prev.type = 'button';
   prev.className = 'inbox-nav toggle inbox-prev';
   prev.textContent = '←';
   prev.onclick = () => cycleScope(-1);
   const label = document.createElement('span');
   label.className = 'inbox-scope-label';
-  const next = document.createElement('span');
+  const next = document.createElement('button');
+  next.type = 'button';
   next.className = 'inbox-nav toggle inbox-next';
   next.textContent = '→';
   next.onclick = () => cycleScope(1);
@@ -216,10 +220,13 @@ function buildInboxCard(row, idx, focused) {
   since.textContent = sinceLabel(row.since);
   reasonRow.append(reason, since);
 
-  const title = document.createElement('div');
-  title.className = focused ? 'inbox-title inbox-control' : 'inbox-title';
+  const title = document.createElement('button');
+  title.type = 'button';
+  title.className = focused ? 'toggle inbox-title inbox-control' : 'toggle inbox-title';
   title.tabIndex = -1;
+  title.title = row.title;
   title.textContent = row.title;
+
   title.onclick = () => {
     // A GLANCE, NOT A DEPARTURE. the inbox is a queue you work through, so opening a card from it
     // is a look at one row - closing that card comes back here, at the row you were on, rather
@@ -340,7 +347,8 @@ function buildLeaseApproveRow(row) {
 
 // reuses the `toggle` class other inbox controls already use as a button
 function leaseButton(name, label) {
-  const button = document.createElement('span');
+  const button = document.createElement('button');
+  button.type = 'button';
   button.className = `${name} toggle inbox-control`;
   button.tabIndex = -1;
   button.textContent = label;
@@ -374,7 +382,8 @@ function buildFallbackRetryRow(row) {
   const wrap = document.createElement('div');
   wrap.className = 'inbox-answer-row';
 
-  const button = document.createElement('span');
+  const button = document.createElement('button');
+  button.type = 'button';
   button.className = 'inbox-retry toggle inbox-control';
   button.tabIndex = -1;
   button.textContent = `retry on ${row.fallback}`;

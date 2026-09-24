@@ -15,8 +15,14 @@
 .cost-row { display: contents; }
 .cost-rows .cost-head { color: var(--text-dim); }
 .cost-rows .num { text-align: right; white-space: nowrap; }
-.cost-rows .cost-name { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cost-rows .cost-name:hover { color: var(--cream); }
+/* a .toggle that goes to the board; block, not flex, so a long name ellipsises (see .inbox-title) */
+.cost-rows .cost-name {
+  display: block; text-align: left; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  line-height: calc(var(--row-height) - 4px);
+}
+
+
 .cost-rows .progress-row { margin: 0; }
 .cost-foot { flex-direction: column; align-items: flex-start; gap: 4px; }
 .cost-foot .cost-note { color: var(--text-dim); }

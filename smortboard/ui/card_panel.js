@@ -246,8 +246,12 @@ function renderCardStrip(card) {
   // appended rather than templated into the string above: the test dom stub does not parse
   // innerHTML back into a tree (see the same note on terminalDom further down), so a live listener
   // needs a real node - appendChild gives one in the stub and in a real browser alike
-  const overflow = document.createElement('span');
+  const overflow = document.createElement('button');
+  overflow.type = 'button';
+  // out of the tab order: the board is walked card by card, and m opens the same menu
+  overflow.tabIndex = -1;
   overflow.className = 'toggle card-overflow';
+
   overflow.title = 'edit, delete, change model, move status';
   overflow.textContent = '⋯';
   // stop here - strip.addEventListener('click', open) (ui_base's expander) would otherwise also

@@ -48,7 +48,8 @@ function buildReplayDom() {
 
   const footer = document.createElement('div');
   footer.className = 'replay-footer';
-  const play = document.createElement('div');
+  const play = document.createElement('button');
+  play.type = 'button';
   play.className = 'toggle replay-play';
   play.textContent = 'play';
   play.onclick = () => toggleReplayPlay();
@@ -70,7 +71,8 @@ function buildReplayDom() {
 function renderReplayAttempts() {
   rp.attemptRow.innerHTML = '';
   rp.attempts.forEach(a => {
-    const btn = document.createElement('div');
+    const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'toggle replay-attempt' + (a.attempt === rp.currentAttempt ? ' on' : '');
     btn.textContent = `attempt ${a.attempt}${a.reached_worker ? '' : ' (refused)'}`;
     btn.onclick = () => loadReplay(rp.cardId, a.attempt);
@@ -81,8 +83,10 @@ function renderReplayAttempts() {
 function renderReplayRail() {
   rp.rail.innerHTML = '';
   rp.steps.forEach((step, i) => {
-    const row = document.createElement('div');
-    row.className = 'replay-step' + (i === rp.index ? ' on' : '');
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'toggle replay-step' + (i === rp.index ? ' on' : '');
+
     row.dataset.index = String(i);
     const marker = document.createElement('span');
     marker.className = `replay-marker replay-marker-${replayMarkerClass(step)}`;

@@ -69,7 +69,8 @@ function buildProfileRow(row) {
   actions.className = 'profile-actions';
 
   if (!row.active) {
-    const activateBtn = document.createElement('span');
+    const activateBtn = document.createElement('button');
+    activateBtn.type = 'button';
     activateBtn.className = 'profile-activate toggle';
     activateBtn.textContent = 'activate';
     activateBtn.onclick = () => activateProfile(row.name, activateBtn, status, row.lab || 'anthropic');
@@ -78,7 +79,8 @@ function buildProfileRow(row) {
 
   // any profile can be removed now, "default" included - the server refuses only the last
   // remaining one, and removing the active profile switches active away first
-  const removeBtn = document.createElement('span');
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
   removeBtn.className = 'profile-remove toggle';
   removeBtn.textContent = 'remove';
   removeBtn.onclick = () => removeProfile(row.name, removeBtn, status, row.lab || 'anthropic');
@@ -149,7 +151,8 @@ function buildAddForm() {
   tokenInput.className = 'profile-add-token text-field';
   tokenInput.placeholder = 'paste a token';
 
-  const submit = document.createElement('span');
+  const submit = document.createElement('button');
+  submit.type = 'button';
   submit.className = 'profile-add-submit toggle';
   submit.textContent = 'add';
 

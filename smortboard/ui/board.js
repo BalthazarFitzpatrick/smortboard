@@ -1160,7 +1160,8 @@ function buildPromptEditorDom() {
   // live node - the test dom stub does not parse innerHTML strings back into a tree (see the same
   // note on terminalDom above)
   promptRoles.forEach(role => {
-    const btn = document.createElement('div');
+    const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'toggle prompt-role';
     btn.dataset.role = role;
     const name = document.createElement('span');
@@ -1188,7 +1189,8 @@ function buildPromptEditorDom() {
 
   const footer = document.createElement('div');
   footer.className = 'prompt-footer';
-  const save = document.createElement('div');
+  const save = document.createElement('button');
+  save.type = 'button';
   save.className = 'toggle prompt-save';
   save.textContent = 'save';
   save.onclick = () => savePromptEditor();

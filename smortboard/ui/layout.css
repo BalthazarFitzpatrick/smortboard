@@ -104,11 +104,8 @@ body {
 .bucket-header-right { display: flex; align-items: baseline; gap: 10px; }
 .bucket-counts .count-d { color: var(--fill-good); font-weight: 600; }
 .bucket-counts .count-a { color: var(--fill-attention); font-weight: 600; }
-.bucket-expand {
-  background: none; border: 1px solid var(--grey-border);
-  color: var(--text-dim); font: inherit; font-size: 0.85em; padding: 1px 7px; cursor: pointer;
-}
-.bucket-expand:hover { color: var(--cream); border-color: var(--cream); }
+/* a .toggle's display rule outranks the browser's own [hidden] */
+.bucket-expand[hidden] { display: none; }
 
 .bucket-rows {
   display: flex;
@@ -203,12 +200,9 @@ body {
    the positioning context, same trick the fan layout's transform already gives it for free, stated
    explicitly here since a plain (non-transformed) strip needs it too */
 .card-strip { position: relative; }
-.card-strip .card-overflow {
-  position: absolute; top: 4px; right: 6px;
-  padding: 0 6px; height: auto; line-height: 1.4; font-weight: 700; cursor: pointer;
-}
+.card-strip .card-overflow { position: absolute; top: 4px; right: 6px; }
 /* clears the ⋯ sitting over the same corner rather than letting a long title run under it */
-.card-strip .card-title { padding-right: 26px; box-sizing: border-box; }
+.card-strip .card-title { padding-right: calc(var(--row-height) + 16px); box-sizing: border-box; }
 
 /* attention is the standard frame in vanilla, nothing more: the thick ring glow it used to wear
    fought the drop shadow, and the operator dropped it on 2026-09-15 */
@@ -462,10 +456,8 @@ body {
    following (pinned to the newest line) is the default; scrolling up stops it, and this is what
    says lines arrived without moving the view. sits centred just above the input, out of the log's
    own scroll area, and only a click target when the count badge has something to show */
-.terminal-jump {
-  align-self: center; flex: 0 0 auto; cursor: pointer;
-  background: none; border: none; padding: 0; font-family: inherit; font-size: inherit;
-}
+.terminal-jump { align-self: center; }
+
 .terminal-jump[hidden] { display: none; }
 
 /* ---- prompt editor (p) - orchestrator/worker/reviewer role prompts -----------------------------

@@ -6,24 +6,9 @@
    plain vertical list - no pile, no fan, no fixed card height - so nothing here reaches for
    columns.js's layout machinery at all. */
 
-.attention-indicator {
-  order: 3;
-  min-width: 20px;
-  height: calc(var(--row-height, 31px) * 0.56 + 5px);
-  padding: 0 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid var(--attention);
-  color: var(--attention);
-  background: var(--panel-row);
-  font-size: var(--font-size, 13px);
-  cursor: pointer;
-}
-.attention-indicator.dim {
-  border-color: var(--grey-border);
-  color: var(--text-dim);
-}
+/* a .toggle wearing the attention colour while anything waits; at zero it is a plain one */
+.attention-indicator { order: 3; }
+.attention-indicator:not(.dim) { border-color: var(--attention); color: var(--attention); }
 
 /* a vertical rectangle, clearly taller than wide - a stack of overview cards to scan top to
    bottom, not a wide surface trying to hold a landscape layout */
@@ -105,12 +90,15 @@
   font-size: calc(var(--font-size, 13px) - 1px);
 }
 
+/* a .toggle that opens the card, cream for the card's name. block, not flex, so a long title
+   ellipsises - the line-height is the row less its two borders, which centres it as flex did */
 .inbox-title {
-  font-weight: 600;
-  color: var(--cream);
-  cursor: pointer;
+  display: block; text-align: left; color: var(--cream);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  line-height: calc(var(--row-height) - 4px);
 }
-.inbox-title:hover { text-decoration: underline; }
+
+
 
 .inbox-board {
   color: var(--text-dim);

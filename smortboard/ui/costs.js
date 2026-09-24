@@ -69,8 +69,15 @@ const COST_COLUMNS = ['board', 'share', 'spend', 'runs', 'accepted', 'prs', 'per
 function boardCostRow(row, share) {
   const line = document.createElement('div');
   line.className = 'cost-row';
-  const name = costCell(row.board_name, 'cost-name');
+  // a real button: tab and the arrows reach it, enter and space press it
+  const name = document.createElement('button');
+  name.type = 'button';
+  name.className = 'toggle cost-name';
+  name.title = row.board_name;
+  name.textContent = row.board_name;
+
   name.onclick = () => jumpToBoard(row.board_id);
+
   const perPr = row.known_cost_per_pr_usd ?? row.cost_per_pr_usd;
   const refused = knownSpend(row, 'refusal_') || row.refusal_unknown_costs;
   line.append(
@@ -297,14 +304,16 @@ function costsHazardNode(text) {
 function costsHeaderNode() {
   const header = document.createElement('div');
   header.className = 'inbox-header';
-  const prev = document.createElement('span');
+  const prev = document.createElement('button');
+  prev.type = 'button';
   prev.className = 'inbox-nav toggle';
   prev.textContent = '←';
   prev.onclick = () => cycleCostsView(-1);
   const label = document.createElement('span');
   label.className = 'inbox-scope-label';
   label.textContent = COSTS_VIEWS[cv.view];
-  const next = document.createElement('span');
+  const next = document.createElement('button');
+  next.type = 'button';
   next.className = 'inbox-nav toggle';
   next.textContent = '→';
   next.onclick = () => cycleCostsView(1);

@@ -428,7 +428,8 @@ function renderColumnHeader(bucketEl, cards, status) {
   name.textContent = STATUS_NAME[status] || status;
   const expandBtn = document.createElement('button');
   expandBtn.type = 'button';
-  expandBtn.className = 'bucket-expand';
+  expandBtn.className = 'toggle bucket-expand';
+
   expandBtn.addEventListener('click', () => toggleExpand(bucketEl));
   const right = document.createElement('span');
   right.className = 'bucket-header-right';
