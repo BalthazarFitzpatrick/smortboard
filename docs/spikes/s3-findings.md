@@ -1,9 +1,9 @@
-# S3 findings — enforcing a card's path lease at write time
+# s3 findings — enforcing a card's path lease at write time
 
 Run 2026-09-08 against an isolated scratch repo. **Confirmed: leases are enforceable at write time,
 not merely advisory.**
 
-## The mechanism
+## the mechanism
 
 A `PreToolUse` hook matched on `Edit|Write`, reading the tool payload on stdin, comparing
 `file_path` against the card's declared lease, and exiting 2 to block:
@@ -18,7 +18,7 @@ exit 2
 
 Wired through `--settings <file>` with `{"hooks": {"PreToolUse": [{"matcher": "Edit|Write", ...}]}}`.
 
-## Result
+## result
 
 A card was asked to make two edits: one inside its lease (`toolkit/cli.py`), one outside
 (`toolkit/billing.py`).
@@ -48,7 +48,7 @@ Note the run still ended `subtype: success`, `is_error: false`. **A lease block 
 failure.** The board decides whether a `LEASE_CONFLICT` parks the card or extends the lease; the
 runner should not infer it from the exit status.
 
-## Second finding: card agents inherit the operator's whole configuration
+## second finding: card agents inherit the operator's whole configuration
 
 The first attempt at this spike never reached the lease. The agent's opening move was
 `git checkout -b`, because a headless run inherits `~/.claude/CLAUDE.md` and the playbook forbids
@@ -77,9 +77,9 @@ written for an interactive operator who can answer a prompt; a card agent has no
 lease hook and the card's own role prompt supplied deliberately rather than by ambient inheritance.
 This wants deciding before Phase 2 rather than discovering in it.
 
-## Net effect on the plan
+## net effect on the plan
 
 - Leases are enforceable at write time. The "come back to clean branches" promise holds, and the
-  risk logged against it in `PLAN.md` is closed.
+  risk logged against it in `plan.md` is closed.
 - `LEASE_CONFLICT` and `AGENT_QUESTION` both have proven, machine-readable signals.
 - Phase 2 gains one decision: what a card run inherits from the operator's configuration.

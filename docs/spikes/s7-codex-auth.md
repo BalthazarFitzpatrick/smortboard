@@ -1,4 +1,4 @@
-# S7: Codex container credentials
+# s7: codex container credentials
 
 Measured 2026-09-17 with codex-cli 0.154.0 in smortboard-card:multi-lab.
 

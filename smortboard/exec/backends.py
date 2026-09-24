@@ -1,6 +1,6 @@
 """how a card runs: one throwaway container, and nothing else.
 
-Per docs/PLAN.md "The containment decision": a card will eventually read input nobody wrote for it -
+Per docs/plan.md "The containment decision": a card will eventually read input nobody wrote for it -
 an issue body, a fetched page, a dependency's readme - so only a boundary it cannot argue with is
 worth having.
 

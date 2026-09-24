@@ -2,9 +2,9 @@
 > plane in September 2026 and handed to Claude as the planning prompt, which is why it opens with
 > instructions. Kept as written; the README is what it became.
 
-# Dev Board — Agent Orchestration Wrapper
+# dev board — agent orchestration wrapper
 
-## How to use this document
+## how to use this document
 
 This is a vision brief, not a spec. I wrote the raw version on a plane; this is the cleaned-up
 version. Nothing here is final except the items under **Decided**.
@@ -27,7 +27,7 @@ Do not write application code until the plan is agreed.
 
 ---
 
-## 1. What this is
+## 1. what this is
 
 A convenience wrapper around coding agents. **Not a harness.** I am not trying to build a new
 agent framework or reimplement what Claude Code / Ollama-hosted models already do. I want a board
@@ -42,7 +42,7 @@ leaving it alone.** Asynchronous work via the board is the point. Watching an ag
 failure mode, not a feature. Anything in this design that encourages hovering should be argued
 against.
 
-## 2. Non-goals
+## 2. non-goals
 
 - Not a general project-management tool. Single user (me), local-first.
 - Not a replacement for the agents' own reasoning loops.
@@ -50,13 +50,13 @@ against.
 
 ---
 
-## 3. Decided (challenge only if genuinely broken)
+## 3. decided (challenge only if genuinely broken)
 
 - Runs in a browser.
 - ~~Distributed via Docker.~~ **REVISED 2026-09-09:** installed with `uv tool install smortboard`
   and run natively; Docker is a hard dependency and isolates each card instead - there is no fallback mode, because a board that silently ran cards unisolated would be claiming a boundary it no longer had. A containerised board that starts card
   containers needs the Docker socket, which is root on the host — the container was always there to
-  contain the cards, not the board. See "The containment decision" in `PLAN.md`.
+  contain the cards, not the board. See "The containment decision" in `plan.md`.
 - Uses the visual design language of my **ui base repo**. Any element this project needs that
   ui base doesn't have gets **built in ui base**, not here. Existing ui base elements get
   extended or restyled in ui base if warranted. This repo contains configuration of ui base
@@ -71,21 +71,21 @@ against.
 
 ---
 
-## 4. Layout and navigation
+## 4. layout and navigation
 
-### 4.1 Boards
+### 4.1 boards
 
 - Multiple boards, swipeable side to side like virtual desktops.
 - Controls are named buttons in a row at the top of the page.
 
-### 4.2 Main view — two modes
+### 4.2 main view — two modes
 
 1. Kanban columns: **To do / Doing / Checking / Accepted / Rejected**
 2. Columns grouped by **workstream**
 
 *[OPEN] How do I switch modes? Not specified. Suggest something.*
 
-### 4.3 Cards
+### 4.3 cards
 
 - Collapsed: a wide, flat horizontal rectangle, roughly 3:1 width:height, tastefully spaced.
 - Expanded: click opens it in the centre of the screen as a large **vertical** rectangle,
@@ -95,7 +95,7 @@ against.
 - A card being actively worked on by an agent: **green highlight**.
 - A card needing my attention: **yellow-gold outline**.
 
-### 4.4 Side panels
+### 4.4 side panels
 
 Two boxes, one per side, parked almost entirely off-screen with a sliver visible — the right
 edge of the screen shows a centimetre or two of the *left* part of the right box, and vice versa.
@@ -118,14 +118,14 @@ until it's concluded.
 **Dismissal:** deselecting a card slides the left box back to parked, as does clicking its
 border. Clicking the right box's border parks it too.
 
-### 4.5 Attention system
+### 4.5 attention system
 
 - Cards needing input get the gold outline.
 - An alert indicator top-right shows how many cards need attention.
 - Clicking it expands a list; clicking an entry jumps to and opens that card in the main view,
   exactly as if I'd selected it myself.
 
-### 4.6 Top-right controls
+### 4.6 top-right controls
 
 - **Usage & account dropdown** — opens with `u` or mouse. A tab or column per model in use.
   Multiple subscriptions of the same model appear as additional sections after a divider,
@@ -135,7 +135,7 @@ border. Clicking the right box's border parks it too.
 
 ---
 
-## 5. Keyboard model
+## 5. keyboard model
 
 Focus starts on the top board bar.
 
@@ -165,7 +165,7 @@ including what happens on Linux/Windows where Cmd doesn't exist.*
 
 ---
 
-## 6. Motion
+## 6. motion
 
 - Very short animations throughout.
 - Keyboard focus **rubberbands** to the next element, using the cream highlight from ui base.
@@ -174,7 +174,7 @@ including what happens on Linux/Windows where Cmd doesn't exist.*
 
 ---
 
-## 7. Card anatomy
+## 7. card anatomy
 
 Every card has:
 
@@ -196,7 +196,7 @@ Every card has:
 
 ---
 
-## 8. Agents and models
+## 8. agents and models
 
 - Orchestrator model in Mission Control; workforce models on cards.
 - Ollama for local/open-weight models; one or more Claude subscriptions; extensible to others.
@@ -211,7 +211,7 @@ Editable from the UI? Tell me what the sensible layering is.
 
 ---
 
-## 9. Git workflow
+## 9. git workflow
 
 This is the part I'm least sure about and most want your opinion on.
 
@@ -228,7 +228,7 @@ This is the part I'm least sure about and most want your opinion on.
 
 ---
 
-## 10. Persistence
+## 10. persistence
 
 Needs to persist and be **easy to carry between systems**.
 
@@ -241,7 +241,7 @@ Needs to persist and be **easy to carry between systems**.
 
 ---
 
-## 11. Scheduled and recurring work
+## 11. scheduled and recurring work
 
 I think there should be a scheduled/recurring tasks section. Not thought through beyond that.
 What does it schedule — card creation, card execution, maintenance sweeps? Where does it live in
@@ -249,7 +249,7 @@ the UI?
 
 ---
 
-## 12. Packaging
+## 12. packaging
 
 - Docker is the baseline distribution.
 - I'd also like it to be an application on Linux, Mac and Windows — still browser-based
@@ -259,14 +259,14 @@ the UI?
 
 ---
 
-## 13. Documentation
+## 13. documentation
 
 All UI APIs and all communication-protocol APIs documented to the standard that future
 development doesn't break them. Treat this as a deliverable per phase, not a final step.
 
 ---
 
-## 14. My open questions, collected
+## 14. my open questions, collected
 
 1. Branch vs worktree per card — what's actually best practice?
 2. How do we keep workstreams merge-clean when I'm not watching?

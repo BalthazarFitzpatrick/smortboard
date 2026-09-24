@@ -3,7 +3,7 @@
 #
 # What is deliberately NOT here: any GitHub credential, any card token baked into the image, any
 # copy of a repo. The clone and the token are bind-mounted at `docker run` time by
-# smortboard/exec/backends.py::ContainerBackend - see docs/PLAN.md "The containment decision".
+# smortboard/exec/backends.py::ContainerBackend - see docs/plan.md "The containment decision".
 #
 # base pinned by digest, resolved 2026-09-17; claude requires node 22
 FROM node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5

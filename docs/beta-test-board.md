@@ -1,21 +1,21 @@
-# Beta-test a board front to back: Comet Catcher
+# beta-test a board front to back: comet catcher
 
-**One evening, most of the board.** A small browser game, built from one mission-control prompt: a
-canvas game, a server that keeps a high-score table, and a skill tree you buy upgrades from. Sized
+**one evening, most of the board.** a small browser game, built from one mission-control prompt: a
+canvas game, a server that keeps a high-score table, and a skill tree you buy upgrades from. sized
 for 12-14 cards with real dependencies and real parallelism.
 
-**Why this game.** No npm, no Python, no custom image. The card image is `node:22-slim`, and Node 22
-has a test runner built in, so `node --test` runs in the offline test gate as it is. Plain
-JavaScript modules and Node's standard library.
+**why this game.** no npm, no python, no custom image. the card image is `node:22-slim`, and node 22
+has a test runner built in, so `node --test` runs in the offline test gate as it is. plain
+javascript modules and node's standard library.
 
-**What it costs.** Measured before the token trim landed: a worker run averaged $1.12 on sonnet, a
-review $0.16. Twelve cards that pass first time are about $15; plan for $20-30 with fix rounds and
-retries. Keep the worker on sonnet and set the board's daily budget before you start (`shift`+`o`).
+**what it costs.** measured before the token trim landed: a worker run averaged $1.12 on sonnet, a
+review $0.16. twelve cards that pass first time are about $15; plan for $20-30 with fix rounds and
+retries. keep the worker on sonnet and set the board's daily budget before you start (`shift`+`o`).
 
-## Fast path: seed it (2 minutes)
+## fast path: seed it (2 minutes)
 
-**One command, 15 cards already written.** It makes the repo, its private GitHub origin and the
-board. You skip sections 1 to 3 and test running rather than planning:
+**one command, 15 cards already written.** it makes the repo, its private github origin and the
+board. you skip sections 1 to 3 and test running rather than planning:
 
 ```bash
 uv run smortboard seed-beta ~/Documents/dev/comet-catcher
@@ -23,23 +23,23 @@ uv run smortboard seed-beta ~/Documents/dev/comet-catcher
 uv run smortboard
 ```
 
-The seed commits the scaffold on `main`, branches `development`, creates a private GitHub repo named
-after the folder and pushes `development`. `gh` has to be logged in (`gh auth login`). It never
-pushes `main`: the command it prints does, and makes `main` the repo's default branch on GitHub.
-Run it once.
+the seed commits the scaffold on `main`, branches `development`, creates a private github repo named
+after the folder and pushes `development`. `gh` has to be logged in (`gh auth login`). it never
+pushes `main`: the command it prints does, and makes `main` the repo's default branch on github.
+run it once.
 
-Then `h` until every row is green, and `w`. The seed sets the repo's base to `development`, its test
-command to `node --test`, strict leases, a $30 daily budget and sonnet on every card. A folder that
+then `h` until every row is green, and `w`. the seed sets the repo's base to `development`, its test
+command to `node --test`, strict leases, a $30 daily budget and sonnet on every card. a folder that
 is not empty, or a board already named `comet-catcher`, is refused before anything is written
-(`--name` picks another name). When `gh` refuses, not logged in or the repo name taken, the seed
+(`--name` picks another name). when `gh` refuses, not logged in or the repo name taken, the seed
 takes its folder back out and adds nothing to the board.
 
-The seeded cards have the shape section 3 asks mission control for. Take sections 1 to 3 instead
+the seeded cards have the shape section 3 asks mission control for. take sections 1 to 3 instead
 when mission control's planning is what you want to test.
 
 ---
 
-## 1. Create the files (5 minutes)
+## 1. create the files (5 minutes)
 
 ```bash
 mkdir -p ~/Documents/dev/smort-arcade && cd ~/Documents/dev/smort-arcade
@@ -75,18 +75,18 @@ touch server/.gitkeep public/js/.gitkeep public/css/.gitkeep
 
 ```
 
-## 2. Set up the board
+## 2. set up the board
 
-1. Start the board from the latest `development` of smortboard: `uv run smortboard`.
-2. `b` -> **new board** -> pick `~/Documents/dev/smort-arcade`. It has files and no git, so the
-   board lists what the first commit would hold: confirm. It commits, makes `development`, creates
-   the private GitHub repo `smort-arcade`, pushes `development`, and shows the one push-main command -
+1. start the board from the latest `development` of smortboard: `uv run smortboard`.
+2. `b` -> **new board** -> pick `~/Documents/dev/smort-arcade`. it has files and no git, so the
+   board lists what the first commit would hold: confirm. it commits, makes `development`, creates
+   the private github repo `smort-arcade`, pushes `development`, and shows the one push-main command -
    run it.
-3. The repo's row shows base **`development`**, its `origin`, and **tests** `npm test` (found from
-   `package.json`). Leave **lint** empty.
+3. the repo's row shows base **`development`**, its `origin`, and **tests** `npm test` (found from
+   `package.json`). leave **lint** empty.
 4. `o`, the settings every board shares:
-   - **models by role**: worker sonnet. If you have a Codex profile, put the reviewer on OpenAI.
-     A reviewer from another lab is the point of the gate.
+   - **models by role**: worker sonnet. if you have a codex profile, put the reviewer on openai.
+     a reviewer from another lab is the point of the gate.
    - **usage limits**: **ask me**, to see the inbox route.
    - **soft file leases**: **enabled**, so section 4 can switch this board to soft later.
 5. `shift`+`o`, this board's own settings:
@@ -94,9 +94,9 @@ touch server/.gitkeep public/js/.gitkeep public/css/.gitkeep
    - **daily budget**: e.g. `30`.
 6. `h` until everything is green.
 
-## 3. The prompt for mission control
+## 3. the prompt for mission control
 
-Open mission control with `.` on the new board and paste this:
+open mission control with `.` on the new board and paste this:
 
 ```text
 Plan Comet Catcher, a small browser game, as 12 to 14 cards on this board's one repo.
@@ -144,15 +144,15 @@ For each card: complexity low or medium, sonnet as the model, a narrow lease ove
 and acceptance criteria a node:test can check where the card has logic.
 ```
 
-## 4. What to watch, and what each part exercises
+## 4. what to watch, and what each part exercises
 
-| Step | Do | It exercises |
+| step | do | it exercises |
 |---|---|---|
 | mission control | read the plan, then let it create the cards | planning, card text limits (8-word titles), leases over real paths, complexity, dependencies |
 | `w` | run the whole board | parallel runs on disjoint leases, queued cards pulsing slowly in their own column, lease-overlap serialisation |
 | the three-deep chain | watch a child start on an unmerged parent | review-mode stacks (up to three deep), a pull request re-targeted when its parent lands |
 | the api validation card | read the reviewer's verdict | the reviewer's four questions, severity grading, findings routed to you |
-| the skill-tree screen card | open it in checking | a mostly visual change judged by tests and review alone. The board's own screenshot step runs only on smortboard's own `ui/`, so no image here |
+| the skill-tree screen card | open it in checking | a mostly visual change judged by tests and review alone. the board's own screenshot step runs only on smortboard's own `ui/`, so no image here |
 | the upgrades card | watch it want core.js | strict: a refused write, then either lease approve in the inbox or, if it committed, the gates run and the wanted path waits under needs. then switch the board's file lease to **soft** in `shift`+`o` and re-run: it may reach core.js unless another active card holds it |
 | mute + pause | `f` on the board | fold: two todo cards into one, dependencies re-pointed, originals restorable |
 | any blocked card | `n` | the inbox, answering, lease approve, retry on fallback after a usage limit |
@@ -161,5 +161,5 @@ and acceptance criteria a node:test can check where the card has logic.
 | cost | `i`, `c`, `u` | per-card and per-board cost, the cap fit, wasted spend |
 | accept | `y` on a checking card | landing on `development` through the landing lock; `main` stays yours |
 
-**A card surprised you?** File it from `beta: submit issue` on the board, with the card's short id
+**a card surprised you?** file it from `beta: submit issue` on the board, with the card's short id
 and what you expected instead.

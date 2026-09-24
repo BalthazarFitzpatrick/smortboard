@@ -14,7 +14,7 @@ distributed via Docker.
 The design test for every feature: does it help the operator define work and then walk away? Anything
 that rewards hovering is wrong, and should be argued against rather than built.
 
-Brief: `docs/dev-board-brief.md`. Approved plan: `docs/PLAN.md` - phases, spikes, unit contracts,
+Brief: `docs/dev-board-brief.md`. Approved plan: `docs/plan.md` - phases, spikes, unit contracts,
 the whole-system test case and the flowchart all live there.
 
 ## Architecture
@@ -43,7 +43,7 @@ reviewer approving. Boards default to review-required: they open a PR and wait f
 landing on an unprotected base. Free-merge boards land after the gates pass. Neither mode merges
 into main/master/trunk. Review mode can stack one unmerged parent, at most three cards deep.
 
-See `docs/PLAN.md` for the full flowchart.
+See `docs/plan.md` for the full flowchart.
 
 ## Active Context
 
@@ -54,7 +54,7 @@ touch).
 
 Since 2026-09-18 two things changed the shape of the board. **Multi-lab**: a run picks a lab and a
 model per role, Claude Code or Codex, with credential profiles per lab and a fallback list per role -
-`smortboard/labs/` holds the adapters and the catalog, and `docs/spikes/S4`-`S7` hold what was
+`smortboard/labs/` holds the adapters and the catalog, and `docs/spikes/s4`-`s7` hold what was
 measured about Codex before any of it was built. **Merge modes**: a board is review-required by
 default and accepting a card is what lands it, with free-merge as the opt-in per board. Review mode
 stacks a dependent card on its unmerged parent so the queue keeps moving while nobody is watching.
