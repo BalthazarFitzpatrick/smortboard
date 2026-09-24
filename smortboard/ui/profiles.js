@@ -246,7 +246,7 @@ function renderProfiles() {
 
 async function loadProfiles() {
   clearChildren(pr.listEl);
-  pr.listEl.appendChild(hazardPlaceholder('loading...'));
+  pr.listEl.appendChild(waitingPlaceholder('loading'));
   try {
     pr.rows = await api('/api/profiles');
   } catch (err) {

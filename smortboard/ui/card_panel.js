@@ -562,6 +562,7 @@ async function openCardPanel(panel, cardId) {
 // one section per field: data-section names it for the layouts, .section-value holds what it says.
 // focus-glow is the board card's own focus frame (ui_base); layout.css lowers only its lift for a
 // section, per the approved mockup (operator, 2026-09-23)
+// what is focusable inside a section - folds, the note field - wears the same focus, softer
 const SECTION_CLASS = 'card-section focus-glow';
 function sectionHtml(name, label, value, {pin = null, accent = false} = {}) {
   const pinAttr = pin === null ? '' : ` data-pin="${pin}"`;
@@ -601,7 +602,7 @@ function dependencyLabel(cardId) {
 // long text the operator opens on purpose - a brief, a summary with no block - folded shut
 function foldHtml(label, text) {
   const body = String(text || '');
-  return `<details class="card-fold"><summary>${escapeHtml(label)} - ${body.length} chars</summary>` +
+  return `<details class="card-fold"><summary class="focus-glow focus-glow-soft">${escapeHtml(label)} - ${body.length} chars</summary>` +
     `<div class="card-fold-body">${linkifyPrRefs(body)}</div></details>`;
 }
 
@@ -715,7 +716,7 @@ function aboutSectionHtml(card) {
   const tasks = (card.tasks || []).map(t => `<li>${t.done ? '[x]' : '[ ]'} ${escapeHtml(t.text)}</li>`);
   const open = (card.tasks || []).filter(t => !t.done).length;
   if (tasks.length) {
-    body += `<details class="card-fold"><summary>tasks - ${open} of ${tasks.length} open</summary>` +
+    body += `<details class="card-fold"><summary class="focus-glow focus-glow-soft">tasks - ${open} of ${tasks.length} open</summary>` +
       `<ul class="card-tasks">${tasks.join('')}</ul></details>`;
   }
   return sectionHtml('about', 'about', body, {pin: 0});
@@ -824,7 +825,7 @@ function needsSectionHtml(card, outcome, block, hasBoardNote) {
   const button = cta && cta.action !== 'open'
     ? `<button type="button" class="toggle comment-cta" data-cta-action="${escapeHtml(cta.action)}">${escapeHtml(cta.label)}</button>`
     : '';
-  const input = '<input class="comment-input text-field" placeholder="note to agent, enter sends">';
+  const input = '<input class="comment-input text-field focus-glow focus-glow-soft" placeholder="note to agent, enter sends">';
   return sectionHtml('needs', 'needs', `<ul class="card-lines">${lines.join('')}</ul>${button}${input}`,
     {pin: 0, accent: attention});
 }
@@ -847,7 +848,7 @@ function historyRowHtml(comment) {
   const head = `<time>${escapeHtml(formatNoteTime(comment.created_at))}</time>` +
     `<span class="history-head${you ? ' history-you' : ''}">${you ? 'you: ' : ''}${linkifyPrRefs(headline)}</span>`;
   if (!rest) return `<li><div class="history-line">${head}</div></li>`;
-  return `<li><details class="history-note"><summary class="history-line">${head}</summary>` +
+  return `<li><details class="history-note"><summary class="history-line focus-glow focus-glow-soft">${head}</summary>` +
     `<div class="comment-body">${linkifyPrRefs(rest)}</div></details></li>`;
 }
 
@@ -857,7 +858,7 @@ function historyRowHtml(comment) {
 // with no lease says so out loud, because that is why its run gets refused
 function detailsSectionHtml(card) {
   const fold = (label, count, inner) =>
-    `<details class="card-fold"><summary>${escapeHtml(label)} - ${count}</summary>${inner}</details>`;
+    `<details class="card-fold"><summary class="focus-glow focus-glow-soft">${escapeHtml(label)} - ${count}</summary>${inner}</details>`;
   const parts = [];
   const criteria = (card.criteria || []).map(c => `<li>${escapeHtml(c.text)}</li>`);
   if (criteria.length) parts.push(fold('criteria', criteria.length, `<ul class="card-lines">${criteria.join('')}</ul>`));

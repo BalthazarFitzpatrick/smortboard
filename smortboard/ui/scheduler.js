@@ -215,7 +215,7 @@ function openDigestPanel() {
   toggleOverlay('KeyD', () => {
     const menu = new Menu({
       title: 'morning digest',
-      sections: [{kind: 'list', items: [], empty: 'loading...'}],
+      sections: [{kind: 'node', node: waitingPlaceholder('loading')}],
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyD') openOverlay = null; },
     });
     menu.openAt({x: window.innerWidth / 2 - 220, y: 80});

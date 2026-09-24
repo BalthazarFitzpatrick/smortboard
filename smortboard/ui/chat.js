@@ -365,7 +365,10 @@ function renderMissionControl(data, {justFinished = false} = {}) {
       }
     });
     if (data.error) appendLine(mc.log, 'board', data.error, 'error');
-    if (data.thinking) appendLine(mc.log, 'orchestrator', 'orchestrator is thinking', 'thinking');
+    if (data.thinking) {
+      appendLine(mc.log, 'orchestrator', 'orchestrator is thinking', 'thinking')
+        .querySelector('.terminal-body')?.classList.add('working-dots');
+    }
   });
   // the redraw just wiped any queued-but-unconfirmed lines too - put back whatever this
   // board's queue still has that the server transcript does not

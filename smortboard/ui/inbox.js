@@ -554,7 +554,7 @@ async function sendAnswer(cardId, input, status) {
 
 async function loadInbox() {
   clearChildren(ib.listEl);
-  ib.listEl.appendChild(hazardPlaceholder('loading...'));
+  ib.listEl.appendChild(waitingPlaceholder('loading'));
   try {
     ib.rows = await api('/api/attention');
   } catch (err) {

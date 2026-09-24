@@ -313,13 +313,13 @@ function costsHeaderNode() {
 }
 
 function costsOverviewNode() {
-  if (!cv.overview) return costsHazardNode('loading...');
+  if (!cv.overview) return waitingPlaceholder('loading');
   if (cv.overview.error) return costsHazardNode(`could not load costs: ${cv.overview.error}`);
   return costsOverviewSections(cv.overview)[0].node;
 }
 
 function costsOptimisationNode() {
-  if (!cv.optimisation) return costsHazardNode('loading...');
+  if (!cv.optimisation) return waitingPlaceholder('loading');
   if (cv.optimisation.error) return costsHazardNode(`could not load costs: ${cv.optimisation.error}`);
   return costOptimisationCard(cv.optimisation);
 }
@@ -378,7 +378,7 @@ function openCostsOverviewPanel() {
     cv.optimisationLoaded = false;
     const menu = new Menu({
       title: 'cost overview',
-      sections: [{kind: 'node', node: costsHazardNode('loading...')}],
+      sections: [{kind: 'node', node: waitingPlaceholder('loading')}],
       onDismiss: () => {
         document.removeEventListener('keydown', onCostsKey, {capture: true});
         cv.menu = null;

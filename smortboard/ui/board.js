@@ -878,7 +878,7 @@ function openRosterPanel() {
   toggleOverlay('KeyA', () => {
     const menu = new Menu({
       title: 'agent roster',
-      sections: [{kind: 'list', items: [], empty: 'loading...'}],
+      sections: [{kind: 'node', node: waitingPlaceholder('loading')}],
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyA') openOverlay = null; },
     });
     menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
@@ -980,6 +980,18 @@ function fillBar(fraction, tone = '') {
   bar.appendChild(fill);
   row.appendChild(bar);
   return row;
+}
+
+// something still coming: ui_base's hazard stripes drifting and the label's dots counting, so a
+// slow fetch reads as working, not stuck. the same box every panel uses for nothing-here-yet
+function waitingPlaceholder(text) {
+  const box = document.createElement('div');
+  box.className = 'hazard-stripes hazard-placeholder hazard-moving';
+  const label = document.createElement('span');
+  label.className = 'hazard-label working-dots';
+  label.textContent = text;
+  box.appendChild(label);
+  return box;
 }
 
 function textLine(text, className) {
@@ -1092,7 +1104,7 @@ function openUsagePanel() {
   toggleOverlay('KeyU', () => {
     const menu = new Menu({
       title: 'usage',
-      sections: [{kind: 'list', items: [], empty: 'loading...'}],
+      sections: [{kind: 'node', node: waitingPlaceholder('loading')}],
       onDismiss: () => { if (openOverlay && openOverlay.key === 'KeyU') openOverlay = null; },
     });
     menu.openAt({x: window.innerWidth / 2 - 200, y: 80});

@@ -126,7 +126,7 @@ function renderPulls() {
 
 async function loadPulls() {
   clearChildren(pl.listEl);
-  pl.listEl.appendChild(pullsHazard('loading...'));
+  pl.listEl.appendChild(waitingPlaceholder('asking github'));
   try {
     pl.rows = await api('/api/pulls');
   } catch (err) {
