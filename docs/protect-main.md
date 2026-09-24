@@ -24,7 +24,7 @@ and the board keeps one pull request from `development` into `main` open for you
 
 ## 2. The hook
 
-[`tools/claude-hooks/protect-main.sh`](../tools/claude-hooks/protect-main.sh) is a `PreToolUse` hook
+[`tools/claude-hooks/protect-main.sh`](https://github.com/BalthazarFitzpatrick/smortboard/blob/main/tools/claude-hooks/protect-main.sh) is a `PreToolUse` hook
 for Claude Code's Bash tool. It needs `bash`, `jq` and a logged-in `gh`.
 
 | The agent runs | The hook |
@@ -105,7 +105,7 @@ what the ruleset is for.
 
 ## 3. The ruleset on main
 
-[`tools/github/protect-main.json`](../tools/github/protect-main.json) is a repository ruleset for the
+[`tools/github/protect-main.json`](https://github.com/BalthazarFitzpatrick/smortboard/blob/main/tools/github/protect-main.json) is a repository ruleset for the
 default branch: no deletion, no force-push, and changes only through a pull request.
 
 ```bash

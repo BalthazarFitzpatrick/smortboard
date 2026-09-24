@@ -1,6 +1,6 @@
 """retakes every screenshot in docs/images against the DEMO board.
 
-the published images are the readme's and the github page's, so they must never show a real card.
+the published images are the readme's and the docs site's, so they must never show a real card.
 this drives the demo board only, which is why it takes the demo server's port rather than defaulting
 to 8000 - pointing it at the operator's own board is then a deliberate act, not an accident.
 
