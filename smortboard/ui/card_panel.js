@@ -121,7 +121,7 @@ function cardClasses(card) {
   // a thing waiting on the operator - the glow is reserved for a card that actually needs him
   // the queue holds it but no agent does: grey, ahead of every other state, so neither the blue of
   // working nor the yellow of attention claims a card that has not started yet
-  if (isPendingCard(card)) classes.push('card-pending');
+  if (isPendingCard(card)) classes.push('card-pending', 'edge-pulse');
   else if (card.handled_by_board) classes.push('card-working');
   else if (card.blocked_reason_code || card.review_flag) classes.push('card-attention');
   else if (card.status === 'doing') classes.push('card-working');
@@ -376,10 +376,138 @@ function wireCommentInput(input, panel, cardId) {
 // short card. from the first child's top to the last one's bottom, as laid out - offsetTop and
 // offsetHeight, since the panel opens under a transform that scales any rect read mid-animation
 function fitCardPanel(panel) {
+  markClippedSections(panel);
   const kids = [...panel.children];
   if (!panel._expander || !kids.length) return;
   const first = kids[0], last = kids[kids.length - 1];
   panel._expander.fit(last.offsetTop + last.offsetHeight - first.offsetTop);
+}
+
+// a matrix cell is one height, so a longer section is cut short: it fades out and its label says
+// space shows the rest
+function markClippedSections(panel) {
+  panel.querySelectorAll('.card-section:not([data-section="title"])').forEach(section => {
+    const value = section.querySelector('.section-value');
+    const clipped = !!value && value.scrollHeight > value.clientHeight + 1;
+    section.classList.toggle('section-clipped', clipped);
+  });
+}
+
+// ---- a section popped out over the card ---------------------------------------------------------
+// space on a focused cell opens that section whole, folds open, in ui_base's expander grown out of
+// the cell and fitted to its content. space or escape closes it back onto the cell. the needs cell
+// brings its note field along: / types into it, enter sends, the same as on the card
+let sectionPopout = null; // {section, expander, input} while one is open
+
+function popoutBodyHtml(section) {
+  const body = document.createElement('div');
+  body.innerHTML = section.innerHTML;
+  body.querySelectorAll('details').forEach(fold => { fold.open = true; });
+  // the lead is the brief's first words - with the whole brief open under it, it only repeats
+  const brief = [...body.querySelectorAll('details.card-fold')]
+    .find(fold => fold.querySelector('summary')?.textContent.startsWith('full brief'));
+  if (brief) body.querySelector('.card-lead')?.remove();
+  return body.innerHTML;
+}
+
+function wireSectionPopout(section, cardPanel, cardId) {
+  const label = section.querySelector('.field-label');
+  if (!label || section.dataset.section === 'title') return;
+  let body = null;
+  // the label is the expander's strip: the popout grows out of it, and a click on it opens it
+  const expander = makeExpander(label, {
+    origin: 'rect',
+    expandedRatio: {w: 1, h: 1},
+    onOpen: pop => {
+      [...cardPanel.classList].filter(c => c.startsWith('card-') && c !== 'card-panel')
+        .forEach(c => pop.classList.add(c));
+      pop.classList.add('section-popout');
+      body = document.createElement('div');
+      body.className = `card-panel section-popout-body card-section`;
+      body.dataset.section = section.dataset.section;
+      body.innerHTML = popoutBodyHtml(section);
+      pop.appendChild(body);
+      const input = body.querySelector('.comment-input');
+      if (input) wirePopoutInput(input, cardPanel, cardId);
+      body.querySelectorAll('.comment-cta').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (btn.dataset.ctaAction === 'run') runFocusedCard(cardId);
+          else if (btn.dataset.ctaAction === 'stop') stopFocusedCard(cardId);
+        });
+      });
+      body.querySelectorAll('details').forEach(fold => fold.addEventListener('toggle', fitPopout));
+      sectionPopout = {section, expander, input};
+      document.addEventListener('keydown', onPopoutKey, true);
+      fitPopout();
+      pop.tabIndex = -1;
+      pop.focus();
+    },
+    onClose: () => {
+      document.removeEventListener('keydown', onPopoutKey, true);
+      sectionPopout = null;
+      if (section.isConnected) section.focus();
+    },
+  });
+  function fitPopout() {
+    if (body) expander.fit(body.offsetHeight);
+  }
+  section._popout = expander;
+}
+
+function wirePopoutInput(input, cardPanel, cardId) {
+  input.addEventListener('keydown', evt => {
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    api(`/api/cards/${cardId}/comments`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({author: 'operator', body: text}),
+    }).then(() => {
+      sectionPopout?.expander.close();
+      openCardPanel(cardPanel, cardId);
+    });
+  });
+}
+
+// CAPTURE PHASE, AHEAD OF THE CARD. the card's own expander closes on escape and the board closes the
+// card on space, both on the document - a popout open over the card answers first and stops there
+function onPopoutKey(evt) {
+  if (!sectionPopout || withModifier(evt)) return;
+  const typing = evt.target.matches?.('input, textarea');
+  const {expander, input} = sectionPopout;
+  if (evt.code === 'Escape') {
+    evt.preventDefault();
+    evt.stopImmediatePropagation();
+    // out of the note field first, then out of the popout
+    if (typing) evt.target.closest('.expand-panel')?.focus();
+    else expander.close();
+    return;
+  }
+  if (typing) return;
+  if (evt.code === 'Space') {
+    evt.preventDefault();
+    evt.stopImmediatePropagation();
+    expander.close();
+  } else if (evt.code === 'Slash' && input) {
+    evt.preventDefault();
+    evt.stopImmediatePropagation();
+    input.focus();
+  }
+}
+
+// space on a focused cell pops it out; on the head band it still closes the card, as it always did
+function wireSectionPopoutKey(panel) {
+  if (panel._popoutKeyWired) return;
+  panel._popoutKeyWired = true;
+  panel.addEventListener('keydown', evt => {
+    if (evt.code !== 'Space' || withModifier(evt) || evt.target.matches?.('input, textarea')) return;
+    const section = evt.target.closest?.('.card-section');
+    if (!section || !section._popout) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    section._popout.open();
+  });
 }
 
 async function openCardPanel(panel, cardId) {
@@ -403,6 +531,8 @@ async function openCardPanel(panel, cardId) {
   }
 
   wireCardSectionNav(panel);
+  wireSectionPopoutKey(panel);
+  panel.querySelectorAll('.card-section').forEach(section => wireSectionPopout(section, panel, cardId));
   // THE OPEN CARD TAKES THE KEYBOARD. focus used to stay on the strip behind the panel, so up and
   // down did nothing here and the sections were only reachable by / and then escape
   focusFirstCardSection(panel);
@@ -425,9 +555,9 @@ async function openCardPanel(panel, cardId) {
   if (openCard && openCard.cardId === cardId) Object.assign(openCard, {input});
 }
 
-// ---- the open card: a head band, then about -> done -> needs down the left and the card's own
-// facts down the right. every section is pinned to its column (data-pin), so the reading order is
-// the same on every card rather than whatever the shortest-column rule makes of it
+// ---- the open card: a head band over a 2x2 matrix - about and needs on the left, done and the
+// card's own facts on the right. every section is pinned to its column (data-pin), and every cell
+// has one height, so the two rows line up
 
 // one section per field: data-section names it for the layouts, .section-value holds what it says.
 // focus-glow is the board card's own focus frame (ui_base); layout.css lowers only its lift for a
@@ -631,7 +761,7 @@ function doneSectionHtml(card, outcome, block) {
   const ran = outcome.summary || outcome.tests || outcome.review || outcome.pr_url;
   if (!ran) {
     const working = card.status === 'doing' && !card.blocked_reason_code;
-    return sectionHtml('done', 'done', `<span class="empty">${working ? 'nothing yet' : 'not run yet'}</span>`, {pin: 0});
+    return sectionHtml('done', 'done', `<span class="empty">${working ? 'nothing yet' : 'not run yet'}</span>`, {pin: 1});
   }
   let body = '';
   if (block) {
@@ -645,7 +775,7 @@ function doneSectionHtml(card, outcome, block) {
   body += runRailHtml(card, outcome);
   const commit = commitFromSummary(outcome.summary);
   const label = commit ? `done<span class="field-count">commit ${escapeHtml(commit)}</span>` : 'done';
-  return sectionHtml('done', label, body, {pin: 0});
+  return sectionHtml('done', label, body, {pin: 1});
 }
 
 // what an open card that is NOT waiting on the operator says under needs
@@ -742,7 +872,7 @@ function detailsSectionHtml(card) {
   if (attachments.length) parts.push(fold('attachments', attachments.length, `<ul class="card-lines">${attachments.join('')}</ul>`));
   const comments = card.comments || [];
   if (comments.length) parts.push(fold('history', comments.length, `<ul class="card-history">${comments.map(historyRowHtml).join('')}</ul>`));
-  return sectionHtml('details', 'details', parts.join(''), {pin: 0});
+  return sectionHtml('details', 'details', parts.join(''), {pin: 1});
 }
 
 function cardPanelHtml(card, outcome) {
@@ -750,9 +880,10 @@ function cardPanelHtml(card, outcome) {
   const block = parseWorkerBlock(run.summary);
   const comments = card.comments || [];
   const hasBoardNote = comments.some(c => c.author === BOARD_COMMENT_AUTHOR);
-  // BARE BONES, ONE COLUMN (operator, 2026-09-23): about, done, needs, and the facts folded away
+  // A 2x2 MATRIX (operator, 2026-09-24): about | done over needs | details, every cell one height.
+  // a cell that holds more than it shows pops out whole on space (openSectionPopout)
   return `
-    <div class="card-sections" data-columns="1">
+    <div class="card-sections" data-columns="2">
       ${cardHeadHtml(card, run)}
       ${aboutSectionHtml(card)}
       ${doneSectionHtml(card, run, block)}

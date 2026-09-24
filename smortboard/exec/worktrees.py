@@ -227,6 +227,65 @@ def rev_parse(repo_path: str | Path, ref: str) -> str | None:
     return result.stdout.strip() or None if result.returncode == 0 else None
 
 
+def _try_git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
+    """one git call whose exit code is the answer, not an error"""
+    return subprocess.run(
+        ["git", "-C", str(repo_path), *args], capture_output=True, text=True, check=False
+    )
+
+
+# the board never moves these, even locally - they are the operator's
+_NEVER_MOVED = frozenset({"main", "master", "trunk"})
+
+
+def _checked_out_at(repo_path: Path, branch: str) -> Path | None:
+    """the worktree (the main folder included) that has `branch` checked out, if any"""
+    listing = subprocess.run(
+        ["git", "-C", str(repo_path), "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    path = None
+    for line in listing.splitlines():
+        if line.startswith("worktree "):
+            path = Path(line.removeprefix("worktree "))
+        elif line == f"branch refs/heads/{branch}":
+            return path
+    return None
+
+
+def fast_forward_base(repo_path: str | Path, base: str, remote: str = "origin") -> str:
+    """moves the local `base` up to `remote`/`base` when that is a plain fast-forward.
+
+    landing pushes to origin and never writes the local branch, so it lagged forever and every
+    reader of it saw the scaffold (comet catcher, 2026-09-24). returns what happened: moved,
+    current, protected, missing, diverged or dirty - a branch with local work is never touched
+    """
+    if base in _NEVER_MOVED:
+        return "protected"
+    root = Path(repo_path).resolve()
+    with repo_lock(root):
+        local = rev_parse(root, f"refs/heads/{base}")
+        target = rev_parse(root, f"refs/remotes/{remote}/{base}")
+        if not local or not target:
+            return "missing"
+        if local == target:
+            return "current"
+        if _try_git(root, "merge-base", "--is-ancestor", local, target).returncode != 0:
+            return "diverged"
+        tree = _checked_out_at(root, base)
+        if tree is None:
+            # compare-and-swap: only moves a branch still at `local`
+            moved = _try_git(root, "update-ref", f"refs/heads/{base}", target, local)
+            return "moved" if moved.returncode == 0 else "diverged"
+        dirty = _try_git(tree, "status", "--porcelain", "--untracked-files=no").stdout.strip()
+        if dirty:
+            return "dirty"
+        merged = _try_git(tree, "merge", "--ff-only", "--quiet", target)
+        return "moved" if merged.returncode == 0 else "dirty"
+
+
 def delete_branch(repo_path: str | Path, card_id: str) -> None:
     """drops the card's local branch. -D because a rejected attempt is never merged anywhere"""
     with repo_lock(repo_path):

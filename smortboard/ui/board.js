@@ -14,18 +14,16 @@ const STATUSES = ['todo', 'doing', 'checking', 'accepted', 'rejected'];
 // out by isAttentionCard (columns.js) rather than driven by card.status
 const COLUMNS = ['todo', 'doing', 'attention', 'checking', 'accepted', 'rejected'];
 
-// which column a card actually renders in: a card the queue is holding shows in doing as pending
-// whatever its stored status says, then attention wins over its own real status - excluding a
-// card the board is already retrying itself (isAttentionCard already reads handled_by_board)
+// which column a card actually renders in: attention wins over its own real status - excluding a
+// card the board is already retrying itself (isAttentionCard reads handled_by_board). a queued card
+// stays where it is and breathes there; doing is only what an agent holds this instant
 function columnFor(card) {
-  if (isPendingCard(card)) return 'doing';
   return isAttentionCard(card) ? 'attention' : card.status;
 }
 
 let boards = [];
 let currentBoardId = null;
 let bucketsApi = null;
-let grouped = false; // g toggles this; workstream layout itself ships post-v1
 let openCard = null; // {cardId, expander, input} while a card panel is open
 
 // a 401 means this tab has no api key cookie - opened by hand rather than from the printed link
@@ -144,6 +142,9 @@ async function onBoardEnter(boardId) {
   const cards = await api(`/api/boards/${boardId}/cards`);
   renderBuckets(cards);
   followedCardStates = new Map(cards.map(c => [c.id, `${c.status}|${c.updated_at}`]));
+  // the schedule poll only ran from w and followed whichever board was current, so a board switch
+  // polled the other board, cleared the queue marks and stopped - read this board's queue on entry
+  if (typeof restartSchedulePoll === 'function') restartSchedulePoll();
   // resumes this board's send queue (a reload landed here with something still unsent) whether or
   // not mission control is open - a message keeps retrying in the background either way.
   // guarded: messageQueue.js is a separate script (see index.html's load order) and some isolated
@@ -924,24 +925,18 @@ async function jumpToCard(cardId, roster) {
 
 // ---- usage (u) --------------------------------------------------------------------------------
 
+// claude reports five_hour, seven_day and per-model seven-day windows; codex has reported none yet
 function windowLabel(type) {
-  if (type === 'five_hour' || type === 'five-hour') return 'five-hour window';
-  if (type === 'seven_day' || type === 'seven-day') return 'seven-day window';
-  return type;
+  return String(type).replace('five_hour', 'five-hour').replace('seven_day', 'seven-day').replace(/_/g, ' ');
 }
 
-// resets_at is a unix-epoch second count; shown in whoever's looking at the drawer's own local time
-function formatResetTime(resetsAt) {
-  if (resetsAt == null) return null;
+// resets_at is a unix-epoch second count, shown in the viewer's local time: the clock alone within
+// a day, the weekday in front beyond that
+function formatResetTime(resetsAt, now = Date.now() / 1000) {
   const d = new Date(resetsAt * 1000);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `resets ${hh}:${mm}`;
-}
-
-function formatTokenCount(n) {
-  const count = n || 0;
-  return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
+  const clock = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (Math.abs(resetsAt - now) < 86400) return clock;
+  return `${d.toLocaleDateString('en-US', {weekday: 'short'}).toLowerCase()} ${clock}`;
 }
 
 // each rate-limit window's length, for how far through it we are when no utilisation is reported
@@ -954,25 +949,23 @@ function formatDuration(seconds) {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
-// WHAT THE BAR MEASURES IS NAMED BESIDE IT. utilisation when the server reports one; otherwise how
-// far through its window we are - never a guess at usage, and the stat line says which it is
+// utilisation when the lab reports one; otherwise how far through the window we are, marked
+// "through" so a time fraction never reads as usage. a past reset is old data: nothing to draw
 function windowMeasure(w, now = Date.now() / 1000) {
-  if (w.utilization != null) return {fraction: w.utilization, note: `${(w.utilization * 100).toFixed(1)}% used`};
+  if (w.utilization != null) return {fraction: w.utilization, label: `${Math.round(w.utilization * 100)}%`};
   const length = WINDOW_SECONDS[String(w.type).replace('-', '_')];
-  if (w.resets_at == null || !length) return {fraction: null, note: null};
-  const left = w.resets_at - now;
-  // A PAST RESET MEANS THE DATA IS OLD: the window rolled over after the last run reported it, so
-  // there is nothing current to draw - a full bar reading "0m left" said the opposite
-  if (left <= 0) return {fraction: null, note: 'reset since the last run reported it'};
-  const fraction = Math.min(1, Math.max(0, 1 - left / length));
-  // the number reads as time, not usage: "through" the window, never "used"
-  return {fraction, note: `${Math.round(fraction * 100)}% through - ${formatDuration(left)} left in the window`};
+  if (w.resets_at == null || !length || w.resets_at <= now) return {fraction: null, label: null};
+  const fraction = Math.min(1, Math.max(0, 1 - (w.resets_at - now) / length));
+  return {fraction, label: `${Math.round(fraction * 100)}% through`};
 }
 
+// one short line: the percentage, the reset, the time left
 function windowStats(w, now = Date.now() / 1000) {
-  const when = formatResetTime(w.resets_at);
-  const reset = when && w.resets_at <= now ? when.replace('resets', 'reset at') : when;
-  return [w.status, reset, windowMeasure(w, now).note].filter(Boolean).join(' - ');
+  const {label} = windowMeasure(w, now);
+  if (w.resets_at == null) return label || 'no reset reported';
+  const when = formatResetTime(w.resets_at, now);
+  if (w.resets_at <= now) return `reset ${when} - no run since`;
+  return [label, `resets ${when}`, `in ${formatDuration(w.resets_at - now)}`].filter(Boolean).join(' - ');
 }
 
 // ui_base's fill bar: .progress-row > .bar > .bar-fill, the fill's width the fraction
@@ -1003,43 +996,33 @@ function usageSection(label, className) {
   return section;
 }
 
-// one row per credential profile inside a window section - a profile the server never sent a
-// window for (no rate_limit_event recorded under it yet) still gets a row, with a zero/empty bar
-// rather than being left out, per the usage-overlay-per-profile card
-function profileRow(profileName, window) {
+function windowRow(w) {
   const row = document.createElement('div');
-  row.className = 'usage-profile';
-  row.appendChild(textLine(profileName, 'field-label'));
-  if (window) {
-    const {fraction} = windowMeasure(window);
-    if (fraction != null) row.appendChild(fillBar(fraction, ['allowed', 'ok'].includes(window.status) ? '' : 'warn'));
-    row.appendChild(textLine(windowStats(window), 'stat'));
-  } else {
-    row.appendChild(fillBar(0));
-    row.appendChild(textLine('no usage yet', 'stat'));
-  }
+  row.className = 'usage-window';
+  row.appendChild(textLine(windowLabel(w.type), 'field-label'));
+  const {fraction} = windowMeasure(w);
+  if (fraction != null) row.appendChild(fillBar(fraction, ['allowed', 'ok'].includes(w.status) ? '' : 'warn'));
+  row.appendChild(textLine(windowStats(w), 'stat'));
   return row;
 }
 
-// windows grouped by type, each type a section holding one row per known profile - windows carry
-// no profile of their own before this card, so a window with none reads as the "default" profile
-function windowSections(windows, profileNames, lab = '') {
-  const byType = new Map();
+// one section per credential profile, holding the windows that profile's lab reported for it -
+// a profile with none still gets its section, so a second account never silently drops out.
+// a window recorded without a profile belongs to "default"
+function profileSections(windows, profiles, labOf) {
+  const keyOf = (lab, name) => `${lab}\u0000${name}`;
+  const byProfile = new Map();
+  profiles.forEach(p => byProfile.set(keyOf(labOf(p), p.name), {lab: labOf(p), name: p.name, windows: []}));
   windows.forEach(w => {
-    if (!byType.has(w.type)) byType.set(w.type, new Map());
-    byType.get(w.type).set(w.profile || 'default', w);
+    const key = keyOf(labOf(w), w.profile || 'default');
+    if (!byProfile.has(key)) byProfile.set(key, {lab: labOf(w), name: w.profile || 'default', windows: []});
+    byProfile.get(key).windows.push(w);
   });
-  return [...byType.entries()].map(([type, byProfile]) => {
-    const section = usageSection(`${lab ? lab + ' - ' : ''}${windowLabel(type)}`, 'usage-window');
-    const names = profileNames.length ? profileNames : [...byProfile.keys()];
-    names.forEach(name => section.appendChild(profileRow(name, byProfile.get(name))));
-    // the section total is the sum of the rows it holds, never a figure computed apart from them
-    const total = names.reduce((sum, name) => {
-      const w = byProfile.get(name);
-      const fraction = w ? windowMeasure(w).fraction : null;
-      return sum + (fraction || 0);
-    }, 0);
-    section.appendChild(textLine(`combined: ${Math.round(total * 100)}%`, 'stat'));
+  const order = type => ['five_hour', 'seven_day'].indexOf(type) + 1 || 3;
+  return [...byProfile.values()].map(({lab, name, windows: own}) => {
+    const section = usageSection(`${lab} - ${name}`, 'usage-profile');
+    own.sort((a, b) => order(a.type) - order(b.type)).forEach(w => section.appendChild(windowRow(w)));
+    if (!own.length) section.appendChild(textLine('no window reported yet', 'stat'));
     return section;
   });
 }
@@ -1049,9 +1032,7 @@ function windowSections(windows, profileNames, lab = '') {
 function usageCard(data) {
   const labOf = row => row.lab || (row.model?.includes('/') ? row.model.split('/')[0] : 'anthropic');
   const labs = [...new Set([...(data.profiles || []), ...(data.windows || []), ...(data.models || [])].map(labOf))];
-  const windowParts = labs.flatMap(lab => windowSections(
-    (data.windows || []).filter(w => labOf(w) === lab),
-    (data.profiles || []).filter(p => labOf(p) === lab).map(p => p.name), lab));
+  const windowParts = profileSections(data.windows || [], data.profiles || [], labOf);
   const modelParts = [];
   const money = row => row.cost_usd == null ? 'unknown' : `${row.cost_estimated ? '~' : ''}$${row.cost_usd.toFixed(2)}`;
   labs.forEach(lab => {
@@ -1063,11 +1044,9 @@ function usageCard(data) {
       const row = document.createElement('div');
       row.className = 'usage-model';
       const share = total > 0 && m.cost_usd != null ? m.cost_usd / total : null;
-      const shareNote = share != null ? ` - ${Math.round(share * 100)}% of spend` : '';
+      const shareNote = share != null ? ` - ${Math.round(share * 100)}%` : '';
       row.appendChild(textLine(`${m.model} - ${money(m)}${shareNote}`, 'usage-model-name'));
       if (share != null) row.appendChild(fillBar(share));
-      row.appendChild(textLine(`in ${formatTokenCount(m.input_tokens)} - out ${formatTokenCount(m.output_tokens)} - ` +
-        `cache ${formatTokenCount((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))}`, 'stat'));
       section.appendChild(row);
     });
     modelParts.push(section);
@@ -1092,6 +1071,8 @@ function usageCard(data) {
   foot.className = 'card-foot usage-foot';
   foot.appendChild(textLine(`${data.runs || 0} runs - ${money({cost_usd: data.total_cost_usd, cost_estimated: data.cost_estimated})}`, 'stat'));
   card.appendChild(foot);
+  card.appendChild(textLine('added up from what the board\'s own runs reported, not read live from '
+    + 'your lab accounts - use outside the board does not show here.', 'field-label usage-disclaimer'));
   return card;
 }
 

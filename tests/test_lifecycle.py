@@ -23,6 +23,12 @@ def _git(repo, *args):
     subprocess.run(["git", "-C", str(repo), *args], capture_output=True, check=True)
 
 
+def _rev(repo, ref):
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", ref], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
 @pytest.fixture
 def repo(tmp_path):
     """a real git repo, because create_worktree really cuts a worktree in it"""
@@ -621,10 +627,10 @@ def _spy_create_worktree(monkeypatch, tree_path):
     return seen
 
 
-def test_a_card_with_no_dependencies_is_cut_from_the_local_base_as_before(
+def test_a_card_with_no_dependencies_and_no_origin_is_cut_from_the_local_base(
     board, tmp_path, monkeypatch
 ):
-    """no depends_on - _base_for_fresh_cut is never reached, so behaviour is unchanged"""
+    """a local-only repo has nowhere to fetch from - the local branch is all there is"""
     store, card_id = board
     _stub_gates(monkeypatch)
     fetched = []
@@ -635,6 +641,36 @@ def test_a_card_with_no_dependencies_is_cut_from_the_local_base_as_before(
     assert seen["base"] == "main"
 
 
+def test_every_card_is_cut_from_origin_even_when_the_local_base_lags(board, tmp_path, monkeypatch):
+    """comet catcher, 2026-09-24: landing pushes to origin and never moves the local branch, so
+    fifteen cards cut from local development all started on the empty scaffold"""
+    store, card_id = board
+    repo_path = store.get_repo(store.get_card(card_id)["repo_id"])["path"]
+    bare = _with_origin(repo_path, tmp_path)
+    # two landings pushed straight to origin, as integrate does - the local main stays behind
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True)
+    for name in ("one.py", "two.py"):
+        (other / name).write_text("")
+        _git(other, "add", name)
+        _git(other, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", name)
+    _git(other, "push", "-q", "origin", "HEAD:main")
+    landed = _rev(other, "HEAD")
+    assert _rev(repo_path, "main") != landed
+    _stub_gates(monkeypatch)
+    # read at the moment the worker starts - the pre-pr sync merges origin in later either way,
+    # which is how the fifteen cards still reached github whole
+    at_start = []
+
+    class _Watching(_Backend):
+        def run_card(self, store, card_id, worktree_path, prompt, settings_path, **kwargs):
+            at_start.append(_rev(worktree_path, "HEAD"))
+            return super().run_card(store, card_id, worktree_path, prompt, settings_path, **kwargs)
+
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Watching())
+    assert at_start == [landed], "the worker starts on what landed on origin"
+
+
 def test_a_dependent_cards_worktree_is_cut_from_a_freshly_fetched_origin(
     board, tmp_path, monkeypatch
 ):
@@ -643,6 +679,7 @@ def test_a_dependent_cards_worktree_is_cut_from_a_freshly_fetched_origin(
     board_id = store.get_card(card_id)["board_id"]
     repo_path = store.get_repo(repo_id)["path"]
     _with_origin(repo_path, tmp_path)
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(board_id, "free")
     dep = store.create_card(board_id, None, "dep card")
     store.add_dependency(card_id, dep["id"])
@@ -655,6 +692,7 @@ def test_a_dependent_cards_worktree_is_cut_from_a_freshly_fetched_origin(
 def test_a_dependent_card_falls_back_to_the_local_base_with_no_origin(board, tmp_path, monkeypatch):
     store, card_id = board
     board_id = store.get_card(card_id)["board_id"]
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(board_id, "free")
     dep = store.create_card(board_id, None, "dep card")
     store.add_dependency(card_id, dep["id"])
@@ -673,6 +711,7 @@ def test_a_failed_fetch_falls_back_and_leaves_a_comment(board, tmp_path, monkeyp
     board_id = store.get_card(card_id)["board_id"]
     repo_path = store.get_repo(repo_id)["path"]
     _with_origin(repo_path, tmp_path)
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(board_id, "free")
     dep = store.create_card(board_id, None, "dep card")
     store.add_dependency(card_id, dep["id"])

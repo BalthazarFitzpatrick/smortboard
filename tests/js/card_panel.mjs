@@ -98,9 +98,12 @@ const html2 = mod.cardPanelHtml(card, {
 assert.ok(sectionOf(html2, 'done').includes('not run yet'), 'a null outcome should say not run yet');
 assert.ok(!html2.includes('run-rail'), 'a card never run has no rail of empty steps');
 
-// ---- bare bones, one column: head, about, done, needs, and the card's facts folded under details
+// ---- a head band over a 2x2 matrix: about | done over needs | details
 assert.deepEqual(sectionOrder(html1), ['title', 'about', 'done', 'needs', 'details'], 'five sections, in reading order');
-assert.ok(html1.includes('data-columns="1"'), 'one column at any width');
+assert.ok(html1.includes('data-columns="2"'), 'two columns');
+const pinOf = name => (new RegExp(`data-section="${name}" data-pin="(\\d)"`).exec(html1) || [])[1];
+assert.deepEqual(['about', 'needs', 'done', 'details'].map(pinOf), ['0', '0', '1', '1'],
+  'about and needs on the left, done and details on the right');
 assert.ok(!html1.includes('data-section="workstream"'), 'the workstream section is gone');
 
 // dependencies and attachments fold under details only when there are any

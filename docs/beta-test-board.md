@@ -85,13 +85,15 @@ touch server/.gitkeep public/js/.gitkeep public/css/.gitkeep
    run it.
 3. On the repo's row: base **`development`**, test command **`npm test`** (found from
    `package.json`). No lint command.
-4. `o`:
-   - **file leases**: leave this board on **strict** for now; the table in section 4 says when to switch.
-   - **budgets and spend caps**: a daily budget for this board, e.g. `$30`.
+4. `o`, the settings every board shares:
    - **models by role**: worker sonnet. If you have a Codex profile, put the reviewer on OpenAI.
      A reviewer from another lab is the point of the gate.
-   - **usage limits**: tick "ask me before switching to a fallback model" to see the inbox route.
-5. `h` until everything is green.
+   - **usage limits**: **ask me**, to see the inbox route.
+   - **soft file leases**: **enabled**, so section 4 can switch this board to soft later.
+5. `shift`+`o`, this board's own settings:
+   - **file lease**: leave it on **strict** for now; the table in section 4 says when to switch.
+   - **daily budget**: e.g. `30`.
+6. `h` until everything is green.
 
 ## 3. The prompt for mission control
 
@@ -107,6 +109,8 @@ THE GAME
 - skill tree: 8 upgrades in 3 branches, each with a cost and prerequisites:
   magnet (catch radius, 3 tiers), shield (absorbs one comet, 2 tiers), thrusters (ship speed, 3 tiers).
   a node is buyable only when its prerequisite is owned and there is enough stardust.
+  the title screen says K opens it; a run's stardust is banked at game over; owned skills apply
+  from the next run. the upgrades card owns that wiring in game.js, so the tree is playable end to end.
 - high scores: top 10 across all players, kept by the server in data/scores.json, surviving a restart.
   on game over the player enters a name (1-12 characters) and sees the table.
 

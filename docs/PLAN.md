@@ -17,8 +17,8 @@
 >   queue keeps moving while nobody is watching.
 > - **Lease modes, usage-limit route, context trim** (2026-09-23). A board's lease is strict by default
 >   or soft, where a card may also write any unprotected path no other active card holds. A refused
->   write no longer sinks committed work. On a usage limit the board switches to the fallback model by
->   itself or asks first (`usage_limit_route`). Every run loads only its role's tools, with skills off,
+>   write no longer sinks committed work. On a usage limit the board waits for the reset, asks first,
+>   or switches profile and then fallback model (`usage_limit_route`). Every run loads only its role's tools, with skills off,
 >   and an unchanged branch re-runs the gates without re-running the agent.
 > - **Rebase guard** (2026-09-23). When the base moves under a card, at run start or while its pull
 >   request waits, the board rebases the card's own commits onto it in a fresh tree. A rebase that

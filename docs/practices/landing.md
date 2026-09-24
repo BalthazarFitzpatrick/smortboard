@@ -4,7 +4,8 @@
 
 The board lands one card at a time per branch, so no two pushes race, and never on `main`, `master`
 or `trunk`. Agents land on `development` and you merge `main`: keep review required, accept with
-`y`, and switch a board to free merge with `shift+a` once you trust it.
+`y`. Once you trust a board, turn on **free merge** in `o`, then switch that board in `shift`+`o`
+or with `shift+a`.
 
 > [!IMPORTANT]
 > **Refused in code, not by habit.**
@@ -22,7 +23,9 @@ Other bases follow the board's mode:
 | **review required** (default) | stops at an open pull request. `y` accepts and lands it in the background; if you already merged it on GitHub, accept records that without merging again |
 | **free merge** | lands and is accepted once tests and review pass |
 
-`shift+a` changes the focused board's mode after confirmation. A free-merge board shows a
+Free merge stays locked until **free merge** is on in `o`; turning it off there puts every board
+back on review. `shift+a` changes the focused board's mode after confirmation, and `shift`+`o` holds
+the same choice. A free-merge board shows a
 burnt-orange pulsing frame and a text label; reduced motion keeps the frame static.
 
 The board keeps one standing pull request from the development branch into `main`, for you to

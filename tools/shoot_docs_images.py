@@ -195,6 +195,12 @@ def shoot_key_screens(page: Page, out: Path) -> None:
     shoot(page, out, "settings.jpg")
     close_with_escape(page, ".settings-panel")
 
+    # the open board's own panel: merge mode, file lease, cards at once, daily budget
+    press_on_board(page, "Shift+KeyO", ".board-settings-panel .settings-section")
+    settle(page, 1200)
+    shoot(page, out, "board-settings.jpg")
+    close_with_escape(page, ".board-settings-panel")
+
     # the second page is the one listing every panel key, the first only moves and acts on cards
     press_on_board(page, "KeyS", ".menu-panel.shortcut-overlay")
     settle(page, 700)

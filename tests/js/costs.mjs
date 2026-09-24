@@ -139,6 +139,59 @@ const emptySections = mod.costsOverviewSections({boards: [], totals: {}});
 assert.equal(emptySections.length, 1);
 assert.match(emptySections[0].node.innerHTML, /no boards yet/);
 
+// ---- runs with no recorded price: the known sum stays, the unpriced runs are counted beside it,
+// share bars fill from the known sums, and a board with nothing priced reads plain "unknown" ------
+
+const mixed = mod.costsOverviewSections({
+  boards: [
+    {
+      board_id: 'b1', board_name: 'comet', cost_usd: null, known_cost_usd: 4.99, unknown_costs: 3,
+      runs: 5, cards: 2, cards_accepted: 1, pull_requests_opened: 1,
+      refusal_cost_usd: 0, refusal_known_cost_usd: 0, refusal_unknown_costs: 0,
+      cost_per_pr_usd: null, known_cost_per_pr_usd: 4.99, spend_by_model: [],
+    },
+    {
+      board_id: 'b2', board_name: 'old board', cost_usd: null, known_cost_usd: 0, unknown_costs: 2,
+      runs: 2, cards: 1, cards_accepted: 0, pull_requests_opened: 0,
+      refusal_cost_usd: 0, refusal_known_cost_usd: 0, refusal_unknown_costs: 0,
+      cost_per_pr_usd: null, known_cost_per_pr_usd: null, spend_by_model: [],
+    },
+  ],
+  totals: {
+    cost_usd: null, known_cost_usd: 4.99, unknown_costs: 5, runs: 7, cards: 3,
+    cards_accepted: 1, pull_requests_opened: 1,
+    refusal_cost_usd: 0, refusal_known_cost_usd: 0, refusal_unknown_costs: 0,
+    worker_cost_usd: 4.5, worker_known_cost_usd: 4.5, worker_unknown_costs: 0,
+    reviewer_cost_usd: null, reviewer_known_cost_usd: 0.49, reviewer_unknown_costs: 5,
+    cost_per_pr_usd: null, known_cost_per_pr_usd: 4.99,
+    spend_by_model: [
+      {model: 'anthropic/sonnet', cost_usd: null, known_cost_usd: 4.5, unknown_costs: 2},
+      {model: 'anthropic/opus', cost_usd: null, known_cost_usd: 0, unknown_costs: 3},
+    ],
+    turn_cost_usd: 0, turn_known_cost_usd: 0, turn_unknown_costs: 0,
+  },
+  cost_groups: {
+    total: {cards: 3, cost_usd: null, known_cost_usd: 4.99, unknown_costs: 5, prs: 1,
+      cost_per_card_usd: null, cost_per_pr_usd: null, known_cost_per_card_usd: 1.6633, known_cost_per_pr_usd: 4.99},
+    accepted: {cards: 1, cost_usd: 4.99, known_cost_usd: 4.99, unknown_costs: 0, prs: 1,
+      cost_per_card_usd: 4.99, cost_per_pr_usd: 4.99, known_cost_per_card_usd: 4.99, known_cost_per_pr_usd: 4.99},
+    refused: {cards: 1, cost_usd: null, known_cost_usd: 0, unknown_costs: 2, prs: 0,
+      cost_per_card_usd: null, cost_per_pr_usd: null, known_cost_per_card_usd: null, known_cost_per_pr_usd: null},
+  },
+});
+const mixedText = flatText({children: [mixed[0].node]}).join(' | ');
+assert.match(mixedText, /total \| \$4\.99 \+ 5 unknown spend \| \$1\.66 \/ card \| \$4\.99 \/ pr/);
+assert.match(mixedText, /accepted \| \$4\.99 spend/);
+assert.match(mixedText, /refused \| unknown spend \| — \/ card \| — \/ pr/);
+assert.match(mixedText, /comet \| \$4\.99 \+ 3 unknown \| 5 \| 1\/2 \| 1 \| \$4\.99 \| -/);
+assert.match(mixedText, /old board \| unknown \| 2 \| 0\/1 \| 0 \| - \| -/);
+assert.match(mixedText, /2 boards - 3 cards - 7 runs - \$4\.99 \+ 5 unknown - \$4\.99 \/ pr/);
+assert.match(mixedText, /worker \$4\.50 - reviewer \$0\.49 \+ 5 unknown/);
+assert.match(mixedText, /anthropic - anthropic\/sonnet \$4\.50 \+ 2 unknown, anthropic\/opus unknown/);
+assert.match(mixedText, /mission control and fold turns \$0\.00/);
+const fills = walk(mixed[0].node).filter(n => (n.className || '').startsWith('bar-fill'));
+assert.deepEqual(fills.map(f => f.style.width), ['100%', '0%'], 'share bars fill from the known sums');
+
 // ---- the header switches between "cost" and "cost optimisation" via ArrowLeft/ArrowRight and
 // via the two arrow buttons - the optimisation view lazily loads and renders its four sections ---
 

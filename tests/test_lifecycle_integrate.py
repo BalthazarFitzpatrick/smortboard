@@ -16,6 +16,7 @@ board = chain.board
 
 
 def _on_development(store, card_id, repo_path):
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(store.get_card(card_id)["board_id"], "free")
     subprocess.run(["git", "-C", str(repo_path), "branch", "development"], check=True)
     store.set_repo_default_branch(store.get_card(card_id)["repo_id"], "development")
@@ -94,3 +95,35 @@ def test_a_card_that_cannot_land_keeps_its_pull_request_for_the_operator(board, 
     assert (
         "could not merge it into development: pushing card/x failed" in card["comments"][-1]["body"]
     )
+
+
+def test_after_a_landing_the_local_base_follows_origin(board, repo, monkeypatch):
+    """comet catcher, 2026-09-24: fifteen landings moved origin/development only, and the local
+    branch every card and mission control read stayed on the scaffold"""
+    from smortboard.review import land_card
+
+    store, card_id = board
+    _on_development(store, card_id, repo)
+    chain._stub_gates(monkeypatch)
+    _fake_integrate(monkeypatch, IntegrateResult("abcdef1234567"))
+    asked = []
+    monkeypatch.setattr(
+        land_card, "fast_forward_base", lambda path, base: asked.append((path, base)) or "moved"
+    )
+    lifecycle.run_card_lifecycle(store, card_id, backend=chain._Backend())
+    assert asked == [(store.get_repo(store.get_card(card_id)["repo_id"])["path"], "development")]
+    events = [e for e in store.list_events(card_id) if e["kind"] == "local_base"]
+    assert events[-1]["payload"] == {"base": "development", "outcome": "moved"}
+
+
+def test_a_landing_that_failed_never_moves_the_local_base(board, repo, monkeypatch):
+    from smortboard.review import land_card
+
+    store, card_id = board
+    _on_development(store, card_id, repo)
+    chain._stub_gates(monkeypatch)
+    _fake_integrate(monkeypatch, *[IntegrateResult(None, reason="conflict", moved=False)])
+    asked = []
+    monkeypatch.setattr(land_card, "fast_forward_base", lambda *a: asked.append(a) or "moved")
+    lifecycle.run_card_lifecycle(store, card_id, backend=chain._Backend())
+    assert asked == []

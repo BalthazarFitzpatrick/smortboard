@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.store.errors import BundleError, UnknownFieldError
+from smortboard.store.schema import BOARD_MODE_GATES_SQL, USAGE_LIMIT_FOLD_SQL
 
 _TABLES = (
     "boards",
@@ -115,6 +116,8 @@ def import_bundle(conn: sqlite3.Connection, path: str | Path) -> None:
         _insert_all(conn, "attachments", [record])
 
     conn.commit()
+    # an older bundle carries settings rows and board modes from before the current ones
+    conn.executescript(USAGE_LIMIT_FOLD_SQL + BOARD_MODE_GATES_SQL)
 
 
 def import_as_new(conn: sqlite3.Connection, bundle: object) -> list[str]:
@@ -139,9 +142,27 @@ def import_as_new(conn: sqlite3.Connection, bundle: object) -> list[str]:
                 if table in _JSON_WITH_IDS:
                     _swap_json_ids(rows, _JSON_WITH_IDS[table], fresh)
                 _insert_all(conn, table, rows)
+            _drop_ungated_modes(conn, list(fresh["boards"].values()))
     except sqlite3.IntegrityError as exc:
         raise BundleError(f"the bundle does not fit this database: {exc}") from exc
     return list(fresh["boards"].values())
+
+
+def _drop_ungated_modes(conn: sqlite3.Connection, board_ids: list[str]) -> None:
+    """a copied board falls back to the default mode for any per-board mode whose global gate is
+    off here - the bundle's settings never come along, so its gates do not either"""
+    marks = ",".join("?" * len(board_ids))
+    for gate, column, mode in (
+        ("allow_free_merge", "merge_mode", "free"),
+        ("allow_soft_leases", "lease_mode", "soft"),
+    ):
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (gate,)).fetchone()
+        if row is not None and row[0] == "on":
+            continue
+        conn.execute(
+            f"UPDATE boards SET {column} = NULL WHERE {column} = ? AND id IN ({marks})",
+            (mode, *board_ids),
+        )
 
 
 def _bundle_rows(bundle: dict[str, Any], table: str) -> list[dict[str, Any]]:

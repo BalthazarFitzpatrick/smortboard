@@ -13,80 +13,118 @@
 
 const st = {backdrop: null, panel: null, listEl: null};
 
-// auto_switch_profiles is opt-in: "on" rotates credentials on USAGE_LIMIT (smortboard/profiles.py);
-// unset (the default) or anything else parks the board until the reset instead, spending nothing
-// on another account without being asked. the toggle reads its state from GET /api/settings on
-// open (buildAutoSwitchToggle -> loadAutoSwitchToggle) - unset renders as unchecked.
-function buildAutoSwitchToggle() {
-  const wrap = document.createElement('label');
-  wrap.className = 'settings-toggle-row';
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.className = 'settings-auto-switch-checkbox';
-  box.checked = false;
-  const text = document.createElement('span');
-  text.textContent = 'switch credential profiles automatically on a usage limit';
-  wrap.append(box, text);
-
-  box.addEventListener('change', async () => {
-    box.disabled = true;
-    const {ok} = await apiOrError('/api/settings', {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({auto_switch_profiles: box.checked ? 'on' : null}),
-    });
-    box.disabled = false;
-    if (!ok) box.checked = !box.checked; // revert on a failed save
+// two buttons for one setting, the mouse toggle's look: the lit one only moves once the save
+// lands, so a failed save leaves it where it was. real buttons, so tab, enter and space just work
+function choiceToggle({className, choices, save}) {
+  const row = document.createElement('div');
+  row.className = 'run-controls';
+  const state = {value: undefined, saving: false};
+  const buttons = choices.map(([text, value]) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `toggle ${className}`;
+    btn.dataset.choice = text;
+    btn.textContent = text;
+    btn.onclick = async () => {
+      if (state.saving || state.value === value) return;
+      state.saving = true;
+      const ok = await save(value);
+      state.saving = false;
+      if (ok) show(value);
+    };
+    return btn;
   });
+  function show(value) {
+    state.value = value;
+    buttons.forEach((btn, i) => {
+      const on = choices[i][1] === value;
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-pressed', String(on));
+    });
+  }
+  row.append(...buttons);
+  return {row, buttons, show};
+}
 
-  loadAutoSwitchToggle(box);
+async function saveSettings(fields) {
+  const {ok} = await apiOrError('/api/settings', {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(fields),
+  });
+  return ok;
+}
+
+function toggleWithNote(toggle, noteText) {
+  const note = document.createElement('div');
+  note.className = 'field-label';
+  note.textContent = noteText;
+  const wrap = document.createElement('div');
+  wrap.className = 'settings-stack';
+  wrap.append(toggle.row, note);
   return wrap;
 }
 
-async function loadAutoSwitchToggle(box) {
+// usage_limit_route: one ladder for a usage limit. unset (the default) parks the board until the
+// window resets; "attention" asks in the inbox (n) before a fallback model; "switch" moves to the
+// next credential profile, then the fallback model, without asking
+const usageRoute = choiceToggle({
+  className: 'settings-usage-limit-choice',
+  choices: [['wait for the reset', null], ['ask me', 'attention'], ['switch by itself', 'switch']],
+  save: value => saveSettings({usage_limit_route: value}),
+});
+
+function buildUsageLimitToggle() {
+  usageRoute.show(null);
+  return toggleWithNote(usageRoute, 'wait: the board parks until the limit resets. ask me: the card '
+    + 'asks in the inbox (n) before moving to a fallback model. switch: your next credential '
+    + 'profile, then the fallback model.');
+}
+
+async function loadUsageLimitToggle() {
   try {
     const settings = await api('/api/settings');
-    box.checked = settings.auto_switch_profiles === 'on';
+    const route = settings.usage_limit_route;
+    usageRoute.show(route === 'attention' || route === 'switch' ? route : null);
   } catch {
-    // leave the default (unchecked) - a failed load is not worth blocking the panel on
+    // leave "wait for the reset" lit - it spends nothing, the safe default to fail to
   }
 }
 
-// usage_limit_route: unset (the default) switches a limited role to its fallback model by itself;
-// "attention" blocks the card and asks in the inbox (n) instead. credential rotation above is a
-// separate choice - same model, another subscription
-function buildUsageLimitRouteToggle() {
-  const wrap = document.createElement('label');
-  wrap.className = 'settings-toggle-row';
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.className = 'settings-usage-limit-route-checkbox';
-  box.checked = false;
-  const text = document.createElement('span');
-  text.textContent = 'on a usage limit, ask me before switching to a fallback model';
-  wrap.append(box, text);
+// allow_soft_leases and allow_free_merge switch a feature on for the whole install; each board
+// then opts in on its own panel (shift+o). off puts every board back on strict or review
+const softLeases = choiceToggle({
+  className: 'settings-soft-leases-choice',
+  choices: [['enabled', 'on'], ['disabled', null]],
+  save: value => saveSettings({allow_soft_leases: value}),
+});
 
-  box.addEventListener('change', async () => {
-    box.disabled = true;
-    const {ok} = await apiOrError('/api/settings', {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({usage_limit_route: box.checked ? 'attention' : null}),
-    });
-    box.disabled = false;
-    if (!ok) box.checked = !box.checked; // revert on a failed save
-  });
+const freeMerge = choiceToggle({
+  className: 'settings-free-merge-choice',
+  choices: [['enabled', 'on'], ['disabled', null]],
+  save: value => saveSettings({allow_free_merge: value}),
+});
 
-  loadUsageLimitRouteToggle(box);
-  return wrap;
+function buildSoftLeasesToggle() {
+  softLeases.show(null);
+  return toggleWithNote(softLeases, 'enabled: a board may let its cards write unprotected paths no other '
+    + 'card holds - pick it per board in shift+o. disabled: every board is strict.');
 }
 
-async function loadUsageLimitRouteToggle(box) {
+function buildFreeMergeToggle() {
+  freeMerge.show(null);
+  return toggleWithNote(freeMerge, 'enabled: a board may merge passing cards into its base without '
+    + 'asking - pick it per board in shift+o. disabled: every board waits for your review. main is '
+    + 'never merged either way.');
+}
+
+async function loadFeatureToggles() {
   try {
     const settings = await api('/api/settings');
-    box.checked = settings.usage_limit_route === 'attention';
+    softLeases.show(settings.allow_soft_leases === 'on' ? 'on' : null);
+    freeMerge.show(settings.allow_free_merge === 'on' ? 'on' : null);
   } catch {
-    // leave the default (unchecked) - the board switches by itself, as before this setting
+    // leave both disabled lit - disabled is what the server assumes for an unset key
   }
 }
 
@@ -161,9 +199,9 @@ async function loadMouseToggle() {
 }
 
 const SETTINGS_SECTIONS = [
-  {group: 'labs', label: 'credential profiles', node: buildAutoSwitchToggle()},
-  {group: 'labs', label: 'usage limits', node: buildUsageLimitRouteToggle()},
-  {group: 'general', label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle},
+  {group: 'labs', label: 'usage limits', node: buildUsageLimitToggle(), onOpen: loadUsageLimitToggle},
+  {group: 'general', label: 'soft file leases', node: buildSoftLeasesToggle(), onOpen: loadFeatureToggles},
+  {group: 'general', label: 'free merge', node: buildFreeMergeToggle()},
 ];
 
 const roleModels = {node: document.createElement('div')};
@@ -509,12 +547,100 @@ SETTINGS_SECTIONS.push({
   onOpen: loadReadPaths,
 });
 
+// ---- where new repos go: the folder new board and from online repo open in ----------------------
+// blank means the home folder. the server checks it exists and stores it absolute (~ expanded)
+
+const reposHome = {input: null, status: null, saved: ''};
+
+async function saveReposHome() {
+  const raw = reposHome.input.value.trim();
+  // blur fires on every tab past the field - only a changed value is worth a save
+  if (raw === reposHome.saved) return;
+  const {ok, body} = await apiOrError('/api/settings', {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({repos_home: raw || null}),
+  });
+  reposHome.status.textContent = ok ? 'saved' : (body && body.error) || 'could not save';
+  reposHome.status.className = ok ? 'boards-status' : 'boards-status boards-error';
+  if (!ok) return;
+  reposHome.saved = body.repos_home || '';
+  reposHome.input.value = reposHome.saved;
+}
+
+function buildReposHomeSection() {
+  const row = document.createElement('div');
+  row.className = 'boards-create-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'board-name-input text-field settings-repos-home-input';
+  input.placeholder = 'home folder';
+  const browse = document.createElement('span');
+  browse.className = 'toggle';
+  browse.textContent = 'browse';
+  browse.onclick = () => openFolderPicker(browse, {
+    title: 'where new repos go',
+    start: 'repos',
+    action: {
+      label: 'use this folder',
+      when: () => true,
+      run: async (path, menu) => {
+        menu.close();
+        reposHome.input.value = path;
+        await saveReposHome();
+      },
+    },
+    onError: text => {
+      reposHome.status.textContent = text;
+      reposHome.status.className = 'boards-status boards-error';
+    },
+  });
+  const status = document.createElement('span');
+  status.className = 'boards-status';
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    saveReposHome();
+  });
+  input.addEventListener('blur', saveReposHome);
+  row.append(input, browse, status);
+  Object.assign(reposHome, {input, status});
+
+  const note = document.createElement('div');
+  note.className = 'field-label';
+  note.textContent = 'new board and from online repo start here. any folder is still one step away.';
+  const box = document.createElement('div');
+  box.className = 'settings-stack';
+  box.append(row, note);
+  return box;
+}
+
+async function loadReposHome() {
+  try {
+    const settings = await api('/api/settings');
+    reposHome.saved = settings.repos_home || '';
+    reposHome.input.value = reposHome.saved;
+    reposHome.status.textContent = '';
+  } catch (err) {
+    reposHome.status.textContent = `could not load: ${err.message}`;
+    reposHome.status.className = 'boards-status boards-error';
+  }
+}
+
+SETTINGS_SECTIONS.push({
+  group: 'general',
+  label: 'where new repos go',
+  node: buildReposHomeSection(),
+  onOpen: loadReposHome,
+});
+
 // ---- how many cards run at once: one global cap, plus an optional cap per board ----------------
 // the global number is the one seat count shared across every board (scheduler.py's runs.active());
 // a board's own number only ever holds it back further, never past the global cap - an unset board
 // row behaves exactly like today, no board-specific limit at all.
 
-const parallelCaps = {globalInput: null, globalStatus: null, boardsList: null};
+const parallelCaps = {globalInput: null, globalStatus: null};
 
 function parallelParseInput(raw) {
   const trimmed = raw.trim();
@@ -572,52 +698,6 @@ function budgetParseInput(raw) {
   return Number.isFinite(value) && value > 0 ? value : undefined; // undefined marks it invalid
 }
 
-function renderBoardParallelRow(board) {
-  const row = document.createElement('div');
-  row.className = 'board-row settings-grid-row';
-  const label = document.createElement('span');
-  label.className = 'board-name field-label';
-  label.textContent = board.name;
-  label.title = board.name;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.inputMode = 'numeric';
-  input.className = 'text-field settings-parallel-input';
-  input.placeholder = 'no limit';
-  input.value = board.max_parallel == null ? '' : String(board.max_parallel);
-  const status = document.createElement('span');
-  status.className = 'boards-status';
-
-  async function save() {
-    const value = parallelParseInput(input.value);
-    if (value === undefined) {
-      status.textContent = 'must be a positive whole number, or empty for no limit';
-      status.className = 'boards-status boards-error';
-      return;
-    }
-    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({max_parallel: value}),
-    });
-    status.textContent = ok ? '' : (body && body.error) || 'could not save';
-    status.className = ok ? 'boards-status' : 'boards-status boards-error';
-  }
-
-  input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
-    if (evt.code !== 'Enter') return;
-    evt.preventDefault();
-    save();
-  });
-  input.addEventListener('blur', save);
-
-  // the status spans the whole grid row and takes no room while empty
-  status.classList.add('settings-grid-note');
-  row.append(label, input, status);
-  return row;
-}
-
 async function loadParallelSection() {
   try {
     const settings = await api('/api/settings');
@@ -627,30 +707,15 @@ async function loadParallelSection() {
     parallelCaps.globalStatus.textContent = `could not load: ${err.message}`;
     parallelCaps.globalStatus.className = 'boards-status boards-error';
   }
-  try {
-    const boards = await api('/api/boards');
-    clearChildren(parallelCaps.boardsList);
-    parallelCaps.boardsList.appendChild(settingsGridHeader(['board', 'cards at once']));
-    boards.forEach(b => parallelCaps.boardsList.appendChild(renderBoardParallelRow(b)));
-  } catch (err) {
-    clearChildren(parallelCaps.boardsList);
-    parallelCaps.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
-  }
 }
 
 function buildParallelSection() {
   const box = document.createElement('div');
   box.className = 'settings-stack';
-  const globalLabel = document.createElement('div');
-  globalLabel.className = 'field-label';
-  globalLabel.textContent = 'global (shared across every board)';
-  const boardsLabel = document.createElement('div');
-  boardsLabel.className = 'field-label';
-  boardsLabel.textContent = 'per board (blank = no board-specific limit)';
-  const boardsList = document.createElement('div');
-  boardsList.className = 'settings-grid settings-grid-two';
-  Object.assign(parallelCaps, {boardsList});
-  box.append(globalLabel, buildGlobalParallelRow(), boardsLabel, boardsList);
+  const note = document.createElement('div');
+  note.className = 'field-label';
+  note.textContent = 'across every board. a board can hold itself lower in shift+o.';
+  box.append(buildGlobalParallelRow(), note);
   return box;
 }
 
@@ -660,140 +725,6 @@ SETTINGS_SECTIONS.push({
   node: buildParallelSection(),
   onOpen: loadParallelSection,
 });
-
-// ---- lease mode: how far a card's writes may reach past its declared paths ---------------------
-// strict (unset) keeps a card inside its lease; soft lets it write any other repo path that is not
-// protected (settings, ci, agent instructions, build and dependency files, secrets) and that no
-// other active card on the repo holds. every path it reaches that way is shown on the card
-
-const leaseModes = {boardsList: null};
-
-function renderBoardLeaseRow(board) {
-  const row = document.createElement('div');
-  row.className = 'board-row settings-grid-row';
-  const label = document.createElement('span');
-  label.className = 'board-name field-label';
-  label.textContent = board.name;
-  label.title = board.name;
-  const wrap = document.createElement('label');
-  wrap.className = 'settings-toggle-row';
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.className = 'settings-lease-mode-checkbox';
-  box.checked = board.lease_mode === 'soft';
-  const text = document.createElement('span');
-  text.textContent = 'soft: may write unprotected paths no other card holds';
-  wrap.append(box, text);
-  const status = document.createElement('span');
-  status.className = 'boards-status settings-grid-note';
-
-  box.addEventListener('change', async () => {
-    box.disabled = true;
-    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({lease_mode: box.checked ? 'soft' : 'strict'}),
-    });
-    box.disabled = false;
-    if (!ok) box.checked = !box.checked; // revert on a failed save
-    status.textContent = ok ? '' : (body && body.error) || 'could not save';
-    status.className = ok ? 'boards-status settings-grid-note' : 'boards-status boards-error settings-grid-note';
-  });
-  row.append(label, wrap, status);
-  return row;
-}
-
-async function loadLeaseModes() {
-  try {
-    const boards = await api('/api/boards');
-    clearChildren(leaseModes.boardsList);
-    leaseModes.boardsList.appendChild(settingsGridHeader(['board', 'file lease']));
-    boards.forEach(board => leaseModes.boardsList.appendChild(renderBoardLeaseRow(board)));
-  } catch (err) {
-    clearChildren(leaseModes.boardsList);
-    leaseModes.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
-  }
-}
-
-function buildLeaseModesSection() {
-  const grid = document.createElement('div');
-  grid.className = 'settings-grid settings-grid-two';
-  leaseModes.boardsList = grid;
-  return grid;
-}
-
-SETTINGS_SECTIONS.push({
-  group: 'general',
-  label: 'file leases: strict or soft, per board',
-  node: buildLeaseModesSection(),
-  onOpen: loadLeaseModes,
-});
-
-// ---- daily budgets: each board's total spend cap for the current utc day -----------------------
-
-const dailyBudgets = {boardsList: null};
-
-function renderBoardBudgetRow(board) {
-  const row = document.createElement('div');
-  row.className = 'board-row settings-grid-row';
-  const label = document.createElement('span');
-  label.className = 'board-name field-label';
-  label.textContent = board.name;
-  label.title = board.name;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.inputMode = 'decimal';
-  input.className = 'text-field settings-budget-input';
-  input.placeholder = 'no budget';
-  input.value = board.daily_budget_usd == null ? '' : String(board.daily_budget_usd);
-  const status = document.createElement('span');
-  status.className = 'boards-status settings-grid-note';
-
-  async function save() {
-    const value = budgetParseInput(input.value);
-    if (value === undefined) {
-      status.textContent = 'must be a positive amount, or empty for no cap';
-      status.className = 'boards-status boards-error settings-grid-note';
-      return;
-    }
-    const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({daily_budget_usd: value}),
-    });
-    status.textContent = ok ? '' : (body && body.error) || 'could not save';
-    status.className = ok ? 'boards-status settings-grid-note' : 'boards-status boards-error settings-grid-note';
-  }
-
-  input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
-    if (evt.code !== 'Enter') return;
-    evt.preventDefault();
-    save();
-  });
-  input.addEventListener('blur', save);
-  row.append(label, input, status);
-  return row;
-}
-
-async function loadDailyBudgets() {
-  try {
-    const boards = await api('/api/boards');
-    clearChildren(dailyBudgets.boardsList);
-    dailyBudgets.boardsList.appendChild(settingsGridHeader(['board', 'daily $']));
-    boards.forEach(board => dailyBudgets.boardsList.appendChild(renderBoardBudgetRow(board)));
-  } catch (err) {
-    clearChildren(dailyBudgets.boardsList);
-    dailyBudgets.boardsList.appendChild(settingsHazardPlaceholder(`could not load boards: ${err.message}`));
-  }
-}
-
-function buildDailyBudgetsSection() {
-  const grid = document.createElement('div');
-  grid.className = 'settings-grid settings-grid-two';
-  dailyBudgets.boardsList = grid;
-  return grid;
-}
 
 // ---- spend caps: the most one run of each role may spend, in usd --------------------------------
 // blank means the role's own default (the placeholder); a run reads its cap when it starts
@@ -873,23 +804,8 @@ async function loadSpendCaps() {
 }
 
 function buildCostControlsSection() {
-  const dailyNode = buildDailyBudgetsSection();
-  dailyNode.classList.add('settings-cost-grid');
   const spendNode = buildSpendCapsSection();
   spendNode.classList.add('settings-cost-grid');
-
-  const dailyTrigger = document.createElement('button');
-  dailyTrigger.className = 'toggle settings-cost-trigger settings-daily-budgets-trigger';
-  dailyTrigger.textContent = 'daily budgets per board';
-  dailyTrigger.onclick = () => {
-    const menu = new Menu({
-      title: 'daily budgets per board',
-      persistent: true,
-      sections: [{kind: 'node', node: dailyNode}],
-    });
-    menu.openAt(dailyTrigger);
-    loadDailyBudgets();
-  };
 
   const spendTrigger = document.createElement('button');
   spendTrigger.className = 'toggle settings-cost-trigger settings-spend-caps-trigger';
@@ -904,15 +820,21 @@ function buildCostControlsSection() {
     loadSpendCaps();
   };
 
+  const note = document.createElement('div');
+  note.className = 'field-label';
+  note.textContent = 'a board\'s own daily budget is on its panel, shift+o.';
   const triggers = document.createElement('div');
   triggers.className = 'settings-cost-triggers';
-  triggers.append(dailyTrigger, spendTrigger);
-  return triggers;
+  triggers.append(spendTrigger);
+  const wrap = document.createElement('div');
+  wrap.className = 'settings-stack';
+  wrap.append(triggers, note);
+  return wrap;
 }
 
 SETTINGS_SECTIONS.push({
   group: 'cost',
-  label: 'budgets and spend caps',
+  label: 'spend caps',
   node: buildCostControlsSection(),
 });
 
@@ -1074,6 +996,9 @@ SETTINGS_SECTIONS.push({
   onOpen: () => showBackupStatus(''),
 });
 
+// last in general: the board is driven from the keyboard, so the mouse is the least of these
+SETTINGS_SECTIONS.push({group: 'general', label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle});
+
 function buildSettingsSection(section) {
   const box = document.createElement('div');
   box.className = 'settings-section';
@@ -1085,7 +1010,7 @@ function buildSettingsSection(section) {
 }
 
 const SETTINGS_GROUPS = [
-  {id: 'general', label: 'general board settings'},
+  {id: 'general', label: 'general'},
   {id: 'labs', label: 'labs and models'},
   {id: 'cost', label: 'cost control'},
 ];

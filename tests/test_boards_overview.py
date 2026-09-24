@@ -76,6 +76,8 @@ def test_boards_overview_rolls_up_one_board(store):
         {
             "model": "anthropic/claude-sonnet-4",
             "cost_usd": pytest.approx(0.13),
+            "known_cost_usd": pytest.approx(0.13),
+            "unknown_costs": 0,
             "cost_estimated": False,
         }
     ]
@@ -128,10 +130,14 @@ def test_cost_groups_are_empty_with_no_cards(store):
     empty = {
         "cards": 0,
         "cost_usd": 0,
+        "known_cost_usd": 0,
+        "unknown_costs": 0,
         "cost_estimated": False,
         "prs": 0,
         "cost_per_card_usd": None,
         "cost_per_pr_usd": None,
+        "known_cost_per_card_usd": None,
+        "known_cost_per_pr_usd": None,
     }
     assert groups["total"] == empty
     assert groups["accepted"] == empty
@@ -167,10 +173,14 @@ def test_cost_groups_count_a_rejected_card_as_refused(store):
     assert groups["refused"] == {
         "cards": 1,
         "cost_usd": pytest.approx(0.05),
+        "known_cost_usd": pytest.approx(0.05),
+        "unknown_costs": 0,
         "cost_estimated": False,
         "prs": 0,
         "cost_per_card_usd": pytest.approx(0.05),
         "cost_per_pr_usd": None,
+        "known_cost_per_card_usd": pytest.approx(0.05),
+        "known_cost_per_pr_usd": None,
     }
     assert groups["accepted"]["cards"] == 0
     assert groups["total"]["cards"] == 1
@@ -201,6 +211,87 @@ def test_cost_groups_include_a_card_never_run_in_total_only(store):
     assert groups["total"]["cost_usd"] == 0
     assert groups["accepted"]["cards"] == 0
     assert groups["refused"]["cards"] == 0
+
+
+# -- an old run with no recorded price keeps the known sum and is counted, not a blank total ----
+
+
+def _unpriced_run(store, card_id):
+    """a worker run whose result carries no cost at all - an old log, or a lab with no price"""
+    store.append_event(card_id, "lifecycle_started", {})
+    store.append_event(card_id, "result", {"num_turns": 3, "result": "done"})
+    store.append_event(card_id, "worker_summary", {"text": "did the thing"})
+
+
+def test_boards_overview_keeps_known_spend_beside_unknown_runs(store):
+    mixed = store.create_board("mixed")
+    priced = store.create_card(mixed["id"], None, "priced")
+    store.update_card(priced["id"], status="accepted")
+    _clean_run(store, priced["id"])
+    unpriced = store.create_card(mixed["id"], None, "unpriced")
+    store.update_card(unpriced["id"], status="accepted")
+    _unpriced_run(store, unpriced["id"])
+    only_unknown = store.create_board("only unknown")
+    _unpriced_run(store, store.create_card(only_unknown["id"], None, "old")["id"])
+    store.add_board_spend(mixed["id"], "fold", 0.25)
+    store.add_board_spend(mixed["id"], "fold", None)
+
+    overview = boards_overview(store)
+    rows = {row["board_name"]: row for row in overview["boards"]}
+    assert [row["board_name"] for row in overview["boards"]] == ["mixed", "only unknown"]
+
+    row = rows["mixed"]
+    assert row["cost_usd"] is None
+    assert row["known_cost_usd"] == pytest.approx(0.13)
+    assert row["unknown_costs"] == 1
+    assert row["worker_known_cost_usd"] == pytest.approx(0.10)
+    assert row["worker_unknown_costs"] == 1
+    assert row["reviewer_known_cost_usd"] == pytest.approx(0.03)
+    assert row["reviewer_unknown_costs"] == 0
+    assert row["known_cost_per_pr_usd"] == pytest.approx(0.13)
+
+    alone = rows["only unknown"]
+    assert alone["cost_usd"] is None
+    assert alone["known_cost_usd"] == 0
+    assert alone["unknown_costs"] == 1
+    assert alone["known_cost_per_pr_usd"] is None
+
+    totals = overview["totals"]
+    assert totals["cost_usd"] is None
+    assert totals["known_cost_usd"] == pytest.approx(0.13)
+    assert totals["unknown_costs"] == 2
+    assert totals["worker_cost_usd"] is None
+    assert totals["worker_known_cost_usd"] == pytest.approx(0.10)
+    assert totals["worker_unknown_costs"] == 2
+    assert totals["reviewer_cost_usd"] == pytest.approx(0.03)
+    assert totals["reviewer_unknown_costs"] == 0
+    assert totals["turn_cost_usd"] is None
+    assert totals["turn_known_cost_usd"] == pytest.approx(0.25)
+    assert totals["turn_unknown_costs"] == 1
+
+    accepted = overview["cost_groups"]["accepted"]
+    assert accepted["cost_usd"] is None
+    assert accepted["cost_per_card_usd"] is None
+    assert accepted["known_cost_usd"] == pytest.approx(0.13)
+    assert accepted["unknown_costs"] == 1
+    assert accepted["known_cost_per_card_usd"] == pytest.approx(0.065)
+    assert accepted["known_cost_per_pr_usd"] == pytest.approx(0.13)
+    assert overview["cost_groups"]["total"]["unknown_costs"] == 2
+
+
+def test_boards_overview_refusal_spend_keeps_known_part(store):
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "a card")
+    store.append_event(card["id"], "lifecycle_started", {})
+    denial = [{"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}]
+    store.append_event(card["id"], "result", _worker_result(cost=0.40, denials=denial))
+    store.append_event(card["id"], "worker_summary", {"text": "blocked"})
+    store.append_event(card["id"], "result", {"num_turns": 1, "result": "reviewed"})
+
+    row = boards_overview(store)["boards"][0]
+    assert row["refusal_cost_usd"] is None
+    assert row["refusal_known_cost_usd"] == pytest.approx(0.40)
+    assert row["refusal_unknown_costs"] == 1
 
 
 # -- the /api/costs route end to end over real http -----------------------------------------

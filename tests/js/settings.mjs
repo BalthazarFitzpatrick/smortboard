@@ -102,6 +102,10 @@ function fetchStub(path, opts) {
       }
       settingsState.max_parallel = body.max_parallel;
     }
+    if ('repos_home' in body) {
+      if (body.repos_home === '~/nope') return Promise.resolve(stubJson(400, {error: '~/nope does not exist or is not a folder'}));
+      settingsState.repos_home = body.repos_home === '~/dev' ? '/home/op/dev' : body.repos_home;
+    }
     return Promise.resolve(stubJson(200, {...settingsState}));
   }
   return Promise.resolve(stubJson(404, {error: 'no stub for ' + path}));
@@ -137,7 +141,7 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, dailyBudgets, BINDINGS, mc, mallCam, spendCaps,
+;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, BINDINGS, mc, mallCam, spendCaps,
   mouseAffordances,
   buttonRef: () => document.querySelector('.settings-button'),
   addButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'add'),
@@ -172,28 +176,22 @@ assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel
 await flush();
 const settingsGroups = mod.st.listEl.querySelectorAll('.settings-group');
 assert.deepEqual(settingsGroups.map(group => group.querySelector('.settings-group-title').textContent),
-  ['general board settings', 'labs and models', 'cost control']);
+  ['general', 'labs and models', 'cost control']);
 assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-section')
   .map(section => section.children[0].textContent)), [
-  ['mouse', 'mission control can read', 'how many cards run at once',
-    'file leases: strict or soft, per board',
-    'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup'],
-  ['credential profiles', 'usage limits', 'models by role'],
-  ['budgets and spend caps'],
+  ['soft file leases', 'free merge', 'mission control can read',
+    'where new repos go', 'how many cards run at once',
+    'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup', 'mouse'],
+  ['usage limits', 'models by role'],
+  ['spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 10);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 11);
+assert.equal(mod.st.listEl.querySelectorAll('.board-row').length, 0,
+  'o holds only what every board shares - no per-board rows');
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
-assert.deepEqual(costTriggers.map(trigger => trigger.textContent),
-  ['daily budgets per board', 'spend caps per run'], 'cost controls have separate compact triggers');
-const dailyTrigger = costTriggers[0];
-dailyTrigger.onclick();
-const dailyMenu = modelMenus.at(-1);
-assert.equal(dailyMenu.opts.title, 'daily budgets per board');
-assert.equal(dailyMenu.opts.persistent, true);
-assert.equal(dailyMenu.anchor, dailyTrigger, 'daily budgets open below their own trigger');
-assert.equal(dailyMenu.opts.sections.filter(section => section.kind === 'node').length, 1,
-  'the daily budget menu contains only the board budget grid');
-const spendTrigger = costTriggers[1];
+assert.deepEqual(costTriggers.map(trigger => trigger.textContent), ['spend caps per run'],
+  'daily budgets moved to each board\'s own panel (shift+o)');
+const spendTrigger = costTriggers[0];
 spendTrigger.onclick();
 const spendMenu = modelMenus.at(-1);
 assert.equal(spendMenu.opts.title, 'spend caps per run');
@@ -341,61 +339,74 @@ assert.equal(fallbackMenu.closed, true, 'a successful save closes the picker');
   await flush();
   assert.ok(mod.spendCaps.statusEl.textContent.includes('positive amount'), 'a bad amount is refused in place');
 }
-const autoSwitchBox = mod.st.listEl.querySelector('.settings-auto-switch-checkbox');
-assert.ok(autoSwitchBox, 'the credential section carries the auto-switch toggle');
-assert.equal(autoSwitchBox.checked, false, 'rotation is opt-in - unset renders unchecked');
 assert.ok(mod.readPaths.listEl.querySelector('.hazard-placeholder'), 'no folders yet shows a placeholder, not nothing');
 
-// ---- checking the auto-switch box sends "on", unchecking sends null (opt-in, not opt-out) -------
-autoSwitchBox.checked = true;
-autoSwitchBox._listeners.change.forEach(fn => fn());
-await flush();
-let switchPatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
-assert.deepEqual(JSON.parse(switchPatch.opts.body), {auto_switch_profiles: 'on'});
-autoSwitchBox.checked = false;
-autoSwitchBox._listeners.change.forEach(fn => fn());
-await flush();
-switchPatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
-assert.deepEqual(JSON.parse(switchPatch.opts.body), {auto_switch_profiles: null});
+// ---- the usage limit is one three-way choice, and the lit button follows only a landed save -----
+function lit(className) {
+  return mod.st.listEl.querySelectorAll(`.${className}`).filter(btn => btn.classList.contains('on'))
+    .map(btn => btn.textContent);
+}
+function choice(className, text) {
+  return mod.st.listEl.querySelectorAll(`.${className}`).find(btn => btn.textContent === text);
+}
+function lastSettingsPatch() {
+  return JSON.parse(calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1).opts.body);
+}
+assert.deepEqual(mod.st.listEl.querySelectorAll('.settings-usage-limit-choice').map(btn => btn.textContent),
+  ['wait for the reset', 'ask me', 'switch by itself']);
+assert.ok(mod.st.listEl.querySelectorAll('.settings-usage-limit-choice').every(btn => btn.tag === 'button'),
+  'real buttons, like the mouse toggle');
+assert.deepEqual(lit('settings-usage-limit-choice'), ['wait for the reset'], 'unset waits - it spends nothing');
+await choice('settings-usage-limit-choice', 'switch by itself').onclick();
+assert.deepEqual(lastSettingsPatch(), {usage_limit_route: 'switch'});
+assert.deepEqual(lit('settings-usage-limit-choice'), ['switch by itself']);
+assert.equal(choice('settings-usage-limit-choice', 'switch by itself')['aria-pressed'], 'true');
+await choice('settings-usage-limit-choice', 'ask me').onclick();
+assert.deepEqual(lastSettingsPatch(), {usage_limit_route: 'attention'});
+stubControl.refuseNextSettingsPatch = true;
+await choice('settings-usage-limit-choice', 'wait for the reset').onclick();
+assert.deepEqual(lit('settings-usage-limit-choice'), ['ask me'], 'a refused save leaves the lit button where it was');
+await choice('settings-usage-limit-choice', 'wait for the reset').onclick();
+assert.deepEqual(lastSettingsPatch(), {usage_limit_route: null});
+assert.equal(mod.st.listEl.querySelectorAll('.settings-auto-switch-checkbox').length, 0,
+  'profile rotation is part of switch, not a second setting');
 
-// ---- the usage-limit route: unchecked switches by itself (unset), checked asks first -----------
-const routeBox = mod.st.listEl.querySelector('.settings-usage-limit-route-checkbox');
-assert.ok(routeBox, 'the labs group carries the usage-limit route toggle');
-assert.equal(routeBox.checked, false, 'unset renders unchecked - the fallback switch stays automatic');
-routeBox.checked = true;
-routeBox._listeners.change.forEach(fn => fn());
-await flush();
-let routePatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
-assert.deepEqual(JSON.parse(routePatch.opts.body), {usage_limit_route: 'attention'});
-routeBox.checked = false;
-routeBox._listeners.change.forEach(fn => fn());
-await flush();
-routePatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
-assert.deepEqual(JSON.parse(routePatch.opts.body), {usage_limit_route: null});
+// ---- soft leases and free merge: one global switch each, off by default --------------------------
+assert.deepEqual(lit('settings-soft-leases-choice'), ['disabled']);
+assert.deepEqual(lit('settings-free-merge-choice'), ['disabled']);
+assert.deepEqual(mod.st.listEl.querySelectorAll('.settings-free-merge-choice').map(b => b.textContent),
+  ['enabled', 'disabled'], 'the same words and order as the mouse toggle');
+await choice('settings-soft-leases-choice', 'enabled').onclick();
+assert.deepEqual(lastSettingsPatch(), {allow_soft_leases: 'on'});
+await choice('settings-free-merge-choice', 'enabled').onclick();
+assert.deepEqual(lastSettingsPatch(), {allow_free_merge: 'on'});
+await choice('settings-free-merge-choice', 'disabled').onclick();
+assert.deepEqual(lastSettingsPatch(), {allow_free_merge: null});
+assert.deepEqual(lit('settings-free-merge-choice'), ['disabled']);
 
-// ---- parallelism stays in general settings; daily budgets have their own cost-control grid -----
+// ---- where new repos go: saved on enter or blur, expanded by the server, refused when missing -----
+{
+  const field = mod.st.listEl.querySelector('.settings-repos-home-input');
+  assert.equal(field.value, '', 'unset reads as blank - the home folder');
+  field.value = '~/dev';
+  field._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.deepEqual(lastSettingsPatch(), {repos_home: '~/dev'});
+  assert.equal(field.value, '/home/op/dev', 'the field shows the absolute path the server stored');
+  const saves = calls.length;
+  field._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.equal(calls.length, saves, 'tabbing past an unchanged field saves nothing');
+  field.value = '~/nope';
+  field._listeners.blur.forEach(fn => fn());
+  await flush();
+  const section = mod.st.listEl.querySelectorAll('.settings-section').find(s => s.children[0].textContent === 'where new repos go');
+  assert.ok(section.querySelectorAll('.boards-error')[0].textContent.includes('does not exist'));
+  assert.equal(settingsState.repos_home, '/home/op/dev', 'a refused folder changes nothing');
+}
+
+// ---- the global parallel cap stays here; each board's own cap is in shift+o ---------------------
 assert.equal(mod.parallelCaps.globalInput.value, '', 'an unset global cap renders as an empty field, not 0');
-const parallelRows = mod.parallelCaps.boardsList.querySelectorAll('.board-row');
-assert.equal(parallelRows.length, 2, 'one parallel-limit row per board');
-assert.equal(parallelRows[0].querySelector('.board-name').textContent, 'alpha');
-assert.equal(parallelRows[0].querySelectorAll('input').length, 1,
-  'the general grid only contains the parallel limit');
-assert.equal(parallelRows[0].querySelector('input').value, '', 'alpha has no board-specific limit');
-assert.equal(parallelRows[1].querySelector('.board-name').textContent, 'beta');
-assert.equal(parallelRows[1].querySelector('input').value, '1', 'beta already carries its own limit');
-const budgetRows = mod.dailyBudgets.boardsList.querySelectorAll('.board-row');
-assert.equal(budgetRows.length, 2, 'one daily-budget row per board');
-assert.equal(budgetRows[0].querySelectorAll('input').length, 1,
-  'the cost-control grid only contains the daily budget');
-assert.equal(budgetRows[0].querySelector('input').value, '', 'alpha has no daily budget');
-
-// ---- saving a board's daily budget PATCHes /api/boards/<id> ------------------------------------
-budgetRows[0].querySelector('input').value = '5.5';
-budgetRows[0].querySelector('input')._listeners.blur.forEach(fn => fn());
-await flush();
-assert.equal(boardsState[0].daily_budget_usd, 5.5, "alpha now carries its own daily budget");
-let boardPatch = calls.filter(call => call.path === '/api/boards/b1' && call.opts?.method === 'PATCH').at(-1);
-assert.deepEqual(JSON.parse(boardPatch.opts.body), {daily_budget_usd: 5.5});
 
 // ---- browse opens the shared folder picker, and its one action adds the folder it is on --------
 {
@@ -444,18 +455,6 @@ mod.parallelCaps.globalInput._listeners.blur.forEach(fn => fn());
 await flush();
 assert.equal(settingsState.max_parallel, 3, 'a zero value never reaches the server');
 assert.ok(mod.parallelCaps.globalStatus.textContent.includes('positive'), 'the field explains why it refused');
-
-// ---- a board's own row PATCHes /api/boards/<id>, and an empty value clears the limit -------------
-parallelRows[0].querySelector('input').value = '2';
-parallelRows[0].querySelector('input')._listeners.blur.forEach(fn => fn());
-await flush();
-assert.equal(boardsState[0].max_parallel, 2, 'alpha now carries its own limit');
-boardPatch = calls.filter(call => call.path === '/api/boards/b1' && call.opts?.method === 'PATCH').at(-1);
-assert.deepEqual(JSON.parse(boardPatch.opts.body), {max_parallel: 2});
-parallelRows[1].querySelector('input').value = '';
-parallelRows[1].querySelector('input')._listeners.blur.forEach(fn => fn());
-await flush();
-assert.equal(boardsState[1].max_parallel, null, "clearing the field removes beta's limit");
 
 // ---- a click on the backdrop itself closes it, a click inside the panel does not ---------------
 mod.st.backdrop._listeners.mousedown.forEach(fn => fn({target: mod.st.panel}));

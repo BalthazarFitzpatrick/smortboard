@@ -55,10 +55,12 @@ def test_the_global_route_forces_every_card(store, card_id):
         "max_parallel": None,
         "resume_briefing": None,
         "gate_timeout_seconds": None,
-        "auto_switch_profiles": None,
         "usage_limit_route": None,
+        "allow_soft_leases": None,
+        "allow_free_merge": None,
         "mall_cam_interval_seconds": None,
         "enable_mouse": None,
+        "repos_home": None,
         "worker_budget_usd": None,
         "reviewer_budget_usd": None,
         "orchestrator_budget_usd": None,
@@ -191,10 +193,12 @@ def test_settings_travel_in_the_export_bundle(store, tmp_path):
             "max_parallel": None,
             "resume_briefing": None,
             "gate_timeout_seconds": None,
-            "auto_switch_profiles": None,
             "usage_limit_route": None,
+            "allow_soft_leases": None,
+            "allow_free_merge": None,
             "mall_cam_interval_seconds": None,
             "enable_mouse": None,
+            "repos_home": None,
             "worker_budget_usd": None,
             "reviewer_budget_usd": None,
             "orchestrator_budget_usd": None,
@@ -340,3 +344,15 @@ def test_rejecting_leaves_already_decided_dependents_alone(store, card_id):
     reject_card(store, card_id, close_pr=lambda *a: None)
     assert store.get_card(done)["blocked_reason_code"] is None
     assert store.get_card(waiting)["blocked_reason_code"] == "DEPENDENCY_REJECTED"
+
+
+def test_repos_home_is_an_existing_folder_stored_absolute(store, tmp_path):
+    folder = tmp_path / "dev"
+    folder.mkdir()
+    assert store.set_setting("repos_home", str(folder))["repos_home"] == str(folder)
+    with pytest.raises(ValueError, match="does not exist"):
+        store.set_setting("repos_home", str(tmp_path / "nope"))
+    with pytest.raises(ValueError, match="absolute"):
+        store.set_setting("repos_home", "relative/dir")
+    assert store.get_settings()["repos_home"] == str(folder), "a refused value changes nothing"
+    assert store.set_setting("repos_home", "")["repos_home"] is None, "blank clears it"
