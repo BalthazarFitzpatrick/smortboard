@@ -85,13 +85,15 @@ touch server/.gitkeep public/js/.gitkeep public/css/.gitkeep
    run it.
 3. On the repo's row: base **`development`**, test command **`npm test`** (found from
    `package.json`). No lint command.
-4. `o`:
-   - **file leases**: leave this board on **strict** for now; the table in section 4 says when to switch.
-   - **budgets and spend caps**: a daily budget for this board, e.g. `$30`.
+4. `o`, the settings every board shares:
    - **models by role**: worker sonnet. If you have a Codex profile, put the reviewer on OpenAI.
      A reviewer from another lab is the point of the gate.
-   - **usage limits**: tick "ask me before switching to a fallback model" to see the inbox route.
-5. `h` until everything is green.
+   - **usage limits**: **ask me**, to see the inbox route.
+   - **soft file leases**: **on**, so section 4 can switch this board to soft later.
+5. `shift`+`o`, this board's own settings:
+   - **file lease**: leave it on **strict** for now; the table in section 4 says when to switch.
+   - **daily budget**: e.g. `30`.
+6. `h` until everything is green.
 
 ## 3. The prompt for mission control
 

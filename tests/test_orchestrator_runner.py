@@ -100,6 +100,7 @@ def test_board_role_cross_lab_retry_requires_its_own_fallback(
     monkeypatch.setattr("smortboard.orchestrator.run_process", run_process)
     with Store(tmp_path / "b.db") as store:
         board = store.create_board("b")
+        store.set_setting("usage_limit_route", "switch")
         if fallback_enabled:
             store.set_setting(f"{role}_cross_lab_fallback", ["openai/gpt-5.6-sol"])
         run = _real_runner(store, board["id"], None, "rules", [], role=role)

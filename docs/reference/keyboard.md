@@ -50,7 +50,6 @@ here.
 | `m` | menu for the focused card: edit, model, complexity, move to, delete |
 | `t` | run replay: scrub the focused card's run step by step |
 | `/` | type: the open card's comment, or the open chat |
-| `g` | toggle kanban / workstream grouping |
 | `w` | run the board: start (with confirmation) / stop the queue |
 | `f` | fold: merge the todo cards one agent should do as one (asks first) |
 
@@ -68,7 +67,7 @@ here.
 | `b` | boards and repos: create a board, register a repo |
 | `n` | attention inbox: answer a blocked card, across every board |
 | `h` | pre-flight checklist: what is missing before a card can run |
-| `o` | settings: mission control preferences |
+| `o / shift+o` | o: settings every board shares. shift+o: this board's own settings |
 | `v` | pull requests: every open one across every board, in merge order |
 | `q` | landing lock: who holds the push lock on each repo, and the queue behind them |
 | `,` | workforce: chat with the focused card's agent |

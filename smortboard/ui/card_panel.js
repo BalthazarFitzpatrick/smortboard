@@ -121,7 +121,7 @@ function cardClasses(card) {
   // a thing waiting on the operator - the glow is reserved for a card that actually needs him
   // the queue holds it but no agent does: grey, ahead of every other state, so neither the blue of
   // working nor the yellow of attention claims a card that has not started yet
-  if (isPendingCard(card)) classes.push('card-pending');
+  if (isPendingCard(card)) classes.push('card-pending', 'edge-pulse');
   else if (card.handled_by_board) classes.push('card-working');
   else if (card.blocked_reason_code || card.review_flag) classes.push('card-attention');
   else if (card.status === 'doing') classes.push('card-working');

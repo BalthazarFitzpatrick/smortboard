@@ -88,9 +88,8 @@ assert.equal(columnOf('c2'), 'attention', 'a blocked card starts in attention');
 assert.equal(columnOf('c3'), 'todo', 'and a plain todo card starts in todo');
 assert.ok(strip('c2').className.includes('card-attention'), 'wearing the attention edge');
 
-// ---- w starts the queue: every queued card moves into doing as pending, in queue order -----------
-// the queue is deliberately not in board order (c3 first), so the doing column proves it sorts by
-// the queue rather than by whatever order the column already held
+// ---- w starts the queue: a queued card stays in its own column and breathes there ---------------
+// doing is only what an agent holds; a queued todo card waits in todo, in queue order (c3 first)
 
 const running = {
   running: ['c1'],
@@ -101,11 +100,12 @@ const running = {
 mod.applyScheduleToCards(running);
 await flush();
 
-assert.deepEqual(drawnIn('doing'), ['c1', 'c3', 'c2', 'c4', 'c6'],
-  'running first, then the queue in its own order, then the card the board only retries');
+assert.deepEqual(drawnIn('doing'), ['c1', 'c2', 'c6'],
+  'running first, then the re-queued card that was already doing, then the card the board only retries');
+assert.deepEqual(drawnIn('todo').slice(0, 2), ['c3', 'c4'], 'queued todo cards stay in todo, in queue order');
 assert.equal(drawnIn('attention').length, 0, 'nothing queued is left in attention');
 assert.equal(columnOf('c2'), 'doing', 'a blocked card held back on a lease clash is pending, not in attention');
-assert.equal(columnOf('c4'), 'doing', 'and so is one held back on a limit');
+assert.equal(columnOf('c4'), 'todo', 'one held back on a limit waits in todo');
 assert.equal(columnOf('c5'), 'todo', 'a card the queue skipped entirely stays put too');
 
 // ---- the colours: blue is the agent, grey is the queue -------------------------------------------
@@ -114,6 +114,7 @@ assert.ok(strip('c1').className.includes('card-working'), 'the card an agent hol
 ['c2', 'c3', 'c4'].forEach(id => {
   const cls = strip(id).className;
   assert.ok(cls.includes('card-pending'), `${id} is drawn as pending`);
+  assert.ok(cls.includes('edge-pulse'), `${id} breathes`);
   assert.ok(!cls.includes('card-working'), `${id} is not drawn as running`);
   assert.ok(!cls.includes('card-attention'), `${id} is not drawn as attention`);
 });
@@ -122,7 +123,8 @@ assert.equal(mod.cardEdgeVar(byId('c1')), 'var(--fill-good)', 'a running one sti
 
 // ---- the counts agree with the strips ------------------------------------------------------------
 
-assert.equal(headerCount('doing'), '5', 'pending counts under doing, so the header matches the column');
+assert.equal(headerCount('doing'), '3', 'the header matches the column');
+assert.ok(!strip('c1').className.includes('edge-pulse'), 'a running card does not breathe');
 assert.equal(headerCount('attention'), '0', 'and the attention count drops to nothing');
 assert.deepEqual(mod.letterCounts([byId('c1'), byId('c2')], 'doing'), {d: 2},
   'a pending blocked card counts as doing, not as attention');
@@ -159,7 +161,7 @@ assert.equal(columnOf('c5'), 'todo');
 
 mod.applyScheduleToCards({running: [], queued: ['c2'], waiting: {}, paused_until: null});
 assert.ok(mod.isPendingCard(byId('c2')) && mod.isPendingCard('c2'), 'a card or a bare id both answer');
-assert.equal(mod.columnFor(byId('c2')), 'doing', 'a queued blocked card renders in doing');
+assert.equal(mod.columnFor(byId('c2')), 'doing', 'a queued blocked card renders in its own column, not attention');
 assert.equal(mod.columnFor(byId('c4')), 'attention', 'one the queue has not taken still renders in attention');
 assert.deepEqual(mod.sortColumnCards([byId('c6'), byId('c2'), byId('c1')]).map(c => c.id), ['c1', 'c2', 'c6'],
   'running, then pending, then the card the board is retrying');

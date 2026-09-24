@@ -78,7 +78,8 @@ async function pollSchedule() {
   try {
     view = await api(`/api/boards/${currentBoardId}/schedule`);
   } catch (err) {
-    scheduleTimer = setTimeout(pollSchedule, SCHEDULE_POLL_MS);
+    // only a queue known to be running is worth retrying - a board entry with no queue asks once
+    if (scheduleRunning) scheduleTimer = setTimeout(pollSchedule, SCHEDULE_POLL_MS);
     return;
   }
   renderScheduleStatus(view);
@@ -86,6 +87,11 @@ async function pollSchedule() {
   const active = view.running.length > 0 || view.queued.length > 0;
   scheduleRunning = active;
   if (active) scheduleTimer = setTimeout(pollSchedule, SCHEDULE_POLL_MS);
+}
+
+function restartSchedulePoll() {
+  if (scheduleTimer) { clearTimeout(scheduleTimer); scheduleTimer = null; }
+  pollSchedule();
 }
 
 // w starts running the current board; pressing it again while a schedule is going stops the

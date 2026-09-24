@@ -47,11 +47,11 @@ COMPLEXITY_LEVELS = (1, 2, 3)
 # smortboard.scheduler.DEFAULT_MAX_PARALLEL
 # resume_briefing gates lifecycle.py's resume briefing - "off" disables it, unset means on
 # gate_timeout_seconds caps the test gate - unset means review.gates.GATE_TIMEOUT_SECONDS (600)
-# auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - opt-in, "on" rotates
-# credentials; unset (or any other value, including a stored "off" from before this flipped)
-# parks the board until the reset instead, the pre-profiles behaviour
-# usage_limit_route gates the cross-lab half of a USAGE_LIMIT - "attention" blocks the card in the
-# inbox instead of switching model unasked; unset (or "fallback") switches, see schema.USAGE_LIMIT_ROUTES
+# usage_limit_route is what a USAGE_LIMIT does - unset waits for the reset, "attention" asks in
+# the inbox, "switch" rotates credential profiles then walks the cross-lab fallback, see
+# schema.USAGE_LIMIT_ROUTES
+# allow_soft_leases and allow_free_merge gate the per-board soft lease and free merge modes - "on"
+# allows them; unset refuses them, and clearing one resets every board back to the default mode
 # mall_cam_interval_seconds is the workforce drawer's auto-cycle period (cf90bacc) - unset means
 # chat.js's own default (10)
 # enable_mouse turns on the pointer affordances that mirror the keyboard - hover focusing a card,
@@ -70,8 +70,9 @@ _SETTING_KEYS = (
     "max_parallel",
     "resume_briefing",
     "gate_timeout_seconds",
-    "auto_switch_profiles",
     "usage_limit_route",
+    "allow_soft_leases",
+    "allow_free_merge",
     "mall_cam_interval_seconds",
     "enable_mouse",
     "worker_budget_usd",
@@ -118,6 +119,26 @@ def _check_usage_limit_route(value: str | None) -> None:
         raise ValueError(
             f"usage_limit_route must be one of {USAGE_LIMIT_ROUTES} or null, not {value!r}"
         )
+
+
+# the global gate each per-board mode needs, with the error a board write gets while it is off
+_BOARD_MODE_GATES = {
+    "allow_soft_leases": (
+        "lease_mode",
+        "soft",
+        "soft leases are off - turn them on in settings (o) first",
+    ),
+    "allow_free_merge": (
+        "merge_mode",
+        "free",
+        "free merge is off - turn it on in settings (o) first",
+    ),
+}
+
+
+def _check_gate(key: str, value: str | None) -> None:
+    if value is not None and value != "on":
+        raise ValueError(f"{key} must be on or null, not {value!r}")
 
 
 # both reach docker or claude argv as their own item, so a leading "-" would read as a flag
@@ -342,6 +363,8 @@ class Store:
         self.get_board(board_id)
         if value not in (None, "review", "free"):
             raise ValueError("merge_mode must be review, free, or null")
+        if value == "free":
+            self._require_gate("allow_free_merge")
         self._conn.execute("UPDATE boards SET merge_mode = ? WHERE id = ?", (value, board_id))
         self._conn.commit()
         return self.get_board(board_id)
@@ -352,9 +375,15 @@ class Store:
         self.get_board(board_id)
         if value not in (None, "strict", "soft"):
             raise ValueError("lease_mode must be strict, soft, or null")
+        if value == "soft":
+            self._require_gate("allow_soft_leases")
         self._conn.execute("UPDATE boards SET lease_mode = ? WHERE id = ?", (value, board_id))
         self._conn.commit()
         return self.get_board(board_id)
+
+    def _require_gate(self, key: str) -> None:
+        if self.get_settings()[key] != "on":
+            raise ValueError(_BOARD_MODE_GATES[key][2])
 
     def board_merges_freely(self, board_id: str) -> bool:
         return self.get_board(board_id)["merge_mode"] == "free"
@@ -801,6 +830,8 @@ class Store:
                 _check_findings_route(value)
             if key == "usage_limit_route":
                 _check_usage_limit_route(value)
+            if key in _BOARD_MODE_GATES:
+                _check_gate(key, value)
             if key in {"max_parallel", "mall_cam_interval_seconds"}:
                 _check_positive_int(key, value)
             if key in SPEND_CAP_KEYS:
@@ -837,6 +868,10 @@ class Store:
                     self._conn.execute(
                         "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, stored)
                     )
+                # a gate turned off takes every board back to the default mode with it
+                if key in _BOARD_MODE_GATES and stored is None:
+                    column = _BOARD_MODE_GATES[key][0]
+                    self._conn.execute(f"UPDATE boards SET {column} = NULL")
         return self.get_settings()
 
     def mission_control_read_paths(self) -> list[str]:

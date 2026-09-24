@@ -16,6 +16,7 @@ board = chain.board
 
 
 def _on_development(store, card_id, repo_path):
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(store.get_card(card_id)["board_id"], "free")
     subprocess.run(["git", "-C", str(repo_path), "branch", "development"], check=True)
     store.set_repo_default_branch(store.get_card(card_id)["repo_id"], "development")

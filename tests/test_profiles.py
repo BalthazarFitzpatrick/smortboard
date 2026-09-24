@@ -384,7 +384,7 @@ def test_save_state_replaces_the_file_rather_than_appending():
 def test_a_usage_limit_run_switches_profile_and_resumes_the_same_card(store, board_and_repo):
     board_id, repo_id = board_and_repo
     store.set_setting("max_parallel", "1")
-    store.set_setting("auto_switch_profiles", "on")  # rotation is opt-in
+    store.set_setting("usage_limit_route", "switch")  # rotation is opt-in
     profiles.add_profile("second", token="second-token")
     card = store.create_card(board_id, repo_id, "a")
 
@@ -408,7 +408,7 @@ def test_a_usage_limit_run_switches_profile_and_resumes_the_same_card(store, boa
 def test_with_every_profile_limited_the_board_parks_until_the_earliest_reset(store, board_and_repo):
     board_id, repo_id = board_and_repo
     store.set_setting("max_parallel", "1")
-    store.set_setting("auto_switch_profiles", "on")  # rotation is opt-in
+    store.set_setting("usage_limit_route", "switch")  # rotation is opt-in
     profiles.add_profile("second", token="second-token")
     card = store.create_card(board_id, repo_id, "a")
 
@@ -435,10 +435,10 @@ def test_with_every_profile_limited_the_board_parks_until_the_earliest_reset(sto
     assert runs.started == [card["id"], card["id"]]
 
 
-def test_auto_switch_off_parks_instead_of_rotating(store, board_and_repo):
+def test_attention_route_parks_instead_of_rotating(store, board_and_repo):
     board_id, repo_id = board_and_repo
     store.set_setting("max_parallel", "1")
-    store.set_setting("auto_switch_profiles", "off")
+    store.set_setting("usage_limit_route", "attention")
     profiles.add_profile("second", token="second-token")
     card = store.create_card(board_id, repo_id, "a")
 
@@ -458,9 +458,8 @@ def test_auto_switch_off_parks_instead_of_rotating(store, board_and_repo):
     assert runs.started == [card["id"]]  # never resumed a second time
 
 
-def test_rotation_is_opt_in_unset_parks_like_off(store, board_and_repo):
-    # the default with the setting never touched - proves rotation stays off until switched on,
-    # not just that an explicit "off" still works
+def test_rotation_is_opt_in_unset_waits(store, board_and_repo):
+    # the default with the setting never touched - wait, so rotation stays off until switch is on
     board_id, repo_id = board_and_repo
     store.set_setting("max_parallel", "1")
     profiles.add_profile("second", token="second-token")
@@ -699,6 +698,7 @@ def test_cross_lab_worker_fallback_is_opt_in_and_does_not_rewrite_the_card(store
     model = load_catalog()["openai"]["models"][0]["id"]
     profiles.add_profile("work", "key", lab="openai", kind="api_key")
     store.set_setting("worker_cross_lab_fallback", [f"openai/{model}"])
+    store.set_setting("usage_limit_route", "switch")
     card = store.create_card(board_id, repo_id, "a")
     runs = FakeRuns()
     scheduler = BoardScheduler(board_id, store.path, runs)
@@ -728,6 +728,7 @@ def test_reviewer_fallback_changes_only_the_failed_role(store, board_and_repo):
             "worker_lab": "openai",
             "worker_model": model,
             "reviewer_cross_lab_fallback": [f"openai/{model}"],
+            "usage_limit_route": "switch",
         }
     )
     card = store.create_card(board_id, repo_id, "a")

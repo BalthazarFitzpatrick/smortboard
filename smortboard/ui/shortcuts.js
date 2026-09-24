@@ -1,7 +1,7 @@
 // keyboard shortcuts: the bindings table, the overlay built from it, and the global keydown
 // handler that dispatches every one of them. split out of board.js so a card-ui card can lease
 // this file alone; it reaches back into board.js and the other split files' globals (openCard,
-// boards, grouped, drawerFor, runFocusedCard, cycleCardModel, and so on) the same way every other
+// boards, drawerFor, runFocusedCard, cycleCardModel, and so on) the same way every other
 // split file does.
 
 // the binding table IS the shortcut overlay's source and the handler dispatch's source, so the
@@ -25,7 +25,6 @@ const BINDINGS = [
   {code: 'KeyM', label: 'm', action: "menu for the focused card: edit, model, complexity, move to, delete", group: 'cards'},
   {code: 'KeyT', label: 't', action: "run replay: scrub the focused card's run step by step", group: 'cards'},
   {code: 'Slash', label: '/', action: "type: the open card's comment, or the open chat", group: 'cards'},
-  {code: 'KeyG', label: 'g', action: 'toggle kanban / workstream grouping', group: 'cards'},
   {code: 'KeyW', label: 'w', action: 'run the board: start (with confirmation) / stop the queue', group: 'cards'},
   {code: 'KeyF', label: 'f', action: 'fold: merge the todo cards one agent should do as one (asks first)', group: 'cards'},
   {code: 'KeyU', label: 'u', action: 'usage: rate-limit windows and per-model spend', group: 'panels'},
@@ -40,7 +39,7 @@ const BINDINGS = [
   {code: 'KeyB', label: 'b', action: 'boards and repos: create a board, register a repo', group: 'panels'},
   {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
   {code: 'KeyH', label: 'h', action: 'pre-flight checklist: what is missing before a card can run', group: 'panels'},
-  {code: 'KeyO', label: 'o', action: 'settings: mission control preferences', group: 'panels'},
+  {code: 'KeyO', label: 'o / shift+o', action: 'o: settings every board shares. shift+o: this board\'s own settings', group: 'panels'},
   {code: 'KeyV', label: 'v', action: 'pull requests: every open one across every board, in merge order', group: 'panels'},
   {code: 'KeyQ', label: 'q', action: 'landing lock: who holds the push lock on each repo, and the queue behind them', group: 'panels'},
   {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent', group: 'panels'},
@@ -146,7 +145,7 @@ function surfaceOverBoard() {
 // the keys that act on a card strip - dead while a surface stands over the board, which is what
 // stopped space and enter opening the card behind an open panel
 const CARD_ACTION_KEYS = new Set(['Space', 'Enter', 'NumpadEnter', 'KeyR', 'KeyK', 'KeyY', 'KeyX',
-  'KeyM', 'KeyT', 'KeyG', 'KeyW', 'KeyF']);
+  'KeyM', 'KeyT', 'KeyW', 'KeyF']);
 
 // the panel a key is aimed at: the topmost open one, menus included
 // plain selectors, one query each: a :not() or a comma is more than the node dom stub the tests
@@ -327,7 +326,6 @@ document.addEventListener('keydown', evt => {
   // above, it stays a space
   if (evt.code === 'Space' && openCard) { evt.preventDefault(); openCard.expander.close(); return; }
 
-  if (evt.code === 'KeyG') { grouped = !grouped; return; }
   if (evt.code === 'KeyW') { toggleRunAll(); return; }
   if (evt.code === 'KeyF') { openFoldConfirm(); return; }
   if (evt.code === 'KeyU') { openUsagePanel(); return; }
@@ -347,6 +345,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
   if (evt.code === 'KeyN') { toggleInboxPanel(); return; }
   if (evt.code === 'KeyH') { evt.preventDefault(); togglePreflightPanel(); return; }
+  if (evt.code === 'KeyO' && evt.shiftKey) { evt.preventDefault(); toggleBoardSettingsPanel(); return; }
   if (evt.code === 'KeyO') { evt.preventDefault(); toggleSettingsPanel(); return; }
   if (evt.code === 'KeyV') { evt.preventDefault(); togglePullsPanel(); return; }
   if (evt.code === 'KeyQ') { evt.preventDefault(); toggleLandingPanel(); return; }

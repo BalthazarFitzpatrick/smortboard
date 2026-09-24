@@ -339,14 +339,12 @@ def _real_runner(
                 for row in profiles.list_profiles(lab=lab)
                 if not row["limited_now"] and (lab, row["name"]) not in tried
             ]
+            # only the "switch" route rotates or changes model - the turn fails with the limit
+            if usage_limit_route(settings) != "switch":
+                break
             if available:
-                if settings.get("auto_switch_profiles") != "on":
-                    break
                 profiles.set_active(available[0]["name"], lab=lab)
                 continue
-            # the "attention" route never switches model unasked - the turn fails with the limit
-            if usage_limit_route(settings) != "fallback":
-                break
             target = profiles.usable_fallback(
                 settings.get(f"{role}_cross_lab_fallback") or [],
                 lab,

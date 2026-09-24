@@ -14,8 +14,8 @@ several; one is active. Tokens are model-only, never your login: Anthropic profi
 
 > [!IMPORTANT]
 > **Rotation is off by default.**
-> A profile at its limit parks new starts on that lab until the window resets. Turn on *switch
-> credential profiles automatically* in settings to rotate instead, so one limited account does
+> A profile at its limit parks new starts on that lab until the window resets. Set
+> `usage_limit_route` to `switch` in settings to rotate instead, so one limited account does
 > not stop the board. Running cards are left alone either way.
 
 ### Adding an OpenAI profile
@@ -53,13 +53,14 @@ Profile rotation stays within a lab. A cross-lab retry needs an explicit fallbac
 message on the card. Codex notes arrive on the next run.
 
 > [!IMPORTANT]
-> **A usage limit switches models unasked.**
-> | `o` setting | `usage_limit_route` | on a usage limit |
-> |---|---|---|
-> | unticked (default) | not set | the role switches to its fallback model on its own |
-> | *on a usage limit, ask me before switching to a fallback model* | `attention` | the card waits in the inbox with a **retry on** control |
+> **A usage limit waits by default.** One `o` setting decides what happens:
+> | `usage_limit_route` | on a usage limit |
+> |---|---|
+> | not set: wait (default) | the profile is marked limited and the board parks until the reset |
+> | `attention` | the card waits in the inbox with a **retry on** control for its fallback model |
+> | `switch` | the board rotates to the next free profile, then to the role's fallback model |
 >
-> Either way the card re-runs on its own model once the window resets.
+> Whichever route, a card still limited re-runs on its own model once the window resets.
 
 ### The model catalog
 
