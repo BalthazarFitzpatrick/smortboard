@@ -66,7 +66,7 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 
 // the contract's table, verified against what board.js actually declares
 const CONTRACT_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape',
-  'KeyG', 'KeyW', 'KeyF', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
+  'KeyW', 'KeyF', 'KeyU', 'KeyI', 'KeyC', 'KeyA', 'KeyD', 'KeyR', 'KeyK', 'KeyY', 'KeyX', 'KeyM',
   'KeyT', 'KeyS',
   'KeyP', 'KeyN', 'KeyV', 'KeyQ', 'KeyH', 'KeyO', 'KeyB', 'Slash', 'Comma', 'Period',
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
@@ -87,8 +87,7 @@ function press(code) {
   document._dispatch('keydown', {code, key: code, target: document.body, preventDefault() {}});
 }
 
-// ---- g, u, a, s, comma and period each open something (hazard placeholder or the overlay)
-press('KeyG');
+// ---- u, a, s, comma and period each open something (hazard placeholder or the overlay)
 press('KeyU'); press('KeyA'); press('KeyS');
 assert.equal(openedMenus.length, 3, 'u, a and s should each open exactly one menu');
 assert.deepEqual(openedMenus.map(m => m.title), ['usage', 'agent roster', 'keyboard shortcuts']);

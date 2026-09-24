@@ -50,7 +50,6 @@ here.
 | `m` | menu for the focused card: edit, model, complexity, move to, delete |
 | `t` | run replay: scrub the focused card's run step by step |
 | `/` | type: the open card's comment, or the open chat |
-| `g` | toggle kanban / workstream grouping |
 | `w` | run the board: start (with confirmation) / stop the queue |
 | `f` | fold: merge the todo cards one agent should do as one (asks first) |
 

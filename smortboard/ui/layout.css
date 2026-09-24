@@ -105,7 +105,7 @@ body {
 .bucket-counts .count-d { color: var(--fill-good); font-weight: 600; }
 .bucket-counts .count-a { color: var(--fill-attention); font-weight: 600; }
 .bucket-expand {
-  background: none; border: 1px solid var(--grey-border); border-radius: var(--radius, 4px);
+  background: none; border: 1px solid var(--grey-border);
   color: var(--text-dim); font: inherit; font-size: 0.85em; padding: 1px 7px; cursor: pointer;
 }
 .bucket-expand:hover { color: var(--cream); border-color: var(--cream); }
@@ -269,7 +269,7 @@ body {
 /* A SECTION IS ITS NAME ON A RULE, the content below it - no ground of its own (operator,
    2026-09-23: the tinted grounds read worse than names and dividers). padded so the focus frame
    has room around the text */
-.card-panel .card-section:not([data-section="title"]) { border-radius: 6px; padding: 6px 10px 10px; }
+.card-panel .card-section:not([data-section="title"]) { padding: 6px 10px 10px; }
 .card-panel .card-section:not([data-section="title"]) > .field-label {
   padding: 2px 0; margin-bottom: 8px; border-bottom: 2px solid var(--grey-border);
 }
