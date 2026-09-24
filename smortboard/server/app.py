@@ -224,6 +224,9 @@ def _make_new_folder(parent: Path, name: object) -> Path:
     never a folder that is already there. raises ValueError with what to change"""
     if not isinstance(name, str) or name.strip() in ("", ".", "..") or "/" in name or "\\" in name:
         raise ValueError("a new folder is one plain name - no slashes, not . or ..")
+    # the folder becomes a GitHub repo of the same name: refuse one GitHub would, before mkdir
+    if not repo_setup.valid_repo_name(name):
+        raise ValueError(f"{name!r} cannot be a GitHub repo name - use letters, digits, . _ or -")
     folder = parent / name
     try:
         folder.mkdir()

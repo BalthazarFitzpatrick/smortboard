@@ -28,6 +28,15 @@ DEVELOPMENT = "development"
 DEFAULT_GITIGNORE = ".env\n.env.*\n*.pem\n*.key\n.venv/\nnode_modules/\n__pycache__/\n.DS_Store\n"
 # what GitHub accepts as a repository name
 _REPO_NAME = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+_BAD_NAME = (
+    "{name!r} is not a GitHub repo name - rename the folder to letters, digits, . _ or - and try "
+    "again"
+)
+
+
+def valid_repo_name(name: str) -> bool:
+    return bool(_REPO_NAME.match(name or "")) and name not in (".", "..")
+
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -113,7 +122,12 @@ def _first_commit(root: Path, git: _Git, steps: list[str], starter: bool) -> Non
     if not (root / ".git").exists():
         git.must("init", "-q", "-b", "main")
         steps.append("git init")
-    git.must("add", "--all")
+    # the same ignores the preview used, whatever the folder's own .gitignore says - what the
+    # operator confirmed is exactly what is committed, and a .env never is
+    with tempfile.TemporaryDirectory() as tmp:
+        excludes = Path(tmp) / "exclude"
+        excludes.write_text(DEFAULT_GITIGNORE)
+        git.must("-c", f"core.excludesFile={excludes}", "add", "--all")
     git.must("commit", "-q", "-m", "initial project scaffold")
     steps.append("first commit on main")
 
@@ -136,11 +150,8 @@ def _push_development(git: _Git, steps: list[str]) -> None:
 
 def _create_origin(root: Path, git: _Git, runner: Runner, steps: list[str]) -> str:
     """a private GitHub repo named after the folder, added as origin, nothing pushed"""
-    if not _REPO_NAME.match(root.name):
-        raise SetupRefused(
-            f"{root.name!r} is not a GitHub repo name - rename the folder to letters, digits, "
-            ". _ or - and try again"
-        )
+    if not valid_repo_name(root.name):
+        raise SetupRefused(_BAD_NAME.format(name=root.name))
     owner = runner(["gh", "api", "user", "--jq", ".login"]).stdout.strip()
     if not owner:
         raise SetupRefused("gh cannot say who you are - run `gh auth login`, then try again")
@@ -173,6 +184,9 @@ def prepare(
     is_repo = (root / ".git").exists()
     has_commit = is_repo and git.ok("rev-parse", "--verify", "--quiet", "HEAD")
     if not has_commit:
+        # a fresh repo gets a GitHub origin named after the folder: refuse a bad name before writing
+        if not valid_repo_name(root.name):
+            raise SetupRefused(_BAD_NAME.format(name=root.name))
         entries = [p for p in root.iterdir() if p.name not in (".git", ".DS_Store")]
         if entries and not confirm:
             raise NeedsConfirm(preview_files(root, runner))

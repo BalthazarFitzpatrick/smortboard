@@ -220,3 +220,41 @@ def test_a_push_that_fails_after_creating_the_repo_names_the_repo_left_on_github
     with pytest.raises(SetupRefused, match="created tester/halfway on GitHub") as refused:
         prepare(folder, runner=failing_push)
     assert "gh repo delete tester/halfway" in str(refused.value)
+
+
+def test_a_folders_own_gitignore_cannot_let_a_secret_into_the_first_commit(tmp_path, gh):
+    """the preview applied the default ignores and the commit did not - a .gitignore without .env
+    showed .env left out, then committed and pushed it"""
+    folder = tmp_path / "own"
+    folder.mkdir()
+    (folder / "app.py").write_text("x = 1\n")
+    (folder / ".env").write_text("TOKEN=secret\n")
+    (folder / ".gitignore").write_text("__pycache__/\n")
+    with pytest.raises(NeedsConfirm) as asked:
+        prepare(folder, runner=gh)
+    prepare(folder, confirm=True, runner=gh)
+    committed = sorted(_git(folder, "ls-tree", "-r", "--name-only", "main").split())
+    assert committed == sorted(asked.value.files) == [".gitignore", "app.py"]
+    pushed = subprocess.run(
+        [
+            "git",
+            "--git-dir",
+            str(gh.remotes / "own.git"),
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "development",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert ".env" not in pushed
+
+
+def test_a_fresh_folder_with_a_bad_name_is_refused_before_anything_is_written(tmp_path, gh):
+    folder = tmp_path / "my project!"
+    folder.mkdir()
+    with pytest.raises(SetupRefused, match="rename the folder"):
+        prepare(folder, runner=gh)
+    assert list(folder.iterdir()) == []

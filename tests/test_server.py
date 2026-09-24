@@ -746,6 +746,17 @@ def test_a_new_folder_is_one_plain_name_not_there_yet(running_server, tmp_path, 
     assert boards == []
 
 
+def test_a_new_folder_github_would_refuse_is_never_made(running_server, tmp_path):
+    status, body = _request(
+        f"{running_server}/api/boards/from-folder",
+        "POST",
+        {"path": str(tmp_path), "new_folder": "my project!"},
+    )
+    assert status == 400
+    assert "GitHub repo name" in body["error"]
+    assert not (tmp_path / "my project!").exists()
+
+
 def test_a_folder_with_files_is_asked_about_before_its_first_commit(running_server, tmp_path):
     folder = tmp_path / "project"
     folder.mkdir()
