@@ -6,8 +6,8 @@
 >
 > - **Multi-lab** (2026-09-18). A run picks a lab and a model per role - Claude Code or Codex - with
 >   credential profiles per lab, a fallback list per role, and one card image carrying both CLIs.
->   The adapters and the model catalog live in `smortboard/labs/`; `docs/spikes/S4-codex-events.md`
->   through `S7-codex-auth.md` record what was measured about Codex before any of it was built,
+>   The adapters and the model catalog live in `smortboard/labs/`; `docs/spikes/s4-codex-events.md`
+>   through `s7-codex-auth.md` record what was measured about Codex before any of it was built,
 >   including the two things that changed the design: Codex reports no dollar cost and no rate-limit
 >   window, and a bare ChatGPT access token is refused where the full login JSON works.
 > - **Merge modes** (2026-09-18). This plan says the board never merges. It does, and now per board:
@@ -24,7 +24,7 @@
 >   request waits, the board rebases the card's own commits onto it in a fresh tree. A rebase that
 >   conflicts blocks the card `OUTDATED`, the eleventh reason code, and leaves the branch alone.
 
-## Context
+## context
 
 The operator wants to get good at defining work precisely and then leaving it alone. Today that means
 hand-running Claude Code sessions, hand-cutting worktrees (a consumer project already carries three under
@@ -44,7 +44,7 @@ below.
 
 ---
 
-## Locked decisions
+## locked decisions
 
 | Area | Decision |
 |---|---|
@@ -66,7 +66,7 @@ below.
 | Isolation | One throwaway container per card, with a clone bind-mounted and a card-scoped token. No GitHub credential inside. **Docker is a hard dependency — there is no fallback.** |
 | Out of scope | Ollama, workstream column mode, scheduling/digest, Omarchy, fish_gate. |
 
-### Resolved from the brief's open flags
+### resolved from the brief's open flags
 
 - **§4.2 mode switch** — a `.toggle` in the top bar, key `g`. Workstream mode ships after v1.
 - **§5 modifier scheme** — `,` opens Workforce (left), `.` opens Mission Control (right). Both
@@ -92,7 +92,7 @@ below.
 
 ---
 
-## Architecture
+## architecture
 
 ```mermaid
 flowchart TD
@@ -121,7 +121,7 @@ flowchart TD
     TELEM --> U
 ```
 
-### Blocked reason codes
+### blocked reason codes
 
 `CRASH`, `USAGE_LIMIT`, `LEASE_CONFLICT`, `AGENT_QUESTION`, `TESTS_FAILED`, `REVIEW_REJECTED`,
 `DEPENDENCY_REJECTED`, `MERGE_CONFLICT`, `API_UNREACHABLE`, `BASE_RED`. The code drives what the
@@ -133,7 +133,7 @@ sixth status, which left a blocked card with no bucket to render in and discarde
 blocked from. The brief said so all along — §4.2 lists five columns, §4.3 makes attention an
 outline.
 
-### Repo layout
+### repo layout
 
 ```
 smortboard/
@@ -153,18 +153,18 @@ the brief's hard constraint and it is load-bearing for the whole plan.
 
 ---
 
-## Spikes — before Phase 2 locks
+## spikes — before phase 2 locks
 
 Each names what would confirm the assumption and what would falsify it. The plan is provisional
 until all three have run.
 
-**S1 — CONFIRMED 2026-09-08, see `docs/spikes/S1-S2-findings.md`.** Run one real card end to end in a scratch worktree.
+**S1 — CONFIRMED 2026-09-08, see `docs/spikes/s1-s2-findings.md`.** Run one real card end to end in a scratch worktree.
 *Confirms:* `claude -p` accepts a prompt, runs to completion non-interactively, emits parseable
 events, reports token counts, and commits. *Falsifies:* it needs a TTY, cannot report tokens, or
 gives no completion signal distinguishable from a crash — any of which forces the Agent SDK instead,
 and re-plans Phase 2 entirely.
 
-**S2 — CONFIRMED 2026-09-08, see `docs/spikes/S1-S2-findings.md`.** Run two headless sessions against the one interactive
+**S2 — CONFIRMED 2026-09-08, see `docs/spikes/s1-s2-findings.md`.** Run two headless sessions against the one interactive
 subscription seat while it is in use. *Confirms:* they queue or fail cleanly with a detectable
 signal we can map to `USAGE_LIMIT`. *Falsifies:* they degrade silently or corrupt the interactive
 session — which makes parallelism (Phase 5) dependent on separate credentials, not just leases.
@@ -175,7 +175,7 @@ buildable and the earlier assumption that only the status line exposes it was wr
 utilisation stayed at 0.11, so this proves concurrency and a readable signal, not behaviour at the
 limit.
 
-**S3 — CONFIRMED 2026-09-08, see `docs/spikes/S3-findings.md`.** A `PreToolUse` hook matched on
+**S3 — CONFIRMED 2026-09-08, see `docs/spikes/s3-findings.md`.** A `PreToolUse` hook matched on
 `Edit|Write` sees `file_path` before the write lands and blocks it with exit 2. Verified: the
 in-lease edit was written, the out-of-lease edit was refused and the file left unchanged. The
 refusal is distinguishable three ways — `hook_response` with `exit_code: 2` and our own
@@ -184,11 +184,11 @@ agent's own report. Leases are enforceable at write time, not advisory.
 
 ---
 
-## Phases
+## phases
 
 Each phase is independently shippable and testable. **v1 is Phases 0–6.**
 
-### Phase 0 — ui_base foundations
+### phase 0 — ui_base foundations
 
 Ships as ui_base `v0.2.0`. Domain-free naming throughout: no `card`, `board`, `kanban`, `agent`.
 Only what Phase 1 needs; the drawer, meter and log arrive in later phases.
@@ -242,7 +242,7 @@ verifies: renders in both light and dark theme using tokens only, no colour lite
 **Ships when:** `uv run pytest` passes in ui_base, the asset tests cover the new files, and a demo
 page exercises all five.
 
-### Phase 1 — the board, no agents
+### phase 1 — the board, no agents
 
 A usable manual kanban. No agent touches anything yet, which makes every later phase's failures
 unambiguously about execution.
@@ -260,7 +260,7 @@ unambiguously about execution.
 **Ships when:** the whole-system test below runs up to "card exists and is navigable", cards survive
 a container restart, and `export` round-trips.
 
-### Phase 2 — one card executes
+### phase 2 — one card executes
 
 Depends on S1 and S3.
 
@@ -276,7 +276,7 @@ Depends on S1 and S3.
 **Ships when:** one card runs unattended, commits to its branch, and reaches Checking or Blocked
 with a correct reason code.
 
-### Phase 3 — the gates
+### phase 3 — the gates
 
 **Two gates, and they answer different questions.** Keeping them apart is the point of having two:
 
@@ -360,7 +360,7 @@ Two things this cost, both found by running it rather than by testing it:
   first now, and puts focus back on the card that ran - without that the fan hides the result
   anyway, since only the focused card's foot is showing.
 
-### Phase 4 — Mission Control
+### phase 4 — mission control
 
 - ui_base: the sliver drawer component.
 - Orchestrator session, role-layered prompts (orchestrator / worker / reviewer), versioned in the
@@ -372,7 +372,7 @@ Two things this cost, both found by running it rather than by testing it:
 
 **Ships when:** a conversation in Mission Control produces cards on the board that pass Phase 3.
 
-### Phase 5 — parallelism
+### phase 5 — parallelism
 
 Depends on S2.
 
@@ -411,7 +411,7 @@ board itself already tells you everything the roster would.
 **Ships when:** three cards across two repos run concurrently, all three merge cleanly, and the
 roster shows all three with an accurate one-line activity for each.
 
-### Phase 6 — telemetry and workforce
+### phase 6 — telemetry and workforce
 
 - ui_base: log component, quota meter.
 - Workforce panel, `,`, defaulting to the **result** view — diff, files touched, last decision,
@@ -423,13 +423,13 @@ roster shows all three with an accurate one-line activity for each.
 
 **Ships when:** token counts reconcile against the event log for a completed card.
 
-### After v1
+### after v1
 
 Workstream column mode; Ollama plus the documented board transport protocol; daily digest.
 
 ---
 
-## Documentation, per §13
+## documentation, per §13
 
 Each phase ships its own API documentation as part of the phase, not afterwards: the HTTP API in
 Phase 1, the event log schema and runner contract in Phase 2, the review and merge contracts in
@@ -439,7 +439,7 @@ spec.
 
 ---
 
-## Whole-system test case
+## whole-system test case
 
 The smallest scenario exercising the assembled units, not each in isolation:
 
@@ -456,7 +456,7 @@ fresh one, and attaches the prior diff.
 This is what catches a wrong seam — a runner that commits but reports no tokens, a lease that is
 claimed but never released, a reviewer that approves before tests finish.
 
-## Verification
+## verification
 
 - `uv run pytest` in both repos; ruff clean before every commit.
 - ui_base asset tests extended per Phase 0 — serving what it should not, failing to serve what a
@@ -466,14 +466,14 @@ claimed but never released, a reviewer that approves before tests finish.
   attribute.
 - Docker image builds and the board survives a container restart with state intact.
 
-## The containment decision
+## the containment decision
 
 **A card will eventually read input nobody wrote for it** — an issue body, a fetched page, a
 dependency's README. That makes prompt injection a real path rather than a theoretical one, and it
 is the fact that decides this section. Against a merely confused agent almost anything is adequate;
 against an injected one, only a boundary it cannot argue with is.
 
-### The board runs natively, and that is the safer choice
+### the board runs natively, and that is the safer choice
 
 A containerised board that starts card containers needs the Docker socket, which is root-equivalent
 on the host. A native board runs with the user's own privileges. **The container was never
@@ -483,7 +483,7 @@ of Docker removes a root-shaped hole and costs nothing.
 It ships as `uv tool install smortboard`, or `uvx smortboard` with no install at all. One command,
 no virtualenv to manage, and `uv` is already the house toolchain.
 
-### A card gets a container, a clone, and no way to reach GitHub
+### a card gets a container, a clone, and no way to reach github
 
 - a **clone** rather than a worktree, because a worktree's `.git` is a pointer file into the parent
   repo: mount only the worktree and git is dead, and committing is the card's whole job
@@ -504,7 +504,7 @@ guard that refuses a push to main lives in the operator's user settings, and a c
 whatever it decides to do. The same split holds for sessions outside the board: agents merge into `development`, a person
 merges into `main`, enforced by a hook and a ruleset - see [protect-main.md](protect-main.md).
 
-### Shared tools, isolated cards
+### shared tools, isolated cards
 
 The toolchain lives in **one image per repo**, declared on the repo alongside its `test_command`.
 A fresh container per card would otherwise pay for `uv sync` or `npm install` on every single run —
@@ -522,7 +522,7 @@ answer to "one card wedged the container two others are using". **And it costs n
 on one repo are on different branches, so they need separate checkouts either way — sharing a clone
 would put them back on a shared `.git`, where one card can rewrite another's refs.
 
-### One card runtime, and Docker is a hard dependency
+### one card runtime, and docker is a hard dependency
 
 **There is no second mode.** A card runs in a container or it does not run. If Docker is missing, or
 the card credential is not configured, the board refuses and says how to fix it rather than starting
@@ -537,7 +537,7 @@ person relying on it would have no way to know.
 So Docker joins `uv` as something you install once, and `require_card_runtime()` is the only way to
 get a runtime.
 
-### What a container still does not solve
+### what a container still does not solve
 
 - **the network is open.** The run has to reach the API, so `--network none` is not available.
   Restricting egress to that one host is possible inside a container and impractical outside one,
@@ -546,9 +546,9 @@ get a runtime.
   protects the operator's own session is that the card credential is a *separate* one, scoped to
   `claude setup-token` rather than the operator's login
 
-## What a card is, and what it costs
+## what a card is, and what it costs
 
-### A card is a feature, not an edit
+### a card is a feature, not an edit
 
 A card is a unit of work with an outcome and a list of tasks that get there: *"the consumer project needs a new
 tab, here is what it shows, here is how it behaves."* Not *"change this sentence."*
@@ -563,7 +563,7 @@ So slicing work into many tiny cards is actively wasteful: you pay the fixed ove
 one, and none of them learn from the last. The board's own affordances make small cards tempting;
 the cost floor is the reason not to.
 
-### Where a feature-sized card gets expensive instead
+### where a feature-sized card gets expensive instead
 
 The opposite failure. A long card's context grows as it reads, and **a file read on turn 2 is
 re-read from cache on every turn after it** — read one big file early in a fifty-turn card and you
@@ -583,7 +583,7 @@ Which makes three things load-bearing rather than nice:
 that today. The honest options are compaction inside the run, or the board splitting the card — and
 neither should be designed before a real card actually hits it.
 
-### Measured, on the same card twice
+### measured, on the same card twice
 
 The first guess was that the path lease in the prompt would be the big saving. It was not, and the
 experiment says so plainly. Running one card, then fixing what the transcript showed and running the
@@ -610,7 +610,7 @@ Four denials remain, and they are the same shape: the card cannot execute anythi
 work, because no repo declared a `test_command`. That is the next thing to measure, and it matters
 for Phase 3 rather than only for cost — a test gate needs a card that can run tests.
 
-### The levers, in the order they matter
+### the levers, in the order they matter
 
 1. **Fewer turns.** The path lease is computed and then *hidden from the agent*, used only to refuse
    writes. Putting it in the prompt turns a security mechanism into navigation, for free, and is the
@@ -627,7 +627,7 @@ Two things already true and worth not breaking: the repo's own `CLAUDE.md` is in
 **Instrument before optimising** — the numbers above come from two runs on a one-file repo, which is
 not a real codebase.
 
-### A card is not a conversation
+### a card is not a conversation
 
 Worth stating because the two get conflated. The API is stateless: every turn re-sends the whole
 context, in a card exactly as in an interactive session. The difference is across runs, not within
@@ -636,7 +636,7 @@ starts small, stays small, and learns nothing from the card before it. Neither i
 they trade reuse against boundedness, which is why the Phase 5 resume briefing hands a card a
 summary rather than letting it re-derive.
 
-## Risks
+## risks
 
 - **A card is not contained, only guided.** The lease hook stops writes outside the card's paths and
   a Bash guard stops the obvious escapes, but shell is arbitrary and a determined command gets out.

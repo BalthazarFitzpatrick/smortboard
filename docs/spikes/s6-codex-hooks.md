@@ -1,4 +1,4 @@
-# S6: Codex hooks and sandbox
+# s6: codex hooks and sandbox
 
 Measured 2026-09-17 with codex-cli 0.154.0; generated hooks rechecked in the
 real smortboard-card:multi-lab image on 2026-09-18.

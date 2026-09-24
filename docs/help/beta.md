@@ -1,9 +1,9 @@
-# Beta and reporting
+# beta and reporting
 
-**One user so far.** The core runs daily on real repos. Everything around it has seen one person,
+**one user so far.** the core runs daily on real repos. everything around it has seen one person,
 one machine and one set of habits.
 
-## What is solid
+## what is solid
 
 - the card lifecycle end to end: worktree, run, test gate, reviewer, pull request
 - the containment and the guards
@@ -11,41 +11,41 @@ one machine and one set of habits.
 - cost accounting and the spend caps
 - hours of unattended running, which is what it was built for
 
-## What is rough
+## what is rough
 
-- **Only macOS is really used.** Linux should be fine: CI runs the test suite there every push.
-  The Windows code paths exist but never ran. Assume they are broken and tell us how.
-- **Setup is the least tested.** It ran a handful of times, always on a machine that already had
-  everything. The pre-flight checklist (`h`) is the best defence; reports about it are
+- **only macos is really used.** linux should be fine: ci runs the test suite there every push.
+  the windows code paths exist but never ran. assume they are broken and tell us how.
+- **setup is the least tested.** it ran a handful of times, always on a machine that already had
+  everything. the pre-flight checklist (`h`) is the best defence; reports about it are
   especially useful.
-- **Keys follow one person's habits.** A key that surprises you is worth a report, even if it works
+- **keys follow one person's habits.** a key that surprises you is worth a report, even if it works
   as built.
-- **The HTTP server handles one request at a time.** Fine for one person on one machine. It is not a
+- **the http server handles one request at a time.** fine for one person on one machine. it is not a
   multi-user server, by design.
-- **A stop during the test gate** waits for the gate to finish.
-- **Task checkboxes in a pull request** are not ticked during a run.
+- **a stop during the test gate** waits for the gate to finish.
+- **task checkboxes in a pull request** are not ticked during a run.
 
-## What will change
+## what will change
 
-**Anything on the rough list.** The database migrates itself forward on every open, so upgrades
-keep your boards. But this is `0.x`: settings, defaults and panel shapes will move.
+**anything on the rough list.** the database migrates itself forward on every open, so upgrades
+keep your boards. but this is `0.x`: settings, defaults and panel shapes will move.
 
-What will not: [cards](../practices/cards.md), [leases](../practices/leases.md),
+what will not: [cards](../practices/cards.md), [leases](../practices/leases.md),
 [the two gates](../practices/gates.md), [the landing lock](../practices/landing.md), and human-only
 merges into main.
 
-## Try it end to end
+## try it end to end
 
-`uv run smortboard seed-beta <empty folder>` makes a small browser game on a private GitHub repo
+`uv run smortboard seed-beta <empty folder>` makes a small browser game on a private github repo
 and a board of 15 cards already written: dependency chains, parallel tracks, and a test gate that
-needs nothing but Node. [Practice board](../beta-test-board.md) walks it, with the mission control
+needs nothing but node. [practice board](../beta-test-board.md) walks it, with the mission control
 prompt if you would rather plan it yourself, and a table of which feature each step exercises.
 
-## Sending a report
+## sending a report
 
-**File bugs at
-[github.com/BalthazarFitzpatrick/smortboard/issues](https://github.com/BalthazarFitzpatrick/smortboard/issues)**
-with the bug report template. The more of it you fill in, the faster the fix:
+**file bugs at
+[github.com/balthazarfitzpatrick/smortboard/issues](https://github.com/BalthazarFitzpatrick/smortboard/issues)**
+with the bug report template. the more of it you fill in, the faster the fix:
 
 - the version (`uv run smortboard --version`) and your operating system
 - anything not green in the pre-flight checklist (`h`)
@@ -55,9 +55,9 @@ with the bug report template. The more of it you fill in, the faster the fix:
   output in the terminal smortboard runs in
 
 > [!IMPORTANT]
-> **Keep credentials out.**
-> Never paste your card token, your API key, or the contents of `~/.config/smortboard/`.
+> **keep credentials out.**
+> never paste your card token, your api key, or the contents of `~/.config/smortboard/`.
 
-Read a transcript before attaching it: a card's event log holds whatever the agent saw in your repo.
-`smortboard export` ([Backup](../reference/backup.md)) attaches your whole board reproducibly. It
+read a transcript before attaching it: a card's event log holds whatever the agent saw in your repo.
+`smortboard export` ([backup](../reference/backup.md)) attaches your whole board reproducibly. it
 never carries credential material, so nothing needs redacting.

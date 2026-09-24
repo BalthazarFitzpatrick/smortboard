@@ -1,9 +1,9 @@
-# Prompt layering
+# prompt layering
 
 Prompts are layered by **role**, and only role - `orchestrator`, `worker`, `reviewer`. Not per
 board, not per repo, not per card.
 
-## The three layers
+## the three layers
 
 1. **Seed default**, in code. Each role's module owns one: `runner.SYSTEM_PROMPT` (worker),
    `reviewer.REVIEW_PROMPT_HEADER` (reviewer), `orchestrator.ORCHESTRATOR_PROMPT` (orchestrator).
@@ -23,7 +23,7 @@ reviewer and orchestrator each pass their own default in, rather than importing 
 that is what keeps `prompts.py` free of an import cycle back into `exec/`, `review/` or the
 orchestrator module.
 
-## Where each layer lands in the actual `claude` invocation
+## where each layer lands in the actual `claude` invocation
 
 - worker: `--system-prompt`, built by `backends.ContainerBackend._docker_command` from
   `active_prompt(store, "worker", runner.SYSTEM_PROMPT)`
@@ -35,7 +35,7 @@ orchestrator module.
 `runner.build_command`'s `system_prompt` parameter defaults to `SYSTEM_PROMPT` so every caller that
 does not care about layering (tests, the non-container `run_card` path) keeps working unchanged.
 
-## What the board adds that a stored prompt cannot drop
+## what the board adds that a stored prompt cannot drop
 
 A stored override replaces the seed default whole, so anything a run depends on is appended outside
 it, in code, on every run:
@@ -63,7 +63,7 @@ it, in code, on every run:
 - **fold:** `consolidate.FOLD_PROMPT` is fixed in code; there is no stored fold role. Its turn prompt
   carries `CARD_TEXT_RULES` too.
 
-## Flags that shape every run
+## flags that shape every run
 
 - `--tools`: the only tools a run loads - Read, Edit, Write, Glob, Grep and Bash for the worker;
   Read, Grep and Glob for the reviewer, mission control and fold. `--allowedTools` and

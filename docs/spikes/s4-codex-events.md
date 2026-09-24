@@ -1,4 +1,4 @@
-# S4: Codex events
+# s4: codex events
 
 Measured 2026-09-17 with codex-cli 0.154.0 and gpt-5.6-sol. These are the
 recorded results from the implementation checkpoint, not a new execution.
