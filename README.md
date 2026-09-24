@@ -1,8 +1,10 @@
 # smortboard
 
-**Kanban board that agents work, not you.** Write the card, walk away. Agent takes it in its own
-container, on its own branch. Board runs your tests, a second agent reviews the diff, pull request
-waits for you. `main` stays yours.
+**Kanban board that agents work, not you.** Tell mission control what to build; it writes the
+cards. Each card's agent works in its own container, on its own branch, and writes the tests for
+what it builds. The board runs them, a second agent reviews the diff. Then your choice: the pull
+request waits for you, or lands on `development` by itself once both pass. `main` is off limits to
+every agent.
 
 ![The board mid-sprint: cards in every state across the columns - blue where agents are working, vanilla where they wait on you, lichen accepted, red rejected](docs/images/hero-board.jpg)
 
@@ -45,12 +47,13 @@ to mint a key.
 
    Opens the board at the printed link. Keep the terminal open.
 
-2. **Repo.** `b` -> from local repo. Needs a GitHub `origin` (private is fine) with its default
-   branch pushed. Set the repo's test command, e.g. `uv run pytest -q` - no test command, no
-   finished card.
+2. **Repo.** `b` -> from local repo: a clone with a GitHub `origin` (private is fine), default
+   branch pushed. Tests are required. Has tests: the board finds how to run them. Has none: mission
+   control writes a first suite, or you point at your own command. New repo: its first card sets up
+   the tests.
 
 3. **Lab keys.** `claude setup-token` or `codex login` in your terminal. On the board: `shift`+`p`,
-   add a profile, paste, activate. Remove the empty `default`. Never your own login.
+   add a profile, paste, activate. Remove the empty `default`.
 
 4. **`h`.** Pre-flight checklist; a red row names its fix. All green: `.` to plan cards, `w` to run
    the board.
@@ -61,19 +64,19 @@ Practice run: `uv run smortboard seed-beta <empty folder>` - a small game repo a
 
 ## Best practices
 
-- **Write the card once, completely.** The agent gets the card and the repo, not your head.
-  Criteria a test can check. [Cards](docs/practices/cards.md)
-- **Keep leases narrow, and keep them apart.** Overlapping leases serialise the board; an empty
-  lease runs nothing. [Leases](docs/practices/leases.md)
+- **Let mission control write the cards.** One pull request each, criteria its own tests check,
+  a lease no parallel card shares. Read its plan before it creates them; steer a running card with
+  `,`. [Mission control](docs/practices/mission-control.md) - [cards](docs/practices/cards.md) -
+  [leases](docs/practices/leases.md)
 - **Watch one column.** Attention holds everything that needs you; the rest runs itself.
   [Attention and inbox](docs/practices/attention.md)
 - **Let the two gates judge.** Your tests, then a second agent, before any pull request. An agent
   saying the tests pass is not a pass. [The two gates](docs/practices/gates.md)
-- **Main is yours.** The board lands on `development`; you merge `main`. A hook keeps agents off it.
+- **Main is yours.** The board lands on `development`: by itself on a free-merge board once tests
+  and review pass, or when you accept each card on a review-required board. A hook keeps agents off
+  `main`.
   [Landing](docs/practices/landing.md) -
   [protect main](docs/protect-main.md)
-- **Plan in mission control, steer in workforce.**
-  [Mission control](docs/practices/mission-control.md)
 - **Budget before you run.** A daily budget per board, a model per role, a fallback in another lab.
   [Cost](docs/practices/cost.md) -
   [labs](docs/practices/labs.md)

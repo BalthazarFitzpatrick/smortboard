@@ -26,7 +26,7 @@ against something real.
 
 ### 1. A credential for the cards
 
-Never your own login. Get one in your terminal:
+Get one in your terminal:
 
 - **Claude:** `claude setup-token` prints a token once.
 - **Codex:** `codex login` writes `~/.codex/auth.json` (paste all of it). Or use an OpenAI API key.
@@ -44,8 +44,19 @@ A card executes in it.
 is enough. The board pushes card branches and opens pull requests there, so a repo with no GitHub
 `origin` stops every card at hand-over.
 
-On the repo's row, set its test command, e.g. `uv run pytest -q`. **Without one a card cannot
-finish**: the gate has nothing to run. See [Repos and test commands](../reference/repos.md).
+**Tests are required.** Cards write them - every criterion gets one - and the gate runs them. When
+you add the repo, the board reads its committed files:
+
+- **Has tests:** it stores the command that runs them - `uv run --no-sync pytest -q` for Python,
+  `npm test` or `node --test` for Node. Change it on the repo's row if it guessed wrong.
+- **Has none:** it says so, with two ways forward: **ask mission control** (it opens `.` with a
+  request for a first card that adds a test suite; `/` then `enter` sends it), or **use my own
+  command**.
+- **New repo, nothing to detect:** mission control's first card sets up the tests and names the
+  command, and the board stores it.
+
+There is no switch to turn tests off: the gate refuses a card on a repo without a test command. See
+[Repos and test commands](../reference/repos.md).
 
 ### Then press `h`
 

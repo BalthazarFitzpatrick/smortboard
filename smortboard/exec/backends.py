@@ -34,6 +34,7 @@ from smortboard.exec.runner import (
     READING_RULES,
     SCREENSHOT_RULE,
     SYSTEM_PROMPT,
+    TEST_RULES,
     ProcessHandle,
     RunResult,
     allowed_tools_for_repo,
@@ -568,6 +569,7 @@ class ContainerBackend:
                 system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT)
                 + HEADLESS_RULES
                 + READING_RULES
+                + TEST_RULES
                 + (SCREENSHOT_RULE if (Path(clone_path) / "smortboard" / "ui").is_dir() else "")
                 + note_marker_paragraph(note_marker or new_note_marker()),
                 stream_input=adapter.capabilities.live_steering,

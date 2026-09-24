@@ -1,6 +1,7 @@
 // boards and repos (b): b opens/closes the panel (not a Menu), creating a board switches to it and
 // refreshes the bar without a reload, registering a repo refreshes the repo list, a refusal renders
-// inline, and typing in any of the panel's inputs never fires a board shortcut.
+// inline, and typing in any of the panel's inputs never fires a board shortcut. a new repo's tests
+// come back as one status line, or as a notice held on its row when it has none.
 // run: node tests/js/boards.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
@@ -65,7 +66,8 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('boards.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {toggleBoardsPanel, openBoardsPanel, closeBoardsPanel, bp, BINDINGS, boardsRef: () => boards};`)(SpyMenu, SpyDrawer);
+;return {toggleBoardsPanel, openBoardsPanel, closeBoardsPanel, bp, BINDINGS, boardsRef: () => boards,
+  createBoardFromRepo, renderRepoList, mc};`)(SpyMenu, SpyDrawer);
 
 const flush = () => new Promise(r => setTimeout(r, 0));
 function press(code, target) {
@@ -182,5 +184,77 @@ assert.deepEqual(JSON.parse(fromRepoCall.opts.body), {path: '/home/me/proj'});
 assert.ok(lastMenu.closed, 'the folder menu closes once the board exists');
 assert.equal(mod.boardsRef().length, 3, 'the new board is in the bar without a reload');
 press('KeyB');
+
+// ---- a repo with tests and a command for them is one status line ---------------------------------
+press('KeyB');
+await flush(); await flush();
+const closedMenu = {close() {}};
+const BOARD_D = {id: 'b4', name: 'tested', position: 3, created_at: 't4'};
+const TESTED_REPO = {id: 'r3', board_id: 'b4', name: 'tested', path: '/home/me/tested',
+  default_branch: 'main', test_command: 'npm test', image: null, lint_command: null};
+stub('/api/boards/from-repo', 'POST', 201,
+  {board: BOARD_D, repo: TESTED_REPO, tests: {command: 'npm test', has_tests: true}});
+stub('/api/boards', 'GET', 200, [BOARD_A, BOARD_B, BOARD_C, BOARD_D]);
+stub('/api/boards/b4/cards', 'GET', 200, []);
+stub('/api/boards/b4/repos', 'GET', 200, [TESTED_REPO]);
+await mod.createBoardFromRepo('/home/me/tested', closedMenu);
+await flush(); await flush();
+assert.equal(mod.bp.boardStatusEl.textContent, "tests run with `npm test` - change it on the repo's row");
+assert.equal(mod.bp.repoListEl.querySelector('.repo-tests-notice'), null, 'a tested repo holds no notice');
+
+// ---- a repo with no tests holds a notice on its row, and asking mission control sends nothing -----
+const BOARD_E = {id: 'b5', name: 'bare', position: 4, created_at: 't5'};
+const BARE_REPO = {id: 'r4', board_id: 'b5', name: 'bare', path: '/home/me/bare', default_branch: 'main',
+  test_command: null, image: null, lint_command: null};
+stub('/api/boards/from-repo', 'POST', 201,
+  {board: BOARD_E, repo: BARE_REPO, tests: {command: null, has_tests: false}});
+stub('/api/boards', 'GET', 200, [BOARD_A, BOARD_B, BOARD_C, BOARD_D, BOARD_E]);
+stub('/api/boards/b5/cards', 'GET', 200, []);
+stub('/api/boards/b5/repos', 'GET', 200, [BARE_REPO]);
+await mod.createBoardFromRepo('/home/me/bare', closedMenu);
+await flush(); await flush();
+let notice = mod.bp.repoListEl.querySelector('.repo-row[data-repo-id="r4"] .repo-tests-notice');
+assert.ok(notice, 'a repo with no tests holds a notice on its own row');
+assert.equal(notice.querySelector('.field-label').textContent, 'bare has no tests - every card needs them');
+assert.deepEqual([...notice.querySelectorAll('.toggle')].map(t => t.textContent),
+  ['ask mission control', 'use my own command']);
+await mod.renderRepoList();
+notice = mod.bp.repoListEl.querySelector('.repo-tests-notice');
+assert.ok(notice, 'a re-render keeps the notice until one of its actions is picked');
+const orchestratorPosts = () =>
+  calls.filter(c => c.path.includes('/orchestrator') && c.opts && c.opts.method === 'POST');
+notice.querySelector('.repo-tests-ask').onclick();
+await flush();
+assert.equal(mod.bp.backdrop.parentNode, null, 'asking mission control closes the panel');
+assert.equal(mod.mc.input.value, 'bare has no tests yet. Plan a first card that adds a test suite for its '
+  + 'current behaviour, sets up its test runner and names the command.');
+assert.notEqual(document.activeElement, mod.mc.input, 'the prefill leaves the input unfocused');
+assert.equal(orchestratorPosts().length, 0, 'the prefill is never sent');
+assert.equal(mod.bp.boardStatusEl.textContent, 'press / then enter to send it');
+press('KeyB');
+await flush(); await flush();
+assert.equal(mod.bp.repoListEl.querySelector('.repo-tests-notice'), null, 'a picked action clears the notice');
+
+// ---- registering a repo with a command but no tests: use my own command focuses its test field ----
+Object.keys(mod.bp.repoFields).forEach(k => { mod.bp.repoFields[k].value = ''; });
+mod.bp.repoFields.name.value = 'py';
+mod.bp.repoFields.path.value = '/py';
+const PY_REPO = {id: 'r5', board_id: 'b5', name: 'py', path: '/py', default_branch: 'main',
+  test_command: 'uv run --no-sync pytest -q', image: null, lint_command: null};
+stub('/api/boards/b5/repos', 'POST', 201,
+  {...PY_REPO, tests: {command: 'uv run --no-sync pytest -q', has_tests: false}});
+stub('/api/boards/b5/repos', 'GET', 200, [BARE_REPO, PY_REPO]);
+fireKeydown(mod.bp.repoFields.path, {code: 'Enter', key: 'Enter'});
+await flush(); await flush(); await flush();
+notice = mod.bp.repoListEl.querySelector('.repo-row[data-repo-id="r5"] .repo-tests-notice');
+assert.ok(notice, 'a registered repo with no tests holds the notice too');
+assert.equal(mod.bp.repoListEl.querySelectorAll('.repo-tests-notice').length, 1, 'only on its own row');
+notice.querySelector('.repo-tests-own').onclick();
+await flush(); await flush();
+assert.equal(document.activeElement,
+  mod.bp.repoListEl.querySelector('.repo-row[data-repo-id="r5"] .repo-edit-test'),
+  "use my own command focuses that repo's test command field");
+assert.equal(mod.bp.repoListEl.querySelector('.repo-tests-notice'), null, 'and clears the notice');
+press('Escape');
 
 console.log('ok');
