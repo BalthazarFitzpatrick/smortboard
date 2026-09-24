@@ -90,7 +90,7 @@ def test_everyday_commands_pass(env, command):
 
 
 def run_codex_hook(env, command):
-    """codex's PreToolUse payload for a shell call, as measured in docs/spikes/S6-codex-hooks.md"""
+    """codex's PreToolUse payload for a shell call, as measured in docs/spikes/s6-codex-hooks.md"""
     tmp_path, bin_dir = env
     payload = json.dumps(
         {

@@ -421,12 +421,12 @@ def _auth_json(token: str) -> str:
         data = json.loads(token)
     except (TypeError, json.JSONDecodeError) as exc:
         raise ProfileError(
-            "ChatGPT login must be a JSON object containing tokens.access_token"
+            "chatgpt login must be a json object containing tokens.access_token"
         ) from exc
     tokens = data.get("tokens") if isinstance(data, dict) else None
     access = tokens.get("access_token") if isinstance(tokens, dict) else None
     if not isinstance(access, str) or not access.strip():
-        raise ProfileError("ChatGPT login must be a JSON object containing tokens.access_token")
+        raise ProfileError("chatgpt login must be a json object containing tokens.access_token")
     return json.dumps(data, separators=(",", ":"))
 
 

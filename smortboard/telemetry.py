@@ -1,7 +1,7 @@
 """pure projections over the store and the run registry - no model calls, nothing derived by asking.
 
 roster: every card an agent currently holds - a live run only - with a one-line activity read off
-its own latest event rather than asked for (see docs/PLAN.md Phase 5's roster unit). a blocked card
+its own latest event rather than asked for (see docs/plan.md Phase 5's roster unit). a blocked card
 belongs to the attention inbox instead, not to this list.
 usage: rate-limit windows and model spend, summed straight off the event log.
 """

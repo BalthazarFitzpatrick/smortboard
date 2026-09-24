@@ -40,24 +40,24 @@ const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {renderCardStrip, ctaFor};`)(SpyMenu, SpyDrawer);
 
 // ---- the label tracks status, one state at a time
-assert.equal(mod.ctaFor({status: 'todo'}).label, 'Run');
-assert.equal(mod.ctaFor({status: 'doing'}).label, 'Running…');
-assert.equal(mod.ctaFor({status: 'checking'}).label, 'Review PR');
-assert.equal(mod.ctaFor({status: 'accepted'}).label, 'View');
-assert.equal(mod.ctaFor({status: 'rejected'}).label, 'Rerun');
+assert.equal(mod.ctaFor({status: 'todo'}).label, 'run');
+assert.equal(mod.ctaFor({status: 'doing'}).label, 'running…');
+assert.equal(mod.ctaFor({status: 'checking'}).label, 'review pr');
+assert.equal(mod.ctaFor({status: 'accepted'}).label, 'view');
+assert.equal(mod.ctaFor({status: 'rejected'}).label, 'rerun');
 
 // ---- a blocked card's label names the fix, not the bare reason code
-assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'LEASE_CONFLICT'}).label, 'Fix leases');
-assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'AGENT_QUESTION'}).label, 'Answer question');
-assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'USAGE_LIMIT'}).label, 'Resume run');
-assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'CRASH'}).label, 'Investigate crash');
-assert.equal(mod.ctaFor({status: 'checking', blocked_reason_code: 'TESTS_FAILED'}).label, 'Review failure');
-assert.equal(mod.ctaFor({status: 'checking', blocked_reason_code: 'REVIEW_REJECTED'}).label, 'Review findings');
-assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'DEPENDENCY_REJECTED'}).label, 'Review dependency');
+assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'LEASE_CONFLICT'}).label, 'fix leases');
+assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'AGENT_QUESTION'}).label, 'answer question');
+assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'USAGE_LIMIT'}).label, 'resume run');
+assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'CRASH'}).label, 'investigate crash');
+assert.equal(mod.ctaFor({status: 'checking', blocked_reason_code: 'TESTS_FAILED'}).label, 'review failure');
+assert.equal(mod.ctaFor({status: 'checking', blocked_reason_code: 'REVIEW_REJECTED'}).label, 'review findings');
+assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'DEPENDENCY_REJECTED'}).label, 'review dependency');
 // an unlisted code still says something, rather than leaking the raw code onto the button
-assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'SOMETHING_NEW'}).label, 'Needs attention');
+assert.equal(mod.ctaFor({status: 'doing', blocked_reason_code: 'SOMETHING_NEW'}).label, 'needs attention');
 // blocked wins over status, the same precedence cardClasses already gives the card's own border
-assert.equal(mod.ctaFor({status: 'checking', blocked_reason_code: 'LEASE_CONFLICT'}).label, 'Fix leases');
+assert.equal(mod.ctaFor({status: 'checking', blocked_reason_code: 'LEASE_CONFLICT'}).label, 'fix leases');
 
 // ---- blocked and flagged cards carry the attention flag; a quiet card does not
 assert.ok(mod.ctaFor({status: 'doing', blocked_reason_code: 'LEASE_CONFLICT'}).attention);
@@ -82,21 +82,21 @@ const footIdx = strip.innerHTML.indexOf('card-foot');
 const actionIdx = strip.innerHTML.indexOf('card-action', footIdx);
 const workstreamIdx = strip.innerHTML.indexOf('card-workstream', footIdx);
 assert.ok(actionIdx > 0 && actionIdx < workstreamIdx, 'the action note sits left of the workstream');
-assert.match(strip.innerHTML, /<span class="card-action card-action-quiet"[^>]*>Run<\/span>/);
+assert.match(strip.innerHTML, /<span class="card-action card-action-quiet"[^>]*>run<\/span>/);
 
 // ---- a blocked card's note is visibly distinct from a quiet one, in the attention colour
 const blockedStrip = mod.renderCardStrip({id: 'c2', title: 't', status: 'doing', blocked_reason_code: 'LEASE_CONFLICT'});
-assert.match(blockedStrip.innerHTML, /<span class="card-action card-action-attention"[^>]*>Fix leases<\/span>/);
+assert.match(blockedStrip.innerHTML, /<span class="card-action card-action-attention"[^>]*>fix leases<\/span>/);
 
 // ---- a running card's note wears the working colour, same as the card's own border
 const runningStrip = mod.renderCardStrip({id: 'c3', title: 't', status: 'doing'});
-assert.match(runningStrip.innerHTML, /<span class="card-action card-action-working"[^>]*>Running…<\/span>/);
+assert.match(runningStrip.innerHTML, /<span class="card-action card-action-working"[^>]*>running…<\/span>/);
 
 // ---- checking and accepted borrow their own state colours
 const checkingStrip = mod.renderCardStrip({id: 'c4', title: 't', status: 'checking'});
-assert.match(checkingStrip.innerHTML, /card-action-review"[^>]*>Review PR</);
+assert.match(checkingStrip.innerHTML, /card-action-review"[^>]*>review pr</);
 const acceptedStrip = mod.renderCardStrip({id: 'c5', title: 't', status: 'accepted'});
-assert.match(acceptedStrip.innerHTML, /card-action-accepted"[^>]*>View</);
+assert.match(acceptedStrip.innerHTML, /card-action-accepted"[^>]*>view</);
 
 // ---- handled_by_board wins over card-attention on the strip's own border class, and its retry
 // text appears exactly once (on the note, not repeated anywhere else on the footer)

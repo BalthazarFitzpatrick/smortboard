@@ -118,7 +118,7 @@ def test_board_role_cross_lab_retry_requires_its_own_fallback(
             assert calls[-1]["stdin_text"] == "test-key\n"
             assert all(row["role"] == role for row in rows)
             assert any(
-                "Retrying" in row["body"] for row in store.list_orchestrator_messages(board["id"])
+                "retrying" in row["body"] for row in store.list_orchestrator_messages(board["id"])
             )
 
 

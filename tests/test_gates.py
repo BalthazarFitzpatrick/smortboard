@@ -101,7 +101,7 @@ def test_a_repo_with_no_test_command_says_so_rather_than_passing(tmp_path, monke
 
 def test_no_docker_is_refused_rather_than_skipped(tmp_path, monkeypatch):
     monkeypatch.setattr("smortboard.review.gates.docker_available", lambda: False)
-    with pytest.raises(GateUnavailable, match="Docker"):
+    with pytest.raises(GateUnavailable, match="docker"):
         run_test_gate(None, "card", tmp_path, REPO)
 
 

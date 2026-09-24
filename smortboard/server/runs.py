@@ -32,8 +32,8 @@ READINESS_TTL_SECONDS = 30
 
 # what a card says when the board process died under its run
 ORPHANED_NOTE = (
-    "The board stopped while this card was running, so the run never finished: no gate ran and no "
-    "pull request was opened. Its worktree and any commits already fetched back are kept. If "
+    "the board stopped while this card was running, so the run never finished: no gate ran and no "
+    "pull request was opened. its worktree and any commits already fetched back are kept. if "
     "`docker ps` still lists a smortboard container for it, remove that first."
 )
 
@@ -51,7 +51,7 @@ def _block_crashed(store: Store, card_id: str, error: str) -> None:
     store.add_comment(
         card_id,
         author=BOARD_AUTHOR,
-        body=with_next(f"The run stopped on an unexpected error: {short}", "CRASH"),
+        body=with_next(f"the run stopped on an unexpected error: {short}", "CRASH"),
     )
 
 
@@ -336,16 +336,16 @@ class Readiness:
         image = docker and card_image_available()
         missing = []
         if not docker:
-            missing.append("Docker is not running. Every card runs in its own container.")
+            missing.append("docker is not running. every card runs in its own container.")
         elif not image:
             missing.append(
-                f"No card image. Build it once: "
+                f"no card image. build it once: "
                 f"docker build -f docker/card.Dockerfile -t {card_image()} ."
             )
         if not token:
             missing.append(
-                "No card credential. Add a credential file in the profiles panel. "
-                "For Claude, generate the token with `claude setup-token`."
+                "no card credential. add a credential file in the profiles panel. "
+                "for claude, generate the token with `claude setup-token`."
             )
         self._answer = {
             "ready": not missing,

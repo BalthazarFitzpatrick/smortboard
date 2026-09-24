@@ -32,7 +32,7 @@ document.body.appendChild(bucketRow);
 
 // a card strip shaped as board.js's renderCardStrip leaves them, so the resolver has a foot to
 // write - attention optional, so the attention-guard test can add it on its own strip
-function addCardStrip(cardId, {attention = false, actionText = 'Running…'} = {}) {
+function addCardStrip(cardId, {attention = false, actionText = 'running…'} = {}) {
   const strip = element('div', `row card card-strip${attention ? ' card-attention' : ''}`);
   strip.dataset.cardId = cardId;
   const foot = element('div', 'card-foot');
@@ -48,7 +48,7 @@ function addCardStrip(cardId, {attention = false, actionText = 'Running…'} = {
 }
 addCardStrip('c1');
 addCardStrip('c2');
-addCardStrip('c3', {attention: true, actionText: 'Fix leases'});
+addCardStrip('c3', {attention: true, actionText: 'fix leases'});
 
 class SpyMenu { constructor(opts) { this.opts = opts; } openAt() { return this; } close() {} }
 function SpyDrawer() {
@@ -119,9 +119,9 @@ mod.clearRunState('c2');
 
 // ---- an attention card never shows "running" left and "starting" right ------------------------
 
-assert.equal(actionText('c3'), 'Fix leases', 'c3 starts attention, naming the fix');
+assert.equal(actionText('c3'), 'fix leases', 'c3 starts attention, naming the fix');
 mod.setLiveRunPhase('c3', 'starting');
-assert.equal(actionText('c3'), 'Fix leases', 'a live phase never overwrites an attention action note');
+assert.equal(actionText('c3'), 'fix leases', 'a live phase never overwrites an attention action note');
 assert.equal(badgeText('c3'), 'starting', 'the run phase itself still shows on the right');
 mod.clearRunState('c3');
 

@@ -1,4 +1,4 @@
-# Phase 1 contracts
+# phase 1 contracts
 
 > **The Phase 1 contract, kept as the record.** The board has grown past it, and where this document
 > disagrees with the code or the README, they win. The main differences: eleven blocked reason codes, not
@@ -20,7 +20,7 @@ File ownership is strict, so the three can run at once:
 | B — server | `smortboard/server/`, `tests/test_server.py`, `docker/` | store internals, ui |
 | C — interface | `smortboard/ui/`, `tests/js/` | any python |
 
-## Vocabulary
+## vocabulary
 
 `status` is one of `todo`, `doing`, `checking`, `accepted`, `rejected` — the five kanban columns
 and nothing else.
@@ -35,7 +35,7 @@ and it throws away what the card was doing, which the Phase 5 resume briefing ne
 rides alongside any status — a queued card blocks on `DEPENDENCY_REJECTED` just as a working one
 blocks on `USAGE_LIMIT`.
 
-## Unit A — store
+## unit a — store
 
 ```
 unit:     store
@@ -72,7 +72,7 @@ Required behaviour:
 - `export(path)` writes a portable bundle (cards, boards, repos, events, attachments) and
   `import_bundle(path)` restores it. The round-trip must be lossless.
 
-## Unit B — server
+## unit b — server
 
 ```
 unit:     server
@@ -107,7 +107,7 @@ path, check containment with `.resolve()` and `in .parents`, fall back to `read_
 map `UiBaseError` to a 404. **Do not reimplement the traversal check** — call `read_asset`.
 `Content-Type` from the extension, `Cache-Control: no-store`.
 
-## Unit C — interface
+## unit c — interface
 
 ```
 unit:     interface

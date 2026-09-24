@@ -638,7 +638,7 @@ def test_a_runtime_refusal_backs_off_then_gives_up_to_the_inbox(store, board):
     registry = SchedulerRegistry(store.path, runs)
     scheduler = registry.get(board_id)
     scheduler.start_all()
-    refusal = f"{RUNTIME_NOT_READY}:\nDocker is not running."
+    refusal = f"{RUNTIME_NOT_READY}:\ndocker is not running."
 
     for attempt, minutes in enumerate(RUNTIME_BACKOFF_MINUTES, start=1):
         # the lifecycle's own refusal: flagged, no reason code, and a doing card is not queueable

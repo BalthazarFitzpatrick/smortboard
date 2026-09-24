@@ -31,12 +31,12 @@ def default_runner(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 def _require_gh(run: Runner) -> None:
     if shutil.which("gh") is None:
         raise ValueError(
-            "gh is not installed. Install the GitHub CLI (https://cli.github.com), then "
+            "gh is not installed. install the github cli (https://cli.github.com), then "
             "`gh auth login`."
         )
     status = run(["gh", "auth", "status"], capture_output=True, text=True, timeout=10, check=False)
     if status.returncode != 0:
-        raise ValueError("gh is not logged in. Run `gh auth login`, then try again.")
+        raise ValueError("gh is not logged in. run `gh auth login`, then try again.")
 
 
 def list_online_repos(run: Runner = default_runner) -> list[dict]:
@@ -91,7 +91,7 @@ def clone_online_repo(name_with_owner: str, folder: str, run: Runner = default_r
     target = parent.resolve() / name_with_owner.split("/", 1)[1]
     if target.exists():
         raise ValueError(
-            f"{target} already exists. Pick a different folder, or use 'new board' on it "
+            f"{target} already exists. pick a different folder, or use 'new board' on it "
             "if it is already a clone."
         )
     _require_gh(run)

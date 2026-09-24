@@ -98,7 +98,7 @@ def land_card(
     def on_wait(position):
         nonlocal waited
         if not waited:
-            _note(store, card_id, f"Waiting for the landing lock on {base} (queue {position}).")
+            _note(store, card_id, f"waiting for the landing lock on {base} (queue {position}).")
             waited = True
 
     landed, reason = None, "the base kept moving while it was merged"
@@ -128,8 +128,8 @@ def land_card(
             store,
             card_id,
             with_next(
-                f"Tests passed and the reviewer approved, but the board could not merge it into "
-                f"{base}: {reason}\n\nThe pull request is open:\n{url}",
+                f"tests passed and the reviewer approved, but the board could not merge it into "
+                f"{base}: {reason}\n\nthe pull request is open:\n{url}",
                 "review",
             ),
         )
@@ -141,8 +141,8 @@ def land_card(
         _note(
             store,
             card_id,
-            f"Tests passed, the reviewer approved, and the board merged it into {base} as "
-            f"{landed[:10]}:\n{url}\n\nMerging {base} into main is yours"
+            f"tests passed, the reviewer approved, and the board merged it into {base} as "
+            f"{landed[:10]}:\n{url}\n\nmerging {base} into main is yours"
             + (f":\n{release}" if release else "."),
         )
         retarget_children(store, card, repo, base)
@@ -178,7 +178,7 @@ def _retarget_children(store, card, repo, base):
             store.add_comment(
                 child["id"],
                 author="smortboard",
-                body="Could not fetch the base to retarget this stacked card.",
+                body="could not fetch the base to retarget this stacked card.",
             )
             continue
         tree = existing_worktree(repo["path"], child["id"])
@@ -193,7 +193,7 @@ def _retarget_children(store, card, repo, base):
             store.add_comment(
                 child["id"],
                 author="smortboard",
-                body="The parent landed, but merging the base into this card conflicts: "
+                body="the parent landed, but merging the base into this card conflicts: "
                 + ", ".join(result.conflicting_files),
             )
             continue
@@ -201,7 +201,7 @@ def _retarget_children(store, card, repo, base):
             store.add_comment(
                 child["id"],
                 author="smortboard",
-                body="The parent landed, but pushing this stacked card failed; its PR target is unchanged.",
+                body="the parent landed, but pushing this stacked card failed; its pr target is unchanged.",
             )
             continue
         refusal = retarget_merge_request(repo, url, base) if url else None
@@ -209,7 +209,7 @@ def _retarget_children(store, card, repo, base):
             store.add_comment(
                 child["id"],
                 author="smortboard",
-                body=f"Could not retarget the stacked pull request: {refusal}",
+                body=f"could not retarget the stacked pull request: {refusal}",
             )
         else:
             store.append_event(child["id"], "stacked_retargeted", {"base": base})

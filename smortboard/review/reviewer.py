@@ -6,7 +6,7 @@ so it runs like a card does: in a throwaway container, the card credential hande
 never as an env var. See docker_available/read_card_token in backends.py, reused rather than
 reinvented here.
 
-It answers exactly four questions about the diff, per docs/PLAN.md Phase 3, and no others:
+It answers exactly four questions about the diff, per docs/plan.md Phase 3, and no others:
 vulnerabilities, leaked credentials, best practices, efficient coding. IT DOES NOT JUDGE
 ACCEPTANCE CRITERIA - that is the test gate's job, from criteria written before the work started.
 A reviewer that also judged "did it meet the criteria" would be judging a target the same run
@@ -38,7 +38,7 @@ from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import parse_ref
 from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import role_effort
-from smortboard.prompts import active_prompt
+from smortboard.prompts import LOWERCASE_RULE, active_prompt
 from smortboard.store.api import Store
 
 CATEGORIES = ("vulnerability", "leaked_credential", "best_practice", "efficiency")
@@ -190,7 +190,9 @@ def _build_prompt(
     excluded: list[str] | tuple[str, ...] = (),
     expanded: list[str] | None = None,
 ) -> str:
-    header = active_prompt(store, "reviewer", REVIEW_PROMPT_HEADER)
+    header = active_prompt(store, "reviewer", REVIEW_PROMPT_HEADER).rstrip("\n")
+    # after the stored prompt, so an edit cannot drop it
+    header += f"\n{LOWERCASE_RULE}\n"
     # the instruction is the board's; the names come from the branch, so they sit inside the
     # markers as data like the diff itself
     if expanded:
@@ -387,7 +389,7 @@ def run_review(
     REVIEW_DIFF_EXCLUDES); `head` is recorded with the verdict.
     """
     if not docker_available():
-        raise ReviewUnavailable("Docker is not running, and the reviewer runs in a container.")
+        raise ReviewUnavailable("docker is not running, and the reviewer runs in a container.")
     from smortboard import profiles
 
     lab, model_id = parse_ref(model)

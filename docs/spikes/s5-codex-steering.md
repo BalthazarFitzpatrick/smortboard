@@ -1,4 +1,4 @@
-# S5: Codex prompt and steering
+# s5: codex prompt and steering
 
 Measured 2026-09-17 with codex-cli 0.154.0 and gpt-5.6-sol.
 

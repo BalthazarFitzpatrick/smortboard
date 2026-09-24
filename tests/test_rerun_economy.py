@@ -107,7 +107,7 @@ def test_a_gate_only_rerun_that_fails_again_is_refused_next_time(card):
     assert third.blocked_reason_code == "TESTS_FAILED"
     assert backend.calls == 1
     assert _kinds(store, card_id).count("test_gate") == 2  # the third attempt ran nothing
-    assert "Nothing has changed" in store.list_comments(card_id)[-1]["body"]
+    assert "nothing has changed" in store.list_comments(card_id)[-1]["body"]
 
 
 def test_the_same_environment_after_a_failed_gate_runs_the_worker_as_before(card):

@@ -383,7 +383,7 @@ def outdated_note(result: RebaseResult) -> str:
     files = ", ".join(result.conflicting_files) or "unknown files"
     return (
         f"OUTDATED: {result.base_ref} moved to {(result.base_sha or '')[:8]} and this card's "
-        f"commits no longer rebase onto it - they conflict in: {files}. The branch was left "
+        f"commits no longer rebase onto it - they conflict in: {files}. the branch was left "
         f"exactly as it was, at {(result.old_tip or '')[:8]}."
     )
 
@@ -473,10 +473,10 @@ def reset_briefing(reset: dict[str, Any]) -> str:
     """what the worker is told on the run after an OUTDATED reset"""
     files = ", ".join(reset.get("files") or []) or "the files it changed"
     return (
-        f"The base branch moved and this card's earlier commits no longer rebased onto "
-        f"{reset.get('base_ref')} - they conflicted in: {files}. The operator chose to redo the "
+        f"the base branch moved and this card's earlier commits no longer rebased onto "
+        f"{reset.get('base_ref')} - they conflicted in: {files}. the operator chose to redo the "
         f"card: this branch was reset to a fresh tree at {reset.get('base_ref')} "
-        f"({(reset.get('base_sha') or '')[:8]}), so none of the earlier commits are here. Redo "
+        f"({(reset.get('base_sha') or '')[:8]}), so none of the earlier commits are here. redo "
         "the change against the current code; the earlier attempt below is context, not a patch "
         "to reapply."
     )

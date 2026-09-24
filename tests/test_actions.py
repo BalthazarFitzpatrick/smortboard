@@ -36,8 +36,8 @@ def test_no_reason_has_no_action():
 
 
 def test_with_next_puts_the_action_last():
-    note = with_next("The run stopped.\n", "stopped")
-    assert note == f"The run stopped.\n\nNext: {next_action('stopped')}"
+    note = with_next("the run stopped.\n", "stopped")
+    assert note == f"the run stopped.\n\nnext: {next_action('stopped')}"
 
 
 def test_a_blocked_cards_last_comment_ends_with_its_action(store):
@@ -45,7 +45,7 @@ def test_a_blocked_cards_last_comment_ends_with_its_action(store):
     state = lifecycle.LifecycleResult(card_id=card["id"], phase="testing")
     lifecycle._block(store, state, "TESTS_FAILED", "`pytest` exited 1")
     last = store.get_card(card["id"])["comments"][-1]["body"]
-    assert last.endswith(f"Next: {next_action('TESTS_FAILED')}")
+    assert last.endswith(f"next: {next_action('TESTS_FAILED')}")
 
 
 def test_the_inbox_row_carries_the_action_first(store):

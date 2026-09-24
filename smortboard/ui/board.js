@@ -453,7 +453,7 @@ function redrawQueueMoves() {
 }
 
 // attention already has its own CTA label (a reason code, "needs attention") - a poller learning
-// about a run mid-transition must never clobber that with "Running…" on one corner while the other
+// about a run mid-transition must never clobber that with "running…" on one corner while the other
 // still names the phase, which is what an attention card showing running left and starting right was
 function footIsAttention(cardId) {
   const strip = document.querySelector(`.card-strip[data-card-id="${cardId}"]`);
@@ -468,21 +468,21 @@ function renderRunFoot(cardId) {
   const attention = footIsAttention(cardId);
   const phase = liveRunPhases.get(cardId);
   if (phase) {
-    if (note && !attention) note.textContent = 'Running…';
+    if (note && !attention) note.textContent = 'running…';
     showRun(cardId, phase);
     return;
   }
   const queue = queuePositions.get(cardId);
   if (!queue) return;
   if (queue.kind === 'running') {
-    if (note && !attention) note.textContent = 'Running…';
+    if (note && !attention) note.textContent = 'running…';
     showRun(cardId, 'running');
   } else if (queue.kind === 'waiting') {
     showRun(cardId, 'waiting', null, queue.reason);
   } else if (queue.kind === 'queued') {
-    // a card re-queued while blocked kept its 'doing' status, so the note still read 'Running…' -
+    // a card re-queued while blocked kept its 'doing' status, so the note still read 'running…' -
     // it hasn't actually started again yet, the queue has
-    if (note && !attention && note.textContent === 'Running…') note.textContent = 'Queued';
+    if (note && !attention && note.textContent === 'running…') note.textContent = 'queued';
     showRun(cardId, `queued, ${queue.index} of ${queue.total}`);
   }
 }

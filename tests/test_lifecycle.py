@@ -439,7 +439,7 @@ def test_a_rerun_with_nothing_changed_since_a_failed_gate_skips_the_worker(
     second = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
     assert second.blocked_reason_code == "TESTS_FAILED"
     assert len(backend.calls) == 1  # the worker was not run again
-    assert any("Nothing has changed" in c["body"] for c in store.list_comments(card_id))
+    assert any("nothing has changed" in c["body"] for c in store.list_comments(card_id))
 
 
 def test_a_gate_failure_the_base_already_has_is_reported_as_base_red(board, monkeypatch):
@@ -453,7 +453,7 @@ def test_a_gate_failure_the_base_already_has_is_reported_as_base_red(board, monk
     result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
     assert result.blocked_reason_code == "BASE_RED"
     assert store.get_card(card_id)["blocked_reason_code"] == "BASE_RED"
-    assert any("BASE IS RED" in c["body"] for c in store.list_comments(card_id))
+    assert any("base is red" in c["body"] for c in store.list_comments(card_id))
     assert "base_red" in [e["kind"] for e in store.list_events(card_id)]
 
 
@@ -463,7 +463,7 @@ def test_an_ordinary_gate_failure_is_not_called_base_red(board, monkeypatch):
     _failing_gate_that_records(monkeypatch)
     monkeypatch.setattr(lifecycle, "check_base_red", lambda *a, **k: None)
     lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
-    assert not any("BASE IS RED" in c["body"] for c in store.list_comments(card_id))
+    assert not any("base is red" in c["body"] for c in store.list_comments(card_id))
 
 
 def test_a_base_check_that_cannot_run_falls_back_to_the_ordinary_block(board, monkeypatch):
@@ -879,7 +879,7 @@ def test_a_stop_leaves_the_card_flagged_with_a_comment_and_an_event(board, monke
     assert card["review_flag"] == 1
     assert card["blocked_reason_code"] is None  # never a CHECK-constraint value
     bodies = [c["body"] for c in store.list_comments(card_id)]
-    assert any(f"Stopped by {OPERATOR_NAME}." in b for b in bodies)
+    assert any(f"stopped by {OPERATOR_NAME}." in b for b in bodies)
     kinds = [e["kind"] for e in store.list_events(card_id)]
     assert "run_stopped" in kinds
 

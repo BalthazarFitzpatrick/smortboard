@@ -11,55 +11,55 @@ from __future__ import annotations
 _ACTIONS = {
     "AGENT_QUESTION": (
         "answer it",
-        "Answer the agent's question in the inbox (n) - the answer resumes it.",
+        "answer the agent's question in the inbox (n) - the answer resumes it.",
     ),
     "TESTS_FAILED": (
         "answer it",
-        "Read the failing output, then answer in the inbox (n) with a hint - that re-runs it.",
+        "read the failing output, then answer in the inbox (n) with a hint - that re-runs it.",
     ),
     "BASE_RED": (
         "fix the base, then r",
-        "The base branch already fails these tests, so this card did not cause it. Fix the base "
+        "the base branch already fails these tests, so this card did not cause it. fix the base "
         "or merge a fix into it, then press r to run the card again.",
     ),
     "REVIEW_REJECTED": (
         "answer it",
-        "Read the findings, then answer in the inbox (n) with what to change - that re-runs it.",
+        "read the findings, then answer in the inbox (n) with what to change - that re-runs it.",
     ),
     "CRASH": (
         "answer it",
-        "Check the note for what broke, then answer in the inbox (n) to resume it.",
+        "check the note for what broke, then answer in the inbox (n) to resume it.",
     ),
     "LEASE_CONFLICT": (
         "widen or answer",
-        "Widen its lease if it needs that file, or answer in the inbox (n) to leave the file be.",
+        "widen its lease if it needs that file, or answer in the inbox (n) to leave the file be.",
     ),
     "USAGE_LIMIT": (
         "retry or wait",
-        "Retry it on a fallback model from the inbox (n), or wait for the rate-limit window to "
+        "retry it on a fallback model from the inbox (n), or wait for the rate-limit window to "
         "reset - its inbox note says whether it re-runs by itself then or needs r.",
     ),
     "DEPENDENCY_REJECTED": (
         "fix its dependency",
-        "Fix and accept the rejected card it depends on - this one un-blocks itself then.",
+        "fix and accept the rejected card it depends on - this one un-blocks itself then.",
     ),
     "MERGE_CONFLICT": (
         "n or r",
-        "Its branch no longer merges cleanly with the base - resume it (n or r) and the board "
-        "rebases it onto the base in a fresh tree. If that still conflicts, it turns OUTDATED.",
+        "its branch no longer merges cleanly with the base - resume it (n or r) and the board "
+        "rebases it onto the base in a fresh tree. if that still conflicts, it turns OUTDATED.",
     ),
     "API_UNREACHABLE": (
         "retrying",
-        "The api was unreachable - the board is retrying it automatically with backoff.",
+        "the api was unreachable - the board is retrying it automatically with backoff.",
     ),
     "OUTDATED": (
         "redo on fresh base",
-        "The base moved and its commits no longer rebase onto it. Answer in the inbox (n) to "
+        "the base moved and its commits no longer rebase onto it. answer in the inbox (n) to "
         "redo it on a fresh tree at the current base - the old commits stay on a backup ref.",
     ),
-    "refused": ("fix, then r", "Fix what the note says, then press r to run it again."),
-    "stopped": ("press r", "Press r to run it again - its worktree and commits are kept."),
-    "review": ("y or x", "Review the pull request, then press y to accept or x to reject."),
+    "refused": ("fix, then r", "fix what the note says, then press r to run it again."),
+    "stopped": ("press r", "press r to run it again - its worktree and commits are kept."),
+    "review": ("y or x", "review the pull request, then press y to accept or x to reject."),
 }
 
 
@@ -76,4 +76,4 @@ def short_action(reason: str | None) -> str | None:
 def with_next(note: str, reason: str) -> str:
     """a board note ending in its call to action, so the card's last comment says what to do"""
     action = next_action(reason)
-    return f"{note.rstrip()}\n\nNext: {action}" if action else note
+    return f"{note.rstrip()}\n\nnext: {action}" if action else note
