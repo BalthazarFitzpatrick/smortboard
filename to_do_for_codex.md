@@ -325,7 +325,7 @@ sha; a stacked card is left alone.
 ### A10. Docs
 
 "The board never merges" is asserted in eight places and has been untrue since `_integrate` shipped.
-The code is not the debt here, the text is. Fix: `CLAUDE.md:38-42`, `docs/PLAN.md:36`,
+The code is not the debt here, the text is. Fix: `CLAUDE.md:38-42`, `docs/plan.md:36`,
 `README.md:119` and `:254-260`, and the module docstrings in `review/decide.py:1-7`,
 `review/merge_request.py:1,9-12,260`, `scheduler.py:303-307`, `lifecycle.py:14`, `pulls.py:28`.
 State the two modes, the stacking rule, and what stays true: main is never merged, and `gh pr merge`

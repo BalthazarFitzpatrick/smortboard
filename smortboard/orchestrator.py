@@ -6,7 +6,7 @@ clones and operator paths mounted and only Read, Grep and Glob allowed - and ret
 ORCHESTRATOR_JSON_SCHEMA. THE BOARD CREATES THE
 CARDS, not the model: repo names are resolved against this board's own repos, dependencies against
 titles in the same reply or existing cards, and an unresolvable name becomes a board message
-instead of a silent card. See docs/PLAN.md Phase 4 and the API contract in the phase 4 brief.
+instead of a silent card. See docs/plan.md Phase 4 and the API contract in the phase 4 brief.
 """
 
 from __future__ import annotations

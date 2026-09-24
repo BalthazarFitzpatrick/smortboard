@@ -1,9 +1,9 @@
-# S1 / S2 findings — headless Claude Code as a card runner
+# s1 / s2 findings — headless claude code as a card runner
 
 Run 2026-09-08 against an isolated scratch repo. Raw streams are not committed; every claim below
 points at a field in the captured `stream-json` output.
 
-## S1 — CONFIRMED, and the stream carries more than the plan assumed
+## s1 — confirmed, and the stream carries more than the plan assumed
 
 One card ("add a `--version` flag"), run headless, completed in 15s and met its acceptance criteria:
 the CLI printed the version and exited 0, committed as `b95013d`.
@@ -21,7 +21,7 @@ claude -p "<card prompt>" \
 `< /dev/null` is required. Without it the process waits 3s for stdin and warns before proceeding —
 harmless once, wasteful across every card.
 
-### What the final `result` event gives us
+### what the final `result` event gives us
 
 | Need | Field |
 |---|---|
@@ -34,13 +34,13 @@ harmless once, wasteful across every card.
 
 So §7's telemetry section needs no instrumentation of our own. It is a projection of one event.
 
-### Two events the plan did not know about
+### two events the plan did not know about
 
 - **`system/vcs_state_changed`** — `{kind: "commit", branch: "...", cwd: "..."}`. Commit and branch
   detection arrives in the stream; the board does not need to poll git to know a card committed.
 - **`rate_limit_event`** — see S2.
 
-### The agent branched by itself
+### the agent branched by itself
 
 It committed to `feature/cli-version-flag`, a branch it created, because a headless run **inherits
 `~/.claude/CLAUDE.md`** and the playbook forbids committing to main. Good compliance, but the branch
@@ -49,9 +49,9 @@ name is model-chosen and therefore unpredictable.
 **Consequence for Phase 2:** the board must cut the worktree and branch itself and hand the agent a
 checkout that is already on the right branch. Otherwise card-to-branch mapping is a guess.
 
-## S2 — contention CONFIRMED clean; quota question RESOLVED, and my earlier claim was wrong
+## s2 — contention confirmed clean; quota question resolved, and my earlier claim was wrong
 
-### Concurrency
+### concurrency
 
 Two headless sessions run simultaneously against the one interactive subscription seat, each in its
 own worktree. Both returned `subtype: success`, `is_error: false`, 5 turns each. No degradation, no
@@ -63,7 +63,7 @@ that the limit *signal* exists and is readable (below), so the board can react r
 
 Parallelism (Phase 5) is therefore a scheduling problem, not a credentials problem.
 
-### Quota — correcting the plan
+### quota — correcting the plan
 
 The plan says, citing the global playbook, that the status line is the only surface exposing
 subscription usage, and that §4.6's quota display might reduce to token counts only. **That is
@@ -94,7 +94,7 @@ Recommendation: **the board cuts worktrees itself.** The naming is fixed, the br
 from the worktree name rather than the card, and cleanup semantics on rejection (destroy the tree,
 keep a diff) need to be ours. Use the CLI's worktree only as a fallback.
 
-## S3 — mechanism identified, not yet proven
+## s3 — mechanism identified, not yet proven
 
 `--include-hook-events` puts hook lifecycle events in the stream, and `permission_denials` in the
 result records refusals. A `PreToolUse` hook is therefore the natural lease enforcer, refusing a
@@ -105,7 +105,7 @@ rather than advisory, which is what the "come back to clean branches" promise ne
 Still to prove: that a hook can see the target path of an `Edit`/`Write` before it lands, and that a
 refusal surfaces distinguishably from other denials.
 
-## Net effect on the plan
+## net effect on the plan
 
 - Phase 2 shrinks. Session lifecycle (`--background`, `agents`, `logs`, `stop`, `rm`), worktree
   creation and commit detection are CLI features, not code we write.
