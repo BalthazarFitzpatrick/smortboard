@@ -165,6 +165,7 @@ def test_policy_is_strict_until_the_board_says_soft(tmp_path):
     store = Store(tmp_path / "db")
     b, mine, _ = _two_cards(store, tmp_path)
     assert lease_policy(store, store.get_card(mine["id"]))["mode"] == "strict"
+    store.set_setting("allow_soft_leases", "on")
     store.set_board_lease_mode(b["id"], "soft")
     policy = lease_policy(store, store.get_card(mine["id"]))
     assert policy["mode"] == "soft"
@@ -175,6 +176,7 @@ def test_policy_is_strict_until_the_board_says_soft(tmp_path):
 def test_soft_policy_holds_back_what_another_active_card_leases(tmp_path):
     store = Store(tmp_path / "db")
     b, mine, theirs = _two_cards(store, tmp_path)
+    store.set_setting("allow_soft_leases", "on")
     store.set_board_lease_mode(b["id"], "soft")
     # a todo card holds nothing yet
     assert lease_policy(store, store.get_card(mine["id"]))["held_globs"] == []
@@ -189,6 +191,7 @@ def test_the_store_accepts_only_known_modes(tmp_path):
     store = Store(tmp_path / "db")
     b = store.create_board("b")
     assert store.get_board(b["id"])["lease_mode"] is None
+    store.set_setting("allow_soft_leases", "on")
     assert store.set_board_lease_mode(b["id"], "soft")["lease_mode"] == "soft"
     assert store.set_board_lease_mode(b["id"], None)["lease_mode"] is None
     with pytest.raises(ValueError):
@@ -210,6 +213,73 @@ def test_an_existing_board_migrates_to_strict(tmp_path):
     store = Store(path)
     assert store.get_board("old")["lease_mode"] is None
     store.close()
+
+
+def test_soft_is_refused_while_the_gate_is_off(tmp_path):
+    store = Store(tmp_path / "db")
+    b = store.create_board("b")
+    with pytest.raises(ValueError, match=r"soft leases are off - turn them on in settings \(o\)"):
+        store.set_board_lease_mode(b["id"], "soft")
+    assert store.get_board(b["id"])["lease_mode"] is None
+    # strict and null never need the gate
+    assert store.set_board_lease_mode(b["id"], "strict")["lease_mode"] == "strict"
+    assert store.set_board_lease_mode(b["id"], None)["lease_mode"] is None
+    with pytest.raises(ValueError, match="allow_soft_leases"):
+        store.set_setting("allow_soft_leases", "off")
+    store.close()
+
+
+def test_turning_the_gate_off_resets_every_board(tmp_path):
+    store = Store(tmp_path / "db")
+    soft, strict = store.create_board("soft")["id"], store.create_board("strict")["id"]
+    store.set_setting("allow_soft_leases", "on")
+    store.set_board_lease_mode(soft, "soft")
+    store.set_board_lease_mode(strict, "strict")
+    store.set_setting("allow_free_merge", "on")
+    store.set_board_merge_mode(soft, "free")
+
+    store.set_setting("allow_soft_leases", None)
+
+    assert [b["lease_mode"] for b in store.list_boards()] == [None, None]
+    # the other gate's mode is left alone
+    assert store.get_board(soft)["merge_mode"] == "free"
+    policy = lease_policy(store, store.create_card(soft, None, "c"))
+    assert policy["mode"] == "strict"
+    store.close()
+
+
+def _db_at(path, version):
+    conn = sqlite3.connect(path)
+    for script in _MIGRATIONS[:version]:
+        conn.executescript(script)
+    conn.execute(f"PRAGMA user_version = {version}")
+    return conn
+
+
+def test_the_migration_turns_the_gate_on_for_a_board_already_soft(tmp_path):
+    conn = _db_at(tmp_path / "old.db", 26)
+    conn.execute(
+        "INSERT INTO boards (id, name, position, created_at, lease_mode)"
+        " VALUES ('old', 'old', 0, 'now', 'soft')"
+    )
+    conn.commit()
+    conn.close()
+    with Store(tmp_path / "old.db") as store:
+        assert store.get_settings()["allow_soft_leases"] == "on"
+        assert store.get_settings()["allow_free_merge"] is None
+        assert store.get_board("old")["lease_mode"] == "soft"
+
+
+def test_the_migration_leaves_the_gate_off_with_no_soft_board(tmp_path):
+    conn = _db_at(tmp_path / "old.db", 26)
+    conn.execute(
+        "INSERT INTO boards (id, name, position, created_at, lease_mode)"
+        " VALUES ('old', 'old', 0, 'now', 'strict')"
+    )
+    conn.commit()
+    conn.close()
+    with Store(tmp_path / "old.db") as store:
+        assert store.get_settings()["allow_soft_leases"] is None
 
 
 def test_the_reviewer_is_told_which_paths_the_soft_lease_reached():

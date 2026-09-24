@@ -275,14 +275,18 @@ def test_import_as_new_leaves_this_databases_settings_and_prompts_alone(store):
     """settings and prompts are global config, not a board's - a bundle must not rewrite them"""
     _populated_board(store)
     bundle = json.loads(store.export_text())
-    bundle["settings"] = [{"key": "auto_switch_profiles", "value": "on"}]
+    bundle["settings"] = [
+        {"key": "auto_switch_profiles", "value": "on"},
+        {"key": "usage_limit_route", "value": "fallback"},
+    ]
     bundle["prompts"] = [
         {"role": "worker", "version": 1, "body": "from the bundle", "created_at": "2026-01-01"}
     ]
 
     store.import_as_new(bundle)
 
-    assert store.get_settings().get("auto_switch_profiles") != "on"
+    assert "auto_switch_profiles" not in store.get_settings()
+    assert store.get_settings()["usage_limit_route"] is None
     assert store.get_prompt("worker") is None
 
 

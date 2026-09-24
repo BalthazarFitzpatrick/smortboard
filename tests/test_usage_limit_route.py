@@ -1,4 +1,5 @@
-"""the usage-limit route: switch to a fallback model unasked, or block and ask in the inbox - plus
+"""the usage-limit route: wait for the reset, switch profile or model unasked, or block and ask in
+the inbox - plus
 the plumbing that makes either retry actually fire: on_finish for every run start, a ticker that
 does not wait for the ui, a startup requeue for the retries a restart dropped, and a backoff for a
 runtime that is not ready yet.
@@ -73,6 +74,7 @@ def store(tmp_path):
 @pytest.fixture
 def board(store):
     board_id = store.create_board("b")["id"]
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(board_id, "free")
     repo_id = store.create_repo(board_id, "r", "/tmp/r", "main")["id"]
     return board_id, repo_id
@@ -114,17 +116,99 @@ def _limit_run(store, card_id, runs, resets_at=None):
 def test_the_route_validates_like_findings_route(store):
     assert store.get_settings()["usage_limit_route"] is None
     assert store.set_setting("usage_limit_route", "attention")["usage_limit_route"] == "attention"
-    assert store.set_setting("usage_limit_route", "fallback")["usage_limit_route"] == "fallback"
-    with pytest.raises(ValueError, match="usage_limit_route"):
-        store.set_setting("usage_limit_route", "ask")
+    assert store.set_setting("usage_limit_route", "switch")["usage_limit_route"] == "switch"
+    for stale in ("ask", "fallback", "wait"):
+        with pytest.raises(ValueError, match="usage_limit_route"):
+            store.set_setting("usage_limit_route", stale)
     assert store.set_setting("usage_limit_route", None)["usage_limit_route"] is None
 
 
-# -- fallback mode: today's behaviour -------------------------------------------------------
+def test_auto_switch_profiles_is_no_longer_a_setting(store):
+    from smortboard.store.errors import UnknownFieldError
+
+    assert "auto_switch_profiles" not in store.get_settings()
+    with pytest.raises(UnknownFieldError):
+        store.set_setting("auto_switch_profiles", "on")
 
 
-def test_fallback_mode_switches_model_and_requeues(store, board, fallback_model):
+def test_the_route_in_effect_defaults_to_wait():
+    assert scheduler_module.usage_limit_route({}) == "wait"
+    assert scheduler_module.usage_limit_route({"usage_limit_route": "fallback"}) == "wait"
+    assert scheduler_module.usage_limit_route({"usage_limit_route": "switch"}) == "switch"
+
+
+# -- the migration from auto_switch_profiles and the "fallback" route --------------------------
+
+
+@pytest.mark.parametrize(
+    ("rows", "route"),
+    [
+        ({}, None),
+        ({"auto_switch_profiles": "on"}, "switch"),
+        ({"auto_switch_profiles": "off"}, None),
+        ({"auto_switch_profiles": "on", "usage_limit_route": "attention"}, "attention"),
+        ({"auto_switch_profiles": "on", "usage_limit_route": "fallback"}, "switch"),
+        ({"usage_limit_route": "fallback"}, "switch"),
+        ({"usage_limit_route": "attention"}, "attention"),
+    ],
+)
+def test_the_migration_folds_the_old_rows_into_one_route(tmp_path, rows, route):
+    import sqlite3
+
+    from smortboard.store.schema import _MIGRATIONS
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    for index, script in enumerate(_MIGRATIONS[:25], 1):
+        conn.executescript(script)
+        conn.execute(f"PRAGMA user_version = {index}")
+    conn.executemany("INSERT INTO settings (key, value) VALUES (?, ?)", rows.items())
+    conn.commit()
+    conn.close()
+    with Store(path) as migrated:
+        assert migrated.get_settings()["usage_limit_route"] == route
+    conn = sqlite3.connect(path)
+    keys = [row[0] for row in conn.execute("SELECT key FROM settings")]
+    conn.close()
+    assert "auto_switch_profiles" not in keys
+
+
+def test_a_full_restore_of_an_old_bundle_folds_its_rows(store, tmp_path):
+    store.export(tmp_path / "bundle.json")
+    bundle = json.loads((tmp_path / "bundle.json").read_text())
+    bundle["settings"] = [{"key": "auto_switch_profiles", "value": "on"}]
+    (tmp_path / "bundle.json").write_text(json.dumps(bundle))
+    with Store(tmp_path / "other.db") as other:
+        other.import_bundle(tmp_path / "bundle.json")
+        assert other.get_settings()["usage_limit_route"] == "switch"
+
+
+# -- wait mode: the default, parks until the reset --------------------------------------------
+
+
+def test_wait_mode_parks_without_switching_model_or_asking(store, board, fallback_model):
     board_id, repo_id = board
+    card = store.create_card(board_id, repo_id, "a")
+    runs = FakeRuns()
+    registry = SchedulerRegistry(store.path, runs)
+    registry.get(board_id).start_all()
+
+    _limit_run(store, card["id"], runs)
+
+    assert "lab_fallback" not in [e["kind"] for e in store.list_events(card["id"])]
+    assert runs.started == [card["id"]]
+    assert "anthropic" in registry.paused_labs()
+    # the board owns the retry, so the inbox stays quiet
+    assert attention_rows(store, registry) == []
+    assert run_ref(store, "worker", store.get_card(card["id"]))[0] == "anthropic"
+
+
+# -- switch mode: rotation, then the cross-lab fallback ---------------------------------------
+
+
+def test_switch_mode_switches_model_and_requeues(store, board, fallback_model):
+    board_id, repo_id = board
+    store.set_setting("usage_limit_route", "switch")
     card = store.create_card(board_id, repo_id, "a")
     runs = FakeRuns()
     scheduler = BoardScheduler(board_id, store.path, runs)
@@ -250,7 +334,7 @@ def test_a_usage_limit_card_with_nothing_scheduled_is_not_handled(store, board):
     assert [row["card_id"] for row in attention_rows(store, registry)] == [card["id"]]
 
 
-def test_a_queued_usage_limit_card_is_handled_in_fallback_mode(store, board):
+def test_a_queued_usage_limit_card_is_handled_in_wait_mode(store, board):
     board_id, repo_id = board
     card = store.create_card(board_id, repo_id, "a")
     runs = FakeRuns()
