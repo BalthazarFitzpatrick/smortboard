@@ -34,14 +34,14 @@
   flex: 1 1 0; display: flex; flex-direction: column; gap: 2px;
   border: 2px solid var(--grey-border); padding: 8px 10px; font-variant-numeric: tabular-nums;
 }
-.cost-group-title { color: var(--text-dim); text-transform: uppercase; }
+.cost-group-title { color: var(--text-dim); }
 .cost-group-figure { font-weight: 600; }
 .cost-group-counts { color: var(--text-dim); }
 .cost-group-accepted { border-color: var(--status-good); }
 .cost-group-refused { border-color: var(--fill-warn); }
 
-/* the cost / cost-optimisation switcher - the header comes from inbox.css's .inbox-header/-nav/
-   -scope-label as-is; this file only owns the body underneath it and the optimisation tables */
+/* the cost / cost-optimisation switcher - the header is layout.css's shared .pager-header; this
+   file only owns the body underneath it and the optimisation tables */
 .costs-view { display: flex; flex-direction: column; gap: 0; }
 .costs-view-body { padding: var(--inset, 12px) var(--inset-x, 14px); }
 .opt-card { gap: 14px; }

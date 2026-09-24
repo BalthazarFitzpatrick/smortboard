@@ -220,7 +220,7 @@ responses.set('/api/costs/optimisation', stubJson(200, {
 mod.openCostsOverviewPanel();
 await new Promise(r => setTimeout(r, 0));
 const menu2 = mod.overlayRef().menu;
-const findHeaderLabel = () => walk(menu2.sections[0].node).find(n => n.className === 'inbox-scope-label');
+const findHeaderLabel = () => walk(menu2.sections[0].node).find(n => n.className === 'pager-label');
 assert.equal(findHeaderLabel().textContent, 'cost', 'the panel opens on the cost view');
 
 // right arrow key switches to optimisation and triggers the lazy load
@@ -243,7 +243,7 @@ press('ArrowLeft');
 assert.equal(findHeaderLabel().textContent, 'cost', 'ArrowLeft switches back to cost');
 
 // the two arrow buttons do the same thing as the keys
-const headerNav = walk(menu2.sections[0].node).filter(n => n.className === 'inbox-nav toggle');
+const headerNav = walk(menu2.sections[0].node).filter(n => n.className === 'pager-nav toggle');
 headerNav[1].onclick();
 assert.equal(findHeaderLabel().textContent, 'cost optimisation', 'the -> button switches views');
 headerNav[0].onclick();

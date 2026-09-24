@@ -282,8 +282,8 @@ function costOptimisationCard(data) {
   return card;
 }
 
-// ---- cost / cost-optimisation header - same fixed-row, arrows-either-side shape inbox.js's
-// scope header uses (inbox.css's .inbox-header/.inbox-nav/.inbox-scope-label, reused as-is) -----
+// ---- cost / cost-optimisation header - the paged panels' shared arrows-either-side row
+// (layout.css .pager-header/.pager-nav/.pager-label), the same one the inbox and shortcuts use ---
 
 const COSTS_VIEWS = ['cost', 'cost optimisation'];
 
@@ -301,18 +301,18 @@ function costsHazardNode(text) {
 
 function costsHeaderNode() {
   const header = document.createElement('div');
-  header.className = 'inbox-header';
+  header.className = 'pager-header';
   const prev = document.createElement('button');
   prev.type = 'button';
-  prev.className = 'inbox-nav toggle';
+  prev.className = 'pager-nav toggle';
   prev.textContent = '←';
   prev.onclick = () => cycleCostsView(-1);
   const label = document.createElement('span');
-  label.className = 'inbox-scope-label';
+  label.className = 'pager-label';
   label.textContent = COSTS_VIEWS[cv.view];
   const next = document.createElement('button');
   next.type = 'button';
-  next.className = 'inbox-nav toggle';
+  next.className = 'pager-nav toggle';
   next.textContent = '→';
   next.onclick = () => cycleCostsView(1);
   header.append(prev, label, next);
@@ -336,6 +336,7 @@ function renderCostsPanel() {
   const wrap = document.createElement('div');
   wrap.className = 'costs-view';
   wrap.appendChild(costsHeaderNode());
+  wrap.appendChild(textLine('', 'h-divider'));
   const body = document.createElement('div');
   body.className = 'costs-view-body';
   body.appendChild(cv.view === 0 ? costsOverviewNode() : costsOptimisationNode());

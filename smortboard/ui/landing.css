@@ -30,8 +30,7 @@
   gap: 12px;
   flex-wrap: wrap;
 }
-.landing-repo { font-weight: 600; color: var(--cream); word-break: break-all; }
-.landing-target { text-transform: uppercase; }
+.landing-repo { color: var(--cream); word-break: break-all; }
 
 .landing-holder { display: flex; flex-direction: column; gap: 2px; }
 .landing-free { color: var(--text-dim); }

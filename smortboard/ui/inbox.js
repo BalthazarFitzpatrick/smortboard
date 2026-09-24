@@ -134,18 +134,22 @@ function buildInboxDom() {
   const panel = document.createElement('div');
   panel.className = 'panel-floating inbox-panel';
 
+  // the head every panel wears, then the paged panels' shared scope row (layout.css .pager-*)
+  const title = document.createElement('div');
+  title.className = 'popup-title';
+  title.textContent = 'attention inbox';
   const header = document.createElement('div');
-  header.className = 'inbox-header';
+  header.className = 'pager-header';
   const prev = document.createElement('button');
   prev.type = 'button';
-  prev.className = 'inbox-nav toggle inbox-prev';
+  prev.className = 'pager-nav toggle inbox-prev';
   prev.textContent = '←';
   prev.onclick = () => cycleScope(-1);
   const label = document.createElement('span');
-  label.className = 'inbox-scope-label';
+  label.className = 'pager-label';
   const next = document.createElement('button');
   next.type = 'button';
-  next.className = 'inbox-nav toggle inbox-next';
+  next.className = 'pager-nav toggle inbox-next';
   next.textContent = '→';
   next.onclick = () => cycleScope(1);
   header.append(prev, label, next);
@@ -154,13 +158,19 @@ function buildInboxDom() {
   list.className = 'inbox-list';
   list.tabIndex = -1;
 
-  panel.append(header, list);
+  panel.append(title, hDivider(), header, hDivider(), list);
   backdrop.appendChild(panel);
   backdrop.addEventListener('mousedown', evt => { if (evt.target === backdrop) closeInboxPanel(); });
 
   Object.assign(ib, {backdrop, panel, headerLabel: label, listEl: list});
   wireInboxListFocus(list);
   return backdrop;
+}
+
+function hDivider() {
+  const rule = document.createElement('div');
+  rule.className = 'h-divider';
+  return rule;
 }
 
 function hazardPlaceholder(text) {

@@ -17,35 +17,7 @@
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  gap: 0;
-  padding: 0;
-}
-
-/* fixed above the list - it never scrolls with it. same row height and bordered-row look the
-   board's own controls use, so it reads as part of the same control language */
-.inbox-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* spacing from the shared tokens, and no fixed height - a set height plus padding squeezed the
-     row-tall buttons against the header's edges */
-  gap: var(--inset-x, 14px);
-  padding: var(--inset, 12px) var(--inset-x, 14px);
-  border-bottom: 2px solid var(--grey-border);
-}
-/* wide targets with a full-size arrow glyph - the font size is one token, so size comes from the
-   glyph and the box, never from a larger font */
-.inbox-nav {
-  min-width: calc(var(--row-height, 31px) * 2);
-  justify-content: center;
-  font-weight: 700;
-}
-.inbox-scope-label {
-  color: var(--cream);
-  font-weight: 600;
-  flex: 1 1 auto;
-  text-align: center;
+  gap: var(--gap, 8px);
 }
 
 /* the list is the thing that scrolls - a card never does */
@@ -80,9 +52,6 @@
 /* the most prominent line on the card - the reason it called for attention, first thing read */
 .inbox-reason {
   color: var(--fill-attention, var(--attention));
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 .inbox-since {
   margin-left: auto;

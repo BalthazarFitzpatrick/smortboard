@@ -455,8 +455,8 @@ body {
 .prompt-roles { display: flex; gap: 8px; flex: 0 0 auto; }
 .prompt-role { flex: 1 1 0; display: flex; justify-content: space-between; gap: 8px; }
 .prompt-role .prompt-role-version { color: var(--text-dim); }
-.prompt-role.on { background: var(--accent-on); color: var(--accent-on-text); border-color: var(--cream); }
-.prompt-role.on .prompt-role-version { color: inherit; }
+/* the chosen role is .toggle.on; its version is secondary text on the accent, as ui_base's .stats */
+.prompt-role.on .prompt-role-version { color: var(--text-on-accent-dim); }
 /* a .text-field: its border, ground, font and focus are ui_base's - only the size is ours */
 .prompt-body { flex: 1 1 auto; min-height: 280px; resize: vertical; line-height: 1.5; }
 .prompt-footer { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
@@ -468,15 +468,16 @@ body {
 .menu-panel.shortcut-overlay { width: min(560px, 94vw); max-height: 90vh; }
 
 /* a paged panel's header: wide arrow buttons either side of a centred label, spaced from the
-   shared tokens - the same row the attention inbox uses to switch scope */
+   shared tokens - the same row the attention inbox, the cost panel and the shortcuts use */
 .pager-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: var(--inset-x, 14px);
   padding: var(--inset, 12px) 0;
 }
-.pager-nav { min-width: calc(var(--row-height, 31px) * 2); justify-content: center; font-weight: 700; }
-.pager-label { flex: 1 1 auto; text-align: center; color: var(--cream); font-weight: 600; }
+.pager-nav { min-width: calc(var(--row-height, 31px) * 2); justify-content: center; }
+.pager-label { flex: 1 1 auto; text-align: center; color: var(--cream); }
 /* the whole page at once - ui_base caps a menu section at 60vh, which hid boards 8 and 9 */
 .shortcut-overlay .menu-section { max-height: none; }
 
@@ -617,7 +618,7 @@ body {
   gap: 4px;
 }
 .settings-group + .settings-group { margin-top: var(--gap, 8px); }
-.settings-group-title { color: var(--cream); font-weight: 600; }
+.settings-group-title { color: var(--cream); }
 
 .settings-section {
   padding: 6px 0;
@@ -644,7 +645,7 @@ body {
   justify-content: space-between;
   gap: 10px;
 }
-.settings-role-name { color: var(--cream); font-weight: 600; }
+.settings-role-name { color: var(--cream); }
 .settings-role-status { text-align: right; }
 .settings-role-control {
   display: grid;

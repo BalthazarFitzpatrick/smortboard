@@ -166,7 +166,7 @@ function renderReplayDetail() {
         '</ul>');
     }
   } else if (step.kind === 'pull request') {
-    if (safeUrl(d.url)) parts.push(`<a href="${escapeHtml(d.url)}" target="_blank" rel="noopener">${escapeHtml(d.url)}</a>`);
+    if (safeUrl(d.url)) parts.push(`<a class="pr-link" href="${escapeHtml(d.url)}" target="_blank" rel="noopener">${escapeHtml(d.url)}</a>`);
     if (d.refusal) parts.push(`<div class="replay-field">${escapeHtml(d.refusal)}</div>`);
   } else if (step.kind === 'decision') {
     parts.push(`<div class="replay-field">${escapeHtml(d.decision || '')}</div>`);

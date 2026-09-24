@@ -13,7 +13,6 @@
 }
 
 .replay-attempts { display: flex; gap: 8px; flex: 0 0 auto; flex-wrap: wrap; }
-.replay-attempt.on { background: var(--accent-on); color: var(--accent-on-text); border-color: var(--cream); }
 
 .replay-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 0; }
 
@@ -59,7 +58,6 @@
 .replay-diff-added { color: var(--lichen-milk); }
 
 .replay-footer { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
-.replay-play.on { background: var(--accent-on); color: var(--accent-on-text); border-color: var(--cream); }
 .replay-hint { color: var(--text-dim); }
 
 @media (prefers-reduced-motion: reduce) {

@@ -33,7 +33,7 @@
   flex-wrap: wrap;
 }
 
-.profile-name { color: var(--cream); font-weight: 600; }
+.profile-name { color: var(--cream); }
 .profile-name.profile-active { color: var(--lichen-milk); }
 
 .profile-active-label { color: var(--lichen-milk); }
