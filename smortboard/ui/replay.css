@@ -12,7 +12,6 @@
   display: flex; flex-direction: column; gap: 10px;
 }
 
-
 .replay-attempts { display: flex; gap: 8px; flex: 0 0 auto; flex-wrap: wrap; }
 .replay-attempt.on { background: var(--accent-on); color: var(--accent-on-text); border-color: var(--cream); }
 
@@ -22,8 +21,8 @@
    filled lichen for ok, filled stone red for a refusal or failure, hollow for no verdict */
 .replay-rail {
   flex: 0 0 280px; overflow-y: auto; border-right: 2px solid var(--grey-border); padding-right: 10px;
+  display: flex; flex-direction: column; gap: 4px;
 }
-.replay-rail { display: flex; flex-direction: column; gap: 4px; }
 /* a step is a .toggle: selected is .toggle.on, hover and focus are ui_base's */
 .replay-step { justify-content: flex-start; gap: 8px; width: 100%; }
 /* the same small round dot as the card's own run timeline */
@@ -33,7 +32,6 @@
 }
 .replay-marker-ok { border-color: var(--lichen-milk); background: var(--lichen-milk); }
 .replay-marker-fail { border-color: var(--fill-warn); background: var(--fill-warn); }
-
 .replay-step-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .replay-detail { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding-left: 14px; }

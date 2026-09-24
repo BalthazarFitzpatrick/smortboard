@@ -9,7 +9,6 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: ui-monospace, "SF Mono", monospace;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -29,12 +28,9 @@ body {
    background and no border and it is declared after .toggle, so restating them here is what makes
    a tab adopt the button shape - shell.js still owns the behaviour through the .nav-tab class */
 .board-bar .nav-tab {
-  /* two fifths of the height it started at, plus 5px - 22px on a 31px row. the 5px is what buys
-     the label back to full size: at 17px a base-size label did not fit and had to shrink */
-  font-size: var(--font-size, 13px);
-  line-height: 1;
+  /* one row height, like every other control */
   padding: 0 18px;
-  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  height: var(--row-height);
   background: var(--panel-row);
   border: 2px solid var(--grey-border);
   border-bottom: 2px solid var(--grey-border);
@@ -220,9 +216,6 @@ body {
 /* a pile wears its column's state edge the way a card does: doing, or attention when it holds one */
 .card-pile.card-pile-doing { --pile-edge: var(--fill-good); }
 .card-pile.card-pile-attention { --pile-edge: var(--fill-attention); }
-/* the count reads a step larger than the titles under it. ui_base cannot carry this - one font
-   size, app-wide, is a rule of that file - so the one local size on the board lives here */
-.card-pile-count .bucket-counts { font-size: 1.15em; }
 .card-pile-count .count-d { color: var(--fill-good); }
 .card-pile-count .count-a { color: var(--fill-attention); }
 
@@ -277,7 +270,7 @@ body {
   mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2em), transparent);
 }
 .card-panel .card-section.section-clipped > .field-label::after {
-  content: 'space: all'; color: var(--text-dim); font-size: 0.85em; margin-left: auto;
+  content: 'space: all'; color: var(--text-dim); margin-left: auto;
 }
 /* the popout hugs its section: the card's own 100% height would make fit() measure the whole box */
 .expand-panel.section-popout > .section-popout-body { height: auto; overflow: visible; padding: 18px 24px; }
@@ -303,7 +296,7 @@ body {
   background: var(--bg); padding: 12px 16px;
 }
 .card-panel [data-section="title"] .section-value {
-  color: var(--cream); font-size: 1.3em; font-weight: 600; line-height: 1.3; margin-top: 4px;
+  color: var(--cream); margin-top: 4px;
 }
 .card-panel.card-working [data-section="title"] { border-left-color: var(--fill-good); }
 .card-panel.card-attention [data-section="title"] { border-left-color: var(--fill-attention); }
@@ -311,7 +304,7 @@ body {
 .card-panel.card-rejected [data-section="title"] { border-left-color: var(--fill-warn); }
 /* the head's one meta line: id, status, why it is blocked, model, spend - small facts, dim, and
    the block reason in the attention colour so it reads before the rest */
-.card-panel .card-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--text-dim); font-size: 0.92em; }
+.card-panel .card-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--text-dim); }
 .card-panel .card-meta .card-id { color: var(--cream); }
 .card-panel .card-meta-flag { color: var(--fill-attention); }
 
@@ -411,8 +404,7 @@ body {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
   color: var(--cream); border-bottom: 2px solid var(--grey-border); padding-bottom: 8px; flex: 0 0 auto;
 }
-.terminal-cycle { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 0.9em; }
-.terminal-cycle .toggle { padding: 0 8px; height: auto; line-height: 1.6; }
+.terminal-cycle { display: flex; align-items: center; gap: 6px; color: var(--text-dim); }
 .terminal-subheader { color: var(--text-dim); flex: 0 0 auto; }
 /* the display rules above outrank the browser's own [hidden], so the cycle buttons stayed up with
    no card to cycle through */
@@ -443,21 +435,17 @@ body {
 /* a queued-but-not-yet-confirmed message: the state word sits right after the body, in the same
    dim tone the line already uses for its lower-priority text - failed is the one state worth
    calling out, since it is the one that looks like something went wrong until the retry lands */
-.terminal-state { padding-left: 2ch; color: var(--text-dim); font-size: 0.9em; }
+.terminal-state { padding-left: 2ch; color: var(--text-dim); }
 .terminal-line.queue-failed .terminal-state { color: var(--fill-warn); }
 .terminal-input-row { display: flex; gap: 8px; align-items: flex-start; flex: 0 0 auto; }
 .terminal-prompt { color: var(--text-dim); padding-top: 6px; }
-.terminal-input {
-  flex: 1 1 auto; resize: none; min-height: 30px; max-height: 30vh;
-  font-family: inherit; font-size: inherit;
-}
+.terminal-input { flex: 1 1 auto; resize: none; max-height: 30vh; }
 
 /* ---- the new-messages pill: ui_base's count badge, reused rather than a primitive of our own.
    following (pinned to the newest line) is the default; scrolling up stops it, and this is what
    says lines arrived without moving the view. sits centred just above the input, out of the log's
    own scroll area, and only a click target when the count badge has something to show */
 .terminal-jump { align-self: center; }
-
 .terminal-jump[hidden] { display: none; }
 
 /* ---- prompt editor (p) - orchestrator/worker/reviewer role prompts -----------------------------
@@ -471,7 +459,6 @@ body {
 .prompt-role.on .prompt-role-version { color: inherit; }
 /* a .text-field: its border, ground, font and focus are ui_base's - only the size is ours */
 .prompt-body { flex: 1 1 auto; min-height: 280px; resize: vertical; line-height: 1.5; }
-
 .prompt-footer { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
 .prompt-status { color: var(--text-dim); }
 .prompt-status.prompt-error { color: var(--fill-warn); }
@@ -563,14 +550,11 @@ body {
 .card-foot .card-action-quiet { color: var(--text-dim); }
 
 /* ---- the card's short-id --------------------------------------------------------------------
-   metadata to say aloud or copy, not a heading - dim, small and monospace so it reads as
-   secondary to the title it sits beside rather than competing with it */
+   metadata to say aloud or copy, not a heading - dim so it reads as secondary to the title it
+   sits beside rather than competing with it */
 .card-head { display: flex; align-items: baseline; gap: 8px; }
 .card-head .card-title { flex: 1 1 auto; min-width: 0; }
-.card-head .card-id {
-  flex: 0 0 auto; color: var(--text-dim); font-family: ui-monospace, "SF Mono", monospace;
-  font-size: 0.85em;
-}
+.card-head .card-id { flex: 0 0 auto; color: var(--text-dim); }
 
 /* agents and the board write short labelled lines - keep the line breaks instead of one wall */
 .card-body, .comment-body, .card-panel .card-fold-body {
@@ -587,7 +571,7 @@ body {
   z-index: 5;
   top: 6px;
   right: var(--inset-x, 15px);
-  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  height: var(--row-height);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -599,33 +583,19 @@ body {
    different kind of thing at a different height */
 .issue-button {
   order: 0;
-  height: calc(var(--row-height, 31px) * 0.56 + 5px);
+  height: var(--row-height);
   padding: 0 12px;
   display: flex;
   align-items: center;
-  font-size: var(--font-size, 13px);
   text-decoration: none;
 }
 
-/* the card filter (board.js buildCardFilterInput, cmd/ctrl+f): ui_base's text-field at the bar
-   corner's own height, between the bug form and settings */
-.card-filter {
-  order: 1;
-  height: calc(var(--row-height, 31px) * 0.56 + 5px);
-  width: 160px;
-  box-sizing: border-box;
-  font-size: var(--font-size, 13px);
-}
+/* the card filter (board.js buildCardFilterInput, cmd/ctrl+f): ui_base's text-field, between the
+   bug form and settings */
+.card-filter { order: 1; width: 160px; }
 
 /* ---- settings (o): the button in the bar corner and the panel it opens ---------------------- */
-.settings-button {
-  order: 2;
-  height: calc(var(--row-height, 31px) * 0.56 + 5px);
-  padding: 0 12px;
-  display: flex;
-  align-items: center;
-  font-size: var(--font-size, 13px);
-}
+.settings-button { order: 2; }
 
 .settings-panel {
   width: min(600px, 90vw);

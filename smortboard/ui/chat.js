@@ -114,7 +114,6 @@ function terminalDom(promptGlyph) {
   const log = document.createElement('div');
   // the soft card focus, the same look every control inside a panel wears
   log.className = 'terminal-log focus-glow focus-glow-soft';
-
   log.tabIndex = 0;
 
   // ui_base's count badge, reused as the new-messages pill rather than a primitive of our own
@@ -122,7 +121,6 @@ function terminalDom(promptGlyph) {
   jump.type = 'button';
   jump.className = 'toggle terminal-jump';
   jump.textContent = 'new lines';
-
   jump.setAttribute('aria-label', 'jump to the newest line');
   initFollow(log, jump);
 

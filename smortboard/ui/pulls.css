@@ -43,5 +43,5 @@
 .pulls-marker-conflicting { color: var(--status-warn); }
 .pulls-marker-dependency { color: var(--fill-attention, var(--attention)); }
 
-.pulls-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.pulls-status { color: var(--text-dim); }
 .pulls-status.pulls-error { color: var(--status-warn); }

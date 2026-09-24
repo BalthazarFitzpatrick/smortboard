@@ -52,7 +52,6 @@ function buildIndicator() {
   const el = document.createElement('button');
   el.type = 'button';
   el.className = 'toggle attention-indicator dim';
-
   el.title = 'attention inbox (n)';
   el.onclick = () => openInboxPanel();
   barCorner().appendChild(el);
@@ -226,7 +225,6 @@ function buildInboxCard(row, idx, focused) {
   title.tabIndex = -1;
   title.title = row.title;
   title.textContent = row.title;
-
   title.onclick = () => {
     // A GLANCE, NOT A DEPARTURE. the inbox is a queue you work through, so opening a card from it
     // is a look at one row - closing that card comes back here, at the row you were on, rather

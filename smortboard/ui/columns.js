@@ -429,7 +429,6 @@ function renderColumnHeader(bucketEl, cards, status) {
   const expandBtn = document.createElement('button');
   expandBtn.type = 'button';
   expandBtn.className = 'toggle bucket-expand';
-
   expandBtn.addEventListener('click', () => toggleExpand(bucketEl));
   const right = document.createElement('span');
   right.className = 'bucket-header-right';
@@ -475,7 +474,6 @@ function buildPileRow(cards, status, side) {
     : status === 'doing' && cards.some(c => !isPendingCard(c)) ? ' card-pile-doing' : '';
   // focus-glow: a focused pile wears the focused card's frame, not the gliding marker
   el.className = `row card-pile focus-glow${state}`;
-
   el.tabIndex = -1;
   el.dataset.pile = 'true';
   const drawn = pileByRecency(cards, side).slice(0, Math.min(MAX_PILE_LAYERS, cards.length));

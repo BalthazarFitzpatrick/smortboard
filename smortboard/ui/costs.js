@@ -75,9 +75,7 @@ function boardCostRow(row, share) {
   name.className = 'toggle cost-name';
   name.title = row.board_name;
   name.textContent = row.board_name;
-
   name.onclick = () => jumpToBoard(row.board_id);
-
   const perPr = row.known_cost_per_pr_usd ?? row.cost_per_pr_usd;
   const refused = knownSpend(row, 'refusal_') || row.refusal_unknown_costs;
   line.append(

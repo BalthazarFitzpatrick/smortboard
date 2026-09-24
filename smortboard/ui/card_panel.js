@@ -251,7 +251,6 @@ function renderCardStrip(card) {
   // out of the tab order: the board is walked card by card, and m opens the same menu
   overflow.tabIndex = -1;
   overflow.className = 'toggle card-overflow';
-
   overflow.title = 'edit, delete, change model, move status';
   overflow.textContent = '⋯';
   // stop here - strip.addEventListener('click', open) (ui_base's expander) would otherwise also

@@ -87,7 +87,6 @@
 .inbox-since {
   margin-left: auto;
   color: var(--text-dim);
-  font-size: calc(var(--font-size, 13px) - 1px);
 }
 
 /* a .toggle that opens the card, cream for the card's name. block, not flex, so a long title
@@ -97,8 +96,6 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   line-height: calc(var(--row-height) - 4px);
 }
-
-
 
 .inbox-board {
   color: var(--text-dim);
@@ -138,7 +135,6 @@
 
 .inbox-status {
   color: var(--text-dim);
-  font-size: calc(var(--font-size, 13px) - 1px);
   flex: 1 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -163,7 +159,6 @@
 /* the card you stepped into keeps its glow while focus sits on one of its controls or its field.
    TODO(ui_base focus-within): replace with ui_base's focus-within modifier once it lands */
 .inbox-card.focus-glow:focus-within {
-
   transform: scale(var(--focus-lift));
   filter: saturate(var(--focus-light-saturate)) brightness(var(--focus-light-brightness));
   box-shadow:

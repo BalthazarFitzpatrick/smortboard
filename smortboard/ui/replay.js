@@ -86,7 +86,6 @@ function renderReplayRail() {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'toggle replay-step' + (i === rp.index ? ' on' : '');
-
     row.dataset.index = String(i);
     const marker = document.createElement('span');
     marker.className = `replay-marker replay-marker-${replayMarkerClass(step)}`;

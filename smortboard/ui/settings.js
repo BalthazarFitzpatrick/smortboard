@@ -1102,7 +1102,6 @@ function buildSettingsButton() {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'toggle settings-button';
-
   btn.textContent = 'settings';
   btn.title = 'settings (o)';
   btn.onclick = () => toggleSettingsPanel();

@@ -61,7 +61,6 @@
 .boards-push-main-command {
   flex: 1 1 100%;
   padding: 6px 8px;
-  font-family: ui-monospace, "SF Mono", monospace;
   color: var(--cream);
   background: var(--bg);
   border: 2px solid var(--grey-border);
@@ -76,11 +75,11 @@
   gap: 10px;
 }
 .board-name-input { flex: 1 1 auto; }
-.boards-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.boards-status { color: var(--text-dim); }
 .boards-status.boards-error { color: var(--status-warn); }
 
 .repos-label { margin-top: 2px; }
-.repos-hint { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.repos-hint { color: var(--text-dim); }
 
 .repo-row {
   border: 2px solid var(--grey-border);
@@ -101,7 +100,7 @@
 .repo-edit-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; align-items: center; }
 .repo-origin { word-break: break-all; }
 .repo-row.on .repo-origin-missing, .repo-origin-missing { color: var(--status-warn); }
-.repo-edit-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.repo-edit-status { color: var(--text-dim); }
 .repo-edit-status.repo-edit-ok { color: var(--lichen-milk); }
 .repo-edit-status.repo-edit-error { color: var(--status-warn); }
 /* a repo with no tests: the delete confirm's label-and-two-toggles row, warn-coloured on the row */
@@ -114,5 +113,5 @@
 .repo-manual[hidden] { display: none; }
 /* the submit row spans both grid columns */
 .repo-form-submit-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
-.repo-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
+.repo-status { color: var(--text-dim); }
 .repo-status.repo-error { color: var(--status-warn); }

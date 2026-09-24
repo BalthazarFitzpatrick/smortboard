@@ -21,8 +21,6 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   line-height: calc(var(--row-height) - 4px);
 }
-
-
 .cost-rows .progress-row { margin: 0; }
 .cost-foot { flex-direction: column; align-items: flex-start; gap: 4px; }
 .cost-foot .cost-note { color: var(--text-dim); }
@@ -34,11 +32,11 @@
 .cost-groups-grid { display: flex; gap: 14px; margin-top: 4px; }
 .cost-group {
   flex: 1 1 0; display: flex; flex-direction: column; gap: 2px;
-  border: 1px solid var(--cream); padding: 8px 10px; font-variant-numeric: tabular-nums;
+  border: 2px solid var(--grey-border); padding: 8px 10px; font-variant-numeric: tabular-nums;
 }
-.cost-group-title { color: var(--text-dim); text-transform: uppercase; font-size: 0.85em; }
+.cost-group-title { color: var(--text-dim); text-transform: uppercase; }
 .cost-group-figure { font-weight: 600; }
-.cost-group-counts { color: var(--text-dim); font-size: 0.85em; }
+.cost-group-counts { color: var(--text-dim); }
 .cost-group-accepted { border-color: var(--status-good); }
 .cost-group-refused { border-color: var(--fill-warn); }
 

@@ -42,5 +42,4 @@
   gap: 2px;
   padding-left: 12px;
   color: var(--text-dim);
-  font-size: calc(var(--font-size, 13px) - 1px);
 }
