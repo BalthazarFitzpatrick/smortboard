@@ -210,6 +210,7 @@ def test_review_stack_accept_external_merge_then_free_card(system, external_proo
     assert len(integrated) == 1
     assert integrated[0]["payload"]["via"] == external_proof
 
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(board_id, "free")
     third = store.create_card(
         board_id, repo_id, "free card", tasks=["commit free card"], leases=["*.txt"]

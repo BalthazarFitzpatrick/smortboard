@@ -643,6 +643,7 @@ def test_a_dependent_cards_worktree_is_cut_from_a_freshly_fetched_origin(
     board_id = store.get_card(card_id)["board_id"]
     repo_path = store.get_repo(repo_id)["path"]
     _with_origin(repo_path, tmp_path)
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(board_id, "free")
     dep = store.create_card(board_id, None, "dep card")
     store.add_dependency(card_id, dep["id"])
@@ -655,6 +656,7 @@ def test_a_dependent_cards_worktree_is_cut_from_a_freshly_fetched_origin(
 def test_a_dependent_card_falls_back_to_the_local_base_with_no_origin(board, tmp_path, monkeypatch):
     store, card_id = board
     board_id = store.get_card(card_id)["board_id"]
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(board_id, "free")
     dep = store.create_card(board_id, None, "dep card")
     store.add_dependency(card_id, dep["id"])
@@ -673,6 +675,7 @@ def test_a_failed_fetch_falls_back_and_leaves_a_comment(board, tmp_path, monkeyp
     board_id = store.get_card(card_id)["board_id"]
     repo_path = store.get_repo(repo_id)["path"]
     _with_origin(repo_path, tmp_path)
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(board_id, "free")
     dep = store.create_card(board_id, None, "dep card")
     store.add_dependency(card_id, dep["id"])

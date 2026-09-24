@@ -45,6 +45,7 @@ Each is a stored setting:
 | spend cap per run | `worker_budget_usd`, `reviewer_budget_usd`, `orchestrator_budget_usd`, `fold_budget_usd` |
 | spend cap per card | `card_total_budget_usd` |
 | absolute paths mission control may also read | `mission_control_read_paths` |
+| gates for per-board modes (`on` or unset; unset refuses the mode and turning one off resets every board) | `allow_soft_leases`, `allow_free_merge` |
 | the rest | `findings_route`, `max_parallel`, `resume_briefing`, `gate_timeout_seconds`, `usage_limit_route` |
 
 Per board: its own parallel cap, its `daily_budget_usd`, its merge mode and its lease mode.

@@ -22,7 +22,9 @@ Other bases follow the board's mode:
 | **review required** (default) | stops at an open pull request. `y` accepts and lands it in the background; if you already merged it on GitHub, accept records that without merging again |
 | **free merge** | lands and is accepted once tests and review pass |
 
-`shift+a` changes the focused board's mode after confirmation. A free-merge board shows a
+Free merge is off until you turn on `allow_free_merge` in `o`; until then a board refuses it, and
+turning it off puts every board back to review required. `shift+a` changes the focused board's mode
+after confirmation. A free-merge board shows a
 burnt-orange pulsing frame and a text label; reduced motion keeps the frame static.
 
 The board keeps one standing pull request from the development branch into `main`, for you to

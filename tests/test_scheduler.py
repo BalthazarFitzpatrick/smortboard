@@ -73,6 +73,7 @@ def store(tmp_path):
 @pytest.fixture
 def board_and_repo(store):
     board = store.create_board("b")
+    store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(board["id"], "free")
     repo = store.create_repo(board["id"], "r", "/tmp/r", "main")
     return board["id"], repo["id"]

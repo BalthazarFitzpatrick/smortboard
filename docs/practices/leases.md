@@ -26,6 +26,9 @@ Set per board in `o` under *file leases*:
 | **strict** (default) | its own lease, plus paths you approved for the whole repo | you want every file decided up front |
 | **soft** | also any other repo path that is not protected and that no other active card holds | the card knows better than its lease where a fix belongs |
 
+Soft is off until you turn on `allow_soft_leases` in `o`; until then a board refuses it, and turning
+it off puts every board back to strict.
+
 Every path a soft card reaches beyond its lease shows on the card under needs, and the reviewer is
 told about each one.
 

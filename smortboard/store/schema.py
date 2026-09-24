@@ -50,6 +50,15 @@ USAGE_LIMIT_FOLD_SQL = """
     DELETE FROM settings WHERE key = 'auto_switch_profiles';
 """
 
+# turns a gate on for every per-board mode some board already uses - a migration, and again after a
+# full bundle restore, which can bring boards from before the gates existed. idempotent
+BOARD_MODE_GATES_SQL = """
+    INSERT OR REPLACE INTO settings (key, value)
+        SELECT 'allow_free_merge', 'on' WHERE EXISTS (SELECT 1 FROM boards WHERE merge_mode = 'free');
+    INSERT OR REPLACE INTO settings (key, value)
+        SELECT 'allow_soft_leases', 'on' WHERE EXISTS (SELECT 1 FROM boards WHERE lease_mode = 'soft');
+"""
+
 _MIGRATIONS: list[str] = [
     # 1: base tables
     """
@@ -550,6 +559,9 @@ _MIGRATIONS: list[str] = [
     # 26: usage limits became one setting - auto_switch_profiles "on" and the old "fallback" route
     # both read as switch now, an explicit attention stays attention
     USAGE_LIMIT_FOLD_SQL,
+    # 27: soft leases and free merge sit behind global gates now - a board already using one turns
+    # its gate on, so nobody's running setup changes on upgrade
+    BOARD_MODE_GATES_SQL,
 ]
 
 
