@@ -25,6 +25,7 @@ from smortboard.orchestrator import (
     _snapshot_repos,
     card_text_warnings,
 )
+from smortboard.prompts import LOWERCASE_RULE
 from smortboard.scheduler import globs_may_overlap
 from smortboard.store.api import Store, _clean_leases
 
@@ -296,7 +297,8 @@ def run_fold_turn(
     prompt = (
         "Board snapshot:\n"
         + json.dumps(snapshot, separators=(",", ":"))
-        + f"\n\n{mounts}\n\n{CARD_TEXT_RULES}\n\nPropose the groups of todo cards to fold."
+        + f"\n\n{mounts}\n\n{CARD_TEXT_RULES}\n\n{LOWERCASE_RULE}"
+        + "\n\nPropose the groups of todo cards to fold."
     )
     run = runner or _real_runner(
         store, board_id, token_path, FOLD_PROMPT, read_paths, schema=FOLD_JSON_SCHEMA, role="fold"

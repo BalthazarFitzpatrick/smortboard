@@ -38,7 +38,7 @@ from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import parse_ref
 from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import role_effort
-from smortboard.prompts import active_prompt
+from smortboard.prompts import LOWERCASE_RULE, active_prompt
 from smortboard.store.api import Store
 
 CATEGORIES = ("vulnerability", "leaked_credential", "best_practice", "efficiency")
@@ -190,7 +190,9 @@ def _build_prompt(
     excluded: list[str] | tuple[str, ...] = (),
     expanded: list[str] | None = None,
 ) -> str:
-    header = active_prompt(store, "reviewer", REVIEW_PROMPT_HEADER)
+    header = active_prompt(store, "reviewer", REVIEW_PROMPT_HEADER).rstrip("\n")
+    # after the stored prompt, so an edit cannot drop it
+    header += f"\n{LOWERCASE_RULE}\n"
     # the instruction is the board's; the names come from the branch, so they sit inside the
     # markers as data like the diff itself
     if expanded:

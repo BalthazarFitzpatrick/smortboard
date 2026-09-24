@@ -25,3 +25,13 @@ def active_prompt(store: Store | None, role: str, default: str) -> str:
         return default
     stored = store.get_prompt(role)
     return stored["body"] if stored is not None else default
+
+
+# appended by the board to every role's prompt, stored or default, so an edited prompt cannot drop
+# it. the capitals exception keeps the labels the board parses, like the worker's ACTION: block
+LOWERCASE_RULE = (
+    "LOWERCASE. everything you write that a person reads - card titles, descriptions, criteria, "
+    "tasks, notes, summaries, commit messages, pull request titles and bodies, review findings - "
+    "is lowercase, except code, identifiers, paths, commands, quoted output and the labels this "
+    "prompt spells in capitals."
+)

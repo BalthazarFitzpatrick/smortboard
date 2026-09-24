@@ -56,7 +56,7 @@ from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import parse_ref
 from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import role_effort
-from smortboard.prompts import active_prompt
+from smortboard.prompts import LOWERCASE_RULE, active_prompt
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
 
@@ -570,6 +570,7 @@ class ContainerBackend:
                 + HEADLESS_RULES
                 + READING_RULES
                 + TEST_RULES
+                + f"\n{LOWERCASE_RULE}\n"
                 + (SCREENSHOT_RULE if (Path(clone_path) / "smortboard" / "ui").is_dir() else "")
                 + note_marker_paragraph(note_marker or new_note_marker()),
                 stream_input=adapter.capabilities.live_steering,

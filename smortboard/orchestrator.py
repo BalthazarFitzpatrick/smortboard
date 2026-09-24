@@ -39,7 +39,7 @@ from smortboard.labs.catalog import load_catalog, parse_ref, resolve_ref
 from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import command_model, role_effort, role_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
-from smortboard.prompts import active_prompt
+from smortboard.prompts import LOWERCASE_RULE, active_prompt
 from smortboard.repo_tests import has_tests, safe_test_command, tracked_files
 from smortboard.scheduler import usage_limit_route
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
@@ -643,6 +643,8 @@ def build_system_prompt(base: str, catalog: dict[str, Any]) -> str:
         + CARD_TEXT_RULES
         + "\n\n"
         + _TEST_RULES
+        + "\n\n"
+        + LOWERCASE_RULE
     )
 
 
