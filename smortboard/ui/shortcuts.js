@@ -40,7 +40,7 @@ const BINDINGS = [
   {code: 'KeyB', label: 'b', action: 'boards and repos: create a board, register a repo', group: 'panels'},
   {code: 'KeyN', label: 'n', action: 'attention inbox: answer a blocked card, across every board', group: 'panels'},
   {code: 'KeyH', label: 'h', action: 'pre-flight checklist: what is missing before a card can run', group: 'panels'},
-  {code: 'KeyO', label: 'o', action: 'settings: mission control preferences', group: 'panels'},
+  {code: 'KeyO', label: 'o / shift+o', action: 'o: settings every board shares. shift+o: this board\'s own settings', group: 'panels'},
   {code: 'KeyV', label: 'v', action: 'pull requests: every open one across every board, in merge order', group: 'panels'},
   {code: 'KeyQ', label: 'q', action: 'landing lock: who holds the push lock on each repo, and the queue behind them', group: 'panels'},
   {code: 'Comma', label: ',', action: 'workforce: chat with the focused card\'s agent', group: 'panels'},
@@ -347,6 +347,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyP') { togglePromptEditor(); return; }
   if (evt.code === 'KeyN') { toggleInboxPanel(); return; }
   if (evt.code === 'KeyH') { evt.preventDefault(); togglePreflightPanel(); return; }
+  if (evt.code === 'KeyO' && evt.shiftKey) { evt.preventDefault(); toggleBoardSettingsPanel(); return; }
   if (evt.code === 'KeyO') { evt.preventDefault(); toggleSettingsPanel(); return; }
   if (evt.code === 'KeyV') { evt.preventDefault(); togglePullsPanel(); return; }
   if (evt.code === 'KeyQ') { evt.preventDefault(); toggleLandingPanel(); return; }

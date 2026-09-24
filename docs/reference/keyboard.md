@@ -68,7 +68,7 @@ here.
 | `b` | boards and repos: create a board, register a repo |
 | `n` | attention inbox: answer a blocked card, across every board |
 | `h` | pre-flight checklist: what is missing before a card can run |
-| `o` | settings: mission control preferences |
+| `o / shift+o` | o: settings every board shares. shift+o: this board's own settings |
 | `v` | pull requests: every open one across every board, in merge order |
 | `q` | landing lock: who holds the push lock on each repo, and the queue behind them |
 | `,` | workforce: chat with the focused card's agent |

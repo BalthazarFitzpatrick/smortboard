@@ -26,7 +26,8 @@ resumes.
 ![The attention inbox: blocked cards oldest first, each with its reason, its next step and an answer box](docs/images/inbox.jpg)
 
 **Usage and cost.** Rate-limit windows per subscription, spend per model, per card, per board. A
-daily budget per board, a cap per run. Limit hit: switch to the fallback model, or ask you first.
+daily budget per board, a cap per run. Limit hit: wait for the reset, ask you, or switch to your
+next profile and then the fallback model.
 
 ![The usage panel: five-hour and seven-day windows per lab, spend by model](docs/images/usage.jpg)
 

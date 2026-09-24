@@ -8,8 +8,8 @@ rest does not stop here: it goes on to the gates and lists the wanted paths unde
 
 Usual cause: a lease written for a layout the repo does not have. Ways out:
 
-- **Soft lease:** on a board you trust, switch it in `o`. Cards then reach unprotected files on
-  their own.
+- **Soft lease:** turn soft file leases on in `o`, then switch a board you trust to soft in
+  `shift`+`o`. Cards then reach unprotected files on their own.
 - **approve** in the inbox (`n`) adds exactly the refused paths and resumes the card.
 - **Answer** instead, telling the agent to leave those files alone. An answer alone never widens a
   lease.
@@ -36,7 +36,7 @@ curl -s -X PATCH -H "$K" -H 'content-type: application/json' 127.0.0.1:8000/api/
 | The gate fails on `Read-only file system` for a tool other than ruff or pytest | Give that tool its own cache flag: `--no-cache`, `-p no:cacheprovider`, or whatever it takes. |
 | A card fails a test its own diff never touches | Preflight (`h`) may show its repo image predates `uv.lock`. The next run rebuilds it. |
 | A card waits with `lease conflict with card <id>` | Two leases overlap. It starts when the other card finishes. |
-| No new runs start | Check the usage window (`u`) and the board's daily budget (`o`). |
+| No new runs start | Check the usage window (`u`) and the board's daily budget (`shift`+`o`). |
 | Cards were `CRASH`ed on start-up | The board was stopped mid-run. They wait in the inbox to be resumed. |
 
 Anything else: [open a bug report](https://github.com/BalthazarFitzpatrick/smortboard/issues).

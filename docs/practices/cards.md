@@ -23,7 +23,7 @@ A named set of cards and the repos they work in, one or several. Use one board p
 product when the work crosses repos. `1`-`9` jump between boards.
 
 Each board has its own parallelism cap, daily spend budget, merge mode (review required or free
-merge, see [landing](landing.md)) and lease mode (strict or soft, see [leases](leases.md)). So each
+merge, see [landing](landing.md)) and lease mode (strict or soft, see [leases](leases.md)), all in `shift`+`o`. So each
 board is a queue you can leave running, and one can run hot while another stays cautious.
 
 ### The card
