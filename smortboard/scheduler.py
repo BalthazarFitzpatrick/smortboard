@@ -35,7 +35,7 @@ from typing import Any
 
 from smortboard import profiles, telemetry
 from smortboard.budgets import spend_refusal
-from smortboard.exec.worktrees import default_branch, fetch_base, has_remote
+from smortboard.exec.worktrees import default_branch, fast_forward_base, fetch_base, has_remote
 from smortboard.labs.events import neutral_events
 from smortboard.labs.routing import role_ref, run_ref
 from smortboard.lifecycle import RUNTIME_NOT_READY
@@ -308,6 +308,8 @@ def _sweep_repo(store, key, cards, now):
     _, path, base = key
     if not has_remote(path) or not fetch_base(path, base):
         return
+    # a pull request merged on github by hand moves origin only - bring the local base along
+    fast_forward_base(path, base)
     sha = _read_base_sha(path, base)
     if not sha:
         return

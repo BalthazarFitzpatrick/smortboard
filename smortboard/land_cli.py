@@ -24,6 +24,7 @@ import urllib.request
 from pathlib import Path
 from types import FrameType
 
+from smortboard.exec.worktrees import fast_forward_base
 from smortboard.server import access
 
 _DEFAULT_URL = "http://127.0.0.1:8000"
@@ -206,6 +207,8 @@ def run(args: argparse.Namespace) -> int:
             print(f"push rejected: {pushed.stderr.strip()}", file=sys.stderr)
             return 1
 
+        # the push moved origin/<target> only - the local branch follows when it can fast-forward
+        fast_forward_base(repo_path, args.target)
         print(f"landed on {args.target}", file=sys.stderr)
         return 0
     finally:

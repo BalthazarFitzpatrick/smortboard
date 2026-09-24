@@ -320,10 +320,11 @@ def _block_on_failed_gate(
 
 
 def _base_for_fresh_cut(store: Store, state: LifecycleResult, repo_path: str, base: str) -> str:
-    """the ref a fresh worktree is cut from, for a card that depends on another.
+    """the ref a fresh worktree is cut from.
 
-    review mode can cut from one ready parent's branch. once dependencies have landed, fetch
-    the default base so the cut contains their commits even when the local branch is stale.
+    review mode can cut a dependent card from one ready parent's branch. every other card is cut
+    from a fresh origin/<base>: landing pushes to origin and never moves the local branch, so a cut
+    from it built every card of a free-merge board on the empty scaffold (comet catcher, 2026-09-24)
     """
     card = store.get_card(state.card_id)
     parent = stacking_parent(store, card)
@@ -340,8 +341,8 @@ def _base_for_fresh_cut(store: Store, state: LifecycleResult, repo_path: str, ba
     _note(
         store,
         state.card_id,
-        f"could not fetch '{base}' from origin before cutting this card's worktree, so its "
-        "dependency's merge may not be visible yet. cutting from the local branch instead.",
+        f"could not fetch '{base}' from origin before cutting this card's worktree, so work "
+        "landed since the last fetch may not be in it. cutting from the local branch instead.",
     )
     return base
 
@@ -637,6 +638,7 @@ def _run_attempt(
         # refused. only reached for a non-accepted card: accepted already returned above, and a
         # rejected card's decide.py step deletes the branch, so it always falls to the fresh cut
         worktree_reused = True
+        cut_base = base
         if worktree_path(repo["path"], card_id).exists():
             tree = existing_worktree(repo["path"], card_id)
         elif branch_exists(repo["path"], card_id):
@@ -663,9 +665,7 @@ def _run_attempt(
             )
         if tree is None:
             worktree_reused = False
-            cut_base = base
-            if card.get("depends_on"):
-                cut_base = _base_for_fresh_cut(store, state, repo["path"], base)
+            cut_base = _base_for_fresh_cut(store, state, repo["path"], base)
             tree = create_worktree(repo["path"], card_id, base=cut_base)
             if tree.base_commit:
                 store.append_event(card_id, "worktree_created", {"base_commit": tree.base_commit})
@@ -686,7 +686,8 @@ def _run_attempt(
     # a reused branch is rebased onto its moved base in a fresh tree BEFORE the worker and gate:
     # measured 2026-09-19, three cards 28-59 commits behind development failed their gate on tests
     # a later base commit had already fixed. one that no longer rebases is outdated
-    commit_base = base
+    # the card's own commits count from the ref it was cut from
+    commit_base = cut_base if cut_base == f"origin/{base}" else base
     if worktree_reused and not _stacked_on_unlanded(store, card_id):
         guarded = rebase_onto_base(store, card_id, repo["path"], base)
         if guarded.outcome == "outdated":

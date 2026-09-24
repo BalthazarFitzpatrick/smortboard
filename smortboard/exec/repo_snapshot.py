@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from smortboard.exec.worktrees import fast_forward_base, fetch_base, has_remote
+
 # where clones and operator paths land inside the container - the prompt names only these, never a
 # host path
 REPOS_MOUNT = "/repos"
@@ -72,10 +74,17 @@ def _clone_repo(source: str, branch: str, dest: Path) -> None:
         raise RepoSnapshotError(result.stderr.strip())
 
 
+def _refresh_base(path: str, branch: str) -> None:
+    """fetch the base, then fast-forward the local branch when nothing local is in the way"""
+    if has_remote(path) and fetch_base(path, branch):
+        fast_forward_base(path, branch)
+
+
 def build_repo_snapshot(
     repos: Iterable[dict[str, Any]],
     extra_paths: Iterable[str],
     cloner: Callable[[str, str, Path], None] | None = None,
+    refresher: Callable[[str, str], Any] | None = None,
 ) -> RepoSnapshot:
     """clones each repo read-only into a temp dir and resolves the operator's extra read paths.
 
@@ -83,6 +92,7 @@ def build_repo_snapshot(
     the board rather than crashing the turn. `cloner` is injected in tests so no real git runs.
     """
     clone = cloner or _clone_repo
+    refresh = refresher or _refresh_base
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"smortboard-mc-{uuid.uuid4().hex[:8]}-"))
     mount_args: list[str] = []
     warnings: list[str] = []
@@ -96,6 +106,9 @@ def build_repo_snapshot(
             warnings.append(f'the repo "{name}" has an unsafe name and was not cloned for reading')
             continue
         dest = tmp_dir / name
+        # the clone reads the folder's local branch, which landing never moved - bring it up to
+        # origin first, or mission control plans against the base from before every landing
+        refresh(repo["path"], repo["default_branch"])
         try:
             clone(repo["path"], repo["default_branch"], dest)
         except RepoSnapshotError as exc:

@@ -142,3 +142,30 @@ def test_two_extra_paths_sharing_a_basename_both_mount_without_collision(tmp_pat
         assert snapshot.warnings == []
     finally:
         snapshot.cleanup()
+
+
+def test_mission_control_reads_what_landed_on_origin_not_the_stale_local_branch(tmp_path):
+    """comet catcher, 2026-09-24: fifteen landings on origin/development, the local branch still
+    on the scaffold, and mission control concluded nothing had merged"""
+    repo = tmp_path / "src"
+    _make_repo(repo)
+    _git(repo, "branch", "development")
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(repo), str(bare)], check=True)
+    _git(repo, "remote", "add", "origin", str(bare))
+    _git(repo, "fetch", "-q", "origin")
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", "-b", "development", str(bare), str(other)], check=True)
+    (other / "game.js").write_text("landed\n")
+    _git(other, "add", "game.js")
+    _git(other, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "landed")
+    _git(other, "push", "-q", "origin", "development")
+
+    snapshot = build_repo_snapshot(
+        [{"name": "src", "path": str(repo), "default_branch": "development"}], []
+    )
+    try:
+        clone_mount = next(m for m in snapshot.mount_args if f"{REPOS_MOUNT}/src:ro" in m)
+        assert (Path(clone_mount.split(":")[0]) / "game.js").exists()
+    finally:
+        snapshot.cleanup()
