@@ -179,9 +179,9 @@ assert.deepEqual(settingsGroups.map(group => group.querySelector('.settings-grou
   ['general', 'labs and models', 'cost control']);
 assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-section')
   .map(section => section.children[0].textContent)), [
-  ['mouse', 'soft file leases', 'free merge', 'mission control can read',
+  ['soft file leases', 'free merge', 'mission control can read',
     'where new repos go', 'how many cards run at once',
-    'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup'],
+    'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup', 'mouse'],
   ['usage limits', 'models by role'],
   ['spend caps'],
 ]);
@@ -372,15 +372,17 @@ assert.equal(mod.st.listEl.querySelectorAll('.settings-auto-switch-checkbox').le
   'profile rotation is part of switch, not a second setting');
 
 // ---- soft leases and free merge: one global switch each, off by default --------------------------
-assert.deepEqual(lit('settings-soft-leases-choice'), ['off']);
-assert.deepEqual(lit('settings-free-merge-choice'), ['off']);
-await choice('settings-soft-leases-choice', 'on').onclick();
+assert.deepEqual(lit('settings-soft-leases-choice'), ['disabled']);
+assert.deepEqual(lit('settings-free-merge-choice'), ['disabled']);
+assert.deepEqual(mod.st.listEl.querySelectorAll('.settings-free-merge-choice').map(b => b.textContent),
+  ['enabled', 'disabled'], 'the same words and order as the mouse toggle');
+await choice('settings-soft-leases-choice', 'enabled').onclick();
 assert.deepEqual(lastSettingsPatch(), {allow_soft_leases: 'on'});
-await choice('settings-free-merge-choice', 'on').onclick();
+await choice('settings-free-merge-choice', 'enabled').onclick();
 assert.deepEqual(lastSettingsPatch(), {allow_free_merge: 'on'});
-await choice('settings-free-merge-choice', 'off').onclick();
+await choice('settings-free-merge-choice', 'disabled').onclick();
 assert.deepEqual(lastSettingsPatch(), {allow_free_merge: null});
-assert.deepEqual(lit('settings-free-merge-choice'), ['off']);
+assert.deepEqual(lit('settings-free-merge-choice'), ['disabled']);
 
 // ---- where new repos go: saved on enter or blur, expanded by the server, refused when missing -----
 {

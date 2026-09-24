@@ -36,7 +36,7 @@ features boards may use. `shift`+`o` for one board: merge mode, file lease, para
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/settings.jpg" width="100%" alt="Settings every board shares: the mouse, soft file leases and free merge switched on or off, folders mission control can read, how many cards run at once"><br><b>Settings</b><br><code>o</code></td>
+<td width="50%"><img src="docs/images/settings.jpg" width="100%" alt="Settings every board shares: soft file leases and free merge enabled or disabled, folders mission control can read, where new repos go, how many cards run at once"><br><b>Settings</b><br><code>o</code></td>
 <td width="50%"><img src="docs/images/board-settings.jpg" width="100%" alt="One board's own settings: review or free merge, strict or soft file leases, its own cap on cards at once and its daily budget"><br><b>Board settings</b><br><code>shift+o</code></td>
 </tr>
 </table>
