@@ -15,32 +15,35 @@ with fix rounds and retries. Keep the worker on sonnet and set a board daily bud
 
 ## Fast path: seed it (2 minutes)
 
-One command makes the repo and a board with 15 cards already written. You skip sections 1 to 3 and
-test running rather than planning:
+One command makes the repo, its private GitHub origin and a board with 15 cards already written. You
+skip sections 1 to 3 and test running rather than planning:
 
 ```bash
 uv run smortboard seed-beta ~/Documents/dev/comet-catcher
-gh repo create comet-catcher --private --source ~/Documents/dev/comet-catcher --push
-git -C ~/Documents/dev/comet-catcher push -u origin development
+# run the one command it prints, then
 uv run smortboard
 ```
 
+The seed commits the scaffold on `main`, branches `development`, creates a private GitHub repo named
+after the folder and pushes `development` to it. `gh` has to be logged in (`gh auth login`). It
+never pushes `main`. That is the one command it prints for you: it pushes `main` and makes it the
+repo's default branch on GitHub. Run it once.
+
 Then `h` until every row is green, and `w`. The seed sets the repo's base to `development`, its test
-command to `node --test`, strict leases, a $30 daily budget and sonnet on every card. It never
-touches GitHub: the two lines after it are yours, and a private repo is enough. A folder that is not
-empty, or a board already named `comet-catcher`, is refused before anything is written (`--name`
-picks another name).
+command to `node --test`, strict leases, a $30 daily budget and sonnet on every card. A folder that
+is not empty, or a board already named `comet-catcher`, is refused before anything is written
+(`--name` picks another name). When `gh` refuses, because it is not logged in or the repo name is
+taken, the seed takes its folder back out and adds nothing to the board.
 
 The seeded cards have the shape section 3 asks mission control for. Take sections 1 to 3 instead
 when mission control's planning is what you want to test.
 
 ---
 
-## 1. Create the repo (5 minutes)
+## 1. Create the files (5 minutes)
 
 ```bash
 mkdir -p ~/Documents/dev/smort-arcade && cd ~/Documents/dev/smort-arcade
-git init -b main
 mkdir -p server public/js public/css test data
 
 cat > package.json <<'EOF'
@@ -71,17 +74,17 @@ printf 'data/\nnode_modules/\n' > .gitignore
 printf '# Comet Catcher\n\nA browser game built card by card on smortboard.\n' > README.md
 touch server/.gitkeep public/js/.gitkeep public/css/.gitkeep
 
-git add -A && git commit -m "initial project scaffold"
-gh repo create smort-arcade --private --source . --push
-git switch -c development && git push -u origin development
 ```
 
 ## 2. Set up the board
 
 1. Start the board from the latest `development` of smortboard: `uv run smortboard`.
-2. `b` -> **from local repo** -> pick `~/Documents/dev/smort-arcade`.
-3. On the repo's row: default branch **`development`**, test command **`node --test`**. No lint
-   command.
+2. `b` -> **new board** -> pick `~/Documents/dev/smort-arcade`. It has files and no git, so the
+   board lists what the first commit would hold: confirm. It commits, makes `development`, creates
+   the private GitHub repo `smort-arcade`, pushes `development`, and shows the one push-main command -
+   run it.
+3. On the repo's row: base **`development`**, test command **`npm test`** (found from
+   `package.json`). No lint command.
 4. `o`:
    - **file leases**: leave this board on **strict** for now; the table in section 4 says when to switch.
    - **budgets and spend caps**: a daily budget for this board, e.g. `$30`.

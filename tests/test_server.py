@@ -11,6 +11,23 @@ import pytest
 from smortboard.actions import next_action
 from smortboard.server.app import build_server
 from smortboard.store import Store
+from tests.test_repo_setup import FakeGh, _git, _remote_heads
+
+
+@pytest.fixture(autouse=True)
+def fake_gh(tmp_path_factory, monkeypatch):
+    """a board's folder setup runs real git against a gh that makes local bare repos, so no test
+    here reaches GitHub - and the operator's own git config cannot decide whether a commit works"""
+    config = tmp_path_factory.mktemp("git") / "gitconfig"
+    config.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for role in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{role}_NAME", "t")
+        monkeypatch.setenv(f"GIT_{role}_EMAIL", "t@t")
+    gh = FakeGh(tmp_path_factory.mktemp("remotes"))
+    monkeypatch.setattr("smortboard.repo_setup.default_runner", gh)
+    return gh
 
 
 @pytest.fixture
@@ -649,7 +666,8 @@ def test_board_from_a_local_repo_registers_it(running_server, tmp_path):
     )
     assert status == 201
     assert body["board"]["name"] == "myrepo"
-    assert body["repo"]["default_branch"] == "main"
+    # from-repo is from-folder under its old name, so the repo gets development as its base
+    assert body["repo"]["default_branch"] == "development"
     # an unknown stack gets no command, and says there is nothing to run yet
     assert body["tests"] == {"command": None, "has_tests": False}
     _, repos = _request(f"{running_server}/api/boards/{body['board']['id']}/repos")
@@ -676,14 +694,103 @@ def test_board_from_a_python_repo_stores_its_test_command(
     assert body["tests"] == {"command": "uv run --no-sync pytest -q", "has_tests": has_tests}
 
 
-def test_board_from_a_plain_folder_is_400_and_creates_no_board(running_server, tmp_path):
-    (tmp_path / "not-a-repo").mkdir()
+def test_board_from_a_missing_folder_is_400_and_creates_no_board(running_server, tmp_path):
     status, body = _request(
-        f"{running_server}/api/boards/from-repo", "POST", {"path": str(tmp_path / "not-a-repo")}
+        f"{running_server}/api/boards/from-repo", "POST", {"path": str(tmp_path / "not-there")}
     )
     assert status == 400
+    assert "not a folder" in body["error"]
     _, boards = _request(f"{running_server}/api/boards")
     assert boards == []
+
+
+def test_board_from_an_empty_folder_sets_it_up_on_development(running_server, tmp_path, fake_gh):
+    folder = tmp_path / "fresh"
+    folder.mkdir()
+    status, body = _request(
+        f"{running_server}/api/boards/from-folder", "POST", {"path": str(folder)}
+    )
+    assert status == 201
+    assert body["board"]["name"] == "fresh"
+    assert body["repo"]["default_branch"] == "development"
+    assert "created private GitHub repo tester/fresh" in body["setup"]["steps"]
+    # main is the operator's to push: the reply carries the command, the origin only development
+    assert "push -u origin main" in body["setup"]["push_main"]
+    assert "gh repo edit tester/fresh --default-branch main" in body["setup"]["push_main"]
+    assert _remote_heads(fake_gh.remotes / "fresh.git") == ["development"]
+
+
+def test_board_in_a_new_folder_creates_the_folder_first(running_server, tmp_path):
+    status, body = _request(
+        f"{running_server}/api/boards/from-folder",
+        "POST",
+        {"path": str(tmp_path), "new_folder": "made"},
+    )
+    assert status == 201
+    assert (tmp_path / "made" / ".git").is_dir()
+    assert body["board"]["name"] == "made"
+    assert body["repo"]["path"] == str(tmp_path / "made")
+
+
+@pytest.mark.parametrize("name", ["a/b", "..", ".", " ", "taken"])
+def test_a_new_folder_is_one_plain_name_not_there_yet(running_server, tmp_path, name):
+    (tmp_path / "taken").mkdir()
+    status, body = _request(
+        f"{running_server}/api/boards/from-folder",
+        "POST",
+        {"path": str(tmp_path), "new_folder": name},
+    )
+    assert status == 400
+    assert "one plain name" in body["error"] or "already exists" in body["error"]
+    _, boards = _request(f"{running_server}/api/boards")
+    assert boards == []
+
+
+def test_a_new_folder_github_would_refuse_is_never_made(running_server, tmp_path):
+    status, body = _request(
+        f"{running_server}/api/boards/from-folder",
+        "POST",
+        {"path": str(tmp_path), "new_folder": "my project!"},
+    )
+    assert status == 400
+    assert "GitHub repo name" in body["error"]
+    assert not (tmp_path / "my project!").exists()
+
+
+def test_a_folder_with_files_is_asked_about_before_its_first_commit(running_server, tmp_path):
+    folder = tmp_path / "project"
+    folder.mkdir()
+    (folder / "app.py").write_text("x = 1\n")
+    (folder / ".env").write_text("TOKEN=secret\n")
+    url = f"{running_server}/api/boards/from-folder"
+
+    status, body = _request(url, "POST", {"path": str(folder)})
+    assert status == 409
+    assert body == {"needs_confirm": True, "files": ["app.py"], "path": str(folder)}
+    assert not (folder / ".git").exists()
+    _, boards = _request(f"{running_server}/api/boards")
+    assert boards == []
+
+    status, body = _request(url, "POST", {"path": str(folder), "confirm": True})
+    assert status == 201
+    assert body["repo"]["default_branch"] == "development"
+    committed = _git(folder, "ls-tree", "-r", "--name-only", "main").split()
+    assert sorted(committed) == [".gitignore", "app.py"]
+
+
+def test_a_ready_repo_is_registered_with_nothing_set_up(running_server, tmp_path, fake_gh):
+    bare = fake_gh.remotes / "ready.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    repo = tmp_path / "ready"
+    _init_repo(repo)
+    _git(repo, "branch", "development")
+    _git(repo, "remote", "add", "origin", str(bare))
+    _git(repo, "push", "-q", "origin", "main", "development")
+    status, body = _request(f"{running_server}/api/boards/from-folder", "POST", {"path": str(repo)})
+    assert status == 201
+    assert body["setup"] == {"steps": [], "push_main": None}
+    assert body["repo"]["default_branch"] == "development"
+    assert fake_gh.pushes() == []
 
 
 def test_patch_repo_unknown_field_is_400(running_server, tmp_path):

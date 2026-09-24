@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -38,8 +39,12 @@ def _live_state(repo_path: str | Path, url: str) -> dict[str, Any]:
         return cached[1]
     if shutil.which("gh") is None:
         return {"state": None, "mergeable": None}
-    result = _gh(["pr", "view", url, "--json", "state,mergeable,url"], cwd=repo_path)
-    if result.returncode != 0:
+    # a repo folder that is gone, or a gh that hangs, raises before any exit code exists
+    try:
+        result = _gh(["pr", "view", url, "--json", "state,mergeable,url"], cwd=repo_path)
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is None or result.returncode != 0:
         state = {"state": None, "mergeable": None}
     else:
         try:

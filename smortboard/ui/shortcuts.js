@@ -350,7 +350,7 @@ document.addEventListener('keydown', evt => {
   if (evt.code === 'KeyO') { evt.preventDefault(); toggleSettingsPanel(); return; }
   if (evt.code === 'KeyV') { evt.preventDefault(); togglePullsPanel(); return; }
   if (evt.code === 'KeyQ') { evt.preventDefault(); toggleLandingPanel(); return; }
-  // preventDefault: the panel focuses its first input, and the key that opened it typed itself there
+  // preventDefault, so the key that opened the panel never types itself into one of its fields
   if (evt.code === 'KeyB') { evt.preventDefault(); toggleBoardsPanel(); return; }
   // opening a drawer leaves focus on the board, so the key that opened it also closes it
   if (evt.code === 'Comma') { evt.preventDefault(); drawerFor('left').toggle(); return; }
