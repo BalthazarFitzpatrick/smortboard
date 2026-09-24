@@ -240,14 +240,17 @@ def _git(repo_path, *args, date=None):
     subprocess.run(["git", "-C", str(repo_path), *args], check=True, capture_output=True, env=env)
 
 
-def _init_repo(tmp_path, name="widgets"):
+def _init_repo(tmp_path, name="widgets", files=None):
+    """a committed repo; by default with one test, since a repo without tests warns"""
     repo_path = tmp_path / name
     repo_path.mkdir()
     _git(repo_path, "init", "-b", "main")
     _git(repo_path, "config", "user.email", "a@b.c")
     _git(repo_path, "config", "user.name", "a")
-    (repo_path / "README.md").write_text("hi")
-    _git(repo_path, "add", "README.md")
+    for rel, text in (files or {"README.md": "hi", "tests/test_widgets.py": ""}).items():
+        (repo_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo_path / rel).write_text(text)
+    _git(repo_path, "add", "-A")
     _git(repo_path, "commit", "-m", "first")
     return repo_path
 
@@ -535,3 +538,48 @@ def test_openai_missing_cli_names_image_and_unknown_prices_warn(monkeypatch, sto
     assert _by_id(rows, "lab-openai-pricing")["status"] == "warn"
     assert commands[0][-2:] == ["test-card:latest", "--version"]
     assert "key" not in commands[0]
+
+
+def test_a_test_command_with_no_tests_behind_it_warns_and_points_at_mission_control(
+    monkeypatch, store, tmp_path
+):
+    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
+    repo_path = _init_repo(tmp_path, files={"pyproject.toml": "", "src/app.py": ""})
+    board = store.create_board("b")
+    store.create_repo(
+        board["id"],
+        name="widgets",
+        path=str(repo_path),
+        default_branch="main",
+        test_command="pytest",
+    )
+    rows = {c["label"]: c for c in run_preflight(store, runner=_all_ok_runner)}
+    assert rows["test command"]["status"] == "warn"
+    assert "no tests yet" in rows["test command"]["detail"]
+    assert "mission control" in rows["test command"]["fix"]
+
+
+def test_no_test_command_on_a_python_repo_names_the_one_that_fits(monkeypatch, store, tmp_path):
+    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
+    repo_path = _init_repo(tmp_path, files={"pyproject.toml": "", "tests/test_a.py": ""})
+    board = store.create_board("b")
+    store.create_repo(board["id"], name="widgets", path=str(repo_path), default_branch="main")
+    row = next(
+        c for c in run_preflight(store, runner=_all_ok_runner) if c["label"] == "test command"
+    )
+    assert row["status"] == "fail"
+    assert "`uv run --no-sync pytest -q`" in row["fix"]
+    assert "key b" in row["fix"]
+
+
+def test_no_test_command_on_an_unknown_repo_points_at_mission_control(monkeypatch, store, tmp_path):
+    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: True)
+    repo_path = _init_repo(tmp_path, files={"README.md": "hi"})
+    board = store.create_board("b")
+    store.create_repo(board["id"], name="widgets", path=str(repo_path), default_branch="main")
+    row = next(
+        c for c in run_preflight(store, runner=_all_ok_runner) if c["label"] == "test command"
+    )
+    assert row["status"] == "fail"
+    assert "mission control" in row["fix"]
+    assert "key b" in row["fix"]
