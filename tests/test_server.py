@@ -5,6 +5,7 @@ import subprocess
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -651,6 +652,32 @@ def test_folders_lists_subfolders_and_marks_repos(running_server, tmp_path):
     assert body["here"] == str(tmp_path.resolve())
     assert body["parent"] == str(tmp_path.resolve().parent)
     assert [(f["name"], f["repo"]) for f in body["folders"]] == [("a-repo", True), ("plain", False)]
+
+
+def test_folders_start_in_repos_home_when_asked(running_server, tmp_path):
+    home = tmp_path / "dev"
+    (home / "comet").mkdir(parents=True)
+    status, _ = _request(f"{running_server}/api/settings", "PATCH", {"repos_home": str(home)})
+    assert status == 200
+    status, body = _request(f"{running_server}/api/folders?start=repos")
+    assert status == 200
+    assert body["here"] == str(home.resolve())
+    assert [f["name"] for f in body["folders"]] == ["comet"]
+    # a plain listing still starts at home, and an explicit folder always wins
+    _, plain = _request(f"{running_server}/api/folders")
+    assert plain["here"] == str(Path.home().resolve())
+    _, under = _request(f"{running_server}/api/folders?start=repos&under={tmp_path}")
+    assert under["here"] == str(tmp_path.resolve())
+
+
+def test_a_repos_home_removed_since_it_was_saved_opens_home(running_server, tmp_path):
+    home = tmp_path / "gone"
+    home.mkdir()
+    _request(f"{running_server}/api/settings", "PATCH", {"repos_home": str(home)})
+    home.rmdir()
+    status, body = _request(f"{running_server}/api/folders?start=repos")
+    assert status == 200
+    assert body["here"] == str(Path.home().resolve())
 
 
 def test_folders_on_a_missing_path_is_400(running_server, tmp_path):

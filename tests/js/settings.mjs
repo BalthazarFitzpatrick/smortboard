@@ -102,6 +102,10 @@ function fetchStub(path, opts) {
       }
       settingsState.max_parallel = body.max_parallel;
     }
+    if ('repos_home' in body) {
+      if (body.repos_home === '~/nope') return Promise.resolve(stubJson(400, {error: '~/nope does not exist or is not a folder'}));
+      settingsState.repos_home = body.repos_home === '~/dev' ? '/home/op/dev' : body.repos_home;
+    }
     return Promise.resolve(stubJson(200, {...settingsState}));
   }
   return Promise.resolve(stubJson(404, {error: 'no stub for ' + path}));
@@ -176,12 +180,12 @@ assert.deepEqual(settingsGroups.map(group => group.querySelector('.settings-grou
 assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-section')
   .map(section => section.children[0].textContent)), [
   ['mouse', 'soft file leases', 'free merge', 'mission control can read',
-    'how many cards run at once',
+    'where new repos go', 'how many cards run at once',
     'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup'],
   ['usage limits', 'models by role'],
   ['spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 10);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 11);
 assert.equal(mod.st.listEl.querySelectorAll('.board-row').length, 0,
   'o holds only what every board shares - no per-board rows');
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
@@ -377,6 +381,27 @@ assert.deepEqual(lastSettingsPatch(), {allow_free_merge: 'on'});
 await choice('settings-free-merge-choice', 'off').onclick();
 assert.deepEqual(lastSettingsPatch(), {allow_free_merge: null});
 assert.deepEqual(lit('settings-free-merge-choice'), ['off']);
+
+// ---- where new repos go: saved on enter or blur, expanded by the server, refused when missing -----
+{
+  const field = mod.st.listEl.querySelector('.settings-repos-home-input');
+  assert.equal(field.value, '', 'unset reads as blank - the home folder');
+  field.value = '~/dev';
+  field._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.deepEqual(lastSettingsPatch(), {repos_home: '~/dev'});
+  assert.equal(field.value, '/home/op/dev', 'the field shows the absolute path the server stored');
+  const saves = calls.length;
+  field._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.equal(calls.length, saves, 'tabbing past an unchanged field saves nothing');
+  field.value = '~/nope';
+  field._listeners.blur.forEach(fn => fn());
+  await flush();
+  const section = mod.st.listEl.querySelectorAll('.settings-section').find(s => s.children[0].textContent === 'where new repos go');
+  assert.ok(section.querySelectorAll('.boards-error')[0].textContent.includes('does not exist'));
+  assert.equal(settingsState.repos_home, '/home/op/dev', 'a refused folder changes nothing');
+}
 
 // ---- the global parallel cap stays here; each board's own cap is in shift+o ---------------------
 assert.equal(mod.parallelCaps.globalInput.value, '', 'an unset global cap renders as an empty field, not 0');

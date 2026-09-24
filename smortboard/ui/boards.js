@@ -250,8 +250,9 @@ function setBoardStatus(text, isError = false) {
 // repos marked. `action` is the one button it offers, shown only for a folder `action.when` accepts,
 // its label text or a function of the folder; `add`, when given, is a name field whose value goes to
 // add.run with the folder it was typed in
-async function openFolderPicker(anchor, {title, action, add, onError}) {
-  const first = await apiOrError('/api/folders');
+// start: 'repos' opens in the folder o names for new repos (repos_home), else home
+async function openFolderPicker(anchor, {title, action, add, onError, start}) {
+  const first = await apiOrError(start ? `/api/folders?start=${start}` : '/api/folders');
   if (!first.ok) { onError((first.body && first.body.error) || 'could not list folders'); return; }
   let where = first.body;
   let menu = null;
@@ -288,6 +289,7 @@ async function openFolderPicker(anchor, {title, action, add, onError}) {
 function openNewBoardPicker(anchor) {
   return openFolderPicker(anchor, {
     title: 'new board',
+    start: 'repos',
     action: {label: 'board from this folder', when: () => true,
       run: (path, menu) => createBoardFromFolder(path, menu)},
     add: {placeholder: 'or a new folder in here', label: 'board in new folder',
@@ -343,6 +345,7 @@ async function openOnlineRepoPicker(anchor) {
         const name = item.id.split('/')[1];
         openFolderPicker(anchor, {
           title: `clone ${item.id} into`,
+          start: 'repos',
           action: {
             label: here => `clone into this folder: ${here.replace(/\/$/, '')}/${name}`,
             when: () => true,

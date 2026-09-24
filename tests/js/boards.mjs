@@ -159,7 +159,8 @@ await flush(); await flush();
 const sources = [...mod.bp.sourceRowEl.children];
 assert.deepEqual(sources.map(s => s.textContent), ['new board', 'from online repo']);
 assert.ok(!sources[1].className.includes('disabled'), 'from online repo is a live button');
-stub('/api/folders', 'GET', 200, {here: '/home/me', parent: '/home', repo: false,
+// new board and the clone both open where new repos go (the repos_home setting in o)
+stub('/api/folders?start=repos', 'GET', 200, {here: '/home/me', parent: '/home', repo: false,
   folders: [{name: 'proj', path: '/home/me/proj', repo: true}, {name: 'notes', path: '/home/me/notes', repo: false}]});
 sources[0].onclick();
 await flush(); await flush();
@@ -356,7 +357,7 @@ const repoMenu = lastMenu;
 const repoItems = repoMenu.opts.sections[0].items;
 assert.deepEqual(repoItems.map(i => i.label), ['me/alpha', 'me/beta  private']);
 
-stub('/api/folders', 'GET', 200, {here: '/home/me', parent: '/home', repo: false, folders: []});
+stub('/api/folders?start=repos', 'GET', 200, {here: '/home/me', parent: '/home', repo: false, folders: []});
 await repoMenu.opts.sections[0].onPick(repoItems[0]);
 await flush(); await flush();
 assert.ok(repoMenu.closed, 'the repo list closes once a repo is picked');

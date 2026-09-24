@@ -548,6 +548,94 @@ SETTINGS_SECTIONS.push({
   onOpen: loadReadPaths,
 });
 
+// ---- where new repos go: the folder new board and from online repo open in ----------------------
+// blank means the home folder. the server checks it exists and stores it absolute (~ expanded)
+
+const reposHome = {input: null, status: null, saved: ''};
+
+async function saveReposHome() {
+  const raw = reposHome.input.value.trim();
+  // blur fires on every tab past the field - only a changed value is worth a save
+  if (raw === reposHome.saved) return;
+  const {ok, body} = await apiOrError('/api/settings', {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({repos_home: raw || null}),
+  });
+  reposHome.status.textContent = ok ? 'saved' : (body && body.error) || 'could not save';
+  reposHome.status.className = ok ? 'boards-status' : 'boards-status boards-error';
+  if (!ok) return;
+  reposHome.saved = body.repos_home || '';
+  reposHome.input.value = reposHome.saved;
+}
+
+function buildReposHomeSection() {
+  const row = document.createElement('div');
+  row.className = 'boards-create-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'board-name-input text-field settings-repos-home-input';
+  input.placeholder = 'home folder';
+  const browse = document.createElement('span');
+  browse.className = 'toggle';
+  browse.textContent = 'browse';
+  browse.onclick = () => openFolderPicker(browse, {
+    title: 'where new repos go',
+    start: 'repos',
+    action: {
+      label: 'use this folder',
+      when: () => true,
+      run: async (path, menu) => {
+        menu.close();
+        reposHome.input.value = path;
+        await saveReposHome();
+      },
+    },
+    onError: text => {
+      reposHome.status.textContent = text;
+      reposHome.status.className = 'boards-status boards-error';
+    },
+  });
+  const status = document.createElement('span');
+  status.className = 'boards-status';
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    saveReposHome();
+  });
+  input.addEventListener('blur', saveReposHome);
+  row.append(input, browse, status);
+  Object.assign(reposHome, {input, status});
+
+  const note = document.createElement('div');
+  note.className = 'field-label';
+  note.textContent = 'new board and from online repo start here. any folder is still one step away.';
+  const box = document.createElement('div');
+  box.className = 'settings-stack';
+  box.append(row, note);
+  return box;
+}
+
+async function loadReposHome() {
+  try {
+    const settings = await api('/api/settings');
+    reposHome.saved = settings.repos_home || '';
+    reposHome.input.value = reposHome.saved;
+    reposHome.status.textContent = '';
+  } catch (err) {
+    reposHome.status.textContent = `could not load: ${err.message}`;
+    reposHome.status.className = 'boards-status boards-error';
+  }
+}
+
+SETTINGS_SECTIONS.push({
+  group: 'general',
+  label: 'where new repos go',
+  node: buildReposHomeSection(),
+  onOpen: loadReposHome,
+});
+
 // ---- how many cards run at once: one global cap, plus an optional cap per board ----------------
 // the global number is the one seat count shared across every board (scheduler.py's runs.active());
 // a board's own number only ever holds it back further, never past the global cap - an unset board

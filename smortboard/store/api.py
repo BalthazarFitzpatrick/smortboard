@@ -75,6 +75,9 @@ _SETTING_KEYS = (
     "allow_free_merge",
     "mall_cam_interval_seconds",
     "enable_mouse",
+    # repos_home: the folder new boards and clones start in (the folder pickers open there) - an
+    # absolute existing folder after ~ expansion; unset means the home folder
+    "repos_home",
     "worker_budget_usd",
     "reviewer_budget_usd",
     "orchestrator_budget_usd",
@@ -245,6 +248,20 @@ def _check_read_paths(value: Any) -> list[str]:
             raise ValueError(f"{raw} does not exist or is not a folder")
         resolved.append(str(path))
     return resolved
+
+
+def _check_repos_home(value: Any) -> str | None:
+    """an existing folder, absolute after ~ expansion, or None to clear it"""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"repos_home must be a folder path, not {value!r}")
+    path = Path(value.strip()).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"{value} must be an absolute path")
+    if not path.is_dir():
+        raise ValueError(f"{value} does not exist or is not a folder")
+    return str(path)
 
 
 def _check_lease_glob(value: Any) -> str:
@@ -839,6 +856,8 @@ class Store:
             if key in _EFFORT_KEYS:
                 _check_effort(key, value)
             stored = value
+            if key == "repos_home":
+                stored = _check_repos_home(value)
             if key == "mission_control_read_paths" or key in _FALLBACK_KEYS:
                 if isinstance(value, str):
                     try:
