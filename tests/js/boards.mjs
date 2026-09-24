@@ -133,6 +133,41 @@ assert.equal(mod.bp.repoListEl.querySelector('.repo-name').textContent, 'smortbo
 assert.ok(mod.bp.repoListEl.querySelector('.repo-row').classList.contains('on'),
   'a repo on the open board carries the opened treatment too');
 
+// ---- a repo row says where it pushes and what each field is; a blank field is not a mystery -----
+{
+  const row = mod.bp.repoListEl.querySelector('.repo-row');
+  const origin = row.querySelector('.repo-origin');
+  assert.ok(origin.className.includes('repo-origin-missing'), 'no origin is flagged');
+  assert.ok(origin.textContent.includes('no origin'), origin.textContent);
+  const labels = row.querySelector('.repo-edit-grid').querySelectorAll('.field-label').map(l => l.textContent);
+  assert.deepEqual(labels, ['tests', 'lint', 'image'], 'every field carries its label');
+  assert.ok(row.querySelector('.repo-edit-lint'), 'lint is editable on the row');
+  assert.equal(row.querySelector('.repo-edit-save').tag, 'button', 'save is a real button');
+}
+// the manual form waits behind its button: new board and from online repo are the way in
+{
+  const manual = mod.bp.panel.querySelector('.repo-manual');
+  assert.equal(manual.hidden, true, 'adding a repo by hand is folded away');
+  const toggle = mod.bp.panel.querySelector('.repo-manual-toggle');
+  toggle.onclick();
+  assert.equal(manual.hidden, false, 'and opens on its button');
+  toggle.onclick();
+  assert.equal(manual.hidden, true);
+}
+// ---- the panel is walkable: up from the name field reaches the boards and new board ----------------
+{
+  const sources = [...mod.bp.sourceRowEl.children];
+  assert.ok(sources.every(s => s.tag === 'button'), 'new board and from online repo are real buttons');
+  mod.bp.boardNameInput.focus();
+  const seen = [];
+  for (let i = 0; i < 8; i++) {
+    press('ArrowUp', document.activeElement);
+    seen.push(document.activeElement);
+  }
+  assert.ok(seen.some(el => (el.className || '').includes('board-name')), 'up reaches a board');
+  assert.ok(seen.includes(sources[0]), 'and on up to new board');
+}
+
 // ---- a refusal renders inline instead of clearing the form -----------------------------------------
 stub('/api/boards/b2/repos', 'POST', 400, {error: 'path does not exist: /nope'});
 mod.bp.repoFields.path.value = '/nope';

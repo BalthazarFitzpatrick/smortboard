@@ -26,14 +26,8 @@ function buildBoardsDom() {
   // and a repo online cloned into one. a board with no repo is the name field below
   const sourceRow = document.createElement('div');
   sourceRow.className = 'boards-source-row';
-  const fromFolder = document.createElement('div');
-  fromFolder.className = 'toggle board-source-new';
-  fromFolder.textContent = 'new board';
-  fromFolder.onclick = () => openNewBoardPicker(fromFolder);
-  const fromOnline = document.createElement('div');
-  fromOnline.className = 'toggle board-source-online';
-  fromOnline.textContent = 'from online repo';
-  fromOnline.onclick = () => openOnlineRepoPicker(fromOnline);
+  const fromFolder = panelButton('board-source-new', 'new board', () => openNewBoardPicker(fromFolder));
+  const fromOnline = panelButton('board-source-online', 'from online repo', () => openOnlineRepoPicker(fromOnline));
   sourceRow.append(fromFolder, fromOnline);
   panel.appendChild(sourceRow);
 
@@ -80,13 +74,21 @@ function buildBoardsDom() {
   repoList.className = 'repos-list';
   panel.appendChild(repoList);
 
+  // new board and from online repo set a repo up; by hand is only for a second repo on a board,
+  // so it stays folded until asked for
+  const manual = document.createElement('div');
+  manual.className = 'repo-manual';
+  manual.hidden = true;
   const hint = document.createElement('div');
   hint.className = 'field-label repos-hint';
-  hint.textContent = 'create the GitHub repo and push the default branch first - press h to check';
-  panel.appendChild(hint);
-
-  const form = buildRepoForm();
-  panel.appendChild(form);
+  hint.textContent = 'a folder that is already a git repo with its base branch on GitHub - h checks it';
+  manual.append(hint, buildRepoForm());
+  const manualToggle = panelButton('repo-manual-toggle', 'add a repo by hand', () => {
+    manual.hidden = !manual.hidden;
+    manualToggle.textContent = manual.hidden ? 'add a repo by hand' : 'hide adding by hand';
+    if (!manual.hidden) bp.repoFields.name.focus();
+  });
+  panel.append(manualToggle, manual);
 
   backdrop.appendChild(panel);
   backdrop.addEventListener('mousedown', evt => { if (evt.target === backdrop) closeBoardsPanel(); });
@@ -104,20 +106,41 @@ function divider() {
   return el;
 }
 
-// name, path, default_branch, test_command, lint_command, image - one row of labelled inputs
+// a real button: tab and the arrows reach it, enter and space press it
+function panelButton(className, text, onClick) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `toggle ${className}`;
+  btn.textContent = text;
+  btn.onclick = onClick;
+  return btn;
+}
+
+// what a registered repo's row lets you change, each with its label
+const REPO_ROW_FIELDS = [
+  {key: 'test_command', label: 'tests', placeholder: 'none - a card cannot pass its gate'},
+  {key: 'lint_command', label: 'lint', placeholder: 'none'},
+  {key: 'image', label: 'image', placeholder: 'the default card image'},
+];
+
+// name, path, default_branch, test_command, lint_command, image - labelled, like a repo's row
 const REPO_FORM_FIELDS = [
-  {key: 'name', placeholder: 'name'},
-  {key: 'path', placeholder: 'path (~ is expanded)'},
-  {key: 'default_branch', placeholder: 'default branch', value: 'main'},
-  {key: 'test_command', placeholder: 'test command (optional)'},
-  {key: 'lint_command', placeholder: 'lint command (optional)'},
-  {key: 'image', placeholder: 'image (optional)'},
+  {key: 'name', label: 'name', placeholder: 'my-app'},
+  {key: 'path', label: 'folder', placeholder: '~/code/my-app'},
+  {key: 'default_branch', label: 'base', placeholder: 'base branch', value: 'development'},
+  {key: 'test_command', label: 'tests', placeholder: 'found from the repo when blank'},
+  {key: 'lint_command', label: 'lint', placeholder: 'optional'},
+  {key: 'image', label: 'image', placeholder: 'optional'},
 ];
 
 function buildRepoForm() {
   const form = document.createElement('div');
-  form.className = 'repo-form';
-  REPO_FORM_FIELDS.forEach(({key, placeholder, value}) => {
+  form.className = 'repo-form repo-edit-grid';
+  REPO_FORM_FIELDS.forEach(({key, label, placeholder, value}) => {
+    const caption = document.createElement('span');
+    caption.className = 'field-label';
+    caption.textContent = label;
+    form.appendChild(caption);
     const input = document.createElement('input');
     input.type = 'text';
     input.className = `repo-field repo-field-${key} text-field`;
@@ -134,10 +157,7 @@ function buildRepoForm() {
   });
   const submitRow = document.createElement('div');
   submitRow.className = 'repo-form-submit-row';
-  const submit = document.createElement('div');
-  submit.className = 'toggle repo-form-submit';
-  submit.textContent = 'register repo';
-  submit.onclick = () => registerRepoFromPanel();
+  const submit = panelButton('repo-form-submit', 'register repo', () => registerRepoFromPanel());
   const status = document.createElement('span');
   status.className = 'repo-status';
   submitRow.append(submit, status);
@@ -160,19 +180,12 @@ function renderBoardRow(board) {
   row.dataset.boardId = board.id;
   if (board.id === currentBoardId) row.classList.add('on');
 
-  const name = document.createElement('span');
-  name.className = 'board-name toggle';
-  name.textContent = board.name;
-  name.onclick = async () => {
+  const name = panelButton('board-name', board.name, async () => {
     activateTab(board.id);
     await onBoardEnter(board.id);
     renderBoardsPanel();
-  };
-
-  const del = document.createElement('span');
-  del.className = 'board-delete toggle';
-  del.textContent = 'delete';
-  del.onclick = () => armBoardDelete(board.id);
+  });
+  const del = panelButton('board-delete', 'delete', () => armBoardDelete(board.id));
 
   row.append(name, del);
 
@@ -188,14 +201,8 @@ function renderBoardRow(board) {
         ? 'delete this board and its cards?'
         : `delete this board and its ${count} card${count === 1 ? '' : 's'}?`;
     });
-    const yes = document.createElement('span');
-    yes.className = 'toggle board-delete-yes';
-    yes.textContent = 'confirm delete';
-    yes.onclick = () => deleteBoardFromPanel(board.id);
-    const no = document.createElement('span');
-    no.className = 'toggle board-delete-no';
-    no.textContent = 'cancel';
-    no.onclick = () => { bp.confirmDeleteId = null; renderBoardsPanel(); };
+    const yes = panelButton('board-delete-yes', 'confirm delete', () => deleteBoardFromPanel(board.id));
+    const no = panelButton('board-delete-no', 'cancel', () => { bp.confirmDeleteId = null; renderBoardsPanel(); });
     confirmRow.append(yes, no);
     row.appendChild(confirmRow);
   }
@@ -406,11 +413,7 @@ function renderSetupNotices() {
 }
 
 function noticeToggle(className, text, onclick) {
-  const el = document.createElement('span');
-  el.className = `toggle ${className}`;
-  el.textContent = text;
-  el.onclick = onclick;
-  return el;
+  return panelButton(className, text, onclick);
 }
 
 // built like the delete confirm: what the folder's first commit would hold, and two toggles
@@ -493,33 +496,43 @@ function renderRepoRow(repo) {
   path.className = 'repo-path field-label';
   path.textContent = repo.path;
 
-  const editRow = document.createElement('div');
-  editRow.className = 'repo-edit-row';
-  const testInput = document.createElement('input');
-  testInput.type = 'text';
-  testInput.className = 'repo-edit-test text-field';
-  testInput.placeholder = 'test command';
-  testInput.value = repo.test_command || '';
-  const imageInput = document.createElement('input');
-  imageInput.type = 'text';
-  imageInput.className = 'repo-edit-image text-field';
-  imageInput.placeholder = 'image';
-  imageInput.value = repo.image || '';
-  const save = document.createElement('span');
-  save.className = 'toggle repo-edit-save';
-  save.textContent = 'save';
+  // where cards' pull requests go - without an origin they have nowhere, and h says what to do
+  const origin = document.createElement('div');
+  origin.className = repo.origin ? 'repo-origin field-label' : 'repo-origin repo-origin-missing field-label';
+  origin.textContent = repo.origin
+    ? `origin  ${repo.origin}`
+    : 'no origin - cards cannot open pull requests. h says how to add one';
+
+  // every field says what it is: a blank one reads as a value that is missing
+  const grid = document.createElement('div');
+  grid.className = 'repo-edit-grid';
+  const inputs = {};
+  REPO_ROW_FIELDS.forEach(({key, label, placeholder}) => {
+    const caption = document.createElement('span');
+    caption.className = 'field-label';
+    caption.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = `repo-edit-${key.split('_')[0]} text-field`;
+    input.placeholder = placeholder;
+    input.value = repo[key] || '';
+    inputs[key] = input;
+    grid.append(caption, input);
+  });
   const status = document.createElement('span');
   status.className = 'repo-edit-status';
-  save.onclick = () => saveRepoEdit(repo.id, testInput.value, imageInput.value, status);
-  [testInput, imageInput].forEach(input => input.addEventListener('keydown', evt => {
+  const save = panelButton('repo-edit-save', 'save', () => saveRepoEdit(repo.id, inputs, status));
+  Object.values(inputs).forEach(input => input.addEventListener('keydown', evt => {
     if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
     evt.preventDefault();
-    saveRepoEdit(repo.id, testInput.value, imageInput.value, status);
+    saveRepoEdit(repo.id, inputs, status);
   }));
-  editRow.append(testInput, imageInput, save, status);
+  const saveRow = document.createElement('div');
+  saveRow.className = 'repo-edit-row';
+  saveRow.append(save, status);
 
-  row.append(head, path, editRow);
+  row.append(head, path, origin, grid, saveRow);
   if (bp.testsNotice?.repoId === repo.id) row.appendChild(renderTestsNotice(bp.testsNotice));
   row.appendChild(renderRememberedLeases(repo));
   return row;
@@ -547,14 +560,8 @@ function renderTestsNotice(notice) {
   const label = document.createElement('span');
   label.className = 'field-label';
   label.textContent = `${notice.name} has no tests - every card needs them`;
-  const ask = document.createElement('span');
-  ask.className = 'toggle repo-tests-ask';
-  ask.textContent = 'ask mission control';
-  ask.onclick = () => askMissionControlForTests(notice);
-  const own = document.createElement('span');
-  own.className = 'toggle repo-tests-own';
-  own.textContent = 'use my own command';
-  own.onclick = () => focusOwnTestCommand(notice.repoId);
+  const ask = panelButton('repo-tests-ask', 'ask mission control', () => askMissionControlForTests(notice));
+  const own = panelButton('repo-tests-own', 'use my own command', () => focusOwnTestCommand(notice.repoId));
   box.append(label, ask, own);
   return box;
 }
@@ -598,10 +605,7 @@ function renderRememberedLeases(repo) {
     const glob = document.createElement('span');
     glob.className = 'repo-remembered-lease-glob';
     glob.textContent = lease.path_glob;
-    const remove = document.createElement('span');
-    remove.className = 'toggle repo-remembered-lease-remove';
-    remove.textContent = 'remove';
-    remove.onclick = () => forgetRememberedLease(repo.id, lease.id);
+    const remove = panelButton('repo-remembered-lease-remove', 'remove', () => forgetRememberedLease(repo.id, lease.id));
     item.append(glob, remove);
     box.appendChild(item);
   });
@@ -613,12 +617,14 @@ async function forgetRememberedLease(repoId, leaseId) {
   renderRepoList();
 }
 
-async function saveRepoEdit(repoId, testCommand, image, statusEl) {
+async function saveRepoEdit(repoId, inputs, statusEl) {
   statusEl.textContent = 'saving...';
   statusEl.className = 'repo-edit-status';
+  const fields = Object.fromEntries(
+    Object.entries(inputs).map(([key, input]) => [key, input.value.trim() || null]));
   const {ok, body} = await apiOrError(`/api/repos/${repoId}`, {
     method: 'PATCH', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({test_command: testCommand || null, image: image || null}),
+    body: JSON.stringify(fields),
   });
   if (!ok) {
     statusEl.textContent = (body && body.error) || 'could not save';

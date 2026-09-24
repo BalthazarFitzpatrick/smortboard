@@ -27,7 +27,7 @@ from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.labs.catalog import ROLES as MODEL_ROLES
 from smortboard.labs.catalog import load_catalog
-from smortboard.local_repos import list_folders
+from smortboard.local_repos import list_folders, origin_url
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
@@ -398,7 +398,12 @@ def _make_handler(
                 cards = store.list_cards(params["board_id"])
                 self._send_json(200, with_actions(store, cards, scheduler))
             elif "board_id" in params and path.endswith("/repos") and method == "GET":
-                self._send_json(200, store.list_repos(params["board_id"]))
+                # origin read live, so the panel shows where each repo pushes, or that it cannot
+                repos = [
+                    {**repo, "origin": origin_url(repo["path"])}
+                    for repo in store.list_repos(params["board_id"])
+                ]
+                self._send_json(200, repos)
             elif "board_id" in params and path.endswith("/repos") and method == "POST":
                 self._handle_create_repo(params["board_id"])
             elif "repo_id" in params and method == "PATCH":
@@ -963,7 +968,7 @@ def _make_handler(
             # path still means re-registering. default_branch is editable because a base branch
             # can merge into main, and it goes through the same validate_repo check as creation
             body = self._read_json()
-            unknown = set(body) - {"test_command", "image", "default_branch"}
+            unknown = set(body) - {"test_command", "lint_command", "image", "default_branch"}
             if unknown:
                 self._send_json(400, {"error": f"not writable: {sorted(unknown)}"})
                 return
@@ -978,6 +983,8 @@ def _make_handler(
                 repo = store.set_repo_default_branch(repo_id, body["default_branch"])
             if "test_command" in body:
                 repo = store.set_repo_test_command(repo_id, body["test_command"])
+            if "lint_command" in body:
+                repo = store.set_repo_lint_command(repo_id, body["lint_command"])
             if "image" in body:
                 repo = store.set_repo_image(repo_id, body["image"])
             self._send_json(200, repo)

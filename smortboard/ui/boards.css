@@ -97,7 +97,10 @@
 .repo-row.on .field-label { color: var(--lichen); }
 .repo-path { word-break: break-all; }
 .repo-edit-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.repo-edit-test, .repo-edit-image { flex: 1 1 160px; }
+/* label on the left, its field on the right - a blank field still says what it is for */
+.repo-edit-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; align-items: center; }
+.repo-origin { word-break: break-all; }
+.repo-row.on .repo-origin-missing, .repo-origin-missing { color: var(--status-warn); }
 .repo-edit-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
 .repo-edit-status.repo-edit-ok { color: var(--lichen-milk); }
 .repo-edit-status.repo-edit-error { color: var(--status-warn); }
@@ -105,13 +108,11 @@
 .repo-tests-notice { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .repo-row.on .repo-tests-notice .field-label { color: var(--status-warn); }
 
-.repo-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-top: 2px solid var(--grey-border);
-  padding-top: 10px;
-}
-.repo-form-submit-row { display: flex; align-items: center; gap: 12px; }
+.repo-manual { display: flex; flex-direction: column; gap: 8px; border-top: 2px solid var(--grey-border); padding-top: 10px; }
+.repo-manual-toggle { align-self: flex-start; }
+/* a display rule beats the hidden attribute, so hidden has to say it again */
+.repo-manual[hidden] { display: none; }
+/* the submit row spans both grid columns */
+.repo-form-submit-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
 .repo-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
 .repo-status.repo-error { color: var(--status-warn); }
