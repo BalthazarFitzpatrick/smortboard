@@ -46,6 +46,7 @@ Each is a stored setting:
 | spend cap per card | `card_total_budget_usd` |
 | absolute paths mission control may also read | `mission_control_read_paths` |
 | gates for per-board modes (`on` or unset; unset refuses the mode and turning one off resets every board) | `allow_soft_leases`, `allow_free_merge` |
+| the folder new board and from online repo open in (unset: home) | `repos_home` |
 | the rest | `findings_route`, `max_parallel`, `resume_briefing`, `gate_timeout_seconds`, `usage_limit_route` |
 
 Per board, in `shift`+`o`: its merge mode, its lease mode, its own parallel cap and its

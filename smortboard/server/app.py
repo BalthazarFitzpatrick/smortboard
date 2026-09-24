@@ -386,7 +386,14 @@ def _make_handler(
                 self._send_json(200, online_repos.list_online_repos(online_repos.default_runner))
             elif path == "/api/folders":
                 query = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-                self._send_json(200, list_folders(query.get("under", [None])[0]))
+                under = query.get("under", [None])[0]
+                # start=repos opens where new repos go (the repos_home setting), else home
+                if under is None and query.get("start", [None])[0] == "repos":
+                    under = store.get_settings().get("repos_home")
+                    # a folder removed since it was saved opens home rather than an error
+                    if under and not Path(under).is_dir():
+                        under = None
+                self._send_json(200, list_folders(under))
             elif "board_id" in params and path.endswith("/cards"):
                 cards = store.list_cards(params["board_id"])
                 self._send_json(200, with_actions(store, cards, scheduler))
