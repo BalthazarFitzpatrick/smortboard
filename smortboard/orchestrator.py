@@ -40,6 +40,7 @@ from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import command_model, role_effort, role_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.prompts import active_prompt
+from smortboard.repo_tests import tracked_files
 from smortboard.scheduler import usage_limit_route
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
 from smortboard.store.api import BOARD_SPEND_TOKENS, Store, _clean_leases, _is_catch_all
@@ -456,7 +457,7 @@ def _open_tasks(repo: dict[str, Any], links: dict[str, str]) -> list[dict[str, A
 
 def _layout(repo: dict[str, Any]) -> list[str]:
     """the repo's folders two levels deep with file counts, so leases name real paths"""
-    listing = _git_show_tree(repo["path"], repo["default_branch"])
+    listing = tracked_files(repo["path"], repo["default_branch"])
     counts: dict[str, int] = {}
     for path in listing:
         parts = path.split("/")
@@ -464,19 +465,6 @@ def _layout(repo: dict[str, Any]) -> list[str]:
         counts[key] = counts.get(key, 0) + 1
     entries = [f"{k} ({n})" if k.endswith("/") else k for k, n in sorted(counts.items())]
     return entries[:_LAYOUT_LIMIT]
-
-
-def _git_show_tree(path: str, ref: str) -> list[str]:
-    try:
-        out = subprocess.run(
-            ["git", "-C", path, "ls-tree", "-r", "--name-only", ref],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    return out.stdout.split() if out.returncode == 0 else []
 
 
 def _snapshot_repos(store: Store, board_id: str) -> list[dict[str, Any]]:
