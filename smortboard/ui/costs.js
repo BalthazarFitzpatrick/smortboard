@@ -2,8 +2,23 @@
 // nine boards still fit. click a board's name to go to it; 1-9 do the same from anywhere. reuses
 // board.js and telemetry.js globals: api, fillBar, textLine, formatUsd, toggleOverlay, Menu.
 
+// the priced part of a figure with its unpriced runs counted beside it: "$4.99 + 3 unknown", and
+// plain "unknown" only when nothing in it has a price. prefix picks worker_, reviewer_, turn_ ...
+function spendLabel(src, prefix = '', estimated = false) {
+  const known = src[`${prefix}known_cost_usd`];
+  const unknown = src[`${prefix}unknown_costs`] || 0;
+  if (!unknown || known == null) return formatUsd(src[`${prefix}cost_usd`], estimated);
+  return known ? `${formatUsd(known, estimated)} + ${unknown} unknown` : 'unknown';
+}
+
+// the priced part alone, for share bars and divisions - falls back to the plain figure
+function knownSpend(src, prefix = '') {
+  return src[`${prefix}known_cost_usd`] ?? src[`${prefix}cost_usd`];
+}
+
 function costPerPrLabel(row) {
-  return row.cost_per_pr_usd == null ? null : `${formatUsd(row.cost_per_pr_usd, row.cost_estimated)} / pr`;
+  const perPr = row.known_cost_per_pr_usd ?? row.cost_per_pr_usd;
+  return perPr == null ? null : `${formatUsd(perPr, row.cost_estimated)} / pr`;
 }
 
 // an em dash rather than a divide-by-zero when a group or figure holds no cards/prs yet
@@ -30,9 +45,11 @@ function costGroupBox(title, group) {
   const box = document.createElement('div');
   box.className = `cost-group cost-group-${title}`;
   box.appendChild(costCell(title, 'cost-group-title'));
-  box.appendChild(costCell(`${formatUsd(group.cost_usd, group.cost_estimated)} spend`, 'cost-group-figure'));
-  box.appendChild(costCell(`${dashOrUsd(group.cost_per_card_usd, group.cost_estimated)} / card`, 'cost-group-figure'));
-  box.appendChild(costCell(`${dashOrUsd(group.cost_per_pr_usd, group.cost_estimated)} / pr`, 'cost-group-figure'));
+  const perCard = group.known_cost_per_card_usd ?? group.cost_per_card_usd;
+  const perPr = group.known_cost_per_pr_usd ?? group.cost_per_pr_usd;
+  box.appendChild(costCell(`${spendLabel(group, '', group.cost_estimated)} spend`, 'cost-group-figure'));
+  box.appendChild(costCell(`${dashOrUsd(perCard, group.cost_estimated)} / card`, 'cost-group-figure'));
+  box.appendChild(costCell(`${dashOrUsd(perPr, group.cost_estimated)} / pr`, 'cost-group-figure'));
   box.appendChild(costCell(`${plural(group.cards, 'card')} · ${plural(group.prs, 'pr')}`, 'cost-group-counts'));
   return box;
 }
@@ -54,15 +71,17 @@ function boardCostRow(row, share) {
   line.className = 'cost-row';
   const name = costCell(row.board_name, 'cost-name');
   name.onclick = () => jumpToBoard(row.board_id);
+  const perPr = row.known_cost_per_pr_usd ?? row.cost_per_pr_usd;
+  const refused = knownSpend(row, 'refusal_') || row.refusal_unknown_costs;
   line.append(
     name,
     fillBar(share),
-    costCell(formatUsd(row.cost_usd, row.cost_estimated), 'num'),
+    costCell(spendLabel(row, '', row.cost_estimated), 'num'),
     costCell(String(row.runs), 'num'),
     costCell(`${row.cards_accepted}/${row.cards}`, 'num'),
     costCell(String(row.pull_requests_opened), 'num'),
-    costCell(row.cost_per_pr_usd == null ? '-' : formatUsd(row.cost_per_pr_usd), 'num'),
-    costCell(row.refusal_cost_usd ? formatUsd(row.refusal_cost_usd) : '-', 'num'),
+    costCell(perPr == null ? '-' : formatUsd(perPr), 'num'),
+    costCell(refused ? spendLabel(row, 'refusal_') : '-', 'num'),
   );
   return line;
 }
@@ -70,18 +89,19 @@ function boardCostRow(row, share) {
 function totalsFoot(totals) {
   const foot = document.createElement('div');
   foot.className = 'card-foot usage-foot cost-foot';
-  const wasteNote = totals.refusal_cost_usd
-    ? ` - ${formatUsd(totals.refusal_cost_usd)} on runs with a permission denial`
+  const wasteNote = knownSpend(totals, 'refusal_') || totals.refusal_unknown_costs
+    ? ` - ${spendLabel(totals, 'refusal_')} on runs with a permission denial`
     : '';
-  const prNote = totals.cost_per_pr_usd == null ? '' : ` - ${costPerPrLabel(totals)}`;
+  const prLabel = costPerPrLabel(totals);
+  const prNote = prLabel == null ? '' : ` - ${prLabel}`;
   foot.appendChild(
     textLine(
       `${plural(totals.boards, 'board')} - ${plural(totals.cards, 'card')} - ${plural(totals.runs, 'run')} - ` +
-        `${formatUsd(totals.cost_usd, totals.cost_estimated)}${prNote}${wasteNote}`,
+        `${spendLabel(totals, '', totals.cost_estimated)}${prNote}${wasteNote}`,
       'stat'
     )
   );
-  const roles = `worker ${formatUsd(totals.worker_cost_usd, totals.worker_cost_estimated)} - reviewer ${formatUsd(totals.reviewer_cost_usd, totals.reviewer_cost_estimated)}`;
+  const roles = `worker ${spendLabel(totals, 'worker_', totals.worker_cost_estimated)} - reviewer ${spendLabel(totals, 'reviewer_', totals.reviewer_cost_estimated)}`;
   foot.appendChild(textLine(roles, 'stat'));
   const byLab = new Map();
   (totals.spend_by_model || []).forEach(row => {
@@ -90,11 +110,11 @@ function totalsFoot(totals) {
     byLab.get(lab).push(row);
   });
   byLab.forEach((models, lab) => {
-    const values = models.map(m => `${m.model} ${formatUsd(m.cost_usd, m.cost_estimated)}`).join(', ');
+    const values = models.map(m => `${m.model} ${spendLabel(m, '', m.cost_estimated)}`).join(', ');
     foot.appendChild(textLine(`${lab} - ${values}`, 'stat'));
   });
   foot.appendChild(textLine(
-    `mission control and fold turns ${formatUsd(totals.turn_cost_usd, totals.turn_cost_estimated)} - not in the card totals above`,
+    `mission control and fold turns ${spendLabel(totals, 'turn_', totals.turn_cost_estimated)} - not in the card totals above`,
     'stat cost-note'
   ));
   return foot;
@@ -114,7 +134,7 @@ function costsOverviewSections(data) {
     box.innerHTML = '<span class="hazard-label">no boards yet</span>';
     return [{kind: 'node', node: box}];
   }
-  const total = data.totals.cost_usd || 0;
+  const total = knownSpend(data.totals) || 0;
   const card = document.createElement('div');
   card.className = 'usage-card usage-wide cost-card';
 
@@ -131,7 +151,7 @@ function costsOverviewSections(data) {
   head.className = 'cost-row';
   COST_COLUMNS.forEach((label, i) => head.appendChild(costCell(label, i > 1 ? 'cost-head num' : 'cost-head')));
   rows.appendChild(head);
-  data.boards.forEach(row => rows.appendChild(boardCostRow(row, total > 0 ? row.cost_usd / total : 0)));
+  data.boards.forEach(row => rows.appendChild(boardCostRow(row, total > 0 ? (knownSpend(row) || 0) / total : 0)));
   card.appendChild(rows);
   card.appendChild(textLine('', 'h-divider'));
   card.appendChild(totalsFoot({...data.totals, boards: data.boards.length}));
