@@ -95,26 +95,26 @@ async function loadUsageLimitToggle() {
 // then opts in on its own panel (shift+o). off puts every board back on strict or review
 const softLeases = choiceToggle({
   className: 'settings-soft-leases-choice',
-  choices: [['off', null], ['on', 'on']],
+  choices: [['enabled', 'on'], ['disabled', null]],
   save: value => saveSettings({allow_soft_leases: value}),
 });
 
 const freeMerge = choiceToggle({
   className: 'settings-free-merge-choice',
-  choices: [['off', null], ['on', 'on']],
+  choices: [['enabled', 'on'], ['disabled', null]],
   save: value => saveSettings({allow_free_merge: value}),
 });
 
 function buildSoftLeasesToggle() {
   softLeases.show(null);
-  return toggleWithNote(softLeases, 'on: a board may let its cards write unprotected paths no other '
-    + 'card holds - pick it per board in shift+o. off: every board is strict.');
+  return toggleWithNote(softLeases, 'enabled: a board may let its cards write unprotected paths no other '
+    + 'card holds - pick it per board in shift+o. disabled: every board is strict.');
 }
 
 function buildFreeMergeToggle() {
   freeMerge.show(null);
-  return toggleWithNote(freeMerge, 'on: a board may merge passing cards into its base without '
-    + 'asking - pick it per board in shift+o. off: every board waits for your review. main is '
+  return toggleWithNote(freeMerge, 'enabled: a board may merge passing cards into its base without '
+    + 'asking - pick it per board in shift+o. disabled: every board waits for your review. main is '
     + 'never merged either way.');
 }
 
@@ -124,7 +124,7 @@ async function loadFeatureToggles() {
     softLeases.show(settings.allow_soft_leases === 'on' ? 'on' : null);
     freeMerge.show(settings.allow_free_merge === 'on' ? 'on' : null);
   } catch {
-    // leave both off lit - off is what the server assumes for an unset key
+    // leave both disabled lit - disabled is what the server assumes for an unset key
   }
 }
 
@@ -200,7 +200,6 @@ async function loadMouseToggle() {
 
 const SETTINGS_SECTIONS = [
   {group: 'labs', label: 'usage limits', node: buildUsageLimitToggle(), onOpen: loadUsageLimitToggle},
-  {group: 'general', label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle},
   {group: 'general', label: 'soft file leases', node: buildSoftLeasesToggle(), onOpen: loadFeatureToggles},
   {group: 'general', label: 'free merge', node: buildFreeMergeToggle()},
 ];
@@ -996,6 +995,9 @@ SETTINGS_SECTIONS.push({
   node: buildBackupSection(),
   onOpen: () => showBackupStatus(''),
 });
+
+// last in general: the board is driven from the keyboard, so the mouse is the least of these
+SETTINGS_SECTIONS.push({group: 'general', label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle});
 
 function buildSettingsSection(section) {
   const box = document.createElement('div');

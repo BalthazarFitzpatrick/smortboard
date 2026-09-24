@@ -89,7 +89,7 @@ touch server/.gitkeep public/js/.gitkeep public/css/.gitkeep
    - **models by role**: worker sonnet. If you have a Codex profile, put the reviewer on OpenAI.
      A reviewer from another lab is the point of the gate.
    - **usage limits**: **ask me**, to see the inbox route.
-   - **soft file leases**: **on**, so section 4 can switch this board to soft later.
+   - **soft file leases**: **enabled**, so section 4 can switch this board to soft later.
 5. `shift`+`o`, this board's own settings:
    - **file lease**: leave it on **strict** for now; the table in section 4 says when to switch.
    - **daily budget**: e.g. `30`.
