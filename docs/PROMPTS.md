@@ -55,9 +55,10 @@ it, in code, on every run:
   the worker wrote - lockfiles left out of the diff, paths a soft lease reached - go inside that
   region, never in the trusted header. The header only carries the board's own instruction to judge
   the soft-lease paths.
-- **orchestrator:** `build_system_prompt` appends the model catalog, `_LEDGER_RULES` and
-  `CARD_TEXT_RULES` to the system prompt, so they stay identical between turns and the provider can
-  cache them. The per-turn prompt carries only the snapshot (compact json, message bodies capped at
+- **orchestrator:** `build_system_prompt` appends the model catalog, `_LEDGER_RULES`,
+  `CARD_TEXT_RULES` and `_TEST_RULES` to the system prompt, so they stay identical between turns and
+  the provider can cache them. `_TEST_RULES`: tests on every card, a first test-suite card for a repo
+  with none, and `test_commands` naming the runner for a repo without a test command. The per-turn prompt carries only the snapshot (compact json, message bodies capped at
   800 characters, the newest 20 finished cards as evidence) and the planning or manage mode rules.
 - **fold:** `consolidate.FOLD_PROMPT` is fixed in code; there is no stored fold role. Its turn prompt
   carries `CARD_TEXT_RULES` too.

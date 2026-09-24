@@ -5,6 +5,7 @@ import subprocess
 
 import pytest
 
+from smortboard import orchestrator
 from smortboard.orchestrator import build_board_snapshot, build_turn_prompt, run_orchestrator_turn
 from smortboard.store import Store
 
@@ -72,6 +73,37 @@ def test_the_snapshot_carries_open_tasks_and_folders(board):
     assert "pkg/ui/ (1)" in repo["layout"]
     assert "README.md" in repo["layout"]
     assert "open_tasks" in build_turn_prompt({"repos": [repo]}, "hi")
+
+
+def test_the_snapshot_says_whether_a_repo_has_tests_from_one_listing(board, tmp_path, monkeypatch):
+    store, board_id = board
+    tested = tmp_path / "tested"
+    (tested / "tests").mkdir(parents=True)
+    (tested / "tests" / "test_x.py").write_text("x")
+    (tested / "app.py").write_text("x")
+    _git(tested, "init", "-b", "main")
+    _git(tested, "config", "user.email", "a@b.c")
+    _git(tested, "config", "user.name", "a")
+    _git(tested, "add", ".")
+    _git(tested, "commit", "-m", "first")
+    store.create_repo(board_id, name="tested", path=str(tested), default_branch="main")
+    # an uncommitted test file is not a test: has_tests reads the default branch
+    untested = tmp_path / "repo"
+    (untested / "tests").mkdir()
+    (untested / "tests" / "test_wip.py").write_text("x")
+
+    listed = []
+    real = orchestrator.tracked_files
+    monkeypatch.setattr(
+        orchestrator, "tracked_files", lambda path, ref: listed.append(path) or real(path, ref)
+    )
+    repos = {r["name"]: r for r in build_board_snapshot(store, board_id)["repos"]}
+
+    assert repos["tested"]["has_tests"] is True
+    assert repos["repo"]["has_tests"] is False
+    assert repos["tested"]["layout"] == ["app.py", "tests/ (1)"]
+    assert "pkg/ui/ (1)" in repos["repo"]["layout"]
+    assert sorted(listed) == sorted([str(tested), str(untested)]), "one listing per repo"
 
 
 def test_a_ledger_task_is_carded_once(board):

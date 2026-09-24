@@ -213,13 +213,16 @@ def test_depends_on_resolves_against_an_existing_card_by_title(store, board):
 
 
 @pytest.mark.parametrize(
-    "schema", [ORCHESTRATOR_JSON_SCHEMA, FOLD_JSON_SCHEMA], ids=["orchestrator", "fold"]
+    ("schema", "count"),
+    # mission control: the reply, a card, a test command
+    [(ORCHESTRATOR_JSON_SCHEMA, 3), (FOLD_JSON_SCHEMA, 2)],
+    ids=["orchestrator", "fold"],
 )
-def test_mission_control_and_fold_schemas_are_strict_at_every_object_level(schema):
+def test_mission_control_and_fold_schemas_are_strict_at_every_object_level(schema, count):
     """the reviewer's failure on card 4c56f435 - `invalid_json_schema ... 'additionalProperties'
     is required to be supplied and to be false` - holds for every schema codex is handed"""
     objects = list(_objects(schema))
-    assert len(objects) == 2
+    assert len(objects) == count
     for obj in objects:
         assert obj["additionalProperties"] is False
         assert sorted(obj["required"]) == sorted(obj["properties"])
@@ -252,7 +255,13 @@ def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_the
         "task_id": "t1",
         "complexity": "high",
     }
-    payload = {"reply": "ok", "plan": "p", "screenshot": None, "cards": [bare, full]}
+    payload = {
+        "reply": "ok",
+        "plan": "p",
+        "screenshot": None,
+        "cards": [bare, full],
+        "test_commands": [],
+    }
     assert set(payload) == set(ORCHESTRATOR_JSON_SCHEMA["properties"])
     assert set(bare) == set(full) == set(card_schema)
     calls = []
@@ -277,6 +286,103 @@ def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_the
     assert made_full["depends_on"] == [made_bare["id"]]
     authors = [m["author"] for m in store.list_orchestrator_messages(board["id"])]
     assert authors == ["operator", "orchestrator"]
+
+
+# -- test_commands: the runner mission control names for a repo that has none --
+
+
+@pytest.fixture
+def fresh(store, board):
+    """a second repo on the board, with no test command yet"""
+    return store.create_repo(board["id"], "fresh", "/fresh", "main")
+
+
+def _names_command(repo, command, **extra):
+    entry = {"repo": repo, "command": command}
+    return {"reply": "ok", "plan": "p", "cards": [], "test_commands": [entry], **extra}
+
+
+def _board_notes(store, board_id):
+    messages = store.list_orchestrator_messages(board_id)
+    return [m["body"] for m in messages if m["author"] == "board"]
+
+
+def test_a_named_test_command_is_stored_on_a_repo_without_one(store, board, fresh):
+    payload = _names_command("fresh", "node --test")
+    run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
+    assert store.get_repo(fresh["id"])["test_command"] == "node --test"
+    assert _board_notes(store, board["id"]) == ['set fresh\'s test command to "node --test"']
+
+
+@pytest.mark.parametrize(
+    ("name", "command", "note"),
+    [
+        ("repo", "node --test", 'kept repo\'s test command "uv run pytest"'),
+        (
+            "fresh",
+            "pytest; rm -rf /",
+            "refused fresh's proposed test command: not a plain test runner call",
+        ),
+        ("nope", "node --test", 'no repo named "nope", so its proposed test command was not set'),
+    ],
+    ids=["already-set", "shell-syntax", "unknown-repo"],
+)
+def test_a_named_test_command_never_replaces_one_or_passes_unsafe_or_unmatched(
+    store, board, fresh, name, command, note
+):
+    before = {r["name"]: r["test_command"] for r in store.list_repos(board["id"])}
+    payload = _names_command(name, command)
+    run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
+    assert {r["name"]: r["test_command"] for r in store.list_repos(board["id"])} == before
+    assert _board_notes(store, board["id"]) == [note]
+
+
+def test_planning_mode_stores_no_test_command(store, board, fresh):
+    payload = _names_command("fresh", "node --test")
+    run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload), mode="planning")
+    assert store.get_repo(fresh["id"])["test_command"] is None
+    assert any("1 proposed test command" in n for n in _board_notes(store, board["id"]))
+
+
+def _replies(*payloads):
+    queue = iter(payloads)
+
+    def run(prompt, model, budget_usd, screenshot_path=None):
+        return json.dumps(next(queue))
+
+    return run
+
+
+def _write_png(url, out_path):
+    out_path.write_bytes(b"png")
+
+
+def test_the_screenshot_rerun_carries_its_own_test_commands(store, board, fresh):
+    asks = {"reply": "let me look", "plan": "", "cards": [], "screenshot": "board"}
+    answers = _names_command("fresh", "node --test", screenshot=None)
+    run_orchestrator_turn(
+        store,
+        board["id"],
+        "look",
+        runner=_replies(asks, answers),
+        board_url="http://127.0.0.1:8000/ui/index.html",
+        screenshot_taker=_write_png,
+    )
+    assert store.get_repo(fresh["id"])["test_command"] == "node --test"
+
+
+def test_a_failed_screenshot_keeps_the_first_replys_test_commands(store, board, fresh):
+    # a non-loopback board url is refused before any re-run, so the first reply stands
+    asks = _names_command("fresh", "node --test", screenshot="board")
+    run_orchestrator_turn(
+        store,
+        board["id"],
+        "look",
+        runner=_replies(asks),
+        board_url="http://example.com/",
+        screenshot_taker=_write_png,
+    )
+    assert store.get_repo(fresh["id"])["test_command"] == "node --test"
 
 
 # -- OrchestratorRegistry: thinking flag and one turn per board --------------

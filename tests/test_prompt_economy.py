@@ -17,6 +17,7 @@ from smortboard.exec.runner import (
 )
 from smortboard.orchestrator import (
     _LEDGER_RULES,
+    _TEST_RULES,
     CARD_TEXT_RULES,
     build_board_snapshot,
     run_orchestrator_turn,
@@ -91,9 +92,22 @@ def test_two_turns_share_one_static_system_prompt_and_carry_no_rules(tmp_path, m
     first, second = seen
     assert first["system"] == second["system"], "the cached prefix must not move between turns"
     assert first["prompt"] != second["prompt"]
-    for rules in (CARD_TEXT_RULES, _LEDGER_RULES):
+    for rules in (CARD_TEXT_RULES, _LEDGER_RULES, _TEST_RULES):
         assert rules in first["system"]
         assert rules not in first["prompt"] and rules not in second["prompt"]
+
+
+def test_the_test_rules_ride_an_edited_mission_control_prompt_too(tmp_path, monkeypatch):
+    seen = []
+    _capture_turns(monkeypatch, seen)
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("b")
+        store.set_prompt("orchestrator", "a custom mission control prompt")
+        run_orchestrator_turn(store, board["id"], "plan it")
+    system = seen[0]["system"]
+    assert system.startswith("a custom mission control prompt")
+    assert "TEST RULES. Tests are required on every card." in system
+    assert _TEST_RULES in system
 
 
 def test_the_snapshot_is_sent_compact(tmp_path, monkeypatch):

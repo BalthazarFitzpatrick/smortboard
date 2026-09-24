@@ -40,7 +40,7 @@ from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import command_model, role_effort, role_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.prompts import active_prompt
-from smortboard.repo_tests import tracked_files
+from smortboard.repo_tests import has_tests, safe_test_command, tracked_files
 from smortboard.scheduler import usage_limit_route
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
 from smortboard.store.api import BOARD_SPEND_TOKENS, Store, _clean_leases, _is_catch_all
@@ -121,8 +121,19 @@ ORCHESTRATOR_JSON_SCHEMA = {
                 ],
             },
         },
+        # a runner command for a repo that has none yet - the board stores it only after
+        # safe_test_command, and never over one the operator already set
+        "test_commands": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"repo": {"type": "string"}, "command": {"type": "string"}},
+                "required": ["repo", "command"],
+            },
+        },
     },
-    "required": ["reply", "plan", "screenshot", "cards"],
+    "required": ["reply", "plan", "screenshot", "cards", "test_commands"],
 }
 
 # a turn is a conversation, not a build - it should cost far less than a card run
@@ -455,9 +466,8 @@ def _open_tasks(repo: dict[str, Any], links: dict[str, str]) -> list[dict[str, A
     return tasks
 
 
-def _layout(repo: dict[str, Any]) -> list[str]:
+def _layout(listing: list[str]) -> list[str]:
     """the repo's folders two levels deep with file counts, so leases name real paths"""
-    listing = tracked_files(repo["path"], repo["default_branch"])
     counts: dict[str, int] = {}
     for path in listing:
         parts = path.split("/")
@@ -468,16 +478,21 @@ def _layout(repo: dict[str, Any]) -> list[str]:
 
 
 def _snapshot_repos(store: Store, board_id: str) -> list[dict[str, Any]]:
-    return [
-        {
-            "name": r["name"],
-            "default_branch": r["default_branch"],
-            "test_command": r["test_command"],
-            "layout": _layout(r),
-            "open_tasks": _open_tasks(r, store.ledger_links(r["id"])),
-        }
-        for r in store.list_repos(board_id)
-    ]
+    repos = []
+    for r in store.list_repos(board_id):
+        # one ls-tree per repo: the layout and whether any test exists read the same listing
+        files = tracked_files(r["path"], r["default_branch"])
+        repos.append(
+            {
+                "name": r["name"],
+                "default_branch": r["default_branch"],
+                "test_command": r["test_command"],
+                "has_tests": has_tests(files),
+                "layout": _layout(files),
+                "open_tasks": _open_tasks(r, store.ledger_links(r["id"])),
+            }
+        )
+    return repos
 
 
 def _snapshot_cards(store: Store, board_id: str) -> list[dict[str, Any]]:
@@ -577,11 +592,25 @@ def card_text_warnings(spec: dict[str, Any]) -> list[str]:
 
 # in the system appendix rather than ORCHESTRATOR_PROMPT: a stored prompt replaces the code default
 _LEDGER_RULES = (
-    "Each repo carries `layout` (its folders with file counts) and `open_tasks` (the not-done tasks "
-    "of its TASKS.jsonl ledger). To turn a ledger task into a card, set the card's `task_id` to "
+    "Each repo carries `layout` (its folders with file counts), `has_tests` (whether any test file "
+    "is committed) and `open_tasks` (the not-done tasks of its TASKS.jsonl ledger). To turn a ledger task into a card, set the card's `task_id` to "
     "that task's id; a task with a `linked_card` already has a card, so never propose it again. "
     "Set `task_id` to null for a card that is not a ledger task. Write leases over real paths from "
     "`layout`, gitignore-style: `*` stays inside one folder, `**/` is any depth, none included."
+)
+
+# the gate refuses a card on a repo with no test command, so this rides the system appendix
+# too: static, and out of reach of a stored prompt
+_TEST_RULES = (
+    "TEST RULES. Tests are required on every card.\n"
+    "- each criterion is a fact a test checks; the card writes or extends that test, and its test "
+    "files are in its leases.\n"
+    "- repo `has_tests` false: its first card adds a test suite for current behaviour; feature "
+    "cards on that repo depend on it.\n"
+    "- repo `test_command` null: that first card sets up the project's test runner, and "
+    "`test_commands` names the command - one runner call, no shell syntax. Else `test_commands` "
+    "is empty.\n"
+    "- never drop tests to make a card smaller."
 )
 
 
@@ -614,6 +643,8 @@ def build_system_prompt(base: str, catalog: dict[str, Any]) -> str:
         + _LEDGER_RULES
         + "\n\n"
         + CARD_TEXT_RULES
+        + "\n\n"
+        + _TEST_RULES
     )
 
 
@@ -651,11 +682,19 @@ def _parse_turn_reply(raw: str) -> dict[str, Any]:
     try:
         data = json.loads(raw)
         reply, plan, cards = data["reply"], data["plan"], data.get("cards") or []
+        test_commands = data.get("test_commands") or []
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise ValueError(str(exc)) from exc
-    if not isinstance(reply, str) or not isinstance(plan, str) or not isinstance(cards, list):
+    texts_ok = isinstance(reply, str) and isinstance(plan, str)
+    if not texts_ok or not isinstance(cards, list) or not isinstance(test_commands, list):
         raise ValueError("malformed orchestrator response shape")
-    return {"reply": reply, "plan": plan, "cards": cards, "screenshot": data.get("screenshot")}
+    return {
+        "reply": reply,
+        "plan": plan,
+        "cards": cards,
+        "test_commands": test_commands,
+        "screenshot": data.get("screenshot"),
+    }
 
 
 def _apply_screenshot_rerun(
@@ -665,9 +704,9 @@ def _apply_screenshot_rerun(
     screenshot_request: Any,
     board_url: str,
     screenshot_taker: ScreenshotTaker | None,
-    fallback: tuple[str, str, list[Any]],
+    fallback: tuple[str, str, list[Any], list[Any]],
     budget: float = DEFAULT_TURN_BUDGET_USD,
-) -> tuple[str, str, list[Any], str | None]:
+) -> tuple[str, str, list[Any], list[Any], str | None]:
     """takes exactly one screenshot for this message and re-runs the turn once with it readable.
 
     any failure here degrades to `fallback` (the first reply) plus a warning, not a lost turn.
@@ -694,7 +733,7 @@ def _apply_screenshot_rerun(
         if data.get("screenshot")
         else None
     )
-    return data["reply"], data["plan"], data["cards"], warning
+    return data["reply"], data["plan"], data["cards"], data["test_commands"], warning
 
 
 @dataclass
@@ -711,6 +750,31 @@ def _resolve_repo(store: Store, board_id: str, name: str | None) -> tuple[str | 
         if repo["name"] == name:
             return repo["id"], None
     return None, f'Repo "{name}" was not found on this board, so the card has no repo.'
+
+
+def _apply_test_commands(store: Store, board_id: str, proposed: list[Any]) -> list[str]:
+    """stores a proposed test command on a repo that has none, and only a plain runner call - one
+    board note per entry either way, so the operator sees what was set and what was not"""
+    # by exact name, as _resolve_repo matches a card's repo
+    repos = {repo["name"]: repo for repo in store.list_repos(board_id)}
+    notes = []
+    for entry in proposed:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("repo") or "").strip()
+        command = str(entry.get("command") or "").strip()
+        repo = repos.get(name)
+        if repo is None:
+            notes.append(f'no repo named "{name}", so its proposed test command was not set')
+        elif repo["test_command"]:
+            notes.append(f'kept {name}\'s test command "{repo["test_command"]}"')
+        elif not safe_test_command(command):
+            notes.append(f"refused {name}'s proposed test command: not a plain test runner call")
+        else:
+            repo = store.set_repo_test_command(repo["id"], command)
+            repos[name] = repo
+            notes.append(f'set {name}\'s test command to "{command}"')
+    return notes
 
 
 def run_orchestrator_turn(
@@ -734,6 +798,7 @@ def run_orchestrator_turn(
 
     `mode` is "planning" (default) or "manage" - planning never creates a card even if the reply
     proposes some (the turn prompt tells the orchestrator so too); manage creates them as before.
+    the same holds for `test_commands`: only manage stores one, and only on a repo that has none.
     """
     if store_message:
         store.add_orchestrator_message(board_id, AUTHOR_KEY, message)
@@ -773,18 +838,19 @@ def run_orchestrator_turn(
         return OrchestratorTurnResult(reply_message=None, error=error)
 
     reply, plan, proposed = data["reply"], data["plan"], data["cards"]
+    test_commands = data["test_commands"]
     warnings: list[str] = []
 
     screenshot_request = data.get("screenshot")
     if screenshot_request:
-        reply, plan, proposed, shot_warning = _apply_screenshot_rerun(
+        reply, plan, proposed, test_commands, shot_warning = _apply_screenshot_rerun(
             run,
             prompt,
             model,
             screenshot_request,
             board_url or _default_board_url(),
             screenshot_taker,
-            fallback=(reply, plan, proposed),
+            fallback=(reply, plan, proposed, test_commands),
             budget=budget,
         )
         if shot_warning:
@@ -802,6 +868,12 @@ def run_orchestrator_turn(
             "managing (shift+tab) to act on them"
         )
         proposed = []
+    if mode != "manage" and test_commands:
+        warnings.append(
+            f"planning mode: {len(test_commands)} proposed test command(s) were not set - "
+            "switch to managing (shift+tab) to act on them"
+        )
+        test_commands = []
 
     for spec in proposed:
         title = str(spec.get("title") or "").strip()
@@ -872,6 +944,8 @@ def run_orchestrator_turn(
                 dep_id = dep_name
             if dep_id is not None and dep_id != card_id:
                 store.add_dependency(card_id, dep_id)
+
+    warnings.extend(_apply_test_commands(store, board_id, test_commands))
 
     for warning in warnings:
         store.add_orchestrator_message(board_id, _BOARD_AUTHOR, warning)
