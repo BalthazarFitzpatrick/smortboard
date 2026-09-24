@@ -29,25 +29,38 @@ resumes.
 daily budget per board, a cap per run. Limit hit: wait for the reset, ask you, or switch to your
 next profile and then the fallback model.
 
-![The usage panel: five-hour and seven-day windows per lab, spend by model](docs/images/usage.jpg)
+![The usage panel: rate-limit windows per credential profile, spend by model](docs/images/usage.jpg)
 
-## One key per screen
-
-Every screen is one key. `s` lists them all, read from the same table the keys run on. Letters are
-commands, `/` starts typing. Clicks always work. Hover-focus and right-click stay off until you turn
-the mouse on in `o` (general -> mouse). Keys sit on the physical key, so a non-US layout does not
-move them. `n` inbox and `u` usage are above.
+**Settings.** `o` for what every board shares: models per role, what a usage limit does, which
+features boards may use. `shift`+`o` for one board: merge mode, file lease, parallel cap, budget.
 
 <table>
 <tr>
-<td width="33%"><img src="docs/images/costs.jpg" width="100%" alt="The cost overview: total, accepted and refused spend per card and per pull request, a spend table per board, and spend by lab and model"><br><code>c</code> cost across boards</td>
-<td width="33%"><img src="docs/images/settings.jpg" width="100%" alt="The settings panel: the mouse set to disabled, folders mission control can read, how many cards run at once globally and per board, and the file lease mode per board"><br><code>o</code> settings</td>
-<td width="33%"><img src="docs/images/digest.jpg" width="100%" alt="The morning digest: open pull requests in merge order, then the blocked cards waiting on you, each with its reason and the board's note"><br><code>d</code> morning digest</td>
+<td width="50%"><img src="docs/images/settings.jpg" width="100%" alt="Settings every board shares: the mouse, soft file leases and free merge switched on or off, folders mission control can read, how many cards run at once"><br><b>Settings</b><br><code>o</code></td>
+<td width="50%"><img src="docs/images/board-settings.jpg" width="100%" alt="One board's own settings: review or free merge, strict or soft file leases, its own cap on cards at once and its daily budget"><br><b>Board settings</b><br><code>shift+o</code></td>
+</tr>
+</table>
+
+## One key per screen
+
+Keyboard first. `s` lists the keys.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/card.jpg" width="100%" alt="An open card: what it is about, what is done with the test and review results, what it needs from you, and its criteria, lease, dependencies and history"><br><b>Open a card</b><br><code>space</code></td>
+<td width="50%"><img src="docs/images/costs.jpg" width="100%" alt="The cost overview: total, accepted and refused spend per card and per pull request, a spend table per board, and spend by lab and model"><br><b>Cost across boards</b><br><code>c</code></td>
 </tr>
 <tr>
-<td width="33%"><img src="docs/images/pulls.jpg" width="100%" alt="The pull requests panel: open pull requests across three boards in merge order, one marked conflicting, one waiting on a dependency that has not merged"><br><code>v</code> pull requests in merge order</td>
-<td width="33%"><img src="docs/images/shortcuts.jpg" width="100%" alt="The shortcut overlay on its panels page: one row per key, from u for usage to 1 .. 9 for jumping between boards"><br><code>s</code> every key</td>
-<td width="33%"><img src="docs/images/preflight.jpg" width="100%" alt="The pre-flight checklist: 30 of 31 ready, green rows for docker, the card image, the token, both credential profiles, gh and git, then each repo's own checks"><br><code>h</code> pre-flight checklist</td>
+<td width="50%"><img src="docs/images/telemetry.jpg" width="100%" alt="One card's cost per attempt: what each run spent, on which model, and how it ended"><br><b>Card cost</b><br><code>i</code></td>
+<td width="50%"><img src="docs/images/replay.jpg" width="100%" alt="Run replay: every step of an attempt, narration and tool calls, stepped through or played back"><br><b>Replay a run</b><br><code>t</code></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/pulls.jpg" width="100%" alt="The pull requests panel: open pull requests across three boards in merge order, one conflicting, one waiting on a dependency"><br><b>Pull requests</b><br><code>v</code></td>
+<td width="50%"><img src="docs/images/digest.jpg" width="100%" alt="The morning digest: open pull requests in merge order, then the blocked cards waiting on you"><br><b>Morning digest</b><br><code>d</code></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/preflight.jpg" width="100%" alt="The pre-flight checklist: docker, the card image, credentials, gh and git, then each repo's own checks"><br><b>Pre-flight</b><br><code>h</code></td>
+<td width="50%"><img src="docs/images/shortcuts.jpg" width="100%" alt="The shortcut overlay: one row per key"><br><b>Every key</b><br><code>s</code></td>
 </tr>
 </table>
 
