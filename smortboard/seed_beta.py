@@ -218,8 +218,8 @@ CARDS: list[dict[str, Any]] = [
         "key": "skills-ui",
         "workstream": "skills",
         "title": "Skill tree screen from the title",
-        "description": "public/js/skills-ui.js and public/css/game.css: the 3 branches with costs, "
-        "owned and locked nodes. Buying spends stardust.",
+        "description": "public/js/skills-ui.js and game.css: 3 branches, costs, owned and locked "
+        "nodes. Wired into game.js and the title.",
         "complexity": 2,
         "leases": [
             "public/js/skills-ui.js",
@@ -229,6 +229,8 @@ CARDS: list[dict[str, Any]] = [
         ],
         "criteria": [
             "K on the title screen opens it; Escape returns",
+            "the title screen says K opens the skill tree",
+            "opening it reloads stardust and owned skills from storage",
             "each node shows cost and owned, buyable or locked",
             "buying goes through skills.js buy and storage.js save",
             "the view model is a pure function with a test",
@@ -239,19 +241,22 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "upgrades",
         "workstream": "skills",
-        "title": "Apply owned upgrades to gameplay",
-        "description": "public/js/upgrades.js turns owned skills into core modifiers: wider catch "
-        "radius, shield charges, faster ship.",
+        "title": "Upgrades applied to runs, stardust banked",
+        "description": "upgrades.js: owned skills become catch radius, shield charges, ship speed. "
+        "game.js uses it every run.",
         "complexity": 2,
-        "leases": ["public/js/upgrades.js", "test/upgrades.test.js"],
+        "leases": ["public/js/upgrades.js", "public/js/game.js", "test/upgrades.test.js"],
         "criteria": [
             "magnet tiers widen catch radius by 10, 20, 30 pixels",
             "each shield tier absorbs one comet per run",
             "each thruster tier raises ship speed 15%",
             "no skills owned plays exactly as before",
+            "game.js runs each run with the skills owned at its start",
+            "a game.js test shows a thruster run moves the ship faster",
+            "game over adds the run's stardust to saved stardust",
         ],
         "tasks": [],
-        "depends_on": ["core", "skills"],
+        "depends_on": ["core", "skills", "storage", "loop"],
     },
     {
         "key": "highscores",
@@ -305,14 +310,15 @@ CARDS: list[dict[str, Any]] = [
         "key": "readme",
         "workstream": "docs",
         "title": "README: how to run and play",
-        "description": "README.md: start the server, open the page, controls, skill tree, "
-        "where scores live, how to run tests.",
+        "description": "README.md: run, open, controls, skill tree, stardust banking, where "
+        "scores live, tests.",
         "complexity": 1,
         "leases": ["README.md"],
         "criteria": [
             "run, test and play steps work on a clean clone",
             "lists every key: arrows, A/D, Space, K, M, P, Escape",
             "says scores live in data/scores.json",
+            "says stardust banks at game over, spent in the tree",
         ],
         "tasks": [],
         "depends_on": ["highscores", "skills-ui", "upgrades", "mute", "pause"],

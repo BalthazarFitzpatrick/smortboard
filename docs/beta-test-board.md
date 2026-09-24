@@ -109,6 +109,8 @@ THE GAME
 - skill tree: 8 upgrades in 3 branches, each with a cost and prerequisites:
   magnet (catch radius, 3 tiers), shield (absorbs one comet, 2 tiers), thrusters (ship speed, 3 tiers).
   a node is buyable only when its prerequisite is owned and there is enough stardust.
+  the title screen says K opens it; a run's stardust is banked at game over; owned skills apply
+  from the next run. the upgrades card owns that wiring in game.js, so the tree is playable end to end.
 - high scores: top 10 across all players, kept by the server in data/scores.json, surviving a restart.
   on game over the player enters a name (1-12 characters) and sees the table.
 
