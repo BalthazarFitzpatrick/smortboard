@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote
 
-from smortboard import profiles
+from smortboard import profiles, repo_setup
 from smortboard.attention import (
     AnswerRefused,
     answer_card,
@@ -27,7 +27,7 @@ from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.labs.catalog import ROLES as MODEL_ROLES
 from smortboard.labs.catalog import load_catalog
-from smortboard.local_repos import detect_default_branch, list_folders
+from smortboard.local_repos import list_folders
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
@@ -83,6 +83,7 @@ _ROUTES = [
     (re.compile(r"^/health$"), "GET"),
     (re.compile(r"^/api/boards$"), "GET"),
     (re.compile(r"^/api/boards$"), "POST"),
+    (re.compile(r"^/api/boards/from-folder$"), "POST"),
     (re.compile(r"^/api/boards/from-repo$"), "POST"),
     (re.compile(r"^/api/folders$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/cards$"), "GET"),
@@ -216,6 +217,21 @@ def _tests_reply(repo: dict[str, Any], tests: RepoTests) -> dict[str, Any]:
     """what the boards panel needs to ask for tests up front: the command stored on the repo, which
     a request's own command wins over detection for, and whether any test exists yet"""
     return {"command": repo["test_command"], "has_tests": tests.has_tests}
+
+
+def _make_new_folder(parent: Path, name: object) -> Path:
+    """the folder `name` made inside `parent` for a new board - one plain name, never a path, and
+    never a folder that is already there. raises ValueError with what to change"""
+    if not isinstance(name, str) or name.strip() in ("", ".", "..") or "/" in name or "\\" in name:
+        raise ValueError("a new folder is one plain name - no slashes, not . or ..")
+    folder = parent / name
+    try:
+        folder.mkdir()
+    except FileExistsError as exc:
+        raise ValueError(f"{folder} already exists - pick it from the list instead") from exc
+    except OSError as exc:
+        raise ValueError(f"could not create {folder}: {exc}") from exc
+    return folder
 
 
 def _make_handler(
@@ -355,8 +371,9 @@ def _make_handler(
                 body = self._read_json()
                 board = store.create_board(name=body["name"])
                 self._send_json(201, board)
-            elif path == "/api/boards/from-repo" and method == "POST":
-                self._handle_board_from_repo()
+            elif path in ("/api/boards/from-folder", "/api/boards/from-repo") and method == "POST":
+                # from-repo is the older name for the same route: one registration path
+                self._handle_board_from_folder()
             elif path == "/api/folders":
                 query = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
                 self._send_json(200, list_folders(query.get("under", [None])[0]))
@@ -846,32 +863,52 @@ def _make_handler(
             )
             self._send_json(201, {**repo, "tests": _tests_reply(repo, tests)})
 
-        def _handle_board_from_repo(self) -> None:
-            """a board named after a local repo, with that repo registered on it - the boards
-            panel's "from local repo" button. every check runs before anything is written, so a
-            folder that is not a usable repo leaves no empty board behind
+        def _handle_board_from_folder(self) -> None:
+            """a board named after a folder, with the folder registered on it as its repo - the
+            boards panel's "new board". repo_setup first gives the folder only what it lacks (git,
+            development, a private origin), and a folder with files is asked about before its
+            first commit. a refusal or a question leaves no board behind
             """
             body = self._read_json()
-            path = Path(body.get("path", "")).expanduser()
-            if not path.is_dir():
-                self._send_json(400, {"error": f"not a folder: {path}"})
+            folder = Path(body.get("path") or "").expanduser()
+            # an empty or relative path would resolve against the server's own working directory
+            if not folder.is_absolute():
+                self._send_json(400, {"error": "path must be an absolute folder path"})
                 return
             try:
-                branch = detect_default_branch(str(path))
-                expanded_path = validate_repo(path.name, str(path), branch)
-            except ValueError as exc:
+                if body.get("new_folder") is not None:
+                    folder = _make_new_folder(folder, body["new_folder"])
+                # the runner is looked up per call, so a test can swap in a gh that stays local
+                setup = repo_setup.prepare(
+                    folder, confirm=bool(body.get("confirm")), runner=repo_setup.default_runner
+                )
+                expanded_path = validate_repo(folder.name, str(folder), setup.base)
+            except repo_setup.NeedsConfirm as asked:
+                self._send_json(
+                    409, {"needs_confirm": True, "files": asked.files, "path": str(folder)}
+                )
+                return
+            except (ValueError, OSError) as exc:  # SetupRefused is a ValueError
                 self._send_json(400, {"error": str(exc)})
                 return
-            tests = detect_tests(expanded_path, branch)
-            board = store.create_board(name=path.name)
+            tests = detect_tests(expanded_path, setup.base)
+            board = store.create_board(name=folder.name)
             repo = store.create_repo(
                 board["id"],
-                name=path.name,
+                name=folder.name,
                 path=expanded_path,
-                default_branch=branch,
+                default_branch=setup.base,
                 test_command=body.get("test_command") or tests.command,
             )
-            self._send_json(201, {"board": board, "repo": repo, "tests": _tests_reply(repo, tests)})
+            self._send_json(
+                201,
+                {
+                    "board": board,
+                    "repo": repo,
+                    "tests": _tests_reply(repo, tests),
+                    "setup": {"steps": setup.steps, "push_main": setup.push_main},
+                },
+            )
 
         def _handle_patch_repo(self, repo_id: str) -> None:
             # path still means re-registering. default_branch is editable because a base branch

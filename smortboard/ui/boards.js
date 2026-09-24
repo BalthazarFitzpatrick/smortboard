@@ -8,7 +8,7 @@
 
 const bp = {backdrop: null, panel: null, boardListEl: null, boardNameInput: null, boardStatusEl: null,
   boardName: '', repoListEl: null, repoStatusEl: null, repoFields: {}, confirmDeleteId: null,
-  testsNotice: null};
+  testsNotice: null, setupEl: null, folderConfirm: null, pushMain: null, settingUp: false};
 
 function buildBoardsDom() {
   const backdrop = document.createElement('div');
@@ -22,24 +22,25 @@ function buildBoardsDom() {
   panel.appendChild(title);
   panel.appendChild(divider());
 
-  // three ways to start a board, as the first row: a blank one by name, one made from a repo
-  // already on this disk, and one from a repo online (not built yet, see the ledger)
+  // two ways to start a board, as the first row: any folder on this disk, made ready for a board,
+  // and a repo online (not built yet, see the ledger). a board with no repo is the name field below
   const sourceRow = document.createElement('div');
   sourceRow.className = 'boards-source-row';
-  const fromBlank = document.createElement('div');
-  fromBlank.className = 'toggle board-source-new';
-  fromBlank.textContent = 'new board';
-  fromBlank.onclick = () => bp.boardNameInput.focus();
-  const fromLocal = document.createElement('div');
-  fromLocal.className = 'toggle board-source-local';
-  fromLocal.textContent = 'from local repo';
-  fromLocal.onclick = () => openLocalRepoPicker(fromLocal);
+  const fromFolder = document.createElement('div');
+  fromFolder.className = 'toggle board-source-new';
+  fromFolder.textContent = 'new board';
+  fromFolder.onclick = () => openNewBoardPicker(fromFolder);
   const fromOnline = document.createElement('div');
   fromOnline.className = 'toggle board-source-online disabled';
   fromOnline.textContent = 'from online repo';
   fromOnline.title = 'not built yet';
-  sourceRow.append(fromBlank, fromLocal, fromOnline);
+  sourceRow.append(fromFolder, fromOnline);
   panel.appendChild(sourceRow);
+
+  // a new board's first-commit question and the step left to the operator, redrawn from bp
+  const setup = document.createElement('div');
+  setup.className = 'boards-setup';
+  panel.appendChild(setup);
 
   // ---- boards section ----
   const boardsLabel = document.createElement('div');
@@ -92,7 +93,7 @@ function buildBoardsDom() {
 
   Object.assign(bp, {
     backdrop, panel, boardListEl: boardList, boardNameInput, boardStatusEl: boardStatus,
-    reposLabelEl: reposLabel, repoListEl: repoList, sourceRowEl: sourceRow,
+    reposLabelEl: reposLabel, repoListEl: repoList, sourceRowEl: sourceRow, setupEl: setup,
   });
   return backdrop;
 }
@@ -246,8 +247,9 @@ function setBoardStatus(text, isError = false) {
 }
 
 // the folder menu opens in place, like the review tool's save dialog: '..' and each subfolder, git
-// repos marked. `action` is the one button it offers, shown only for a folder `action.when` accepts
-async function openFolderPicker(anchor, {title, action, onError}) {
+// repos marked. `action` is the one button it offers, shown only for a folder `action.when` accepts;
+// `add`, when given, is a name field whose value goes to add.run with the folder it was typed in
+async function openFolderPicker(anchor, {title, action, add, onError}) {
   const first = await apiOrError('/api/folders');
   if (!first.ok) { onError((first.body && first.body.error) || 'could not list folders'); return; }
   let where = first.body;
@@ -269,6 +271,8 @@ async function openFolderPicker(anchor, {title, action, onError}) {
       ],
       onPick: item => open(item.id),
     },
+    ...(add ? [{kind: 'add', placeholder: add.placeholder, button: add.label,
+      onAdd: (name, m) => add.run(where.here, name, m)}] : []),
     ...(action.when(where) ? [{kind: 'buttons', buttons: [
       {label: action.label, tone: 'adds', onClick: m => action.run(where.here, m)},
     ]}] : []),
@@ -277,27 +281,131 @@ async function openFolderPicker(anchor, {title, action, onError}) {
   menu.openAt(anchor);
 }
 
-function openLocalRepoPicker(anchor) {
+// any folder can hold a board - the server gives it whatever it lacks (git, development, an origin) -
+// so every folder offers the action, and a name typed here makes a new folder inside this one
+function openNewBoardPicker(anchor) {
   return openFolderPicker(anchor, {
-    title: 'board from local repo',
-    action: {label: 'create board from this repo', when: where => where.repo, run: createBoardFromRepo},
+    title: 'new board',
+    action: {label: 'board from this folder', when: () => true,
+      run: (path, menu) => createBoardFromFolder(path, menu)},
+    add: {placeholder: 'or a new folder in here', label: 'board in new folder',
+      run: (path, name, menu) => createBoardFromFolder(path, menu, {new_folder: name})},
     onError: text => setBoardStatus(text, true),
   });
 }
 
-async function createBoardFromRepo(path, menu) {
-  setBoardStatus('creating...');
-  const {ok, body} = await apiOrError('/api/boards/from-repo', {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path}),
-  });
+// one POST for every starting point. a folder with files and no git answers 409 with what its first
+// commit would hold, and waits for the operator; `settingUp` keeps a double click to one board
+async function createBoardFromFolder(path, menu, extra = {}) {
+  if (bp.settingUp) return;
+  bp.settingUp = true;
+  setBoardStatus('setting up...');
+  let reply;
+  try {
+    reply = await apiOrError('/api/boards/from-folder', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path, ...extra}),
+    });
+  } finally {
+    bp.settingUp = false;
+  }
+  const {ok, status, body} = reply;
+  if (status === 409 && body?.needs_confirm) {
+    menu?.close();
+    bp.folderConfirm = {path: body.path, files: body.files};
+    setBoardStatus('');
+    renderSetupNotices();
+    return;
+  }
   if (!ok) { setBoardStatus((body && body.error) || 'could not create the board', true); return; }
-  menu.close();
-  setBoardStatus('');
-  reportRepoTests(body.repo, body.tests, setBoardStatus);
+  menu?.close();
+  bp.folderConfirm = null;
+  bp.pushMain = body.setup?.push_main || null;
+  // what was set up leads the status line, and the tests line follows it
+  const done = body.setup?.steps?.length ? `done: ${body.setup.steps.join(', ')}` : '';
+  const setStatus = (text, isError = false) =>
+    setBoardStatus([done, text].filter(Boolean).join('; '), isError);
+  setStatus('');
+  reportRepoTests(body.repo, body.tests, setStatus);
   await loadBoards();
   activateTab(body.board.id);
   await onBoardEnter(body.board.id);
   renderBoardsPanel();
+}
+
+// ---- a new board's setup notices -------------------------------------------------------------
+
+const FIRST_COMMIT_SHOWN = 12;
+
+function renderSetupNotices() {
+  clearChildren(bp.setupEl);
+  if (bp.folderConfirm) bp.setupEl.appendChild(renderFolderConfirm(bp.folderConfirm));
+  if (bp.pushMain) bp.setupEl.appendChild(renderPushMain(bp.pushMain));
+}
+
+function noticeToggle(className, text, onclick) {
+  const el = document.createElement('span');
+  el.className = `toggle ${className}`;
+  el.textContent = text;
+  el.onclick = onclick;
+  return el;
+}
+
+// built like the delete confirm: what the folder's first commit would hold, and two toggles
+function renderFolderConfirm({path, files}) {
+  const box = document.createElement('div');
+  box.className = 'boards-folder-confirm';
+  const label = document.createElement('span');
+  label.className = 'field-label';
+  label.textContent = `${path.split('/').filter(Boolean).pop() || path} has files and no git - `
+    + 'its first commit would hold:';
+  const list = document.createElement('div');
+  list.className = 'boards-folder-files';
+  files.slice(0, FIRST_COMMIT_SHOWN).forEach(name => {
+    const row = document.createElement('span');
+    row.textContent = name;
+    list.appendChild(row);
+  });
+  if (files.length > FIRST_COMMIT_SHOWN) {
+    const more = document.createElement('span');
+    more.className = 'field-label';
+    more.textContent = `and ${files.length - FIRST_COMMIT_SHOWN} more`;
+    list.appendChild(more);
+  }
+  const ignore = document.createElement('span');
+  ignore.className = 'field-label';
+  ignore.textContent = 'a .gitignore for secrets is added first if the folder has none';
+  box.append(label, list, ignore,
+    noticeToggle('boards-folder-commit', 'commit these and continue',
+      () => createBoardFromFolder(path, null, {confirm: true})),
+    noticeToggle('boards-folder-cancel', 'cancel',
+      () => { bp.folderConfirm = null; renderSetupNotices(); }));
+  return box;
+}
+
+// the board never pushes main: when it made the origin, this command is the operator's to run, and
+// the notice stays until they say it is done
+function renderPushMain(command) {
+  const box = document.createElement('div');
+  box.className = 'boards-push-main';
+  const label = document.createElement('span');
+  label.className = 'field-label';
+  label.textContent = 'one step is yours - run this once:';
+  const code = document.createElement('code');
+  code.className = 'boards-push-main-command';
+  code.textContent = command;
+  const copy = noticeToggle('boards-push-main-copy', 'copy', async () => {
+    // written inside the click, which the clipboard asks for; a refusal leaves it to select by hand
+    try {
+      await navigator.clipboard.writeText(command);
+      copy.textContent = 'copied';
+    } catch {
+      copy.textContent = 'could not copy - select it';
+    }
+  });
+  box.append(label, code, copy,
+    noticeToggle('boards-push-main-done', 'done', () => { bp.pushMain = null; renderSetupNotices(); }));
+  return box;
 }
 
 // ---- repos list --------------------------------------------------------------------------------
@@ -531,6 +639,7 @@ async function renderRepoList() {
 }
 
 function renderBoardsPanel() {
+  renderSetupNotices();
   renderBoardsList();
   renderRepoList();
 }
@@ -554,7 +663,9 @@ function openBoardsPanel() {
 
 function closeBoardsPanel() {
   if (!bp.backdrop || !bp.backdrop.parentNode) return;
+  // an unanswered question goes with the panel; the push-main step stays until it is done
   bp.testsNotice = null;
+  bp.folderConfirm = null;
   document.removeEventListener('keydown', onBoardsKey);
   bp.backdrop.remove();
   reenterIfFocusLost();
