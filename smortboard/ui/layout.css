@@ -431,7 +431,7 @@ body {
   flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
   padding-block: 8px; min-height: 0;
 }
-.terminal-log:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cream); }
+/* focus is ui_base's soft card focus (chat.js puts focus-glow focus-glow-soft on the log) */
 /* the name on its own line behind a dot in its own colour, the words two spaces in underneath it */
 .terminal-line { display: flex; flex-direction: column; gap: 3px; }
 .terminal-author { color: var(--text); line-height: 1.25; display: flex; align-items: center; gap: 1ch; }
@@ -477,13 +477,9 @@ body {
 .prompt-role .prompt-role-version { color: var(--text-dim); }
 .prompt-role.on { background: var(--accent-on); color: var(--accent-on-text); border-color: var(--cream); }
 .prompt-role.on .prompt-role-version { color: inherit; }
-/* the board's own monospace, our font our look - inherited rather than restated */
-.prompt-body {
-  flex: 1 1 auto; min-height: 280px; resize: vertical; box-sizing: border-box;
-  font-family: inherit; font-size: inherit; line-height: 1.5;
-  background: var(--bg); color: var(--text); border: 2px solid var(--grey-border); padding: 10px;
-}
-.prompt-body:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cream); }
+/* a .text-field: its border, ground, font and focus are ui_base's - only the size is ours */
+.prompt-body { flex: 1 1 auto; min-height: 280px; resize: vertical; line-height: 1.5; }
+
 .prompt-footer { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
 .prompt-status { color: var(--text-dim); }
 .prompt-status.prompt-error { color: var(--fill-warn); }

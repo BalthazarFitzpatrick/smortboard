@@ -11,7 +11,7 @@
   width: min(1100px, 95vw); height: min(760px, 90vh);
   display: flex; flex-direction: column; gap: 10px;
 }
-.replay-panel:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cream); }
+
 
 .replay-attempts { display: flex; gap: 8px; flex: 0 0 auto; flex-wrap: wrap; }
 .replay-attempt.on { background: var(--accent-on); color: var(--accent-on-text); border-color: var(--cream); }

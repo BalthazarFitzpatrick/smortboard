@@ -110,7 +110,9 @@ function terminalDom(promptGlyph) {
   subheader.hidden = true;
 
   const log = document.createElement('div');
-  log.className = 'terminal-log';
+  // the soft card focus, the same look every control inside a panel wears
+  log.className = 'terminal-log focus-glow focus-glow-soft';
+
   log.tabIndex = 0;
 
   // ui_base's count badge, reused as the new-messages pill rather than a primitive of our own

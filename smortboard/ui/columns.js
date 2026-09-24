@@ -472,7 +472,9 @@ function buildPileRow(cards, status, side) {
   // a pile of nothing but queued cards keeps the grey edge - the blue one says an agent is at work
   const state = cards.some(c => isAttentionCard(c)) ? ' card-pile-attention'
     : status === 'doing' && cards.some(c => !isPendingCard(c)) ? ' card-pile-doing' : '';
-  el.className = `row card-pile${state}`;
+  // focus-glow: a focused pile wears the focused card's frame, not the gliding marker
+  el.className = `row card-pile focus-glow${state}`;
+
   el.tabIndex = -1;
   el.dataset.pile = 'true';
   const drawn = pileByRecency(cards, side).slice(0, Math.min(MAX_PILE_LAYERS, cards.length));
