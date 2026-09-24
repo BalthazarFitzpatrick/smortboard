@@ -2,8 +2,8 @@
 
 **Keep leases narrow, and keep them apart.**
 
-A lease is the paths a card may write, and no note or argument with the agent moves it. Small,
-non-overlapping leases are also what let cards run side by side.
+A lease is the paths a card may write. No note or argument with the agent moves it. Small leases
+that do not overlap are what let cards run side by side.
 
 > [!IMPORTANT]
 > **Overlap serialises, empty refuses.**
@@ -19,8 +19,9 @@ trailing `**` is everything below.
 
 ### Strict and soft
 
-Soft is off until you turn on **soft file leases** in `o`. Then each board picks its mode in
-`shift`+`o` under *file lease*. Turning the switch off puts every board back on strict.
+**Soft file leases** in `o` is one switch for every board: enabled or disabled, disabled by default.
+While it is disabled every board is strict. While it is enabled, each board picks strict or soft in
+`shift`+`o` under *file lease*. Disabling it puts every board back on strict.
 
 | Mode | A card may write | Use it when |
 |---|---|---|
@@ -65,7 +66,7 @@ exactly the repo's declared `test_command` (and `lint_command`, if set) plus git
 (see [repos](../reference/repos.md)).
 
 If the declared command runs a formatter in check-only form (`ruff format --check ...`), the card
-also gets its write form, so it can fix what it finds rather than only report it. An out-of-lease
+also gets its write form, so it fixes what it finds rather than only reporting it. An out-of-lease
 path it reformats is still refused by the post-run check.
 
 The real boundary is the container (see [security](../reference/security.md)).
