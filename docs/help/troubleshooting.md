@@ -29,6 +29,8 @@ curl -s -X PATCH -H "$K" -H 'content-type: application/json' 127.0.0.1:8000/api/
 | Symptom | Fix |
 |---|---|
 | `this tab has no api key` at the top of the page | Open the link the board printed on start. |
+| A card blocks on `no tests ran` | The card added no tests. Each criterion needs one; re-run it with a note saying so. |
+| Preflight warns `has no tests yet` | Ask mission control (`.`) for a first card that adds a test suite, or commit your own tests. |
 | `.../card_token is not mode 600 - refusing to read it` | `chmod 600 ~/.config/smortboard/card_token` |
 | An expired or revoked token (HTTP 401) | `claude setup-token` again, then in `shift`+`p` add it as a new profile, activate it, remove the expired one. |
 | The gate fails on `Read-only file system` for a tool other than ruff or pytest | Give that tool its own cache flag: `--no-cache`, `-p no:cacheprovider`, or whatever it takes. |

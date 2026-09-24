@@ -8,6 +8,13 @@ cards there itself. See [Protect main](../protect-main.md).
 
 ## The test command
 
+Tests are required. The cards write them; this command runs them, on every card, in the gate. When
+a repo is added the board detects it from the committed files (Python: `uv run --no-sync pytest -q`;
+Node: `npm test` with a test script, else `node --test`). A repo with none gets a first card from
+mission control that adds a test suite, and a brand-new repo gets its command named by mission
+control's first card. Mission control's proposal is stored only when the repo has no command yet,
+and only a plain test-runner call (no shell syntax) is accepted.
+
 The test command is the gate, so give it everything your CI checks. If CI runs `ruff check` and the
 gate does not, a card can pass its gate and still fail CI once it lands.
 
