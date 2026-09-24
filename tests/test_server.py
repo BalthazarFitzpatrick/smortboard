@@ -603,6 +603,46 @@ def test_patch_repo_test_command_and_image(running_server, tmp_path):
     assert updated["image"] == "card-python:latest"
 
 
+def test_patch_repo_lint_command(running_server, tmp_path):
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    _, repo = _request(
+        f"{running_server}/api/boards/{board['id']}/repos",
+        "POST",
+        {"name": "r", "path": str(repo_path), "default_branch": "main"},
+    )
+    status, updated = _request(
+        f"{running_server}/api/repos/{repo['id']}", "PATCH", {"lint_command": "uv run ruff check ."}
+    )
+    assert status == 200 and updated["lint_command"] == "uv run ruff check ."
+    _, cleared = _request(
+        f"{running_server}/api/repos/{repo['id']}", "PATCH", {"lint_command": None}
+    )
+    assert cleared["lint_command"] is None
+
+
+def test_a_boards_repos_say_where_each_one_pushes(running_server, tmp_path):
+    """the panel showed no remote at all, so repos with one looked like repos without"""
+    pushed, local = tmp_path / "pushed", tmp_path / "local"
+    _init_repo(pushed)
+    _init_repo(local)
+    subprocess.run(
+        ["git", "-C", str(pushed), "remote", "add", "origin", "https://github.com/me/pushed.git"],
+        check=True,
+    )
+    _, board = _request(f"{running_server}/api/boards", "POST", {"name": "dev"})
+    for name, path in (("pushed", pushed), ("local", local)):
+        _request(
+            f"{running_server}/api/boards/{board['id']}/repos",
+            "POST",
+            {"name": name, "path": str(path), "default_branch": "main"},
+        )
+    _, repos = _request(f"{running_server}/api/boards/{board['id']}/repos")
+    by_name = {r["name"]: r["origin"] for r in repos}
+    assert by_name == {"pushed": "https://github.com/me/pushed.git", "local": None}
+
+
 def test_patch_repo_default_branch_moves_the_base(running_server, tmp_path):
     """a base branch that merged into main must be movable without a db write"""
     repo_path = tmp_path / "repo"

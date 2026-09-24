@@ -54,7 +54,7 @@ const src = [uiBase('menu.js'), uiBase('buckets.js'), uiBase('expand.js'), uiBas
   smort('chat.js'), smort('shortcuts.js'), smort('board.js'), smort('settings.js'),
   smort('boards.js')].join('\n;\n');
 const mod = new Function('makeDrawer', `${src}
-;return {renderCardStrip, st, bp, pe, BINDINGS, surfaceOverBoard, topSurface, surfaceFields,
+;return {renderCardStrip, st, bp, pe, BINDINGS, surfaceOverBoard, topSurface, surfaceFields, panelStops,
   setMouseEnabled, mouseAffordances, focusFirstCardSection, wireCommentInput,
   setBoard: id => { currentBoardId = id; },
   setOpenCard: value => { openCard = value; },
@@ -128,10 +128,14 @@ const settingsFields = mod.surfaceFields(mod.st.panel);
 assert.ok(settingsFields.length > 1, 'settings is the many-fields case the model describes');
 press('Slash', '/');
 assert.equal(document.activeElement, mod.st.panel, '/ does not guess between several fields');
+// the cursor stops on buttons as well as fields, in reading order - a panel is walkable end to end
+const settingsStops = mod.panelStops(mod.st.panel);
+assert.ok(settingsStops.some(el => el.tag === 'button') && settingsStops.includes(settingsFields[0]),
+  'buttons and fields are both stops');
 press('ArrowDown');
-assert.equal(document.activeElement, settingsFields[0], 'the cursor steps into the first field');
+assert.equal(document.activeElement, settingsStops[0], 'the cursor steps onto the first stop');
 press('ArrowDown');
-assert.equal(document.activeElement, settingsFields[1], 'and on to the next one');
+assert.equal(document.activeElement, settingsStops[1], 'and on to the next one');
 
 // ---- escape in settings is one level: field -> panel -> closed, and the field still saves --------
 fireKeydown(settingsFields[1], {code: 'Escape'});

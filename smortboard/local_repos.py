@@ -32,6 +32,21 @@ def list_folders(under: str | None = None) -> dict:
     }
 
 
+def origin_url(path: str) -> str | None:
+    """where the repo pushes - None when it has no origin or git cannot say"""
+    try:
+        result = subprocess.run(
+            ["git", "-C", path, "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
 def detect_default_branch(path: str) -> str:
     """origin's HEAD when the clone knows it, else the branch that is checked out"""
     for args in (

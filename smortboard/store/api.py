@@ -480,6 +480,15 @@ class Store:
         self._conn.commit()
         return self.get_repo(repo_id)
 
+    def set_repo_lint_command(self, repo_id: str, lint_command: str | None) -> dict[str, Any]:
+        """sets (or clears, with None) the lint command a card may run, the same way as tests"""
+        self.get_repo(repo_id)  # raises NotFoundError on a bad id
+        self._conn.execute(
+            "UPDATE repos SET lint_command = ? WHERE id = ?", (lint_command, repo_id)
+        )
+        self._conn.commit()
+        return self.get_repo(repo_id)
+
     def get_repo_row(self, repo_id: str) -> dict[str, Any]:
         """the repos row alone, with no remembered_leases query - get_repo's own building block,
         so remember_lease_paths/forget_lease_path don't pay for a list they throw away"""

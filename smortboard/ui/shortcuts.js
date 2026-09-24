@@ -265,12 +265,31 @@ function stepOutOfField(field) {
   focusPanel(panel);
 }
 
-// up/down step between a panel's fields - the cursor is how the model reaches one of settings'
-// many fields, since / never guesses between them. one field (or none) is left alone
+// what up/down stop on inside a floating panel: its fields and its buttons, in reading order, so
+// a panel is walkable end to end without the mouse. a walk rather than one comma selector - the
+// dom stub the tests run on parses neither that nor document order
+function panelStops(surface) {
+  const stops = [];
+  // Array.from: a browser's children is an HTMLCollection, which has no forEach
+  const walk = el => Array.from(el.children || []).forEach(child => {
+    if (child.hidden) return;
+    const tag = String(child.tagName || child.tag || '').toLowerCase();
+    const field = (tag === 'input' && child.type !== 'checkbox' && child.type !== 'range') || tag === 'textarea';
+    if ((field || tag === 'button') && !child.disabled) stops.push(child);
+    walk(child);
+  });
+  walk(surface);
+  return stops;
+}
+
+// up/down step between a panel's fields and buttons - the cursor is how the model reaches one of
+// settings' many fields, since / never guesses between them. a menu keeps its own arrows, and the
+// open card walks its sections itself, so both step fields only
 function movePanelField(evt) {
   const surface = topSurface();
   if (!surface) return false;
-  const fields = surfaceFields(surface);
+  const own = surface.classList?.contains('menu-panel') || surface.classList?.contains('expand-panel');
+  const fields = own ? surfaceFields(surface) : panelStops(surface);
   if (fields.length < 2) return false;
   const at = fields.indexOf(document.activeElement);
   const dir = evt.code === 'ArrowDown' ? 1 : -1;
@@ -299,7 +318,7 @@ document.addEventListener('keydown', evt => {
   }
   // up/down inside a panel are the panel's own: they step between its fields rather than moving
   // the card focus sitting behind it
-  if ((evt.code === 'ArrowDown' || evt.code === 'ArrowUp') && surfaceOverBoard()
+  if ((evt.code === 'ArrowDown' || evt.code === 'ArrowUp') && surfaceOverBoard() && !evt.defaultPrevented
       && !evt.target.matches?.('textarea') && movePanelField(evt)) return;
   // re-entry hands focus to a card, which is the wrong place while a panel stands over the board
   const recovered = surfaceOverBoard() ? false : reenterIfFocusLost();
