@@ -17,10 +17,10 @@ credential:
 | **Claude Code** | `npm install -g @anthropic-ai/claude-code` | `claude setup-token` |
 | **OpenAI Codex** | `npm install -g @openai/codex` or `brew install codex` | `codex login`, which writes `~/.codex/auth.json` |
 
-One lab runs the board. A second adds an independent reviewer and a fallback when the first is
-rate-limited.
+**One lab runs the board.** A second adds a reviewer from another lab, and a fallback when the first
+hits its rate limit.
 
-Python and uv open the board. The rest matters once a card runs, and the pre-flight checklist (`h`)
+**Python and uv open the board.** The rest matters once a card runs. The pre-flight checklist (`h`)
 names each gap and its fix.
 
 ## Steps
@@ -42,16 +42,16 @@ uv run smortboard
 ```
 
 It prints and opens `http://127.0.0.1:8000/ui/index.html?key=...`. The first load swaps the key for
-a cookie and drops it from the address bar, so a hand-opened tab has no key: use the printed link.
-Keep the terminal open: closing it stops the board and any running card.
+a cookie and drops it from the address bar, so a tab opened by hand has no key. Use the printed
+link. Keep the terminal open: closing it stops the board and any running card.
 
 ### 3. Give cards a credential
 
-In the board: `shift`+`p`, add a profile, paste, press **activate**. A fresh board starts with an
-empty `default` profile active; remove it once yours is. The board writes the mode-600 file itself
+`shift`+`p`, add a profile, paste, **activate**. A fresh board starts with an empty `default`
+profile active; remove it once yours is. The board writes the credential file itself, at mode 600,
 and refuses one others could read.
 
-Cards never use your own login. What you paste:
+**Cards never use your own login.** What you paste:
 
 | Lab | Paste |
 |---|---|
@@ -61,17 +61,18 @@ Cards never use your own login. What you paste:
 At run time the credential reaches the container over stdin, into a memory-backed home that dies
 with the container. Your own `~/.claude` and `~/.codex` are never mounted.
 
-With several profiles per lab, turn on *switch credential profiles automatically* in settings
-and the board rotates to the next when the active one hits its rate limit. Off, new starts wait for
-the reset. File locations: [Credential files](../reference/credentials.md).
+**Several profiles per lab.** In `o`, labs and models, set **usage limits** to **switch by itself**:
+a limit moves the card to your next credential profile, then to the fallback model. The default,
+**wait for the reset**, parks the board until the window resets. File locations:
+[Credential files](../reference/credentials.md).
 
 ### 4. Keep `main` for people
 
-Agents merge into `development`: the board's, and your own Claude Code or Codex sessions. A person
-merges into `main`. One hook script,
+**Agents merge into `development`, a person merges into `main`.** That holds for the board's agents
+and for your own Claude Code or Codex sessions. One hook script,
 [`tools/claude-hooks/protect-main.sh`](https://github.com/BalthazarFitzpatrick/smortboard/blob/main/tools/claude-hooks/protect-main.sh),
-refuses the rest in both CLIs: committing on `main`, pushing to it by any refspec, and merging a
-pull request whose base is not `development`. It needs `bash`, `jq` and a logged-in `gh`.
+refuses the rest in both CLIs: a commit on `main`, a push to it by any refspec, and merging a pull
+request whose base is not `development`. It needs `bash`, `jq` and a logged-in `gh`.
 
 ```bash
 mkdir -p ~/.claude/hooks ~/.codex/hooks
@@ -95,8 +96,8 @@ Claude Code, in `~/.claude/settings.json` (merge into an existing `PreToolUse` l
 }
 ```
 
-Codex, in `~/.codex/hooks.json`. Codex sends shell calls as `Bash` with the same payload shape and
-honours the same exit code, so the script is shared:
+Codex, in `~/.codex/hooks.json`. Codex sends shell calls as `Bash` with the same payload and honours
+the same exit code, so one script serves both:
 
 ```json
 {
@@ -113,11 +114,11 @@ honours the same exit code, so the script is shared:
 
 Codex runs only a hook it has recorded as trusted, under `[hooks.state]` in `~/.codex/config.toml`.
 
-Check both: ask the agent to run `git push origin HEAD:main`. It should be refused.
+**Check both.** Ask the agent to run `git push origin HEAD:main`. It should be refused.
 
-The hook sees only commands an agent runs through its shell tool. The GitHub ruleset in
+**The hook sees only what an agent runs through its shell tool.** The GitHub ruleset in
 [`tools/github/protect-main.json`](https://github.com/BalthazarFitzpatrick/smortboard/blob/main/tools/github/protect-main.json)
-protects `main` against everything else; use both. [Protect main](../protect-main.md) has the
+guards `main` against everything else. Use both. [Protect main](../protect-main.md) has the
 `development` branch setup, a per-repo variant of the hook and the ruleset commands.
 
 ## Without a checkout

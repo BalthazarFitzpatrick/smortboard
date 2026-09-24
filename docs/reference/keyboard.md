@@ -1,17 +1,21 @@
 # Keyboard
 
-Keyboard-first. Three rules carry the whole model:
+**Keyboard first. Three rules carry the model.**
 
-- **`space` opens.** On a focused card it opens the card; on the open card it closes it.
+- **`space` opens.** On a focused card it opens the card. On the open card it pops the focused
+  section out over the card, and `space` or `esc` puts it back. On the card's title it closes the
+  card.
 - **`esc` goes one level back:** out of a text field, then out of the panel, then to the board.
 - **`/` types.** It is the only way into typing. Opening a card or a drawer never steals focus, so
   every letter stays a board key until you press `/`.
 
-What follows from that:
+What follows:
 
-- A card's comment box exists only while the card is open. Open it with `space`, then `/`.
+- A card's note field exists only while the card is open, in its needs section: `space`, then `/`.
+  Popped out, needs brings the field along. `enter` sends.
 - An inbox card that shows its answer box takes `/` straight from focus.
-- Settings has many fields: arrow to one first. `esc` closes the panel and saves the field.
+- In a panel the arrows follow its layout: up and down change rows, left and right move along one,
+  across fields and buttons alike. `esc` closes the panel and saves the field.
 
 Keys resolve on the physical key, so a non-US layout does not move them. `cmd`, `ctrl` and `alt`
 belong to the browser (`cmd`+`c` copies), with one exception: `cmd`/`ctrl`+`f` on a board with
@@ -26,7 +30,7 @@ Anything that starts, spends, lands or destroys asks once, with one button alrea
 - **`r`, `w`, `f`, and delete or change-model in the card menu focus cancel.** A stray `enter`
   cancels instead of spending money, starting a run or destroying something.
 
-Reversible defaults to yes; expensive or destructive defaults to no.
+Reversible defaults to yes. Expensive or destructive defaults to no.
 
 `s` shows the same list in the app, paged left and right. Both come from `BINDINGS` in
 `smortboard/ui/shortcuts.js`, and `tests/js/keyboard_docs.mjs` fails when a key there is missing

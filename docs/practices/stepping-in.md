@@ -6,7 +6,7 @@ underspecified, or the board owes you a surface that would have let you leave.
 
 ## How it works
 
-Anything on the board that rewards hovering is a design mistake. Good cards are on
+**Anything on the board that rewards hovering is a design mistake.** Good cards are on
 [Cards](cards.md).
 
 ### The loop you run
@@ -14,16 +14,18 @@ Anything on the board that rewards hovering is a design mistake. Good cards are 
 1. **Queue a few cards**, with mission control (`.`) or by hand. Check the leases before running
    anything: overlaps are cheapest to catch here.
 2. **Start the board** (`w`) and leave. Two cards run at once by default. A dependent card waits for
-   its dependencies. On a free-merge board: until their pull requests are **merged**. On a
+   its dependencies: on a free-merge board until their pull requests are **merged**, on a
    review-required board it may start on one parent still in checking, stacked at most three deep.
+   A queued card stays in its own column with a slow pulse until an agent picks it up.
 3. **Answer the inbox** (`n`) when you are back. Oldest first; each row says what it needs.
-4. **Merge what is ready.** `v` lists open pull requests across every board, in merge order.
-   Review, merge, accept the card with `y`.
+4. **Land what is ready.** `v` lists open pull requests across every board, in merge order.
+   Review one, then `y` accepts the card; on a review-required board that also lands it on its
+   base. A free-merge board has landed it already.
 5. **Check cost now and then** (`c`). Cost per accepted card by model and complexity shows whether
    your card sizing works.
 
-Set a daily budget per board ([Cost and budgets](cost.md)) before running unattended. It is the
-difference between a bad night and an expensive one.
+**Set a daily budget per board before running unattended** (`shift`+`o`, see
+[Cost and budgets](cost.md)). It is the difference between a bad night and an expensive one.
 
 ### When to step in, and when not to
 

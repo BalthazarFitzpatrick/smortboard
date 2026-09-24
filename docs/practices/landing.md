@@ -2,10 +2,10 @@
 
 **Main is yours.**
 
-The board lands one card at a time per branch, so no two pushes race, and never on `main`, `master`
-or `trunk`. Agents land on `development` and you merge `main`: keep review required, accept with
-`y`. Once you trust a board, turn on **free merge** in `o`, then switch that board in `shift`+`o`
-or with `shift+a`.
+Agents land on `development`; you merge `main`. Keep review required and accept each card with `y`.
+Once you trust a board, enable **free merge** in `o`, then switch that board to free in `shift`+`o`
+or with `shift`+`a`. The board lands one card at a time per branch, so no two pushes race, and never
+on `main`, `master` or `trunk`.
 
 > [!IMPORTANT]
 > **Refused in code, not by habit.**
@@ -16,21 +16,34 @@ or with `shift+a`.
 
 ### Merge modes
 
-Other bases follow the board's mode:
+Every base except the protected ones follows the board's mode:
 
 | Mode | A card |
 |---|---|
 | **review required** (default) | stops at an open pull request. `y` accepts and lands it in the background; if you already merged it on GitHub, accept records that without merging again |
 | **free merge** | lands and is accepted once tests and review pass |
 
-Free merge stays locked until **free merge** is on in `o`; turning it off there puts every board
-back on review. `shift+a` changes the focused board's mode after confirmation, and `shift`+`o` holds
-the same choice. A free-merge board shows a
-burnt-orange pulsing frame and a text label; reduced motion keeps the frame static.
+**Free merge** in `o` is one switch for every board: enabled or disabled, disabled by default. While
+it is disabled no board can pick free; disabling it puts every board back on review. While it is
+enabled, each board picks review or free in `shift`+`o` under *merge mode*, and `shift`+`a` flips the
+focused board after a confirmation. A free-merge board shows a burnt-orange pulsing frame and a text
+label; reduced motion keeps the frame static.
 
 The board keeps one standing pull request from the development branch into `main`, for you to
-merge. Accepting a protected-base card records your decision; it cannot merge the PR.
+merge. Accepting a protected-base card records your decision; it cannot merge the pull request.
 [Protect main](../protect-main.md) has the branch setup.
+
+### The local base
+
+Every card is cut from `origin/<base>`, fetched just before; a stacked child is cut from its
+parent's branch instead. Work landed by another card or merged on GitHub is in it even when nobody
+pulled. If the fetch fails, the card is cut from the local branch and gets a note saying so.
+
+A landing pushes to origin only, so the board then moves your local base branch up to match. It
+does this only when it is a plain fast-forward: a branch with local commits, or checked out with
+uncommitted changes to tracked files, is left alone. `main`, `master` and `trunk` never move. The
+[waiting pull request](waiting-prs.md) sweep, `smortboard-land` and mission control's read of the
+repo do the same.
 
 ### Stacks in review mode
 
@@ -49,7 +62,7 @@ dependent attempts and create fresh work; the board does not rewrite an existing
 
 ### The landing lock
 
-One holder per repo and target branch, with a FIFO queue behind it. It is stored in the database,
+One holder per repo and target branch, with a FIFO queue behind it. The lock lives in the database,
 so it survives a board restart. A holder that stops heartbeating past its TTL is evicted, so a dead
 process cannot wedge the queue. `q` shows every holder and the queue behind it.
 

@@ -2,7 +2,7 @@
 
 **Let the two gates judge.**
 
-Your tests, then a second agent, check every card before its pull request, and neither trusts the
+Your tests, then a second agent, check every card before its pull request, and neither takes the
 agent's word. Write criteria your test command checks: with a test behind it a criterion is
 enforced; without one it is a note.
 
@@ -13,7 +13,7 @@ enforced; without one it is a note.
 
 ## How it works
 
-The pull request that opens has already passed your suite and an independent read of the diff.
+A pull request only opens once the card passed your suite and an independent read of the diff.
 [Runs](runs.md) has the phases around the gates.
 
 ### The test gate
@@ -24,9 +24,9 @@ nothing.
 
 ### The reviewer
 
-A second agent with only Read, Grep and Glob, on a working tree mounted read-only. It asks exactly
-four questions of the diff: **vulnerability**, **leaked credential**, **best practice**,
-**efficiency**. Each finding is graded `low`, `medium`, `high` or `critical`.
+A second agent with only Read, Grep and Glob, on a working tree mounted read-only. It asks four
+questions of the diff: **vulnerability**, **leaked credential**, **best practice**, **efficiency**.
+Each finding is graded `low`, `medium`, `high` or `critical`.
 
 The card blocks on:
 
@@ -42,6 +42,6 @@ finding.
 
 ### Where findings go
 
-A setting: `attention` (the default) sends them to you, `fix` sends them back to the worker. Let
-them come to you first: a card quietly fixing its own findings unattended spends a run's worth of
-tokens nobody asked for.
+A setting: `attention` (the default) sends them to you, `fix` sends them back to the worker. Keep
+the default. A card fixing its own findings unattended spends a run's worth of tokens nobody asked
+for.
