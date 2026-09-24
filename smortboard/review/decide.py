@@ -60,7 +60,7 @@ def _release_dependents(store: Store, card: dict[str, Any]) -> None:
         store.add_comment(
             dependent_id,
             author=BOARD_AUTHOR,
-            body=f"A card this one depends on was accepted after all: {card['title']}",
+            body=f"a card this one depends on was accepted after all: {card['title']}",
         )
 
 
@@ -89,8 +89,8 @@ def accept_card(
         store.add_comment(
             card_id,
             author=BOARD_AUTHOR,
-            body="Accepted after being rejected. Rejecting closed its pull request and kept the "
-            "branch on GitHub - reopen the pull request there if this work should land.",
+            body="accepted after being rejected. rejecting closed its pull request and kept the "
+            "branch on github - reopen the pull request there if this work should land.",
         )
         _release_dependents(store, card)
     store.append_event(card_id, "decision", {"decision": "accepted", "reversed": reversing})
@@ -130,18 +130,18 @@ def reject_card(
             delete_branch(path, card_id)
 
     store.update_card(card_id, status="rejected", blocked_reason_code=None, review_flag=False)
-    note = "Rejected. The next run cuts a fresh worktree from base."
+    note = "rejected. the next run cuts a fresh worktree from base."
     if preserve_branch:
         note += " Its local branch is kept while undecided cards are stacked on it."
     if card["status"] == "accepted":
         note += (
-            "\nIt had been accepted: if its pull request was already merged, that merge stands - "
+            "\nit had been accepted: if its pull request was already merged, that merge stands - "
             "revert it on main by hand."
         )
     if attachment:
         note += f" This attempt is kept as {attachment}."
     if pr_url:
-        note += f"\nPull request: {pr_url} - " + (
+        note += f"\npull request: {pr_url} - " + (
             f"could not be closed: {pr_refusal}" if pr_refusal else "closed, branch kept."
         )
     store.add_comment(card_id, author=BOARD_AUTHOR, body=note)
@@ -155,8 +155,8 @@ def reject_card(
             store.add_comment(
                 dependent_id,
                 author=BOARD_AUTHOR,
-                body=f"A card this one depends on was rejected: {card['title']}. "
-                "This attempt still contains its work. Reject this attempt and define fresh work; "
+                body=f"a card this one depends on was rejected: {card['title']}. "
+                "this attempt still contains its work. reject this attempt and define fresh work; "
                 "the board will not rerun it on top of the rejected branch.",
             )
 

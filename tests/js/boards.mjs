@@ -346,7 +346,7 @@ const orchestratorPosts = () =>
 notice.querySelector('.repo-tests-ask').onclick();
 await flush();
 assert.equal(mod.bp.backdrop.parentNode, null, 'asking mission control closes the panel');
-assert.equal(mod.mc.input.value, 'bare has no tests yet. Plan a first card that adds a test suite for its '
+assert.equal(mod.mc.input.value, 'bare has no tests yet. plan a first card that adds a test suite for its '
   + 'current behaviour, sets up its test runner and names the command.');
 assert.notEqual(document.activeElement, mod.mc.input, 'the prefill leaves the input unfocused');
 assert.equal(orchestratorPosts().length, 0, 'the prefill is never sent');

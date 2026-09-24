@@ -60,9 +60,9 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "store",
         "workstream": "server",
-        "title": "Score store with atomic writes",
+        "title": "score store with atomic writes",
         "description": "server/scores.js keeps top 10 scores in data/scores.json. "
-        "Writes go to a temp file, then rename.",
+        "writes go to a temp file, then rename.",
         "complexity": 1,
         "leases": ["server/scores.js", "test/scores.test.js"],
         "criteria": [
@@ -77,7 +77,7 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "server",
         "workstream": "server",
-        "title": "Http server: public/ files and scores api",
+        "title": "http server: public/ files and scores api",
         "description": "server/main.js serves public/ and GET/POST /api/scores over node:http; "
         "server/api.js holds the handlers. PORT, default 8080.",
         "complexity": 2,
@@ -95,9 +95,9 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "validate",
         "workstream": "server",
-        "title": "Reject bad score posts with 400",
+        "title": "reject bad score posts with 400",
         "description": "POST /api/scores accepts only names of 1-12 printable characters and "
-        "integer scores 0 to 9,999,999. Everything else: 400.",
+        "integer scores 0 to 9,999,999. everything else: 400.",
         "complexity": 2,
         "leases": ["server/api.js", "server/validate.js", "test/validate.test.js"],
         "criteria": [
@@ -114,9 +114,9 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "core",
         "workstream": "game",
-        "title": "Pure game core: ship, stars, comets, collisions",
+        "title": "pure game core: ship, stars, comets, collisions",
         "description": "public/js/core.js: state, seeded spawning, tick(state, dt, input), "
-        "catches, lives, score, stardust, speed ramp. No DOM.",
+        "catches, lives, score, stardust, speed ramp. no dom.",
         "complexity": 2,
         "leases": ["public/js/core.js", "test/core.test.js"],
         "criteria": [
@@ -132,15 +132,15 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "render",
         "workstream": "game",
-        "title": "Canvas renderer with score, lives and stardust",
-        "description": "public/js/render.js draws ship, stars, comets and a HUD line from "
+        "title": "canvas renderer with score, lives and stardust",
+        "description": "public/js/render.js draws ship, stars, comets and a hud line from "
         "core state onto the 480x640 canvas.",
         "complexity": 1,
         "leases": ["public/js/render.js", "public/js/hud.js", "test/render.test.js"],
         "criteria": [
             "draw(ctx, state) reads state, never changes it",
             "a recording ctx stub sees one shape per star and comet",
-            "the HUD shows score, lives and stardust",
+            "the hud shows score, lives and stardust",
         ],
         "tasks": [],
         "depends_on": ["core"],
@@ -148,7 +148,7 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "input",
         "workstream": "game",
-        "title": "Keyboard input: arrows and A/D",
+        "title": "keyboard input: arrows and A/D",
         "description": "public/js/input.js maps keys to left/right intent for core's tick, "
         "and attaches and detaches its listeners.",
         "complexity": 1,
@@ -165,7 +165,7 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "loop",
         "workstream": "game",
-        "title": "Game loop: title, playing, game over",
+        "title": "game loop: title, playing, game over",
         "description": "public/js/game.js: state machine and requestAnimationFrame loop wiring "
         "core, render and input. index.html loads it.",
         "complexity": 2,
@@ -183,9 +183,9 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "skills",
         "workstream": "skills",
-        "title": "Skill tree data and buy rules",
+        "title": "skill tree data and buy rules",
         "description": "public/js/skills.js: 8 upgrades in 3 branches (magnet 3 tiers, shield 2, "
-        "thrusters 3), costs, prerequisites, canBuy, buy. Pure.",
+        "thrusters 3), costs, prerequisites, canBuy, buy. pure.",
         "complexity": 1,
         "leases": ["public/js/skills.js", "test/skills.test.js"],
         "criteria": [
@@ -200,14 +200,14 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "storage",
         "workstream": "skills",
-        "title": "Save stardust and owned skills locally",
+        "title": "save stardust and owned skills locally",
         "description": "public/js/storage.js: versioned localStorage save and load for stardust "
-        "and owned skills. Bad data loads as empty.",
+        "and owned skills. bad data loads as empty.",
         "complexity": 1,
         "leases": ["public/js/storage.js", "test/storage.test.js"],
         "criteria": [
             "save then load round-trips stardust and owned skills",
-            "corrupt JSON loads as zero stardust, nothing owned",
+            "corrupt json loads as zero stardust, nothing owned",
             "an unknown version loads as empty, not a crash",
             "storage is injected, so tests pass a plain object",
         ],
@@ -217,9 +217,9 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "skills-ui",
         "workstream": "skills",
-        "title": "Skill tree screen from the title",
+        "title": "skill tree screen from the title",
         "description": "public/js/skills-ui.js and game.css: 3 branches, costs, owned and locked "
-        "nodes. Wired into game.js and the title.",
+        "nodes. wired into game.js and the title.",
         "complexity": 2,
         "leases": [
             "public/js/skills-ui.js",
@@ -241,7 +241,7 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "upgrades",
         "workstream": "skills",
-        "title": "Upgrades applied to runs, stardust banked",
+        "title": "upgrades applied to runs, stardust banked",
         "description": "upgrades.js: owned skills become catch radius, shield charges, ship speed. "
         "game.js uses it every run.",
         "complexity": 2,
@@ -261,7 +261,7 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "highscores",
         "workstream": "game",
-        "title": "High-score entry and table on game over",
+        "title": "high-score entry and table on game over",
         "description": "public/js/scores-ui.js: on game over, enter a name (1-12 characters), "
         "POST it, then show the top 10.",
         "complexity": 2,
@@ -278,7 +278,7 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "mute",
         "workstream": "game",
-        "title": "Mute toggle on the M key",
+        "title": "mute toggle on the M key",
         "description": "public/js/sound.js: short WebAudio beeps on catch and hit. M mutes and "
         "unmutes, saved in localStorage.",
         "complexity": 1,
@@ -294,7 +294,7 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "pause",
         "workstream": "game",
-        "title": "Pause and resume on the P key",
+        "title": "pause and resume on the P key",
         "description": "P pauses the loop while playing and resumes it; the canvas shows PAUSED.",
         "complexity": 1,
         "leases": ["public/js/game.js", "test/pause.test.js"],
@@ -309,7 +309,7 @@ CARDS: list[dict[str, Any]] = [
     {
         "key": "readme",
         "workstream": "docs",
-        "title": "README: how to run and play",
+        "title": "readme: how to run and play",
         "description": "README.md: run, open, controls, skill tree, stardust banking, where "
         "scores live, tests.",
         "complexity": 1,

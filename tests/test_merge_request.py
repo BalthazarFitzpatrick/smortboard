@@ -148,12 +148,12 @@ def test_the_body_carries_what_the_tests_and_the_reviewer_said(tmp_path, monkeyp
     mr.open_merge_request(store, card_id, tmp_path, BRANCH)
 
     body = bodies[0]
-    assert "Tests: passed" in body and "uv run pytest" in body
-    assert "Review: approved, 1 finding(s)" in body
+    assert "tests: passed" in body and "uv run pytest" in body
+    assert "review: approved, 1 finding(s)" in body
     assert "reads the file twice" in body and "a.py:4" in body
     assert "the thing exists" in body  # the acceptance criteria
     assert "$0.42" in body and "9 turns" in body
-    assert "Review mode waits for acceptance" in body
+    assert "review mode waits for acceptance" in body
     assert seen  # the fake was in use throughout
     store.close()
 
@@ -185,7 +185,7 @@ def test_the_body_lists_tasks_as_plain_text_not_checkboxes(tmp_path, monkeypatch
     body = bodies[0]
     assert "- [x]" not in body
     assert "- [ ]" not in body
-    assert "## Tasks" in body
+    assert "## tasks" in body
     assert "(done)" not in body
     first = body.index("do the first thing")
     second = body.index("do the second thing")

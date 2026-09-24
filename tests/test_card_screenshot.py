@@ -352,7 +352,7 @@ def test_a_screenshot_failure_leaves_a_note_and_still_opens_the_pr(board, monkey
     assert result.phase == "opened"
     assert result.pr_url == "https://x/pull/1"
     notes = [c["body"] for c in store.list_comments(card_id)]
-    assert any("Screenshot not attached" in n and "playwright is not installed" in n for n in notes)
+    assert any("screenshot not attached" in n and "playwright is not installed" in n for n in notes)
     store.close()
 
 

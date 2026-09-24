@@ -66,7 +66,7 @@ def test_no_docker_refuses_rather_than_falling_back(monkeypatch):
     monkeypatch.setattr("smortboard.exec.backends.docker_available", lambda: False)
     with pytest.raises(CardRuntimeUnavailable) as exc:
         require_card_runtime(token_path="/nonexistent/token")
-    assert "Docker" in str(exc.value)
+    assert "docker" in str(exc.value)
 
 
 def test_missing_card_credential_refuses_and_says_how_to_fix_it(tmp_path, monkeypatch):

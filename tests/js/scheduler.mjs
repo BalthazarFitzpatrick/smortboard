@@ -50,7 +50,7 @@ function addCardStrip(cardId) {
   badge.hidden = true;
   foot.appendChild(badge);
   const note = element('span', 'card-action');
-  note.textContent = 'Running…';
+  note.textContent = 'running…';
   foot.appendChild(note);
   strip.appendChild(foot);
   bucketRow.appendChild(strip);
@@ -119,10 +119,10 @@ function actionText(cardId) {
     .querySelector('.card-action').textContent;
 }
 // a re-queued card kept its 'doing' status (see scheduler.py's _is_queueable), so the compact
-// note still read 'Running…' until this landed - the queue corrects it, not the card's own
+// note still read 'running…' until this landed - the queue corrects it, not the card's own
 // stored status
-assert.equal(actionText('c2'), 'Queued', 'a queued card says so on its own note, not Running…');
-assert.equal(actionText('c1'), 'Running…', 'a card actually running keeps its own label');
+assert.equal(actionText('c2'), 'queued', 'a queued card says so on its own note, not running…');
+assert.equal(actionText('c1'), 'running…', 'a card actually running keeps its own label');
 
 // ---- what the queue knows is what the board draws: queued means pending, running does not -------
 // only the ids in the queued list, so the board can put them in doing as grey strips (card_pending.mjs)

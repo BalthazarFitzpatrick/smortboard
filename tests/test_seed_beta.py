@@ -205,7 +205,7 @@ def test_the_cli_seeds_and_prints_the_one_step_that_is_yours(tmp_path, capsys, g
 
     out = capsys.readouterr().out
     path = repo.resolve()
-    assert "created private GitHub repo tester/comet, pushed development" in out
+    assert "created private github repo tester/comet, pushed development" in out
     assert "one step is yours - run this once:" in out
     assert (
         f"  git -C {path} push -u origin main && gh repo edit tester/comet --default-branch main"

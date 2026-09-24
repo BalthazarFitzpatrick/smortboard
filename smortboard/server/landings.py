@@ -36,7 +36,7 @@ def perform_landing(store, card_id):
         store.add_comment(
             card_id,
             author="smortboard",
-            body=f"Already merged into {base}; accepted without another merge.",
+            body=f"already merged into {base}; accepted without another merge.",
         )
         if base not in PROTECTED_BRANCHES:
             open_release_request(repo["path"], base)
@@ -52,7 +52,7 @@ def perform_landing(store, card_id):
     land_card(store, state, card, tree, repo, base, url, sync=sync_and_test)
     card = store.get_card(card_id)
     if card["status"] != "accepted":
-        raise DecisionRefused("Landing failed; the card and its pull request remain in checking.")
+        raise DecisionRefused("landing failed; the card and its pull request remain in checking.")
     return card
 
 
@@ -94,7 +94,7 @@ class LandingRegistry:
                     store.add_comment(
                         state.card_id,
                         author="smortboard",
-                        body=f"Could not complete acceptance: {exc}",
+                        body=f"could not complete acceptance: {exc}",
                     )
         finally:
             with self._lock:

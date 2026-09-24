@@ -244,7 +244,7 @@ def test_a_codex_review_keeps_its_guards_apart_from_the_workers(tmp_path, monkey
 
 def test_no_docker_is_refused_rather_than_skipped(tmp_path, monkeypatch):
     _wire(monkeypatch, docker=False)
-    with pytest.raises(ReviewUnavailable, match="Docker"):
+    with pytest.raises(ReviewUnavailable, match="docker"):
         run_review(None, "card", DIFF, tmp_path, tmp_path / "s.json", REPO)
 
 

@@ -134,7 +134,7 @@ def open_release_request(repo_path: str | Path, base: str, into: str = "main") -
             "--title",
             f"{base} into {into}",
             "--body",
-            f"Every card the board merged into {base} since {into} last took it. Each card's own "
+            f"every card the board merged into {base} since {into} last took it. each card's own "
             f"pull request is linked from its merge commit on {base}.",
         ],
         cwd=repo_path,

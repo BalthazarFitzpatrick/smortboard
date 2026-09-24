@@ -101,8 +101,8 @@ function buildAddForm() {
     {id: 'openai', label: 'openai'},
   ];
   const openaiKindChoices = [
-    {id: 'auth_json', label: 'ChatGPT login JSON'},
-    {id: 'api_key', label: 'API key'},
+    {id: 'auth_json', label: 'chatgpt login json'},
+    {id: 'api_key', label: 'api key'},
   ];
 
   const labButton = document.createElement('button');

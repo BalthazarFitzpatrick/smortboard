@@ -177,20 +177,20 @@ const onceBlock = mod.cardPanelHtml(card, {...outcome, summary: `ACTION: none\nW
 assert.equal(count(onceBlock, 'Keyed the endpoint'), 1, 'nor with one');
 
 // ---- a summary with no block falls back: the text folded under done, reason and next under needs
-const crashed = {...card, status: 'doing', blocked_reason_code: 'CRASH', next_action: 'Check the note for what broke.'};
+const crashed = {...card, status: 'doing', blocked_reason_code: 'CRASH', next_action: 'check the note for what broke.'};
 const fallback = mod.cardPanelHtml(crashed, {...outcome, summary: 'older run, plain prose'});
 assert.ok(sectionOf(fallback, 'done').includes('<details class="card-fold"><summary class="focus-glow focus-glow-soft">agent summary - 22 chars</summary>'),
   'the whole summary folds under done');
 assert.ok(sectionOf(fallback, 'done').includes('older run, plain prose'));
 assert.ok(!sectionOf(fallback, 'needs').includes('blocked: crash'), 'the reason lives in the head line, not again under needs');
-assert.ok(sectionOf(fallback, 'needs').includes('<li class="card-next">Check the note for what broke.</li>'),
+assert.ok(sectionOf(fallback, 'needs').includes('<li class="card-next">check the note for what broke.</li>'),
   'needs carries the one next step');
 const bare = sectionOf(mod.cardPanelHtml({...crashed, next_action: null}, {...outcome, summary: 'older run, plain prose'}), 'needs');
 assert.ok(bare.includes('<li>blocked: crash</li>'), 'with no step to give, needs says what went wrong');
 
 // ---- a card waiting on someone leads needs with the call to action; a quiet one does not
-const waiting = mod.cardPanelHtml({...card, blocked_reason_code: 'TESTS_FAILED', next_action: 'Press r to run it again.'}, outcome);
-assert.ok(sectionOf(waiting, 'needs').includes('<li class="card-next">Press r to run it again.</li>'),
+const waiting = mod.cardPanelHtml({...card, blocked_reason_code: 'TESTS_FAILED', next_action: 'press r to run it again.'}, outcome);
+assert.ok(sectionOf(waiting, 'needs').includes('<li class="card-next">press r to run it again.</li>'),
   'the panel should say what to do next');
 assert.ok(!html1.includes('card-next'), 'a card with no action shows no next line');
 
@@ -236,7 +236,7 @@ const rejectedCard = {...card, status: 'rejected', comments: [
 ]};
 const rejectedHtml = mod.cardPanelHtml(rejectedCard, outcome);
 assert.equal(count(rejectedHtml, 'comment-cta'), 1, 'exactly one primary action button');
-assert.ok(sectionOf(rejectedHtml, 'needs').includes('data-cta-action="run">Rerun</button>'),
+assert.ok(sectionOf(rejectedHtml, 'needs').includes('data-cta-action="run">rerun</button>'),
   "a rejected card offers Rerun under needs, the same action the strip's CTA offers");
 assert.ok(!mod.cardPanelHtml({...card, status: 'rejected'}, outcome).includes('comment-cta'),
   'no board note, no button');

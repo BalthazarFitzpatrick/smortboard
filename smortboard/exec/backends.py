@@ -56,7 +56,7 @@ from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import parse_ref
 from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import role_effort
-from smortboard.prompts import active_prompt
+from smortboard.prompts import LOWERCASE_RULE, active_prompt
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
 
@@ -197,7 +197,7 @@ def read_card_token(token_path: str | Path | None = None) -> str:
         if token:
             return token
     raise CardTokenMissing(
-        "No card credential. Run `claude setup-token`, then\n" + _store_instructions(resolved)
+        "no card credential. run `claude setup-token`, then\n" + _store_instructions(resolved)
     )
 
 
@@ -485,7 +485,7 @@ class ContainerBackend:
                         subtype="error_lease_conflict",
                         is_error=True,
                         blocked_reason_code="LEASE_CONFLICT",
-                        result_text="Committed paths outside the lease:\n" + "\n".join(outside),
+                        result_text="committed paths outside the lease:\n" + "\n".join(outside),
                     )
             return result
         finally:
@@ -570,6 +570,7 @@ class ContainerBackend:
                 + HEADLESS_RULES
                 + READING_RULES
                 + TEST_RULES
+                + f"\n{LOWERCASE_RULE}\n"
                 + (SCREENSHOT_RULE if (Path(clone_path) / "smortboard" / "ui").is_dir() else "")
                 + note_marker_paragraph(note_marker or new_note_marker()),
                 stream_input=adapter.capabilities.live_steering,
@@ -659,8 +660,8 @@ def require_card_runtime(
     problems = []
     if not docker_available():
         problems.append(
-            "Docker is not running or not installed. smortboard runs every card in its own "
-            "container; install Docker Desktop and start it."
+            "docker is not running or not installed. smortboard runs every card in its own "
+            "container; install docker desktop and start it."
         )
     try:
         if lab == "anthropic":

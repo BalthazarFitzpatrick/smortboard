@@ -81,7 +81,7 @@ function buildBoardsDom() {
   manual.hidden = true;
   const hint = document.createElement('div');
   hint.className = 'field-label repos-hint';
-  hint.textContent = 'a folder that is already a git repo with its base branch on GitHub - h checks it';
+  hint.textContent = 'a folder that is already a git repo with its base branch on github - h checks it';
   manual.append(hint, buildRepoForm());
   const manualToggle = panelButton('repo-manual-toggle', 'add a repo by hand', () => {
     manual.hidden = !manual.hidden;
@@ -572,7 +572,7 @@ function askMissionControlForTests({name, command}) {
   const runner = command ? '' : ', sets up its test runner and names the command';
   closeBoardsPanel();
   prefillMissionControl(`${name} has no tests yet. `
-    + `Plan a first card that adds a test suite for its current behaviour${runner}.`);
+    + `plan a first card that adds a test suite for its current behaviour${runner}.`);
   setBoardStatus('press / then enter to send it');
 }
 

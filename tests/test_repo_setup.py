@@ -109,7 +109,7 @@ def test_an_empty_folder_becomes_a_repo_on_github_with_development_pushed(tmp_pa
         f"git -C {folder.resolve()} push -u origin main && "
         "gh repo edit tester/fresh --default-branch main"
     )
-    assert "created private GitHub repo tester/fresh" in result.steps
+    assert "created private github repo tester/fresh" in result.steps
     create = next(c for c in gh.calls if c[:3] == ["gh", "repo", "create"])
     assert "--private" in create and "--push" not in create
     _never_pushed_main(gh)
@@ -217,7 +217,7 @@ def test_a_push_that_fails_after_creating_the_repo_names_the_repo_left_on_github
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="network down")
         return real(cmd, cwd=cwd, timeout=timeout)
 
-    with pytest.raises(SetupRefused, match="created tester/halfway on GitHub") as refused:
+    with pytest.raises(SetupRefused, match="created tester/halfway on github") as refused:
         prepare(folder, runner=failing_push)
     assert "gh repo delete tester/halfway" in str(refused.value)
 

@@ -22,6 +22,8 @@ from smortboard.orchestrator import (
     build_board_snapshot,
     run_orchestrator_turn,
 )
+from smortboard.prompts import LOWERCASE_RULE
+from smortboard.review.reviewer import _build_prompt
 from smortboard.store.api import Store
 from smortboard.telemetry import EVIDENCE_CARD_LIMIT, board_evidence
 
@@ -218,3 +220,33 @@ def test_the_fold_snapshot_is_sent_compact(tmp_path):
     sent = prompts[0].split("Board snapshot:\n", 1)[1].split("\n", 1)[0]
     assert json.loads(sent)["cards"]
     assert '": ' not in sent
+
+
+def test_the_lowercase_rule_rides_every_role_prompt_even_an_edited_one(tmp_path, monkeypatch):
+    assert "commit messages, pull request titles and bodies" in LOWERCASE_RULE
+    seen, folds = [], []
+    _capture_turns(monkeypatch, seen)
+
+    def fold(prompt, model, budget_usd, screenshot_path=None):
+        folds.append(prompt)
+        return json.dumps({"summary": "nothing", "groups": []})
+
+    with Store(tmp_path / "b.db") as store:
+        board = store.create_board("b")
+        store.create_card(board["id"], None, "a", leases=["x.py"])
+        store.create_card(board["id"], None, "b", leases=["x.py"])
+        for role in ("worker", "orchestrator", "reviewer"):
+            store.set_prompt(role, f"a custom {role} prompt")
+        worker = ContainerBackend(image="img")._docker_command(
+            tmp_path / "c", "p", tmp_path / "s.json", "sonnet", REPO, store
+        )
+        run_orchestrator_turn(store, board["id"], "plan it")
+        run_fold_turn(store, board["id"], runner=fold)
+        review = _build_prompt(store, "diff --git a/x b/x")
+    assert "a custom worker prompt" in _system_prompt(worker)
+    assert LOWERCASE_RULE in _system_prompt(worker)
+    assert seen[0]["system"].startswith("a custom orchestrator prompt")
+    assert LOWERCASE_RULE in seen[0]["system"]
+    assert LOWERCASE_RULE in folds[0]
+    assert review.startswith("a custom reviewer prompt")
+    assert LOWERCASE_RULE in review

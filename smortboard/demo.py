@@ -127,113 +127,113 @@ def column_counts() -> list[dict[str, Any]]:
 
 _TITLES = {
     "orchard-pay": [
-        "Idempotency keys on the refund endpoint",
-        "Retry a declined capture on the issuer's advice code",
-        "Split the settlement report by acquirer",
-        "Webhook signatures rotate without dropping a delivery",
-        "Ledger entries carry the originating payment intent",
-        "Refunds past 180 days quote the chargeback route instead",
-        "Currency rounding follows the acquirer, not the locale",
-        "Payout schedule respects bank holidays per country",
-        "A failed 3DS challenge keeps the cart intact",
-        "Batch capture retries in one transaction, not nine",
-        "Dispute evidence bundles as one PDF",
-        "Mask the PAN in every log line, including the slow-query log",
-        "Backfill the payment_method_fingerprint column",
-        "Rate-limit the tokenisation endpoint per merchant",
-        "Sandbox keys stop working against live endpoints",
-        "Partial captures leave the remainder authorised",
-        "Statement descriptors truncate at the network's limit",
-        "Reconcile the acquirer file against the ledger nightly",
-        "Stored cards re-authenticate after a network token update",
-        "Fee breakdown on every payout line",
-        "Void and refund stop being the same endpoint",
-        "Decline reasons map to one vocabulary across acquirers",
-        "Payment intents expire instead of hanging authorised",
-        "One webhook endpoint per merchant, not per event type",
-        "Currency conversion quotes are held for the checkout's life",
-        "Settlement file parser handles a trailing blank record",
-        "Test cards stop reaching the fraud model",
-        "Refund receipts carry the original payment's reference",
-        "Drop the legacy /v1/charge alias",
+        "idempotency keys on the refund endpoint",
+        "retry a declined capture on the issuer's advice code",
+        "split the settlement report by acquirer",
+        "webhook signatures rotate without dropping a delivery",
+        "ledger entries carry the originating payment intent",
+        "refunds past 180 days quote the chargeback route instead",
+        "currency rounding follows the acquirer, not the locale",
+        "payout schedule respects bank holidays per country",
+        "a failed 3DS challenge keeps the cart intact",
+        "batch capture retries in one transaction, not nine",
+        "dispute evidence bundles as one pdf",
+        "mask the pan in every log line, including the slow-query log",
+        "backfill the payment_method_fingerprint column",
+        "rate-limit the tokenisation endpoint per merchant",
+        "sandbox keys stop working against live endpoints",
+        "partial captures leave the remainder authorised",
+        "statement descriptors truncate at the network's limit",
+        "reconcile the acquirer file against the ledger nightly",
+        "stored cards re-authenticate after a network token update",
+        "fee breakdown on every payout line",
+        "void and refund stop being the same endpoint",
+        "decline reasons map to one vocabulary across acquirers",
+        "payment intents expire instead of hanging authorised",
+        "one webhook endpoint per merchant, not per event type",
+        "currency conversion quotes are held for the checkout's life",
+        "settlement file parser handles a trailing blank record",
+        "test cards stop reaching the fraud model",
+        "refund receipts carry the original payment's reference",
+        "drop the legacy /v1/charge alias",
     ],
     "lantern-cms": [
-        "Draft previews expire instead of leaking a URL forever",
-        "Media library keeps the original alongside each derivative",
-        "Scheduled publish survives a worker restart",
-        "Editor autosave every 20 seconds, conflict-aware",
-        "Slug history redirects an old URL to the renamed page",
-        "Block editor: pull quote block with a source line",
-        "Search reindexes only the pages a save touched",
-        "Roles: an editor cannot publish, only submit",
-        "Image alt text is required before publish",
-        "Page tree drag-and-drop writes one move, not a reorder storm",
-        "Sitemap excludes noindex pages",
-        "Comment moderation queue with a bulk approve",
-        "Locale fallback walks up the language tag",
-        "Trash keeps a page for 30 days, then purges the blobs",
-        "Webhooks fire once per publish, not once per revision",
-        "Revision diff shows blocks moved, not rewritten",
-        "Uploads reject a file the magic bytes disagree with",
-        "Menu builder keeps external links out of the page tree",
-        "Preview renders with the theme the page will publish under",
-        "Bulk import maps a CSV column to a field once",
-        "Embeds resolve server-side so the editor never calls out",
-        "Draft and published trees stay one tree, two states",
-        "Asset URLs survive a storage backend swap",
-        "Editor toolbar collapses instead of wrapping",
-        "Page templates are data, not code",
-        "Publishing writes one cache purge, not one per block",
-        "Author field falls back to the account, never to blank",
-        "Tag pages paginate past the first hundred",
-        "Retire the v1 preview token format",
+        "draft previews expire instead of leaking a url forever",
+        "media library keeps the original alongside each derivative",
+        "scheduled publish survives a worker restart",
+        "editor autosave every 20 seconds, conflict-aware",
+        "slug history redirects an old url to the renamed page",
+        "block editor: pull quote block with a source line",
+        "search reindexes only the pages a save touched",
+        "roles: an editor cannot publish, only submit",
+        "image alt text is required before publish",
+        "page tree drag-and-drop writes one move, not a reorder storm",
+        "sitemap excludes noindex pages",
+        "comment moderation queue with a bulk approve",
+        "locale fallback walks up the language tag",
+        "trash keeps a page for 30 days, then purges the blobs",
+        "webhooks fire once per publish, not once per revision",
+        "revision diff shows blocks moved, not rewritten",
+        "uploads reject a file the magic bytes disagree with",
+        "menu builder keeps external links out of the page tree",
+        "preview renders with the theme the page will publish under",
+        "bulk import maps a csv column to a field once",
+        "embeds resolve server-side so the editor never calls out",
+        "draft and published trees stay one tree, two states",
+        "asset urls survive a storage backend swap",
+        "editor toolbar collapses instead of wrapping",
+        "page templates are data, not code",
+        "publishing writes one cache purge, not one per block",
+        "author field falls back to the account, never to blank",
+        "tag pages paginate past the first hundred",
+        "retire the v1 preview token format",
     ],
     "tideline-etl": [
-        "Incremental load keyed on the source watermark",
-        "Late-arriving rows reopen the affected partition only",
-        "Schema drift raises before it writes a mangled column",
-        "Warehouse merge is idempotent on a replayed batch",
-        "Dead-letter rows land in a table, not a log line",
-        "Column-level lineage in the run manifest",
-        "Timezone normalisation at ingest, never at read",
-        "A failed step resumes from its own checkpoint",
-        "Source credentials rotate without a redeploy",
-        "Row counts reconcile against the source per run",
-        "Compact small files after every hourly load",
-        "Nulls in the join key fail the run instead of dropping rows",
-        "Backfill runs at a lower priority than the hourly load",
-        "Data freshness published as a metric per table",
-        "Retire the v1 extractor once v2 has run clean for a week",
-        "Partition pruning survives the date-cast in the filter",
-        "Secrets never reach the run manifest",
-        "A schema change writes a new version, not a new table",
-        "Hourly load skips a source that has not moved",
-        "Unit costs per pipeline in the daily summary",
-        "Replace the bespoke scheduler with a cron table",
-        "One manifest per run, written once at the end",
-        "Source connectors declare their own required grants",
-        "Deduplicate on the natural key, not the row hash",
-        "Run history keeps 90 days, then rolls up",
-        "Alert on a table that stops arriving, not only on errors",
-        "Test fixtures generated from the real schema",
-        "Parallel extracts share one connection pool",
-        "Drop the staging tables v1 left behind",
+        "incremental load keyed on the source watermark",
+        "late-arriving rows reopen the affected partition only",
+        "schema drift raises before it writes a mangled column",
+        "warehouse merge is idempotent on a replayed batch",
+        "dead-letter rows land in a table, not a log line",
+        "column-level lineage in the run manifest",
+        "timezone normalisation at ingest, never at read",
+        "a failed step resumes from its own checkpoint",
+        "source credentials rotate without a redeploy",
+        "row counts reconcile against the source per run",
+        "compact small files after every hourly load",
+        "nulls in the join key fail the run instead of dropping rows",
+        "backfill runs at a lower priority than the hourly load",
+        "data freshness published as a metric per table",
+        "retire the v1 extractor once v2 has run clean for a week",
+        "partition pruning survives the date-cast in the filter",
+        "secrets never reach the run manifest",
+        "a schema change writes a new version, not a new table",
+        "hourly load skips a source that has not moved",
+        "unit costs per pipeline in the daily summary",
+        "replace the bespoke scheduler with a cron table",
+        "one manifest per run, written once at the end",
+        "source connectors declare their own required grants",
+        "deduplicate on the natural key, not the row hash",
+        "run history keeps 90 days, then rolls up",
+        "alert on a table that stops arriving, not only on errors",
+        "test fixtures generated from the real schema",
+        "parallel extracts share one connection pool",
+        "drop the staging tables v1 left behind",
     ],
 }
 
 # a card's own paragraph. one per card rather than one sentence repeated down a column - a board
 # where every description reads the same is the tell that gives a seeded demo away
 _DESCRIPTIONS = [
-    "{title}. Today the caller has no way to tell the two cases apart, and the logs do not record "
+    "{title}. today the caller has no way to tell the two cases apart, and the logs do not record "
     "which one happened, so this starts by making the distinction visible.",
-    "{title}. Raised after the third support ticket in a week about the same symptom; the cause "
+    "{title}. raised after the third support ticket in a week about the same symptom; the cause "
     "is the shared path below, not any one caller.",
-    "{title}. The current shape works for the common case and quietly loses the edge case. Make "
+    "{title}. the current shape works for the common case and quietly loses the edge case. make "
     "the edge case explicit rather than widening the happy path.",
-    "{title}. Scoped small on purpose: one behaviour change, one migration, no rename.",
-    "{title}. Blocked on nothing external - the interface already exposes everything this needs, "
+    "{title}. scoped small on purpose: one behaviour change, one migration, no rename.",
+    "{title}. blocked on nothing external - the interface already exposes everything this needs, "
     "so it is a change of rules, not of plumbing.",
-    "{title}. The tests around this are thin, so the first task is the failing test that pins "
+    "{title}. the tests around this are thin, so the first task is the failing test that pins "
     "today's behaviour before anything moves.",
 ]
 
@@ -382,23 +382,23 @@ def _narration(store: Store, card_id: str, steps: list[tuple[str, str, dict]]) -
 _WALKTHROUGH = [
     (
         "Read",
-        "Reading the refund path before touching it.",
+        "reading the refund path before touching it.",
         {"file_path": "/workspace/src/payments/refund.py"},
     ),
-    ("Grep", "Looking for every caller of capture().", {"pattern": "def capture"}),
+    ("Grep", "looking for every caller of capture().", {"pattern": "def capture"}),
     (
         "Edit",
-        "The endpoint needs to key on the header, not the body.",
+        "the endpoint needs to key on the header, not the body.",
         {"file_path": "/workspace/src/payments/refund.py"},
     ),
     (
         "Write",
-        "A test that fails without the key.",
+        "a test that fails without the key.",
         {"file_path": "/workspace/tests/test_refund_idempotency.py"},
     ),
     (
         "Bash",
-        "Running the suite.",
+        "running the suite.",
         {"command": "uv run pytest -q tests/test_refund_idempotency.py"},
     ),
 ]
@@ -424,7 +424,7 @@ def _clean_attempt(
         "worker_summary",
         {
             "text": _summary(
-                "review the PR",
+                "review the pr",
                 "every criterion has a test, and it passes",
                 ["keyed the endpoint on the Idempotency-Key header", "covered the replay case"],
             )
@@ -456,7 +456,7 @@ def _rejected_review_attempt(store: Store, card_id: str, model: str) -> None:
         "worker_summary",
         {
             "text": _summary(
-                "review the PR", "decline retry covered", ["widened the retry to every decline"]
+                "review the pr", "decline retry covered", ["widened the retry to every decline"]
             )
         },
     )
@@ -476,7 +476,7 @@ def _rejected_review_attempt(store: Store, card_id: str, model: str) -> None:
                     "file": "src/payments/capture.py",
                     "line": 118,
                     "detail": (
-                        "Retries every decline code, including hard declines the issuer will "
+                        "retries every decline code, including hard declines the issuer will "
                         "never approve - retry only the soft advice codes."
                     ),
                 }
@@ -494,7 +494,7 @@ def _failed_tests_attempt(store: Store, card_id: str, model: str) -> None:
         "worker_summary",
         {
             "text": _summary(
-                "review the PR",
+                "review the pr",
                 "per-acquirer totals match the ledger",
                 ["split the report per acquirer"],
                 ["rounding on split refunds: unsure which side owns the cent"],
@@ -645,23 +645,23 @@ def _seed_board(store: Store, spec: dict[str, Any], attention: Iterator) -> dict
 
 # the board's own note on a blocked card - what the inbox shows for every reason but a question
 _BLOCK_NOTES = {
-    "TESTS_FAILED": "The test gate failed: tests/test_settlement.py::test_totals_per_acquirer.",
-    "BASE_RED": "BASE IS RED: 2 failing tests also fail on development without this card's changes.",
-    "REVIEW_REJECTED": "The reviewer stopped this: retries every decline, not only soft declines.",
-    "LEASE_CONFLICT": "The agent asked to edit src/core/db.py, which is outside this card's lease.",
-    "USAGE_LIMIT": "The five-hour window is spent. New runs resume when it resets.",
-    "CRASH": "The container exited before the agent finished its first turn.",
-    "MERGE_CONFLICT": "The branch no longer merges into development; the base moved underneath it.",
-    "API_UNREACHABLE": "The API could not be reached. The board is retrying on its own.",
+    "TESTS_FAILED": "the test gate failed: tests/test_settlement.py::test_totals_per_acquirer.",
+    "BASE_RED": "base is red: 2 failing tests also fail on development without this card's changes.",
+    "REVIEW_REJECTED": "the reviewer stopped this: retries every decline, not only soft declines.",
+    "LEASE_CONFLICT": "the agent asked to edit src/core/db.py, which is outside this card's lease.",
+    "USAGE_LIMIT": "the five-hour window is spent. new runs resume when it resets.",
+    "CRASH": "the container exited before the agent finished its first turn.",
+    "MERGE_CONFLICT": "the branch no longer merges into development; the base moved underneath it.",
+    "API_UNREACHABLE": "the api could not be reached. the board is retrying on its own.",
     "OUTDATED": "OUTDATED: origin/development moved and this card's commits no longer rebase onto "
     "it - they conflict in: src/ledger/settle.py.",
-    "DEPENDENCY_REJECTED": "The card this one waits on was rejected, so it cannot start.",
+    "DEPENDENCY_REJECTED": "the card this one waits on was rejected, so it cannot start.",
 }
 
 _AGENT_QUESTION = (
-    "Refunds past the 180-day window: should the endpoint refuse them outright, or accept them "
-    "and mark the entry for the chargeback route? The spec reads both ways and the tests do not "
-    "cover it, so I have stopped rather than pick."
+    "refunds past the 180-day window: should the endpoint refuse them outright, or accept them "
+    "and mark the entry for the chargeback route? the spec reads both ways and the tests do not "
+    "cover it, so i have stopped rather than pick."
 )
 
 
@@ -693,7 +693,7 @@ def _attention_card(store: Store, card: dict[str, Any], position: int, repo: str
         store.add_comment(
             card_id,
             BOARD_AUTHOR,
-            "Tests passed and the reviewer approved. The pull request is open and waiting on you.",
+            "tests passed and the reviewer approved. the pull request is open and waiting on you.",
         )
         return
     if reason == "AGENT_QUESTION":
@@ -752,7 +752,7 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
         store.add_comment(
             doing[-1]["id"],
             "demo",
-            "Keep the header name exactly as the spec spells it - the SDK capitalises it.",
+            "keep the header name exactly as the spec spells it - the sdk capitalises it.",
         )
 
     for position, card in enumerate(grouped.get("attention", [])):
@@ -811,9 +811,9 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
     if len(accepted) > 1:
         store.set_dependencies(accepted[0]["id"], [accepted[1]["id"]])
     if accepted:
-        store.add_comment(accepted[0]["id"], "demo", "Merged. The replay case is the one I wanted.")
+        store.add_comment(accepted[0]["id"], "demo", "merged. the replay case is the one i wanted.")
         store.add_comment(
-            accepted[0]["id"], BOARD_AUTHOR, "Tests passed, reviewer approved, pull request open."
+            accepted[0]["id"], BOARD_AUTHOR, "tests passed, reviewer approved, pull request open."
         )
         store.add_attachment(accepted[0]["id"], "settlement-split.png", "image/png", _TINY_PNG)
 
@@ -824,28 +824,28 @@ def _decorate_board(store: Store, entry: dict[str, Any], index: int) -> None:
 
 
 _PLANS = [
-    "Ship the idempotency work first - everything else on the board touches the same call path "
+    "ship the idempotency work first - everything else on the board touches the same call path "
     "and would only queue up behind it.",
-    "Editor correctness before editor features: autosave and the conflict case, then the blocks.",
-    "The watermark work unblocks the rest of the column; nothing else starts until it lands.",
+    "editor correctness before editor features: autosave and the conflict case, then the blocks.",
+    "the watermark work unblocks the rest of the column; nothing else starts until it lands.",
 ]
 
 _CHATS = [
     (
-        "The refund endpoint is capturing twice when a client retries. What should we do?",
-        "Three cards, in this order: key the endpoint on the Idempotency-Key header, then make "
-        "the retry read the issuer's advice code, then split the settlement report. The first "
+        "the refund endpoint is capturing twice when a client retries. what should we do?",
+        "three cards, in this order: key the endpoint on the Idempotency-Key header, then make "
+        "the retry read the issuer's advice code, then split the settlement report. the first "
         "two share a lease, so the board will never run them at once.",
     ),
     (
-        "Editors keep losing work when a tab crashes. Where do we start?",
-        "Two cards. Autosave every 20 seconds with a conflict check, then draft previews that "
+        "editors keep losing work when a tab crashes. where do we start?",
+        "two cards. autosave every 20 seconds with a conflict check, then draft previews that "
         "expire - the second is a smaller change and can run in parallel, different lease.",
     ),
     (
-        "The hourly load reprocesses the whole table. Can we make it incremental?",
-        "One card for the source watermark, one for reopening only the affected partition when "
-        "rows arrive late. The second depends on the first and the board will hold it until the "
+        "the hourly load reprocesses the whole table. can we make it incremental?",
+        "one card for the source watermark, one for reopening only the affected partition when "
+        "rows arrive late. the second depends on the first and the board will hold it until the "
         "first card's pull request is merged.",
     ),
 ]

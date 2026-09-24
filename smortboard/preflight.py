@@ -80,7 +80,7 @@ def _docker_check() -> dict[str, Any]:
             "docker",
             "fail",
             "docker is not installed.",
-            "install Docker Desktop (or the docker engine), then re-check.",
+            "install docker desktop (or the docker engine), then re-check.",
         )
     if not docker_available():
         return _check(
@@ -89,7 +89,7 @@ def _docker_check() -> dict[str, Any]:
             "docker",
             "fail",
             "docker is installed but the daemon is not answering.",
-            "start Docker Desktop (or `sudo systemctl start docker`), then re-check.",
+            "start docker desktop (or `sudo systemctl start docker`), then re-check.",
         )
     return _check(
         "docker", "machine", "docker", "ok", "docker is installed and the daemon answers."
@@ -242,7 +242,7 @@ def _gh_check(run: CommandRunner) -> dict[str, Any]:
             "gh cli",
             "fail",
             "gh is not installed.",
-            "install the GitHub CLI (https://cli.github.com), then `gh auth login`.",
+            "install the github cli (https://cli.github.com), then `gh auth login`.",
         )
     result = run(["gh", "auth", "status"])
     if result.returncode != 0:
@@ -367,7 +367,7 @@ def _repo_checks(repo: dict[str, Any], run: CommandRunner) -> list[dict[str, Any
                 "fail",
                 f"{path} does not exist or is not a git repository.",
                 f"clone the repo to {path} (git clone <url> {path}), or fix its path on the "
-                "board (key b) once the matching GitHub repo exists.",
+                "board (key b) once the matching github repo exists.",
             )
         )
         checks.append(row("origin", "origin remote", "fail", "not checked: no repo at that path."))
@@ -398,7 +398,7 @@ def _repo_checks(repo: dict[str, Any], run: CommandRunner) -> list[dict[str, Any
                     "origin remote",
                     "fail",
                     "no `origin` remote.",
-                    f"create the matching repo on GitHub yourself, then: "
+                    f"create the matching repo on github yourself, then: "
                     f"git -C {path} remote add origin git@github.com:<owner>/{name}.git",
                 )
             )
@@ -431,7 +431,7 @@ def _repo_checks(repo: dict[str, Any], run: CommandRunner) -> list[dict[str, Any
                         "origin-branch",
                         "default branch on origin",
                         "fail",
-                        f"origin has no {branch} branch - has the GitHub repo been created and pushed to?",
+                        f"origin has no {branch} branch - has the github repo been created and pushed to?",
                         f"git -C {path} push -u origin {branch}",
                     )
                 )

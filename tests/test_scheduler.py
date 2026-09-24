@@ -215,7 +215,7 @@ def test_github_unreachable_waits_rather_than_guesses(store, board_and_repo, mon
     scheduler.start_all()
 
     assert card["id"] not in runs.started
-    assert "could not ask GitHub" in scheduler.schedule_view()["waiting"][card["id"]]
+    assert "could not ask github" in scheduler.schedule_view()["waiting"][card["id"]]
 
 
 def test_a_dependent_starts_once_its_dependencys_pull_request_is_merged(
@@ -833,7 +833,7 @@ def test_a_merge_conflict_is_resumed_automatically_once(store, board_and_repo):
     kinds = [e["kind"] for e in store.list_events(a["id"])]
     assert "merge_conflict_auto_resume" in kinds
     comments = store.get_card(a["id"])["comments"]
-    assert any("Resuming automatically" in c["body"] for c in comments)
+    assert any("resuming automatically" in c["body"] for c in comments)
 
 
 def test_a_second_merge_conflict_on_the_same_card_is_left_for_the_operator(store, board_and_repo):
@@ -1107,7 +1107,7 @@ def test_a_branch_that_no_longer_rebases_is_flagged_outdated(
     assert card["status"] == "checking"  # a block keeps the column
     note = card["comments"][-1]["body"]
     assert "a.py" in note and "b.py" in note
-    assert note.endswith(f"Next: {next_action('OUTDATED')}")
+    assert note.endswith(f"next: {next_action('OUTDATED')}")
 
 
 @pytest.mark.parametrize("outcome", ["current", "skipped", "push_refused"])

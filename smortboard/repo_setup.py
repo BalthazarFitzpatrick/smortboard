@@ -29,7 +29,7 @@ DEFAULT_GITIGNORE = ".env\n.env.*\n*.pem\n*.key\n.venv/\nnode_modules/\n__pycach
 # what GitHub accepts as a repository name
 _REPO_NAME = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 _BAD_NAME = (
-    "{name!r} is not a GitHub repo name - rename the folder to letters, digits, . _ or - and try "
+    "{name!r} is not a github repo name - rename the folder to letters, digits, . _ or - and try "
     "again"
 )
 
@@ -168,7 +168,7 @@ def _create_origin(root: Path, git: _Git, runner: Runner, steps: list[str]) -> s
             f"gh could not create {full}: {(created.stderr or created.stdout).strip()} - if the "
             "repo already exists, add it as origin yourself and try again"
         )
-    steps.append(f"created private GitHub repo {full}")
+    steps.append(f"created private github repo {full}")
     return full
 
 
@@ -225,7 +225,7 @@ def prepare(
             if full is None:
                 raise
             raise SetupRefused(
-                f"created {full} on GitHub, then {exc}. the repo stays there: push "
+                f"created {full} on github, then {exc}. the repo stays there: push "
                 f"{DEVELOPMENT} yourself, or `gh repo delete {full}` and try again"
             ) from exc
     return result
