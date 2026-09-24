@@ -88,16 +88,17 @@ body {
    columns squeezed beside the hazard box instead of hiding them */
 .bucket[hidden] { display: none; }
 
+/* one row tall whether or not it holds the expand button, so every column's header lines up */
 .bucket-label {
   color: var(--text-dim);
-  padding: 2px 0;
+  min-height: var(--row-height);
   border-bottom: 2px solid var(--grey-border);
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
-.bucket-header-right { display: flex; align-items: baseline; gap: 10px; }
+.bucket-header-right { display: flex; align-items: center; gap: 10px; }
 .bucket-counts .count-d { color: var(--fill-good); font-weight: 600; }
 .bucket-counts .count-a { color: var(--fill-attention); font-weight: 600; }
 /* a .toggle's display rule outranks the browser's own [hidden] */
