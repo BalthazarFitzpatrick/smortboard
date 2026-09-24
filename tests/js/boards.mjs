@@ -3,7 +3,7 @@
 // inline, and typing in any of the panel's inputs never fires a board shortcut. new board picks any
 // folder or names a new one, a folder with files asks before its first commit, and main's one push
 // is shown to the operator. a new repo's tests come back as one status line, or as a notice held on
-// its row when it has none.
+// its row when it has none. from online repo lists what gh sees, then clones into a picked folder.
 // run: node tests/js/boards.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
@@ -158,7 +158,7 @@ press('KeyB');
 await flush(); await flush();
 const sources = [...mod.bp.sourceRowEl.children];
 assert.deepEqual(sources.map(s => s.textContent), ['new board', 'from online repo']);
-assert.ok(sources[1].className.includes('disabled'), 'from online repo is not built yet');
+assert.ok(!sources[1].className.includes('disabled'), 'from online repo is a live button');
 stub('/api/folders', 'GET', 200, {here: '/home/me', parent: '/home', repo: false,
   folders: [{name: 'proj', path: '/home/me/proj', repo: true}, {name: 'notes', path: '/home/me/notes', repo: false}]});
 sources[0].onclick();
@@ -340,5 +340,70 @@ assert.equal(document.activeElement,
   "use my own command focuses that repo's test command field");
 assert.equal(mod.bp.repoListEl.querySelector('.repo-tests-notice'), null, 'and clears the notice');
 press('Escape');
+
+// ---- from online repo: the repos gh can see, then the folder to clone the pick into --------------
+press('KeyB');
+await flush(); await flush();
+const onlineButton = [...mod.bp.sourceRowEl.children][1];
+stub('/api/online-repos', 'GET', 200, [
+  {name_with_owner: 'me/alpha', private: false, description: ''},
+  {name_with_owner: 'me/beta', private: true, description: ''},
+]);
+await onlineButton.onclick();
+await flush(); await flush();
+assert.equal(lastMenu.opts.title, 'board from online repo');
+const repoMenu = lastMenu;
+const repoItems = repoMenu.opts.sections[0].items;
+assert.deepEqual(repoItems.map(i => i.label), ['me/alpha', 'me/beta  private']);
+
+stub('/api/folders', 'GET', 200, {here: '/home/me', parent: '/home', repo: false, folders: []});
+await repoMenu.opts.sections[0].onPick(repoItems[0]);
+await flush(); await flush();
+assert.ok(repoMenu.closed, 'the repo list closes once a repo is picked');
+assert.equal(lastMenu.opts.title, 'clone me/alpha into');
+const cloneMenu = lastMenu;
+const clone = () => cloneMenu.opts.sections.find(s => s.kind === 'buttons').buttons[0];
+assert.equal(clone().label, 'clone into this folder: /home/me/alpha', 'the target path is shown first');
+assert.equal(cloneMenu.opts.sections.find(s => s.kind === 'add'), undefined, 'no new folder field');
+
+const BOARD_F = {id: 'b6', name: 'alpha', position: 5, created_at: 't6'};
+stub('/api/boards/from-online-repo', 'POST', 201, {board: BOARD_F,
+  repo: {id: 'r7', board_id: 'b6', name: 'alpha', path: '/home/me/alpha', default_branch: 'development',
+    test_command: 'npm test', image: null, lint_command: null},
+  tests: {command: 'npm test', has_tests: true},
+  setup: {steps: ['branched development from main', 'pushed development'], push_main: null}});
+stub('/api/boards', 'GET', 200, [BOARD_A, BOARD_B, BOARD_C, BOARD_D, BOARD_E, BOARD_F]);
+stub('/api/boards/b6/cards', 'GET', 200, []);
+stub('/api/boards/b6/repos', 'GET', 200, []);
+const cloning = clone().onClick(cloneMenu);
+assert.equal(mod.bp.boardStatusEl.textContent, 'cloning...');
+await cloning;
+await flush(); await flush();
+const onlineCalls = () => calls.filter(c => c.path === '/api/boards/from-online-repo');
+assert.deepEqual(JSON.parse(onlineCalls().at(-1).opts.body), {repo: 'me/alpha', folder: '/home/me'});
+assert.ok(cloneMenu.closed, 'the folder menu closes once the board exists');
+assert.equal(mod.boardsRef().length, 6, 'the cloned board is in the bar without a reload');
+assert.equal(mod.bp.boardStatusEl.textContent, 'done: branched development from main, pushed development; '
+  + "tests run with `npm test` - change it on the repo's row");
+assert.equal(mod.bp.setupEl.querySelector('.boards-push-main'), null, 'a clone has its origin already');
+
+// a refused clone keeps the folder menu open and says why
+cloneMenu.closed = false;
+stub('/api/boards/from-online-repo', 'POST', 400, {error: '/home/me/alpha already exists. Pick a different folder'});
+await clone().onClick(cloneMenu);
+await flush();
+assert.match(mod.bp.boardStatusEl.textContent, /already exists/);
+assert.ok(mod.bp.boardStatusEl.className.includes('boards-error'));
+assert.ok(!cloneMenu.closed, 'the menu stays to pick another folder');
+assert.equal(mod.boardsRef().length, 6, 'no board added');
+
+// a gh that is missing or logged out is refused with the fix, and no menu opens
+stub('/api/online-repos', 'GET', 400, {error: 'gh is not logged in. Run `gh auth login`, then try again.'});
+const menusBefore = lastMenu;
+await onlineButton.onclick();
+await flush();
+assert.equal(lastMenu, menusBefore, 'a refused listing opens no menu');
+assert.match(mod.bp.boardStatusEl.textContent, /gh auth login/);
+press('KeyB');
 
 console.log('ok');

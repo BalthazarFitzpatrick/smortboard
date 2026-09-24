@@ -23,7 +23,7 @@ function buildBoardsDom() {
   panel.appendChild(divider());
 
   // two ways to start a board, as the first row: any folder on this disk, made ready for a board,
-  // and a repo online (not built yet, see the ledger). a board with no repo is the name field below
+  // and a repo online cloned into one. a board with no repo is the name field below
   const sourceRow = document.createElement('div');
   sourceRow.className = 'boards-source-row';
   const fromFolder = document.createElement('div');
@@ -31,9 +31,9 @@ function buildBoardsDom() {
   fromFolder.textContent = 'new board';
   fromFolder.onclick = () => openNewBoardPicker(fromFolder);
   const fromOnline = document.createElement('div');
-  fromOnline.className = 'toggle board-source-online disabled';
+  fromOnline.className = 'toggle board-source-online';
   fromOnline.textContent = 'from online repo';
-  fromOnline.title = 'not built yet';
+  fromOnline.onclick = () => openOnlineRepoPicker(fromOnline);
   sourceRow.append(fromFolder, fromOnline);
   panel.appendChild(sourceRow);
 
@@ -247,8 +247,9 @@ function setBoardStatus(text, isError = false) {
 }
 
 // the folder menu opens in place, like the review tool's save dialog: '..' and each subfolder, git
-// repos marked. `action` is the one button it offers, shown only for a folder `action.when` accepts;
-// `add`, when given, is a name field whose value goes to add.run with the folder it was typed in
+// repos marked. `action` is the one button it offers, shown only for a folder `action.when` accepts,
+// its label text or a function of the folder; `add`, when given, is a name field whose value goes to
+// add.run with the folder it was typed in
 async function openFolderPicker(anchor, {title, action, add, onError}) {
   const first = await apiOrError('/api/folders');
   if (!first.ok) { onError((first.body && first.body.error) || 'could not list folders'); return; }
@@ -274,7 +275,8 @@ async function openFolderPicker(anchor, {title, action, add, onError}) {
     ...(add ? [{kind: 'add', placeholder: add.placeholder, button: add.label,
       onAdd: (name, m) => add.run(where.here, name, m)}] : []),
     ...(action.when(where) ? [{kind: 'buttons', buttons: [
-      {label: action.label, tone: 'adds', onClick: m => action.run(where.here, m)},
+      {label: typeof action.label === 'function' ? action.label(where.here) : action.label,
+        tone: 'adds', onClick: m => action.run(where.here, m)},
     ]}] : []),
   ];
   menu = new Menu({title, persistent: true, sections: build()});
@@ -318,6 +320,63 @@ async function createBoardFromFolder(path, menu, extra = {}) {
     return;
   }
   if (!ok) { setBoardStatus((body && body.error) || 'could not create the board', true); return; }
+  await showNewBoard(body, menu);
+}
+
+// two steps, both menus: the repos gh can see, private ones marked, then the folder to clone into
+async function openOnlineRepoPicker(anchor) {
+  setBoardStatus('asking github...');
+  const {ok, body} = await apiOrError('/api/online-repos');
+  if (!ok) { setBoardStatus((body && body.error) || 'could not list your repos', true); return; }
+  setBoardStatus('');
+  const repoMenu = new Menu({
+    title: 'board from online repo',
+    sections: [{
+      kind: 'list',
+      empty: 'no repos found for this login',
+      items: body.map(r => ({
+        id: r.name_with_owner,
+        label: r.private ? `${r.name_with_owner}  private` : r.name_with_owner,
+      })),
+      onPick: item => {
+        repoMenu.close();
+        const name = item.id.split('/')[1];
+        openFolderPicker(anchor, {
+          title: `clone ${item.id} into`,
+          action: {
+            label: here => `clone into this folder: ${here.replace(/\/$/, '')}/${name}`,
+            when: () => true,
+            run: (folder, menu) => createBoardFromOnlineRepo(item.id, folder, menu),
+          },
+          onError: text => setBoardStatus(text, true),
+        });
+      },
+    }],
+  });
+  repoMenu.openAt(anchor);
+}
+
+// the clone and the setup a folder gets run in one request, so the reply is the same as a folder's
+async function createBoardFromOnlineRepo(repo, folder, menu) {
+  if (bp.settingUp) return;
+  bp.settingUp = true;
+  setBoardStatus('cloning...');
+  let reply;
+  try {
+    reply = await apiOrError('/api/boards/from-online-repo', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({repo, folder}),
+    });
+  } finally {
+    bp.settingUp = false;
+  }
+  const {ok, body} = reply;
+  if (!ok) { setBoardStatus((body && body.error) || 'could not clone the repo', true); return; }
+  await showNewBoard(body, menu);
+}
+
+// a board that exists now: what was set up, the push-main step if any, its tests, then the board
+async function showNewBoard(body, menu) {
   menu?.close();
   bp.folderConfirm = null;
   bp.pushMain = body.setup?.push_main || null;
