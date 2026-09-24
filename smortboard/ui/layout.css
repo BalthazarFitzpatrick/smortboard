@@ -270,7 +270,26 @@ body {
    2026-09-23: the tinted grounds read worse than names and dividers). padded so the focus frame
    has room around the text */
 .card-panel .card-section:not([data-section="title"]) { padding: 6px 10px 10px; }
-.card-panel .card-section:not([data-section="title"]) > .field-label {
+.card-panel:not([class*="panel-layout-"]) .card-sections > .card-section:not([data-section="title"]) {
+  /* THE MATRIX: every cell one height so the two rows line up; the value takes what the label leaves */
+  height: 13.5em; display: flex; flex-direction: column;
+}
+.card-panel:not([class*="panel-layout-"]) .card-sections > .card-section:not([data-section="title"]) > .section-value {
+  flex: 1 1 auto; min-height: 0; overflow: hidden;
+}
+/* more than the cell shows: the value fades out and the label says space shows the rest. a mask on
+   the value, not an overlay on the cell - the focus ring is the cell's own inset shadow */
+.card-panel .card-section.section-clipped > .section-value {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2em), transparent);
+}
+.card-panel .card-section.section-clipped > .field-label::after {
+  content: 'space: all'; color: var(--text-dim); font-size: 0.85em; margin-left: auto;
+}
+/* the popout hugs its section: the card's own 100% height would make fit() measure the whole box */
+.expand-panel.section-popout > .section-popout-body { height: auto; overflow: visible; padding: 18px 24px; }
+.expand-panel.section-popout { overflow: auto; }
+.card-panel .card-section:not([data-section="title"]) > .field-label,
+.section-popout-body > .field-label {
   padding: 2px 0; margin-bottom: 8px; border-bottom: 2px solid var(--grey-border);
 }
 /* A FOCUSED SECTION WEARS THE BOARD CARD'S OWN FRAME (operator, 2026-09-23, the approved mockup;
