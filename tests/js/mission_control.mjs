@@ -102,35 +102,48 @@ responses.set('/api/roster', stubJson(200, []));
   assert.match(text, /inbox/, 'the empty state points at the inbox for anything waiting');
 }
 
-// ---- usage: a null utilization shows no percentage, a real one does -----------------------------
+// ---- usage: one section per profile, each window one short line --------------------------------
 {
+  const now = Date.now() / 1000;
   const sections = mod.usageSections({
     windows: [
-      {type: 'five_hour', status: 'ok', resets_at: null, utilization: null},
-      {type: 'seven_day', status: 'near limit', resets_at: 0, utilization: 0.82},
+      {lab: 'anthropic', profile: 'work', type: 'seven_day', status: 'near limit', resets_at: now + 3 * 86400, utilization: 0.82},
+      {lab: 'anthropic', profile: 'work', type: 'five_hour', status: 'ok', resets_at: null, utilization: null},
+      {lab: 'anthropic', profile: 'home', type: 'five_hour', status: 'allowed', resets_at: now + 3600, utilization: 0.4},
+    ],
+    profiles: [
+      {lab: 'anthropic', name: 'work'}, {lab: 'anthropic', name: 'home'}, {lab: 'openai', name: 'default'},
     ],
     models: [
       {model: 'opus', input_tokens: 12300, output_tokens: 4100, cache_read_tokens: 20000, cache_creation_tokens: 6400, cost_usd: 0.19},
     ],
     total_cost_usd: 0.19, runs: 3,
   });
-  // one card-like node: ruled sections, ui_base fill bars, a foot with the total
   assert.equal(sections.length, 1, 'usage renders as one card');
   const card = sections[0].node;
-  const windows = card.querySelectorAll('.usage-window');
+  const profiles = card.querySelectorAll('.usage-profile');
+  assert.deepEqual(profiles.map(s => s.children[0].textContent),
+    ['anthropic - work', 'anthropic - home', 'openai - default'], 'grouped by profile, not by window');
+  const work = profiles[0].querySelectorAll('.usage-window');
+  assert.deepEqual(work.map(w => w.children[0].textContent), ['five-hour', 'seven-day'],
+    'each profile shows the windows it has, shortest first');
   const statOf = el => el.querySelectorAll('.stat')[0].textContent;
-  assert.ok(!statOf(windows[0]).includes('%'), 'a null utilization must not render a percentage');
-  assert.equal(windows[0].querySelectorAll('.bar-fill').length, 0, 'no utilisation and no reset draws no bar');
-  assert.ok(statOf(windows[1]).includes('82.0%'), 'a real utilization renders as a percentage');
-  assert.equal(windows[1].querySelectorAll('.bar-fill')[0].style.width, '82%', 'and fills the bar that far');
+  assert.equal(statOf(work[0]), 'no reset reported', 'a null utilization and no reset renders no percentage');
+  assert.equal(work[0].querySelectorAll('.bar-fill').length, 0, 'and no bar');
+  assert.match(statOf(work[1]), /^82% - resets [a-z]{3} \d\d:\d\d - in (2d 23h|3d 0h)$/, 'percent, reset, time left');
+  assert.equal(work[1].querySelectorAll('.bar-fill')[0].style.width, '82%');
+  assert.match(statOf(profiles[1].querySelectorAll('.usage-window')[0]), /^40% - resets \d\d:\d\d - in (59m|1h 0m)$/,
+    'within a day the reset is the clock alone');
+  assert.equal(profiles[2].querySelectorAll('.usage-window').length, 0);
+  assert.equal(statOf(profiles[2]), 'no window reported yet', 'a profile without windows keeps its section');
   const model = card.querySelectorAll('.usage-model')[0];
-  assert.ok(statOf(model).includes('12.3k'), 'token counts render abbreviated');
-  assert.ok(model.querySelectorAll('.usage-model-name')[0].textContent.includes('$0.19'), 'model row carries its cost');
-  assert.equal(model.querySelectorAll('.bar-fill')[0].style.width, '100%', 'the only model is all of the spend');
+  assert.equal(model.querySelectorAll('.stat').length, 0, 'no token line under the spend bar');
+  assert.equal(model.querySelectorAll('.usage-model-name')[0].textContent, 'opus - $0.19 - 100%');
   assert.equal(card.querySelectorAll('.usage-foot .stat')[0].textContent, '3 runs - $0.19', 'the foot sums runs and cost');
+  assert.match(card.querySelectorAll('.usage-disclaimer')[0].textContent, /not read live from your lab accounts/);
 }
 
-// a window with a reset time but no utilisation shows how far through it we are, and says so
+// a window with a reset time but no utilisation shows how far through it we are, as time
 {
   const now = Date.now() / 1000;
   const sections = mod.usageSections({
@@ -139,10 +152,8 @@ responses.set('/api/roster', stubJson(200, []));
   });
   const win = sections[0].node.querySelectorAll('.usage-window')[0];
   assert.equal(win.querySelectorAll('.bar-fill')[0].style.width, '80%', 'four of five hours gone fills 80%');
-  assert.ok(statOf2(win).includes('left in the window'), 'the line names what the bar measures');
-  assert.ok(statOf2(win).includes('80% through'), 'and carries the number the bar shows, as time not usage');
-  assert.ok(!statOf2(win).includes('used'), 'a time fraction never reads as usage');
-  function statOf2(el) { return el.querySelectorAll('.stat')[0].textContent; }
+  const line = win.querySelectorAll('.stat')[0].textContent;
+  assert.ok(line.startsWith('80% through - resets'), `a time fraction says "through", never usage: ${line}`);
 }
 
 // a reset time already in the past is old data: no bar, and the line says the window has reset
@@ -154,7 +165,7 @@ responses.set('/api/roster', stubJson(200, []));
   const win = sections[0].node.querySelectorAll('.usage-window')[0];
   assert.equal(win.querySelectorAll('.bar-fill').length, 0, 'a window that already reset draws no bar');
   const line = win.querySelectorAll('.stat')[0].textContent;
-  assert.ok(line.includes('reset at') && line.includes('reset since the last run'), `the line says so: ${line}`);
+  assert.match(line, /^reset \d\d:\d\d - no run since$/, `the line says so: ${line}`);
 }
 
 // no usage at all says so instead of three empty sections

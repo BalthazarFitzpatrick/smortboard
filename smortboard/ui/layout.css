@@ -508,8 +508,9 @@ body {
 .usage-model { display: flex; flex-direction: column; gap: 4px; }
 .usage-model + .usage-model { margin-top: 8px; }
 .usage-model-name { color: var(--text); }
-.usage-profile { display: flex; flex-direction: column; gap: 4px; }
-.usage-profile + .usage-profile { margin-top: 8px; }
+.usage-window { display: flex; flex-direction: column; gap: 4px; }
+.usage-window + .usage-window { margin-top: 8px; }
+.usage-disclaimer { white-space: normal; }
 /* these lines carry the meaning of each bar, so they wrap - ui_base's .stat is one ellipsised line */
 .usage-section .stat { color: var(--text-dim); white-space: normal; overflow: visible; }
 
