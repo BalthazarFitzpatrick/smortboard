@@ -24,6 +24,7 @@ from smortboard.exec.backends import (
     docker_available,
     read_card_token,
 )
+from smortboard.repo_tests import detect_tests
 from smortboard.store.api import Store
 
 _TIMEOUT = 10
@@ -453,16 +454,36 @@ def _repo_checks(repo: dict[str, Any], run: CommandRunner) -> list[dict[str, Any
                     )
                 )
 
-    if repo.get("test_command"):
-        checks.append(row("test-command", "test command", "ok", f"runs `{repo['test_command']}`."))
+    # tests are required: a command with nothing to run fails every card on "no tests ran"
+    command = repo.get("test_command")
+    tests = detect_tests(str(path), repo["default_branch"])
+    if command and tests.has_tests:
+        checks.append(row("test-command", "test command", "ok", f"runs `{command}`."))
+    elif command:
+        checks.append(
+            row(
+                "test-command",
+                "test command",
+                "warn",
+                f"runs `{command}`, but {repo['default_branch']} has no tests yet.",
+                "ask mission control (.) for a first card that adds a test suite, or commit your "
+                "own tests - every card's gate needs some to run.",
+            )
+        )
     else:
+        suggestion = (
+            f"set `{tests.command}` on the repo (key b) - it fits this repo"
+            if tests.command
+            else "ask mission control (.) for a first card that sets up tests and names the "
+            "command, or set one on the repo (key b)"
+        )
         checks.append(
             row(
                 "test-command",
                 "test command",
                 "fail",
                 "no test command is set.",
-                "set one on the repo (key b) - the test gate cannot run a card's work without it.",
+                f"{suggestion}. the test gate cannot run a card's work without one.",
             )
         )
 

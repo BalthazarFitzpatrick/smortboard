@@ -74,6 +74,9 @@
 .repo-edit-status { color: var(--text-dim); font-size: calc(var(--font-size, 13px) - 1px); }
 .repo-edit-status.repo-edit-ok { color: var(--lichen-milk); }
 .repo-edit-status.repo-edit-error { color: var(--status-warn); }
+/* a repo with no tests: the delete confirm's label-and-two-toggles row, warn-coloured on the row */
+.repo-tests-notice { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.repo-row.on .repo-tests-notice .field-label { color: var(--status-warn); }
 
 .repo-form {
   display: flex;

@@ -49,6 +49,24 @@ def test_the_headless_rule_reaches_the_worker_even_under_a_stored_prompt(tmp_pat
     assert "NOTHING WAKES YOU UP" not in SYSTEM_PROMPT  # not editable, so not in the prompt
 
 
+def test_the_test_rule_reaches_the_worker_even_under_a_stored_prompt(tmp_path):
+    """tests are required on every board, so the rule rides outside the editable prompt too"""
+
+    def _command(store):
+        cmd = ContainerBackend(image="img")._docker_command(
+            tmp_path / "clone", "p", tmp_path / "s.json", "sonnet", None, store
+        )
+        return shlex.join(cmd)
+
+    with Store(tmp_path / "b.db") as store:
+        default = _command(store)
+        store.set_prompt("worker", "a custom worker prompt")
+        custom = _command(store)
+    assert "EVERY CRITERION GETS A TEST" in default
+    assert "EVERY CRITERION GETS A TEST" in custom
+    assert "EVERY CRITERION GETS A TEST" not in SYSTEM_PROMPT
+
+
 def test_the_bash_guard_refuses_a_background_command(tmp_path):
     worktree = tmp_path / "wt"
     worktree.mkdir()

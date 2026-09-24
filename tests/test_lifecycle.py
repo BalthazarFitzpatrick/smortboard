@@ -1078,6 +1078,22 @@ def test_a_failing_test_gate_leads_its_note_with_the_parsed_headline(board, monk
     assert any("FAILED tests/test_x.py::test_x" in b for b in bodies), "full output stays in body"
 
 
+def test_no_tests_ran_says_so_instead_of_tests_failed(board, monkeypatch):
+    """pytest exits 5 when it collects nothing: the card added no tests, which is its own fault"""
+    store, card_id = board
+    _stub_gates(monkeypatch, passed=False)
+    monkeypatch.setattr(
+        lifecycle,
+        "run_test_gate",
+        lambda *a, **k: GateResult(
+            passed=False, command="pytest", exit_code=5, output="no tests ran in 0.01s\n"
+        ),
+    )
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    bodies = [c["body"] for c in store.list_comments(card_id)]
+    assert any(b.startswith("no tests ran - the card must add tests") for b in bodies)
+
+
 def test_no_test_command_gets_a_short_pointer_at_the_repo_setting(board, monkeypatch):
     """the long explanation lives in the pre-flight checklist now, once per repo - the card only
     needs to say where to fix it"""
@@ -1090,7 +1106,8 @@ def test_no_test_command_gets_a_short_pointer_at_the_repo_setting(board, monkeyp
     monkeypatch.setattr(lifecycle, "run_test_gate", _unavailable)
     result = lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
     assert result.phase == "refused"
-    assert result.refusal == "repo has no test command - set it in b"
+    assert result.refusal.startswith("repo has no test command - set it in b")
+    assert "mission control" in result.refusal
 
 
 def test_the_reviewer_budget_setting_reaches_the_review(board, monkeypatch):

@@ -401,6 +401,15 @@ function sendMissionControl(text) {
   scrollToBottom(mc.log); // sending always jumps to the newest line and resumes following
 }
 
+// a message written for the operator, left in mission control's input and never sent. like any
+// drawer open it takes no focus - / then enter is the operator's own send, so / must land here
+function prefillMissionControl(text) {
+  drawerFor('right').open();
+  lastDrawerEdge = 'right';
+  mc.input.value = text;
+  growComposer(mc.input, composerMaxLines);
+}
+
 // ---- workforce (,) - one card's agent chat -------------------------------------------------------
 
 const wf = {header: null, cycle: null, count: null, subheader: null, log: null, jump: null, input: null,

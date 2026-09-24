@@ -70,6 +70,7 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), b
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {
   loadRoster, jumpToCard, usageSections, sendMissionControl, renderMissionControl, mc, mcQueueFor,
+  prefillMissionControl,
   resolveWorkforceTarget, loadWorkforce, wf, buildDrawers, drawers, onBoardEnter, createMessageQueue,
   boardIdRef: () => currentBoardId, __badgeCalls,
   cycleWorkforce, loadMallCamSeconds, mallCamSecondsRef: () => mallCamSeconds, resetWorkforceTarget,
@@ -342,6 +343,24 @@ mod.drawers.right.close();
   const after = mod.createMessageQueue('reload-key', neverResolves, {backoffMs: [10_000]});
   assert.deepEqual(after.items().map(i => i.body), ['still here after reload'],
     'a fresh queue instance against the same key - standing in for a page reload - keeps the unsent message');
+}
+
+// ---- a prefill opens mission control with the text in its input: unsent, unfocused, / reaches it --
+{
+  const orchestratorPosts = () => calls.filter(c => c.path.includes('/orchestrator') && c.opts?.method === 'POST');
+  const postsBefore = orchestratorPosts().length;
+  mod.mc.input.blur();
+  mod.prefillMissionControl('plan a first card that adds a test suite');
+  await new Promise(r => setTimeout(r, 0));
+  assert.ok(mod.drawers.right.isOpen(), 'a prefill opens the drawer');
+  assert.equal(mod.mc.input.value, 'plan a first card that adds a test suite', 'the text waits in the input');
+  assert.ok(!mod.mc.input.focused, 'a prefill does not focus the input, same as any drawer open');
+  assert.equal(orchestratorPosts().length, postsBefore, 'a prefill sends nothing');
+  document._dispatch('keydown', {code: 'Slash', key: '/', target: document.body, preventDefault() {}});
+  assert.equal(document.activeElement, mod.mc.input, '/ lands on the prefilled input');
+  mod.mc.input.blur();
+  mod.mc.input.value = '';
+  mod.drawers.right.close();
 }
 
 // ---- workforce target: the focused card wins over the roster ------------------------------------

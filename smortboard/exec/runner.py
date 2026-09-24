@@ -196,6 +196,14 @@ READING_RULES = (
     "limit. Never re-read a file already read this run unless it changed since.\n"
 )
 
+# appended beside READING_RULES, for the same reason. tests are required on every board: the gate
+# runs the repo's suite, and a card that adds nothing for it to check has proven nothing
+TEST_RULES = (
+    "\nEVERY CRITERION GETS A TEST. Add or extend one in the repo's suite for each criterion, run "
+    "the suite in the foreground, fix until it passes, then commit. No tests in the repo yet: "
+    "adding the first ones is part of this card.\n"
+)
+
 
 def build_command(
     prompt: str,

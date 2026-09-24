@@ -382,17 +382,20 @@ def _tests_failed_note(command: str, exit_code: int, output: str, after_merging:
     """the stored comment for a TESTS_FAILED block: the parsed headline leads, the full gate
     command and output stay in the body for whoever opens the details."""
     context = f" after merging {after_merging} in" if after_merging else ""
-    return (
-        f"{_failing_tests_headline(output)}{context}.\n\n"
-        f"`{command}` exited {exit_code}.\n\n```\n{output}\n```"
+    # pytest's exit 5 is "no tests collected": nothing failed, there was nothing to check
+    headline = (
+        "no tests ran - the card must add tests for its criteria"
+        if exit_code == 5 and "no tests ran" in output
+        else _failing_tests_headline(output)
     )
+    return f"{headline}{context}.\n\n`{command}` exited {exit_code}.\n\n```\n{output}\n```"
 
 
 # a repo with no test_command is a board setting, not a fault in this run - the pre-flight
 # checklist already explains it once per repo, so the card only needs a pointer back to it
 def _gate_unavailable_note(exc: GateUnavailable) -> str:
     if isinstance(exc, NoTestCommand):
-        return "repo has no test command - set it in b"
+        return "repo has no test command - set it in b, or ask mission control (.) to set up tests"
     return f"The test gate could not run: {exc}"
 
 

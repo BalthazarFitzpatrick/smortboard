@@ -4,10 +4,11 @@
 // before assuming Menu fits a panel with real text inputs in it.
 //
 // relies on globals board.js already defines: api, apiOrError, escapeHtml, boards, currentBoardId,
-// loadBoards, onBoardEnter, activateTab, reenterIfFocusLost.
+// loadBoards, onBoardEnter, activateTab, reenterIfFocusLost - and chat.js's prefillMissionControl.
 
 const bp = {backdrop: null, panel: null, boardListEl: null, boardNameInput: null, boardStatusEl: null,
-  boardName: '', repoListEl: null, repoStatusEl: null, repoFields: {}, confirmDeleteId: null};
+  boardName: '', repoListEl: null, repoStatusEl: null, repoFields: {}, confirmDeleteId: null,
+  testsNotice: null};
 
 function buildBoardsDom() {
   const backdrop = document.createElement('div');
@@ -292,6 +293,7 @@ async function createBoardFromRepo(path, menu) {
   if (!ok) { setBoardStatus((body && body.error) || 'could not create the board', true); return; }
   menu.close();
   setBoardStatus('');
+  reportRepoTests(body.repo, body.tests, setBoardStatus);
   await loadBoards();
   activateTab(body.board.id);
   await onBoardEnter(body.board.id);
@@ -347,8 +349,59 @@ function renderRepoRow(repo) {
   }));
   editRow.append(testInput, imageInput, save, status);
 
-  row.append(head, path, editRow, renderRememberedLeases(repo));
+  row.append(head, path, editRow);
+  if (bp.testsNotice?.repoId === repo.id) row.appendChild(renderTestsNotice(bp.testsNotice));
+  row.appendChild(renderRememberedLeases(repo));
   return row;
+}
+
+// ---- a new repo's tests ------------------------------------------------------------------------
+
+// every card needs tests, so a repo landing without any says so at once: a command and tests for
+// it is one status line, no tests holds a notice on the repo's row until one of its ways out is
+// picked or the panel closes
+function reportRepoTests(repo, tests, setStatus) {
+  if (!tests) return;
+  if (!tests.has_tests) {
+    bp.testsNotice = {repoId: repo.id, name: repo.name, command: tests.command};
+    return;
+  }
+  if (tests.command) setStatus(`tests run with \`${tests.command}\` - change it on the repo's row`);
+  else setStatus("no test command found - set one on the repo's row", true);
+}
+
+// built like the delete confirm: a label and two toggles, redrawn from bp on every render
+function renderTestsNotice(notice) {
+  const box = document.createElement('div');
+  box.className = 'repo-tests-notice';
+  const label = document.createElement('span');
+  label.className = 'field-label';
+  label.textContent = `${notice.name} has no tests - every card needs them`;
+  const ask = document.createElement('span');
+  ask.className = 'toggle repo-tests-ask';
+  ask.textContent = 'ask mission control';
+  ask.onclick = () => askMissionControlForTests(notice);
+  const own = document.createElement('span');
+  own.className = 'toggle repo-tests-own';
+  own.textContent = 'use my own command';
+  own.onclick = () => focusOwnTestCommand(notice.repoId);
+  box.append(label, ask, own);
+  return box;
+}
+
+// written, never sent: the operator reads it in mission control and sends it with / then enter
+function askMissionControlForTests({name, command}) {
+  const runner = command ? '' : ', sets up its test runner and names the command';
+  closeBoardsPanel();
+  prefillMissionControl(`${name} has no tests yet. `
+    + `Plan a first card that adds a test suite for its current behaviour${runner}.`);
+  setBoardStatus('press / then enter to send it');
+}
+
+async function focusOwnTestCommand(repoId) {
+  bp.testsNotice = null;
+  await renderRepoList();
+  bp.repoListEl.querySelector(`.repo-row[data-repo-id="${repoId}"] .repo-edit-test`)?.focus();
 }
 
 // remembered globs approved once from the inbox (see lease/approve's remember flag) - every
@@ -406,22 +459,26 @@ async function saveRepoEdit(repoId, testCommand, image, statusEl) {
   statusEl.className = 'repo-edit-status repo-edit-ok';
 }
 
+function setRepoStatus(text, isError = false) {
+  bp.repoStatusEl.textContent = text;
+  bp.repoStatusEl.className = isError ? 'repo-status repo-error' : 'repo-status';
+}
+
 async function registerRepoFromPanel() {
   if (!currentBoardId) return;
   const body = {};
   REPO_FORM_FIELDS.forEach(({key}) => { body[key] = bp.repoFields[key].value.trim(); });
-  bp.repoStatusEl.textContent = 'registering...';
-  bp.repoStatusEl.className = 'repo-status';
+  setRepoStatus('registering...');
   const {ok, body: result} = await apiOrError(`/api/boards/${currentBoardId}/repos`, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
   });
   if (!ok) {
-    bp.repoStatusEl.textContent = (result && result.error) || 'could not register the repo';
-    bp.repoStatusEl.className = 'repo-status repo-error';
+    setRepoStatus((result && result.error) || 'could not register the repo', true);
     return;
   }
   REPO_FORM_FIELDS.forEach(({key, value}) => { bp.repoFields[key].value = value || ''; });
-  bp.repoStatusEl.textContent = '';
+  setRepoStatus('');
+  reportRepoTests(result, result.tests, setRepoStatus);
   await onBoardEnter(currentBoardId);
   renderRepoList();
 }
@@ -497,6 +554,7 @@ function openBoardsPanel() {
 
 function closeBoardsPanel() {
   if (!bp.backdrop || !bp.backdrop.parentNode) return;
+  bp.testsNotice = null;
   document.removeEventListener('keydown', onBoardsKey);
   bp.backdrop.remove();
   reenterIfFocusLost();
