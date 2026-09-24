@@ -11,6 +11,11 @@ run it in two terminals, or background the first:
 
 each image keeps the name and the pixel size the readme already references - the viewport per shot
 is what fixes the size, so do not change one without the other.
+
+two panels are served fixed responses from tools/fixtures/ instead of the demo's own. pre-flight
+(h) probes this machine's docker and gh and each repo's folder, and pull requests (v) asks gh about
+every open one - in the demo that shows whatever machine takes the shot, next to repos that do not
+exist. preflight.json and pulls.json keep the real api's shape, so the panels render them as-is.
 """
 
 from __future__ import annotations
@@ -29,6 +34,8 @@ CARD_VIEWPORT = {"width": 1440, "height": 860}
 
 # card-states.jpg is a band cut across the columns rather than a whole screen
 STATES_STRIP = {"width": 1043, "height": 120}
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def settle(page: Page, ms: int = 1200) -> None:
@@ -152,6 +159,60 @@ def shoot_board_set(page: Page, out: Path) -> None:
         shoot(page, out, name)
         page.keyboard.press("Escape")
         settle(page, 800)
+
+    shoot_key_screens(page, out)
+
+
+def serve_fixture(page: Page, endpoint: str, name: str) -> None:
+    body = (FIXTURES / name).read_text()
+    page.route(
+        f"**/api/{endpoint}",
+        lambda route: route.fulfill(status=200, content_type="application/json", body=body),
+    )
+
+
+def press_on_board(page: Page, key: str, ready: str) -> None:
+    # blurred first, as the settings shot does: a key binding is dead while a field has focus
+    page.evaluate("() => document.activeElement && document.activeElement.blur()")
+    settle(page, 400)
+    page.keyboard.press(key)
+    page.wait_for_selector(ready, timeout=8000)
+
+
+def close_with_escape(page: Page, panel: str) -> None:
+    page.keyboard.press("Escape")
+    page.wait_for_selector(panel, state="detached", timeout=8000)
+    settle(page, 800)
+
+
+def shoot_key_screens(page: Page, out: Path) -> None:
+    """the full-frame panels the readme's one-key-per-screen table shows beside costs and digest"""
+    serve_fixture(page, "preflight", "preflight.json")
+    serve_fixture(page, "pulls", "pulls.json")
+
+    press_on_board(page, "KeyO", ".settings-panel")
+    settle(page, 1500)
+    shoot(page, out, "settings.jpg")
+    close_with_escape(page, ".settings-panel")
+
+    # the second page is the one listing every panel key, the first only moves and acts on cards
+    press_on_board(page, "KeyS", ".menu-panel.shortcut-overlay")
+    settle(page, 700)
+    page.keyboard.press("ArrowRight")
+    settle(page, 900)
+    shoot(page, out, "shortcuts.jpg")
+    close_with_escape(page, ".menu-panel.shortcut-overlay")
+
+    # rows replace the "checking..." placeholder once the fixture lands
+    press_on_board(page, "KeyH", ".preflight-panel .preflight-row")
+    settle(page, 900)
+    shoot(page, out, "preflight.jpg")
+    close_with_escape(page, ".preflight-panel")
+
+    press_on_board(page, "KeyV", ".pulls-panel .pulls-row")
+    settle(page, 900)
+    shoot(page, out, "pulls.jpg")
+    close_with_escape(page, ".pulls-panel")
 
 
 # the settings panel is one scrolling column of three groups, and it has grown too tall to read as
