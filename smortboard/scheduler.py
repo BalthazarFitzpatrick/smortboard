@@ -7,11 +7,11 @@ the same entry point a manual run uses. Three rules gate a start, each documente
 DEPENDENCIES - free mode waits for merged pull requests; review mode allows one checking parent
   and a stack of at most three cards.
 LEASES - two cards in the same repo whose lease globs could touch the same file never run together.
-USAGE_LIMIT - a run that blocks on it marks the active credential profile limited. Rotation to the
-  next configured profile is opt-in (auto_switch_profiles == "on"); by default the board just
-  parks new starts until the earliest reset, same as before profiles existed. Already-running
-  cards are left alone either way. See smortboard/profiles.py. A cross-lab fallback model is
-  switched to unasked unless usage_limit_route is "attention", which asks in the inbox instead.
+USAGE_LIMIT - a run that blocks on it marks the active credential profile limited, and
+  usage_limit_route decides the rest. Unset (wait) parks new starts until the earliest reset;
+  "attention" parks too and asks in the inbox about the fallback model; "switch" rotates to the
+  next configured profile and, when none is free, to the role's cross-lab fallback model.
+  Already-running cards are left alone either way. See smortboard/profiles.py.
 BUDGET - a board with a daily_budget_usd set and today's (UTC) spend at or past it starts no new
   cards; already-running cards finish. See _board_daily_budget and telemetry.board_spend_today.
 
@@ -44,7 +44,7 @@ from smortboard.review.merge_request import PullRequestState, pr_view
 from smortboard.review.rebase_guard import flag_outdated, rebase_onto_base
 from smortboard.store.api import Store
 from smortboard.store.errors import NotFoundError
-from smortboard.store.schema import DEFAULT_USAGE_LIMIT_ROUTE
+from smortboard.store.schema import DEFAULT_USAGE_LIMIT_ROUTE, USAGE_LIMIT_ROUTES
 
 # the same author every other board-written comment carries - see lifecycle.BOARD_AUTHOR
 _BOARD_AUTHOR = "smortboard"
@@ -86,9 +86,9 @@ _RESET_LOOKBACK_EVENTS = 200
 
 
 def usage_limit_route(settings: dict[str, Any]) -> str:
-    """the route in effect - "attention" asks before a cross-lab model switch, anything else switches"""
+    """the route in effect - wait, attention or switch; anything unknown waits"""
     route = settings.get("usage_limit_route")
-    return "attention" if route == "attention" else DEFAULT_USAGE_LIMIT_ROUTE
+    return route if route in USAGE_LIMIT_ROUTES else DEFAULT_USAGE_LIMIT_ROUTE
 
 
 def latest_limit(store: Store, card_id: str) -> dict[str, Any] | None:
@@ -882,15 +882,10 @@ class BoardScheduler:
                 each hit disk - with only the implicit "default" profile configured it stays a pure read,
                 so a single-credential board never grows a profiles.json.
 
-        rotation is opt-in: auto_switch_profiles must be "on". Anything else (unset, or a stored "off"
-                from before this flipped) skips the rotation half - the profile is still marked limited
-                (so it is skipped once switching is turned on later), but the board parks until the reset
-                exactly as it did before profiles existed, instead of rotating credentials on the
-                operator's behalf without being asked.
-
-        the cross-lab fallback walk runs only while usage_limit_route is "fallback" (the default).
-        "attention" leaves the card blocked for the inbox to ask about, and the board still re-runs
-        it on its own model once the pause lapses - that is a wait, not a model switch.
+        rotation and the cross-lab fallback walk both run only while usage_limit_route is "switch".
+        wait (unset) and "attention" skip them - the profile is still marked limited (so it is
+        skipped once switching is turned on later), and the board re-runs the card on its own
+        model once the pause lapses. "attention" also leaves it in the inbox to ask about.
         """
         store = Store(self._db_path)
         try:
@@ -930,8 +925,8 @@ class BoardScheduler:
                         resets_at = max(resets)
                         break
             resets_at = resets_at or (time.time() + _FALLBACK_PARK_SECONDS)
-            auto_switch = store.get_settings().get("auto_switch_profiles") == "on"
-            if auto_switch:
+            switching = usage_limit_route(settings) == "switch"
+            if switching:
                 result = profiles.handle_usage_limit(resets_at, lab=lab, name=profile)
             else:
                 # a single-profile board must never write a state file just because a run hit
@@ -962,7 +957,7 @@ class BoardScheduler:
                 own_lab_free = profiles.has_multiple_profiles(lab) and profiles.next_available(
                     lab=lab
                 )
-                if usage_limit_route(settings) == "fallback" and not own_lab_free:
+                if switching and not own_lab_free:
                     target = profiles.usable_fallback(
                         settings.get(f"{role}_cross_lab_fallback") or [],
                         lab,

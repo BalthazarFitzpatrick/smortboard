@@ -18,7 +18,7 @@ was added. A bare access token pulled out of that JSON is refused, as measured i
   read only from these files.
 - **Several subscriptions, or both labs:** one profile per credential in `shift`+`p`, each under
   its own name. When the active one is rate-limited, the board rotates to the next profile of the
-  same lab - only with *switch credential profiles automatically* on in settings; otherwise new
+  same lab - only with `usage_limit_route` set to `switch` in settings; otherwise new
   starts wait for the reset. Crossing to the other lab needs a [fallback list per role](../practices/labs.md), on
   purpose.
 

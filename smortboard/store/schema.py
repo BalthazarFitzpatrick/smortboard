@@ -23,10 +23,11 @@ BLOCKED_REASON_CODES = (
 # spends a run's worth of tokens that nobody asked for
 FINDINGS_ROUTES = ("fix", "attention")
 DEFAULT_FINDINGS_ROUTE = "attention"
-# what a usage limit does to a role with a cross-lab fallback: switch to it unasked, or block and
-# ask in the inbox. unset means fallback, the behaviour before this setting existed
-USAGE_LIMIT_ROUTES = ("fallback", "attention")
-DEFAULT_USAGE_LIMIT_ROUTE = "fallback"
+# what a usage limit does. unset is wait: mark the profile limited and park until the reset.
+# attention blocks the card and asks in the inbox about the fallback model. switch rotates to the
+# next credential profile, then walks the cross-lab fallback when none is free
+USAGE_LIMIT_ROUTES = ("attention", "switch")
+DEFAULT_USAGE_LIMIT_ROUTE = "wait"
 
 # a deleted card is kept as a backup for this many days before it is purged for good - see
 # Store.delete_card, Store.restore_card and Store._purge_expired_backups
@@ -35,6 +36,19 @@ BACKUP_RETENTION_DAYS = 7
 # a role's reasoning effort - claude --effort, codex model_reasoning_effort. unset passes no flag,
 # the cli's own default
 EFFORT_LEVELS = ("low", "medium", "high")
+
+# folds settings rows from before the usage-limit route became one setting - run as a migration
+# and again after a full bundle restore, since an old bundle carries the old rows. idempotent
+USAGE_LIMIT_FOLD_SQL = """
+    UPDATE settings SET value = 'switch' WHERE key = 'usage_limit_route' AND value = 'fallback';
+    INSERT OR REPLACE INTO settings (key, value)
+        SELECT 'usage_limit_route', 'switch'
+        WHERE EXISTS (SELECT 1 FROM settings WHERE key = 'auto_switch_profiles' AND value = 'on')
+        AND NOT EXISTS (
+            SELECT 1 FROM settings WHERE key = 'usage_limit_route' AND value = 'attention'
+        );
+    DELETE FROM settings WHERE key = 'auto_switch_profiles';
+"""
 
 _MIGRATIONS: list[str] = [
     # 1: base tables
@@ -533,6 +547,9 @@ _MIGRATIONS: list[str] = [
 
     PRAGMA foreign_keys = ON;
     """,
+    # 26: usage limits became one setting - auto_switch_profiles "on" and the old "fallback" route
+    # both read as switch now, an explicit attention stays attention
+    USAGE_LIMIT_FOLD_SQL,
 ]
 
 

@@ -33,7 +33,7 @@ def test_export_bundle_has_no_credential_or_token_material(tmp_path, monkeypatch
         repo = store.create_repo(board["id"], "smortboard", "/repo", "main")
         card = store.create_card(board["id"], repo["id"], "a card", tasks=["t1"])
         store.add_comment(card["id"], "operator", "hi")
-        store.set_setting("auto_switch_profiles", "on")
+        store.set_setting("usage_limit_route", "switch")
 
         bundle_path = tmp_path / "bundle.json"
         store.export(bundle_path)

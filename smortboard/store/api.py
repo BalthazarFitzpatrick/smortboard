@@ -47,11 +47,9 @@ COMPLEXITY_LEVELS = (1, 2, 3)
 # smortboard.scheduler.DEFAULT_MAX_PARALLEL
 # resume_briefing gates lifecycle.py's resume briefing - "off" disables it, unset means on
 # gate_timeout_seconds caps the test gate - unset means review.gates.GATE_TIMEOUT_SECONDS (600)
-# auto_switch_profiles gates BoardScheduler's USAGE_LIMIT rotation - opt-in, "on" rotates
-# credentials; unset (or any other value, including a stored "off" from before this flipped)
-# parks the board until the reset instead, the pre-profiles behaviour
-# usage_limit_route gates the cross-lab half of a USAGE_LIMIT - "attention" blocks the card in the
-# inbox instead of switching model unasked; unset (or "fallback") switches, see schema.USAGE_LIMIT_ROUTES
+# usage_limit_route is what a USAGE_LIMIT does - unset waits for the reset, "attention" asks in
+# the inbox, "switch" rotates credential profiles then walks the cross-lab fallback, see
+# schema.USAGE_LIMIT_ROUTES
 # mall_cam_interval_seconds is the workforce drawer's auto-cycle period (cf90bacc) - unset means
 # chat.js's own default (10)
 # enable_mouse turns on the pointer affordances that mirror the keyboard - hover focusing a card,
@@ -70,7 +68,6 @@ _SETTING_KEYS = (
     "max_parallel",
     "resume_briefing",
     "gate_timeout_seconds",
-    "auto_switch_profiles",
     "usage_limit_route",
     "mall_cam_interval_seconds",
     "enable_mouse",

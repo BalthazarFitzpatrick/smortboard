@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.store.errors import BundleError, UnknownFieldError
+from smortboard.store.schema import USAGE_LIMIT_FOLD_SQL
 
 _TABLES = (
     "boards",
@@ -115,6 +116,8 @@ def import_bundle(conn: sqlite3.Connection, path: str | Path) -> None:
         _insert_all(conn, "attachments", [record])
 
     conn.commit()
+    # an older bundle carries settings rows from before the usage-limit route became one setting
+    conn.executescript(USAGE_LIMIT_FOLD_SQL)
 
 
 def import_as_new(conn: sqlite3.Connection, bundle: object) -> list[str]:
