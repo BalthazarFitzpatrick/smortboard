@@ -868,7 +868,7 @@ def build_demo_db(path: str | Path) -> Path:
 # the demo's own credential profiles. the usage and profiles panels read these off DISK, not out
 # of the database, so a demo that only swapped the db would still put the operator's real profile
 # names on screen - which is exactly what a demo is for not doing
-DEMO_PROFILES = ["weekday", "weekend"]
+DEMO_PROFILES = ["work", "personal"]
 
 
 def isolate_demo_config(root: Path) -> None:
