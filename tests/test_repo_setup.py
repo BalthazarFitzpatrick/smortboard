@@ -204,3 +204,19 @@ def test_a_folder_name_github_would_refuse_says_rename(tmp_path, gh):
 def test_not_a_folder_is_refused(tmp_path, gh):
     with pytest.raises(SetupRefused, match="not a folder"):
         prepare(tmp_path / "nope", runner=gh)
+
+
+def test_a_push_that_fails_after_creating_the_repo_names_the_repo_left_on_github(tmp_path, gh):
+    folder = tmp_path / "halfway"
+    folder.mkdir()
+    real = gh.__call__
+
+    def failing_push(cmd, cwd=None, timeout=60):
+        if cmd[:1] == ["git"] and "push" in cmd:
+            gh.calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="network down")
+        return real(cmd, cwd=cwd, timeout=timeout)
+
+    with pytest.raises(SetupRefused, match="created tester/halfway on GitHub") as refused:
+        prepare(folder, runner=failing_push)
+    assert "gh repo delete tester/halfway" in str(refused.value)

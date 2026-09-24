@@ -191,6 +191,7 @@ def prepare(
             git.must("branch", DEVELOPMENT, default)
             result.steps.append(f"branched {DEVELOPMENT} from {default}")
 
+    full = None
     if not has_origin:
         full = _create_origin(root, git, runner, result.steps)
         result.created_origin = True
@@ -200,5 +201,14 @@ def prepare(
                 f"gh repo edit {full} --default-branch {default}"
             )
     if not dev_on_origin:
-        _push_development(git, result.steps)
+        try:
+            _push_development(git, result.steps)
+        except SetupRefused as exc:
+            # the GitHub repo exists now either way - say so, or a retry only hears "name taken"
+            if full is None:
+                raise
+            raise SetupRefused(
+                f"created {full} on GitHub, then {exc}. the repo stays there: push "
+                f"{DEVELOPMENT} yourself, or `gh repo delete {full}` and try again"
+            ) from exc
     return result
