@@ -1,6 +1,6 @@
 """local folders a person can pick a repo from, and the one fact the board needs from a picked repo
 
-read-only helpers behind the boards panel's "from local repo" button. the server binds 127.0.0.1,
+read-only helpers behind the boards panel's "new board" folder picker. the server binds 127.0.0.1,
 so listing folders under the operator's home only ever shows them their own disk
 """
 

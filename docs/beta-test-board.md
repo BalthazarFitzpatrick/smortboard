@@ -40,11 +40,10 @@ when mission control's planning is what you want to test.
 
 ---
 
-## 1. Create the repo (5 minutes)
+## 1. Create the files (5 minutes)
 
 ```bash
 mkdir -p ~/Documents/dev/smort-arcade && cd ~/Documents/dev/smort-arcade
-git init -b main
 mkdir -p server public/js public/css test data
 
 cat > package.json <<'EOF'
@@ -75,20 +74,17 @@ printf 'data/\nnode_modules/\n' > .gitignore
 printf '# Comet Catcher\n\nA browser game built card by card on smortboard.\n' > README.md
 touch server/.gitkeep public/js/.gitkeep public/css/.gitkeep
 
-git add -A && git commit -m "initial project scaffold"
-git branch development
-gh repo create smort-arcade --private --source . --remote origin
-git push -u origin development
-# main is yours: push it and make it the default branch on GitHub
-git push -u origin main && gh repo edit --default-branch main
 ```
 
 ## 2. Set up the board
 
 1. Start the board from the latest `development` of smortboard: `uv run smortboard`.
-2. `b` -> **from local repo** -> pick `~/Documents/dev/smort-arcade`.
-3. On the repo's row: default branch **`development`**, test command **`node --test`**. No lint
-   command.
+2. `b` -> **new board** -> pick `~/Documents/dev/smort-arcade`. It has files and no git, so the
+   board lists what the first commit would hold: confirm. It commits, makes `development`, creates
+   the private GitHub repo `smort-arcade`, pushes `development`, and shows the one push-main command -
+   run it.
+3. On the repo's row: base **`development`**, test command **`npm test`** (found from
+   `package.json`). No lint command.
 4. `o`:
    - **file leases**: leave this board on **strict** for now; the table in section 4 says when to switch.
    - **budgets and spend caps**: a daily budget for this board, e.g. `$30`.

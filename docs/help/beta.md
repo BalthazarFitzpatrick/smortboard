@@ -36,8 +36,8 @@ merges into main.
 
 ## Try it end to end
 
-`uv run smortboard seed-beta <empty folder>` makes a small browser-game repo and a board of 15 cards
-already written: dependency chains, parallel tracks, and a test gate that needs nothing but Node.
+`uv run smortboard seed-beta <empty folder>` makes a small browser game on a private GitHub repo
+and a board of 15 cards already written: dependency chains, parallel tracks, and a test gate that needs nothing but Node.
 [Practice board](../beta-test-board.md) walks it. It also has the mission-control prompt, if you
 would rather plan it yourself, and a table of which board feature each step exercises.
 

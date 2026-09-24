@@ -67,10 +67,11 @@ to mint a key.
 
    Opens the board at the printed link. Keep the terminal open.
 
-2. **Repo.** `b` -> from local repo: a clone with a GitHub `origin` (private is fine), default
-   branch pushed. Tests are required. Has tests: the board finds how to run them. Has none: mission
-   control writes a first suite, or you point at your own command. New repo: its first card sets up
-   the tests.
+2. **Repo.** `b` -> **new board** -> pick a folder, or name a new one. The board adds what is
+   missing: git, a `development` branch, a private GitHub repo. It never pushes `main` - when it
+   made the GitHub repo, it shows you the one command to run. Or **from online repo**: clone one of
+   yours. Tests are required. Has tests: the board finds how to run them. Has none: mission control
+   writes a first suite, or you point at your own command.
 
 3. **Lab keys.** `claude setup-token` or `codex login` in your terminal. On the board: `shift`+`p`,
    add a profile, paste, activate. Remove the empty `default`.
@@ -79,8 +80,8 @@ to mint a key.
    the board.
 
 Look before you set up: `uv run smortboard --demo` - throwaway board, invented cards, port 8001.
-Practice run: `uv run smortboard seed-beta <empty folder>` - a small game repo and 15 written cards
-([walkthrough](docs/beta-test-board.md)).
+Practice run: `uv run smortboard seed-beta <empty folder>` - a small game on a private GitHub repo
+and 15 written cards; you run one push command ([walkthrough](docs/beta-test-board.md)).
 
 ## Best practices
 
