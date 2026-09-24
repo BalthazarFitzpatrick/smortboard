@@ -124,14 +124,3 @@
   color: var(--text-dim);
   word-break: break-all;
 }
-
-/* the card you stepped into keeps its glow while focus sits on one of its controls or its field.
-   TODO(ui_base focus-within): replace with ui_base's focus-within modifier once it lands */
-.inbox-card.focus-glow:focus-within {
-  transform: scale(var(--focus-lift));
-  filter: saturate(var(--focus-light-saturate)) brightness(var(--focus-light-brightness));
-  box-shadow:
-    inset 0 0 0 var(--focus-ring-width) var(--focus-ring-color),
-    inset 0 0 var(--focus-inner-glow-blur) var(--focus-inner-glow-spread) var(--focus-inner-glow-color);
-  z-index: 2;
-}

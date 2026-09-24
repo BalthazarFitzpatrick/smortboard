@@ -214,7 +214,8 @@ function buildSummary(row) {
 // summary of what it needs - the lease/answer controls only show up once this card has focus
 function buildInboxCard(row, idx, focused) {
   const card = document.createElement('div');
-  card.className = 'row card card-strip card-attention inbox-card focus-glow';
+  // focus-glow-within: the card stays lit while focus sits on one of its controls or its field
+  card.className = 'row card card-strip card-attention inbox-card focus-glow focus-glow-within';
   card.tabIndex = -1;
   card.dataset.cardId = row.card_id;
   card.dataset.idx = String(idx);
