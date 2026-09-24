@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from smortboard.lifecycle import LifecycleResult
 
 from smortboard.actions import with_next
-from smortboard.exec.worktrees import branch_name, fetch_base
+from smortboard.exec.worktrees import branch_name, fast_forward_base, fetch_base
 from smortboard.review.decide import DecisionRefused, accept_card
 from smortboard.review.integrate import _git, integrate, integration_lock, open_release_request
 from smortboard.review.landing import landing_lock, resolve_repo_key
@@ -117,6 +117,11 @@ def land_card(
             if result.sha or not result.moved:
                 landed, reason = result.sha, result.reason or reason
                 break
+        if landed is not None:
+            # the push moved origin/<base> only - the local branch follows, or everything reading
+            # it (a card cut, mission control) keeps seeing the base from before this landing
+            moved = fast_forward_base(repo["path"], base)
+            store.append_event(card_id, "local_base", {"base": base, "outcome": moved})
 
     if landed is None:
         _note(
