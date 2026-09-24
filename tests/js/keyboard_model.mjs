@@ -247,6 +247,18 @@ assert.ok(calls.some(c => c.path === '/api/boards/b1/fold' && c.opts?.method ===
 assert.equal(calls.filter(c => c.path === '/api/cards/c1/accept').length, acceptsBefore,
   'y answered the question - it never also accepted the focused card');
 
+// ---- y resolves on the physical key: on a qwertz layout that key types z and still answers yes --
+strip.focus();
+press('KeyY');
+await flush();
+assert.equal(menuTitle(), 'accept this card?', 'y asks first');
+const acceptsBeforeZ = calls.filter(c => c.path === '/api/cards/c1/accept').length;
+// the confirm's own listener sees the key first in a browser, and stops it there
+fireKeydown(menuPanel(), {code: 'KeyY', key: 'z'});
+await flush();
+assert.equal(calls.filter(c => c.path === '/api/cards/c1/accept').length, acceptsBeforeZ + 1,
+  'the KeyY key answers yes whatever letter the layout gives it');
+
 // ---- the mouse is an option, off by default: with it off the pointer changes nothing -----------
 const settle = ms => new Promise(r => setTimeout(r, ms));
 function fireMouse(el, type, evt = {}) {
