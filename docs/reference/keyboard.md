@@ -41,7 +41,7 @@ here.
 | `left` | move focus left |
 | `right` | move focus right |
 | `enter` | open the focused card |
-| `space` | open the focused card, or close the open one |
+| `space` | open the focused card, or close it. on an open card: pop the focused section out, or back |
 | `esc` | one level back: input -> panel -> closed |
 | `r` | run the focused card, with confirmation |
 | `k` | stop the focused card if it is running |
