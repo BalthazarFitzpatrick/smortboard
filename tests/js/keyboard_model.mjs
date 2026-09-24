@@ -54,7 +54,7 @@ const src = [uiBase('menu.js'), uiBase('buckets.js'), uiBase('expand.js'), uiBas
   smort('chat.js'), smort('shortcuts.js'), smort('board.js'), smort('settings.js'),
   smort('boards.js')].join('\n;\n');
 const mod = new Function('makeDrawer', `${src}
-;return {renderCardStrip, st, bp, pe, BINDINGS, surfaceOverBoard, topSurface, surfaceFields, panelStops, computePanelMove,
+;return {Menu, renderCardStrip, st, bp, pe, BINDINGS, surfaceOverBoard, topSurface, surfaceFields, panelStops, computePanelMove,
   setMouseEnabled, mouseAffordances, focusFirstCardSection, wireCommentInput,
   setBoard: id => { currentBoardId = id; },
   setOpenCard: value => { openCard = value; },
@@ -385,16 +385,20 @@ mod.setMouseEnabled(false);
 }
 
 // ---- space presses a focused menu row, the same as enter (the new-board folder picker) ------------
+// ui_base's Menu answers space itself since v0.2.7, so the board carries no shim of its own
 {
-  const panel = element('div', 'menu-panel');
-  const row = element('div', 'toggle menu-item');
-  panel.appendChild(row);
-  document.body.appendChild(panel);
-  let clicks = 0;
-  row.click = () => { clicks++; };
+  const picked = [];
+  const menu = new mod.Menu({title: 'folder', sections: [{kind: 'list', items: [{id: 'a', label: 'a/'}],
+    onPick: item => picked.push(item.id)}]});
+  menu.openAt({x: 0, y: 0});
+  await new Promise(r => setTimeout(r, 0)); // Menu listens for keys one tick after it opens
+  const row = menu.el.querySelectorAll('.menu-item')[0];
+  // the stub has no click(); a browser's runs the row's own handler, which is what Menu relies on
+  row.click = () => row.onclick?.({});
+  row.focus();
   document._dispatch('keydown', {code: 'Space', key: ' ', target: row, preventDefault() {}});
-  assert.equal(clicks, 1, 'space on a menu row presses it');
-  panel.remove();
+  assert.deepEqual(picked, ['a'], 'space on a focused menu row picks it');
+  menu.close();
 }
 
 console.log('ok');

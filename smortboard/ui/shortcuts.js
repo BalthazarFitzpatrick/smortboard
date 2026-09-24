@@ -346,14 +346,6 @@ function movePanelField(evt) {
 
 document.addEventListener('keydown', evt => {
   if (withModifier(evt)) return;
-  // space presses a focused menu row the way enter does - ui_base's Menu only answers enter, so
-  // stepping into a folder in the new-board picker needed enter while every button took space
-  if (evt.code === 'Space' && evt.target.classList?.contains('menu-item')
-      && evt.target.closest?.('.menu-panel')) {
-    evt.preventDefault();
-    evt.target.click();
-    return;
-  }
   // the fold question owns y and n while it is open - y is otherwise accept, and accepting the
   // focused card while answering "fold?" would be the worst possible misread
   if (openOverlay && openOverlay.key === 'KeyF' && (evt.code === 'KeyY' || evt.code === 'KeyN')) {
