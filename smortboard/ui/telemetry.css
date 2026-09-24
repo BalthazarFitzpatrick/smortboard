@@ -20,6 +20,8 @@
 .cost-rows .progress-row { margin: 0; }
 .cost-foot { flex-direction: column; align-items: flex-start; gap: 4px; }
 .cost-foot .cost-note { color: var(--text-dim); }
+/* long per-lab model lines wrap inside the panel - ui_base's .card-foot .stat never shrinks */
+.cost-foot .stat { flex: 0 1 auto; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 
 /* the 3x3 grid the redesign asked for: total / accepted / refused, each carrying spend, price
    per card and price per pr, readable before a scan ever reaches the per-board table below it */
