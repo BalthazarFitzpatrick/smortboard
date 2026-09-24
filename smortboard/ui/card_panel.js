@@ -59,7 +59,7 @@ function openActionConfirm(title, confirmLabel, cancelLabel, onConfirm, onDismis
   // y is the explicit yes whatever holds focus; enter is deliberately NOT bound here, so it
   // activates the focused button instead of always confirming
   menu.el?.addEventListener('keydown', evt => {
-    if (evt.key !== 'y') return;
+    if (evt.code !== 'KeyY') return;
     evt.preventDefault();
     evt.stopPropagation();
     menu.close();

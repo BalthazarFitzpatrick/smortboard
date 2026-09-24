@@ -40,9 +40,19 @@ A card executes in it.
 
 ### 3. A board and a repo
 
-`b` -> **from local repo** -> pick a clone of a GitHub repo with its default branch pushed. Private
-is enough. The board pushes card branches and opens pull requests there, so a repo with no GitHub
-`origin` stops every card at hand-over.
+`b` -> **new board** -> pick a folder, or type a new folder's name. The board looks at it and adds
+only what is missing:
+
+| The folder | The board | You |
+|---|---|---|
+| new or empty | git, a starter commit on `main`, a `development` branch, a private GitHub repo, `development` pushed | run the one push-main command it shows |
+| has files, no git | lists what the first commit would hold and waits for your confirm; a `.gitignore` keeps `.env` and keys out; then as above | confirm, then the command |
+| a repo without GitHub | `development` if missing, a private GitHub repo, `development` pushed | the command |
+| a repo on GitHub | fetches or creates `development`, pushes it if missing | nothing |
+
+The board never pushes `main`: the command it shows (`git push -u origin main && gh repo edit
+--default-branch main`) is yours to run once. Cards land on `development`. **from online repo**
+clones one of your GitHub repos and does the same. `gh` must be logged in (`gh auth login`).
 
 **Tests are required.** Cards write them - every criterion gets one - and the gate runs them. When
 you add the repo, the board reads its committed files:
@@ -82,5 +92,6 @@ There is no switch to turn tests off: the gate refuses a card on a repo without 
 
 ## Practice run
 
-`uv run smortboard seed-beta <empty folder>` makes a small browser-game repo and a board of 15 cards
-written for it. [Practice board](../beta-test-board.md) takes it to a green `h` and `w`.
+`uv run smortboard seed-beta <empty folder>` makes a small browser game on a private GitHub repo
+and a board of 15 cards written for it - the same setup as new board, so you run the one push-main
+command it prints. [Practice board](../beta-test-board.md) takes it to a green `h` and `w`.

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote
 
-from smortboard import profiles
+from smortboard import online_repos, profiles, repo_setup
 from smortboard.attention import (
     AnswerRefused,
     answer_card,
@@ -27,7 +27,7 @@ from smortboard.digest import board_digest
 from smortboard.exec.runner import SYSTEM_PROMPT
 from smortboard.labs.catalog import ROLES as MODEL_ROLES
 from smortboard.labs.catalog import load_catalog
-from smortboard.local_repos import detect_default_branch, list_folders
+from smortboard.local_repos import list_folders
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.orchestrator import (
     DEFAULT_ORCHESTRATOR_MODEL,
@@ -83,7 +83,10 @@ _ROUTES = [
     (re.compile(r"^/health$"), "GET"),
     (re.compile(r"^/api/boards$"), "GET"),
     (re.compile(r"^/api/boards$"), "POST"),
+    (re.compile(r"^/api/boards/from-folder$"), "POST"),
     (re.compile(r"^/api/boards/from-repo$"), "POST"),
+    (re.compile(r"^/api/boards/from-online-repo$"), "POST"),
+    (re.compile(r"^/api/online-repos$"), "GET"),
     (re.compile(r"^/api/folders$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/cards$"), "GET"),
     (re.compile(r"^/api/boards/(?P<board_id>[^/]+)/repos$"), "GET"),
@@ -216,6 +219,24 @@ def _tests_reply(repo: dict[str, Any], tests: RepoTests) -> dict[str, Any]:
     """what the boards panel needs to ask for tests up front: the command stored on the repo, which
     a request's own command wins over detection for, and whether any test exists yet"""
     return {"command": repo["test_command"], "has_tests": tests.has_tests}
+
+
+def _make_new_folder(parent: Path, name: object) -> Path:
+    """the folder `name` made inside `parent` for a new board - one plain name, never a path, and
+    never a folder that is already there. raises ValueError with what to change"""
+    if not isinstance(name, str) or name.strip() in ("", ".", "..") or "/" in name or "\\" in name:
+        raise ValueError("a new folder is one plain name - no slashes, not . or ..")
+    # the folder becomes a GitHub repo of the same name: refuse one GitHub would, before mkdir
+    if not repo_setup.valid_repo_name(name):
+        raise ValueError(f"{name!r} cannot be a GitHub repo name - use letters, digits, . _ or -")
+    folder = parent / name
+    try:
+        folder.mkdir()
+    except FileExistsError as exc:
+        raise ValueError(f"{folder} already exists - pick it from the list instead") from exc
+    except OSError as exc:
+        raise ValueError(f"could not create {folder}: {exc}") from exc
+    return folder
 
 
 def _make_handler(
@@ -355,8 +376,14 @@ def _make_handler(
                 body = self._read_json()
                 board = store.create_board(name=body["name"])
                 self._send_json(201, board)
-            elif path == "/api/boards/from-repo" and method == "POST":
-                self._handle_board_from_repo()
+            elif path in ("/api/boards/from-folder", "/api/boards/from-repo") and method == "POST":
+                # from-repo is the older name for the same route: one registration path
+                self._handle_board_from_folder()
+            elif path == "/api/boards/from-online-repo" and method == "POST":
+                self._handle_board_from_online_repo()
+            elif path == "/api/online-repos":
+                # the runner is looked up per call, so a test can swap in a gh that stays local
+                self._send_json(200, online_repos.list_online_repos(online_repos.default_runner))
             elif path == "/api/folders":
                 query = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
                 self._send_json(200, list_folders(query.get("under", [None])[0]))
@@ -846,32 +873,84 @@ def _make_handler(
             )
             self._send_json(201, {**repo, "tests": _tests_reply(repo, tests)})
 
-        def _handle_board_from_repo(self) -> None:
-            """a board named after a local repo, with that repo registered on it - the boards
-            panel's "from local repo" button. every check runs before anything is written, so a
-            folder that is not a usable repo leaves no empty board behind
+        def _handle_board_from_folder(self) -> None:
+            """a board named after a folder, with the folder registered on it as its repo - the
+            boards panel's "new board". repo_setup first gives the folder only what it lacks (git,
+            development, a private origin), and a folder with files is asked about before its
+            first commit. a refusal or a question leaves no board behind
             """
             body = self._read_json()
-            path = Path(body.get("path", "")).expanduser()
-            if not path.is_dir():
-                self._send_json(400, {"error": f"not a folder: {path}"})
+            folder = Path(body.get("path") or "").expanduser()
+            # an empty or relative path would resolve against the server's own working directory
+            if not folder.is_absolute():
+                self._send_json(400, {"error": "path must be an absolute folder path"})
                 return
+            if body.get("new_folder") is not None:
+                try:
+                    folder = _make_new_folder(folder, body["new_folder"])
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+            self._send_json(
+                *self._board_for_folder(
+                    folder, confirm=bool(body.get("confirm")), test_command=body.get("test_command")
+                )
+            )
+
+        def _handle_board_from_online_repo(self) -> None:
+            """clones a GitHub repo the operator picked into the folder they picked, then gives the
+            clone the same setup and registration as "new board". a refused clone leaves nothing;
+            a clone whose setup fails stays on disk and is named in the error - the operator's
+            folder, not ours to delete
+            """
+            body = self._read_json()
             try:
-                branch = detect_default_branch(str(path))
-                expanded_path = validate_repo(path.name, str(path), branch)
+                path = online_repos.clone_online_repo(
+                    body.get("repo") or "", body.get("folder") or "", online_repos.default_runner
+                )
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
-            tests = detect_tests(expanded_path, branch)
-            board = store.create_board(name=path.name)
+            status, reply = self._board_for_folder(Path(path), confirm=False, test_command=None)
+            if status != 201:
+                # a clone has commits, so a 409 cannot happen; any non-201 is a failed setup
+                detail = reply.get("error") or "setup asked about files to commit"
+                reply = {"error": f"cloned into {path}, then {detail}. the clone stays there"}
+                status = 400
+            self._send_json(status, reply)
+
+        def _board_for_folder(
+            self, folder: Path, *, confirm: bool, test_command: str | None
+        ) -> tuple[int, dict[str, Any]]:
+            """repo_setup on `folder`, then a board named after it with the folder as its repo on
+            base development. the status and reply to send: 201, 409 to confirm a first commit,
+            or 400 with no board made
+            """
+            try:
+                # the runner is looked up per call, so a test can swap in a gh that stays local
+                setup = repo_setup.prepare(
+                    folder, confirm=confirm, runner=repo_setup.default_runner
+                )
+                expanded_path = validate_repo(folder.name, str(folder), setup.base)
+            except repo_setup.NeedsConfirm as asked:
+                return 409, {"needs_confirm": True, "files": asked.files, "path": str(folder)}
+            except (ValueError, OSError) as exc:  # SetupRefused is a ValueError
+                return 400, {"error": str(exc)}
+            tests = detect_tests(expanded_path, setup.base)
+            board = store.create_board(name=folder.name)
             repo = store.create_repo(
                 board["id"],
-                name=path.name,
+                name=folder.name,
                 path=expanded_path,
-                default_branch=branch,
-                test_command=body.get("test_command") or tests.command,
+                default_branch=setup.base,
+                test_command=test_command or tests.command,
             )
-            self._send_json(201, {"board": board, "repo": repo, "tests": _tests_reply(repo, tests)})
+            return 201, {
+                "board": board,
+                "repo": repo,
+                "tests": _tests_reply(repo, tests),
+                "setup": {"steps": setup.steps, "push_main": setup.push_main},
+            }
 
         def _handle_patch_repo(self, repo_id: str) -> None:
             # path still means re-registering. default_branch is editable because a base branch

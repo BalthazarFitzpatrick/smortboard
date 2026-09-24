@@ -250,3 +250,19 @@ def test_a_cached_answer_is_not_asked_again_within_the_ttl(store, monkeypatch):
     open_pull_requests(store)
     open_pull_requests(store)
     assert calls == ["https://example/pr/1"]  # the second poll reused the cached answer
+
+
+def test_a_repo_folder_that_is_gone_keeps_the_row_with_an_unknown_state(store, monkeypatch):
+    """gh runs inside the repo folder; a missing folder raised before gh ran and dropped the request"""
+    board_id, repo_id = _board_and_repo(store)
+    card = store.create_card(board_id, repo_id, "fix the thing", status="checking")
+    _merge_request(store, card["id"], "https://example/pr/9")
+
+    def _gh(args, cwd):
+        raise FileNotFoundError(2, "No such file or directory", str(cwd))
+
+    monkeypatch.setattr(pulls_module, "_gh", _gh)
+    monkeypatch.setattr(pulls_module.shutil, "which", lambda name: "/usr/bin/gh")
+    rows = open_pull_requests(store)
+    assert [r["url"] for r in rows] == ["https://example/pr/9"]
+    assert rows[0]["state"] is None

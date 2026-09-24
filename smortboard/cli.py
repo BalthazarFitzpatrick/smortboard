@@ -196,9 +196,8 @@ def _run_seed_beta(args: argparse.Namespace) -> None:
             raise SystemExit(f"nothing seeded: {exc}") from exc
     print(
         f"seeded board {result.board['name']} with {len(result.cards)} cards into {db_path}\n"
-        f"repo {result.repo['path']}: main and development, one starter commit\n"
+        f"repo {result.repo['path']}: {', '.join(result.setup.steps)}\n"
         f"daily budget ${DAILY_BUDGET_USD:.0f}, strict leases, every card on sonnet\n\n"
-        "a card finishes only once the repo has a github origin - private is enough:\n"
         f"{next_steps(result)}\n\n"
         "a board already running shows the new board after a page reload"
     )

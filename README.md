@@ -30,6 +30,26 @@ daily budget per board, a cap per run. Limit hit: switch to the fallback model, 
 
 ![The usage panel: five-hour and seven-day windows per lab, spend by model](docs/images/usage.jpg)
 
+## One key per screen
+
+Every screen is one key. `s` lists them all, read from the same table the keys run on. Letters are
+commands, `/` starts typing. Clicks always work. Hover-focus and right-click stay off until you turn
+the mouse on in `o` (general -> mouse). Keys sit on the physical key, so a non-US layout does not
+move them. `n` inbox and `u` usage are above.
+
+<table>
+<tr>
+<td width="33%"><img src="docs/images/costs.jpg" width="100%" alt="The cost overview: total, accepted and refused spend per card and per pull request, a spend table per board, and spend by lab and model"><br><code>c</code> cost across boards</td>
+<td width="33%"><img src="docs/images/settings.jpg" width="100%" alt="The settings panel: the mouse set to disabled, folders mission control can read, how many cards run at once globally and per board, and the file lease mode per board"><br><code>o</code> settings</td>
+<td width="33%"><img src="docs/images/digest.jpg" width="100%" alt="The morning digest: open pull requests in merge order, then the blocked cards waiting on you, each with its reason and the board's note"><br><code>d</code> morning digest</td>
+</tr>
+<tr>
+<td width="33%"><img src="docs/images/pulls.jpg" width="100%" alt="The pull requests panel: open pull requests across three boards in merge order, one marked conflicting, one waiting on a dependency that has not merged"><br><code>v</code> pull requests in merge order</td>
+<td width="33%"><img src="docs/images/shortcuts.jpg" width="100%" alt="The shortcut overlay on its panels page: one row per key, from u for usage to 1 .. 9 for jumping between boards"><br><code>s</code> every key</td>
+<td width="33%"><img src="docs/images/preflight.jpg" width="100%" alt="The pre-flight checklist: 30 of 31 ready, green rows for docker, the card image, the token, both credential profiles, gh and git, then each repo's own checks"><br><code>h</code> pre-flight checklist</td>
+</tr>
+</table>
+
 ## Setup: four steps
 
 Needs Python 3.11+ with [uv](https://docs.astral.sh/uv/getting-started/installation/), Docker
@@ -47,10 +67,11 @@ to mint a key.
 
    Opens the board at the printed link. Keep the terminal open.
 
-2. **Repo.** `b` -> from local repo: a clone with a GitHub `origin` (private is fine), default
-   branch pushed. Tests are required. Has tests: the board finds how to run them. Has none: mission
-   control writes a first suite, or you point at your own command. New repo: its first card sets up
-   the tests.
+2. **Repo.** `b` -> **new board** -> pick a folder, or name a new one. The board adds what is
+   missing: git, a `development` branch, a private GitHub repo. It never pushes `main` - when it
+   made the GitHub repo, it shows you the one command to run. Or **from online repo**: clone one of
+   yours. Tests are required. Has tests: the board finds how to run them. Has none: mission control
+   writes a first suite, or you point at your own command.
 
 3. **Lab keys.** `claude setup-token` or `codex login` in your terminal. On the board: `shift`+`p`,
    add a profile, paste, activate. Remove the empty `default`.
@@ -59,8 +80,8 @@ to mint a key.
    the board.
 
 Look before you set up: `uv run smortboard --demo` - throwaway board, invented cards, port 8001.
-Practice run: `uv run smortboard seed-beta <empty folder>` - a small game repo and 15 written cards
-([walkthrough](docs/beta-test-board.md)).
+Practice run: `uv run smortboard seed-beta <empty folder>` - a small game on a private GitHub repo
+and 15 written cards; you run one push command ([walkthrough](docs/beta-test-board.md)).
 
 ## Best practices
 

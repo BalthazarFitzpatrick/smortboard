@@ -1,0 +1,256 @@
+[
+  {
+    "id": "docker",
+    "group": "machine",
+    "label": "docker",
+    "status": "ok",
+    "detail": "docker is installed and the daemon answers.",
+    "fix": ""
+  },
+  {
+    "id": "card-image",
+    "group": "machine",
+    "label": "card image",
+    "status": "ok",
+    "detail": "smortboard-card:latest is present.",
+    "fix": ""
+  },
+  {
+    "id": "card-token",
+    "group": "machine",
+    "label": "card token",
+    "status": "ok",
+    "detail": "a token file is present at ~/.config/smortboard/tokens/weekday.",
+    "fix": ""
+  },
+  {
+    "id": "profile-weekday",
+    "group": "machine",
+    "label": "anthropic profile: weekday (active)",
+    "status": "ok",
+    "detail": "present at ~/.config/smortboard/tokens/weekday, mode 600.",
+    "fix": "",
+    "lab": "anthropic",
+    "kind": "oauth",
+    "profile": "weekday"
+  },
+  {
+    "id": "profile-weekend",
+    "group": "machine",
+    "label": "anthropic profile: weekend",
+    "status": "ok",
+    "detail": "present at ~/.config/smortboard/tokens/weekend, mode 600.",
+    "fix": "",
+    "lab": "anthropic",
+    "kind": "oauth",
+    "profile": "weekend"
+  },
+  {
+    "id": "gh",
+    "group": "machine",
+    "label": "gh cli",
+    "status": "ok",
+    "detail": "gh is installed and authenticated.",
+    "fix": ""
+  },
+  {
+    "id": "git",
+    "group": "machine",
+    "label": "git",
+    "status": "ok",
+    "detail": "git is installed.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-orchard-pay-path",
+    "group": "orchard-pay",
+    "label": "repo path",
+    "status": "ok",
+    "detail": "/home/demo/projects/orchard-pay is a git repository.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-orchard-pay-branch",
+    "group": "orchard-pay",
+    "label": "default branch",
+    "status": "ok",
+    "detail": "development exists locally.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-orchard-pay-origin",
+    "group": "orchard-pay",
+    "label": "origin remote",
+    "status": "ok",
+    "detail": "origin is git@github.com:demo/orchard-pay.git.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-orchard-pay-origin-branch",
+    "group": "orchard-pay",
+    "label": "default branch on origin",
+    "status": "ok",
+    "detail": "development exists on origin.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-orchard-pay-gh-view",
+    "group": "orchard-pay",
+    "label": "gh can see the repo",
+    "status": "ok",
+    "detail": "gh repo view succeeded.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-orchard-pay-test-command",
+    "group": "orchard-pay",
+    "label": "test command",
+    "status": "ok",
+    "detail": "runs `uv run pytest -q`.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-orchard-pay-image",
+    "group": "orchard-pay",
+    "label": "repo image",
+    "status": "ok",
+    "detail": "smortboard-card:latest is present.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-orchard-pay-image-stale",
+    "group": "orchard-pay",
+    "label": "repo image freshness",
+    "status": "ok",
+    "detail": "smortboard-card:latest postdates uv.lock's last change and its base image's last build.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-lantern-cms-path",
+    "group": "lantern-cms",
+    "label": "repo path",
+    "status": "ok",
+    "detail": "/home/demo/projects/lantern-cms is a git repository.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-lantern-cms-branch",
+    "group": "lantern-cms",
+    "label": "default branch",
+    "status": "ok",
+    "detail": "development exists locally.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-lantern-cms-origin",
+    "group": "lantern-cms",
+    "label": "origin remote",
+    "status": "ok",
+    "detail": "origin is git@github.com:demo/lantern-cms.git.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-lantern-cms-origin-branch",
+    "group": "lantern-cms",
+    "label": "default branch on origin",
+    "status": "ok",
+    "detail": "development exists on origin.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-lantern-cms-gh-view",
+    "group": "lantern-cms",
+    "label": "gh can see the repo",
+    "status": "ok",
+    "detail": "gh repo view succeeded.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-lantern-cms-test-command",
+    "group": "lantern-cms",
+    "label": "test command",
+    "status": "ok",
+    "detail": "runs `npm test --silent`.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-lantern-cms-image",
+    "group": "lantern-cms",
+    "label": "repo image",
+    "status": "ok",
+    "detail": "lantern-cms-tests:latest is present.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-lantern-cms-image-stale",
+    "group": "lantern-cms",
+    "label": "repo image freshness",
+    "status": "warn",
+    "detail": "lantern-cms-tests:latest was built 2026-09-12 but its base image (smortboard-card:latest) was rebuilt 2026-09-21 - a card's gate runs offline against whatever this image already has baked in, which has nothing to do with the card's own work.",
+    "fix": "docker build -t lantern-cms-tests:latest . (or the board's rebuild-image action) to pick up the newer base image."
+  },
+  {
+    "id": "repo-demo-tideline-etl-path",
+    "group": "tideline-etl",
+    "label": "repo path",
+    "status": "ok",
+    "detail": "/home/demo/projects/tideline-etl is a git repository.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-tideline-etl-branch",
+    "group": "tideline-etl",
+    "label": "default branch",
+    "status": "ok",
+    "detail": "main exists locally.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-tideline-etl-origin",
+    "group": "tideline-etl",
+    "label": "origin remote",
+    "status": "ok",
+    "detail": "origin is git@github.com:demo/tideline-etl.git.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-tideline-etl-origin-branch",
+    "group": "tideline-etl",
+    "label": "default branch on origin",
+    "status": "ok",
+    "detail": "main exists on origin.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-tideline-etl-gh-view",
+    "group": "tideline-etl",
+    "label": "gh can see the repo",
+    "status": "ok",
+    "detail": "gh repo view succeeded.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-tideline-etl-test-command",
+    "group": "tideline-etl",
+    "label": "test command",
+    "status": "ok",
+    "detail": "runs `uv run pytest -q`.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-tideline-etl-image",
+    "group": "tideline-etl",
+    "label": "repo image",
+    "status": "ok",
+    "detail": "smortboard-card:latest is present.",
+    "fix": ""
+  },
+  {
+    "id": "repo-demo-tideline-etl-image-stale",
+    "group": "tideline-etl",
+    "label": "repo image freshness",
+    "status": "ok",
+    "detail": "smortboard-card:latest postdates uv.lock's last change and its base image's last build.",
+    "fix": ""
+  }
+]
