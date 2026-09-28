@@ -197,6 +197,8 @@ async function openBoardSettingsPanel() {
 
 function closeBoardSettingsPanel() {
   if (!bs.backdrop || !bs.backdrop.parentNode) return;
+  // a submenu goes with its panel - left open it hung over the board with nothing under it
+  Menu.closeOpen?.();
   document.removeEventListener('keydown', onBoardSettingsKey);
   bs.backdrop.remove();
   reenterIfFocusLost();

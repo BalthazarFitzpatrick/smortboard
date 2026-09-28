@@ -196,6 +196,8 @@ function openPullsPanel() {
 
 function closePullsPanel() {
   if (!pl.backdrop || !pl.backdrop.parentNode) return;
+  // a submenu goes with its panel - left open it hung over the board with nothing under it
+  Menu.closeOpen?.();
   document.removeEventListener('keydown', onPullsKey);
   pl.backdrop.remove();
   reenterIfFocusLost();
