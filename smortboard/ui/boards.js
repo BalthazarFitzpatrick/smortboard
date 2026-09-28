@@ -732,6 +732,8 @@ function openBoardsPanel() {
 
 function closeBoardsPanel() {
   if (!bp.backdrop || !bp.backdrop.parentNode) return;
+  // a submenu goes with its panel - left open it hung over the board with nothing under it
+  Menu.closeOpen?.();
   // an unanswered question goes with the panel; the push-main step stays until it is done
   bp.testsNotice = null;
   bp.folderConfirm = null;

@@ -135,7 +135,9 @@ class SpyMenu {
   openAt(anchor) { this.anchor = anchor; return this; }
   refresh(sections) { this.opts.sections = sections; }
   close() { this.closed = true; }
+  static closeOpen() { SpyMenu.closedOpen += 1; }
 }
+SpyMenu.closedOpen = 0;
 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
@@ -533,6 +535,16 @@ assert.ok(!mod.st.backdrop.parentNode, 'a second o should close the panel');
   assert.ok(status.classList.contains('boards-error'));
   document.createElement = createElement;
   mod.closeSettingsPanel();
+}
+
+// o on an open settings panel closes it, and a fallback picker opened from it goes too - it used
+// to stay on screen with nothing under it
+{
+  mod.openSettingsPanel();
+  await flush();
+  const before = SpyMenu.closedOpen;
+  mod.toggleSettingsPanel();
+  assert.equal(SpyMenu.closedOpen, before + 1, 'closing settings should close its open submenu');
 }
 
 console.log('ok');
