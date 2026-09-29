@@ -923,32 +923,39 @@ function complexityLabel(card) {
   return 'unrated';
 }
 
-// cycles low -> medium -> high -> low, same wrap as cycleCardModel
-async function cycleCardComplexity(cardId = actionableCardId()) {
+// a list of the three levels, the current one lit: one pick sets it, escape goes back
+async function openComplexityMenu(cardId = actionableCardId(), onBack = null) {
   if (!cardId) return;
-  let next;
+  let card;
   try {
-    const card = await api(`/api/cards/${cardId}`);
-    // unrated lands on low first; otherwise the same wrap as cycleCardModel
-    const currentIndex = COMPLEXITY_LEVELS.indexOf(card.complexity);
-    next = COMPLEXITY_LEVELS[(currentIndex + 1) % COMPLEXITY_LEVELS.length];
+    card = await api(`/api/cards/${cardId}`);
   } catch (err) {
     showRun(cardId, "can't change complexity", null, err.message);
     return;
   }
-  openActionConfirm(`switch to ${COMPLEXITY_LABELS[next]}?`, 'switch complexity', 'cancel',
-    () => doCycleCardComplexity(cardId, next));
+  let picked = false;
+  const menu = new Menu({
+    title: 'complexity',
+    sections: [{
+      kind: 'list',
+      items: COMPLEXITY_LEVELS.map(level => ({
+        id: String(level), label: COMPLEXITY_LABELS[level], on: level === card.complexity,
+      })),
+      onPick: item => { picked = true; menu.close(); setCardComplexity(cardId, Number(item.id)); },
+    }],
+    onDismiss: () => { if (!picked && onBack) onBack(); },
+  });
+  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
+  return menu;
 }
 
-async function doCycleCardComplexity(cardId, next) {
+async function setCardComplexity(cardId, level) {
   try {
     const updated = await api(`/api/cards/${cardId}`, {
-      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({complexity: next}),
+      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({complexity: level}),
     });
-    const label = metaComplexityText(updated);
-    showRun(cardId, label);
-    const shown = document.querySelector('.card-panel .card-complexity');
-    if (shown && openCard && openCard.cardId === cardId) shown.textContent = label;
+    showRun(cardId, metaComplexityText(updated));
   } catch (err) {
     showRun(cardId, "can't change complexity", null, err.message);
   }
@@ -1201,7 +1208,7 @@ function openCardOverflowMenu(cardId, anchor) {
         menu.close();
         if (item.id === 'edit') editCard(cardId);
         else if (item.id === 'model') cycleCardModel(cardId);
-        else if (item.id === 'complexity') cycleCardComplexity(cardId);
+        else if (item.id === 'complexity') openComplexityMenu(cardId, () => openCardActionsMenu(cardId));
         else if (item.id === 'status') openMoveStatusMenu(cardId, () => openCardActionsMenu(cardId));
         else if (item.id === 'delete') deleteCard(cardId);
       },
