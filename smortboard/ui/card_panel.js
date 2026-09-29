@@ -663,13 +663,14 @@ function reasonWords(code) {
 }
 
 // the head line names a model the way people say it: "opus 5", not "anthropic/claude-opus-5"
-function metaModelText(model, lab) {
-  if (!model) return 'default model';
+function metaModelText(model, lab, effort = null) {
+  const at = effort ? ` @ ${effort}` : '';
+  if (!model) return `default model${at}`;
   const id = (model.includes('/') ? model.split('/').pop() : model).replace(/-\d{8}$/, '');
-  if (!id.startsWith('claude-')) return id;
+  if (!id.startsWith('claude-')) return `${id}${at}`;
   // claude-haiku-4-5 -> "haiku 4.5", claude-opus-5 -> "opus 5"
   const [name, ...version] = id.slice('claude-'.length).split('-');
-  return version.length ? `${name} ${version.join('.')}` : name;
+  return `${version.length ? `${name} ${version.join('.')}` : name}${at}`;
 }
 
 function metaComplexityText(card) {
@@ -696,7 +697,7 @@ function cardHeadHtml(card, outcome) {
     meta.push(`<span class="card-meta-flag">${escapeHtml(reasonWords(card.blocked_reason_code))}</span>`);
   }
   if (card.workstream) meta.push(`<span>${escapeHtml(card.workstream)}</span>`);
-  meta.push(`<span class="card-model">${escapeHtml(metaModelText(card.model, card.lab))}</span>`);
+  meta.push(`<span class="card-model">${escapeHtml(metaModelText(card.model, card.lab, card.effort))}</span>`);
   const spend = spendLabel(outcome);
   if (spend) meta.push(`<span>${escapeHtml(spend)}</span>`);
   return `<div class="${SECTION_CLASS}" tabindex="0" data-section="title">` +
@@ -922,32 +923,39 @@ function complexityLabel(card) {
   return 'unrated';
 }
 
-// cycles low -> medium -> high -> low, same wrap as cycleCardModel
-async function cycleCardComplexity(cardId = actionableCardId()) {
+// a list of the three levels, the current one lit: one pick sets it, escape goes back
+async function openComplexityMenu(cardId = actionableCardId(), onBack = null) {
   if (!cardId) return;
-  let next;
+  let card;
   try {
-    const card = await api(`/api/cards/${cardId}`);
-    // unrated lands on low first; otherwise the same wrap as cycleCardModel
-    const currentIndex = COMPLEXITY_LEVELS.indexOf(card.complexity);
-    next = COMPLEXITY_LEVELS[(currentIndex + 1) % COMPLEXITY_LEVELS.length];
+    card = await api(`/api/cards/${cardId}`);
   } catch (err) {
     showRun(cardId, "can't change complexity", null, err.message);
     return;
   }
-  openActionConfirm(`switch to ${COMPLEXITY_LABELS[next]}?`, 'switch complexity', 'cancel',
-    () => doCycleCardComplexity(cardId, next));
+  let picked = false;
+  const menu = new Menu({
+    title: 'complexity',
+    sections: [{
+      kind: 'list',
+      items: COMPLEXITY_LEVELS.map(level => ({
+        id: String(level), label: COMPLEXITY_LABELS[level], on: level === card.complexity,
+      })),
+      onPick: item => { picked = true; menu.close(); setCardComplexity(cardId, Number(item.id)); },
+    }],
+    onDismiss: () => { if (!picked && onBack) onBack(); },
+  });
+  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
+  menu.el?.classList.add('menu-centered');
+  return menu;
 }
 
-async function doCycleCardComplexity(cardId, next) {
+async function setCardComplexity(cardId, level) {
   try {
     const updated = await api(`/api/cards/${cardId}`, {
-      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({complexity: next}),
+      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({complexity: level}),
     });
-    const label = metaComplexityText(updated);
-    showRun(cardId, label);
-    const shown = document.querySelector('.card-panel .card-complexity');
-    if (shown && openCard && openCard.cardId === cardId) shown.textContent = label;
+    showRun(cardId, metaComplexityText(updated));
   } catch (err) {
     showRun(cardId, "can't change complexity", null, err.message);
   }
@@ -966,11 +974,32 @@ async function loadModelCatalog() {
   return modelCatalog;
 }
 
-async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200, y: 80}, onBack = null) {
+// unset is the role's effort; a level becomes --effort (claude) or model_reasoning_effort (codex) -
+// store/schema.py EFFORT_LEVELS
+const EFFORT_LEVELS = ['low', 'medium', 'high'];
+
+// the third column of every lab | model picker. `selected` null is the default row
+function effortColumn(selected, onPick, label = 'effort') {
+  return {
+    label,
+    multi: false,
+    items: ['default', ...EFFORT_LEVELS].map(level => ({
+      id: level, label: level, on: level === (selected || 'default'),
+    })),
+    onPick: item => onPick(item.id === 'default' ? null : item.id),
+  };
+}
+
+// `current` preselects what is set now: {lab, model, effort}
+async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200, y: 80}, onBack = null,
+  current = {}) {
   const catalog = await loadModelCatalog();
   const labs = Object.keys(catalog);
-  let selectedLab = labs.find(lab => catalog[lab].available !== false) || labs[0];
-  let selectedModel = null;
+  const currentLab = current.model ? current.lab || 'anthropic' : null;
+  let selectedLab = catalog[currentLab] ? currentLab
+    : labs.find(lab => catalog[lab].available !== false) || labs[0];
+  let selectedModel = catalog[currentLab] ? current.model : null;
+  let selectedEffort = current.effort || null;
   let picked = false;
   let menu = null;
 
@@ -1006,19 +1035,25 @@ async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200,
           menu.refresh(buildSections());
         },
       },
+      effortColumn(selectedEffort, effort => {
+        selectedEffort = effort;
+        menu.refresh(buildSections());
+      }),
     ],
   }, {
     kind: 'buttons',
     buttons: [
-      {id: 'save-model', label: 'save', enabled: selectedModel !== null, onClick: openMenu => {
-        picked = true;
-        openMenu.close();
-        onPick(selectedLab, selectedModel);
-      }},
+      // an effort alone is a choice too: it rides on the default model
+      {id: 'save-model', label: 'save', enabled: selectedModel !== null || selectedEffort !== null,
+        onClick: openMenu => {
+          picked = true;
+          openMenu.close();
+          onPick(selectedModel === null ? null : selectedLab, selectedModel, selectedEffort);
+        }},
       {id: 'model-default', label: 'board default', onClick: openMenu => {
         picked = true;
         openMenu.close();
-        onPick(null, null);
+        onPick(null, null, null);
       }},
     ],
   }];
@@ -1035,22 +1070,25 @@ async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200,
 async function cycleCardModel(cardId = actionableCardId()) {
   if (!cardId) return;
   try {
-    await openModelPicker((lab, model) => doCycleCardModel(cardId, model, lab), undefined,
-      () => openCardActionsMenu(cardId));
+    const card = await api(`/api/cards/${cardId}`);
+    await openModelPicker((lab, model, effort) => doCycleCardModel(cardId, model, lab, effort),
+      undefined, () => openCardActionsMenu(cardId), card);
   } catch (err) {
     showRun(cardId, "can't change model", null, err.message);
   }
 }
 
-async function doCycleCardModel(cardId, next, lab = null) {
+async function doCycleCardModel(cardId, next, lab = null, effort = null) {
   try {
     const updated = await api(`/api/cards/${cardId}`, {
-      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({lab, model: next}),
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({lab, model: next, effort}),
     });
-    const label = `model: ${modelLabel(updated.model, updated.lab)}`;
+    const at = updated.effort ? ` @ ${updated.effort}` : '';
+    const label = `model: ${modelLabel(updated.model, updated.lab)}${at}`;
     showRun(cardId, label);
     const shown = document.querySelector('.card-panel .card-model');
-    if (shown && openCard && openCard.cardId === cardId) shown.textContent = metaModelText(updated.model, updated.lab);
+    if (shown && openCard && openCard.cardId === cardId) shown.textContent = metaModelText(updated.model, updated.lab, updated.effort);
   } catch (err) {
     showRun(cardId, "can't change model", null, err.message);
   }
@@ -1170,7 +1208,7 @@ function openCardOverflowMenu(cardId, anchor) {
         menu.close();
         if (item.id === 'edit') editCard(cardId);
         else if (item.id === 'model') cycleCardModel(cardId);
-        else if (item.id === 'complexity') cycleCardComplexity(cardId);
+        else if (item.id === 'complexity') openComplexityMenu(cardId, () => openCardActionsMenu(cardId));
         else if (item.id === 'status') openMoveStatusMenu(cardId, () => openCardActionsMenu(cardId));
         else if (item.id === 'delete') deleteCard(cardId);
       },

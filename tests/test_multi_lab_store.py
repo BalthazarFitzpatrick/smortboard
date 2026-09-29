@@ -52,6 +52,20 @@ def test_card_model_pairs_patch_and_clear(store):
     assert (changed["lab"], changed["model"]) == ("openai", "gpt-5.6-sol")
 
 
+def test_card_effort_is_its_own_and_only_a_named_level(store):
+    board = store.create_board("effort")
+    card = store.create_card(board["id"], None, "c")
+    assert card["effort"] is None
+    assert store.update_card(card["id"], effort="high")["effort"] == "high"
+    with pytest.raises(ValueError, match="effort"):
+        store.update_card(card["id"], effort="max")
+    with pytest.raises(ValueError, match="effort"):
+        store.create_card(board["id"], None, "d", effort="max")
+    # a model change leaves the effort alone; clearing it hands the worker back the role's
+    assert store.update_card(card["id"], model="openai/gpt-6-astra")["effort"] == "high"
+    assert store.update_card(card["id"], effort=None)["effort"] is None
+
+
 def test_paired_settings_validate_atomically_and_fallback_is_opt_in(store):
     assert store.get_settings()["worker_cross_lab_fallback"] == []
     store.set_setting("worker_model", "sonnet")
@@ -64,18 +78,45 @@ def test_paired_settings_validate_atomically_and_fallback_is_opt_in(store):
     settings = store.set_setting("fold_model", "openai/gpt-6-astra")
     assert (settings["fold_lab"], settings["fold_model"]) == ("openai", "gpt-6-astra")
     settings = store.set_setting("worker_cross_lab_fallback", ["sonnet", "openai/gpt-6-astra"])
-    assert settings["worker_cross_lab_fallback"] == ["anthropic/sonnet", "openai/gpt-6-astra"]
+    assert settings["worker_cross_lab_fallback"] == [
+        {"ref": "anthropic/sonnet", "effort": None},
+        {"ref": "openai/gpt-6-astra", "effort": None},
+    ]
     with pytest.raises(ValueError, match="unknown fallback"):
         store.set_setting("worker_cross_lab_fallback", ["openai/unknown"])
     with pytest.raises(ValueError, match="list"):
         store.set_setting("worker_cross_lab_fallback", {})
 
 
+def test_fallback_entries_carry_their_own_effort(store):
+    # a list stored before fallbacks had an effort reads as the role's effort
+    store._conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?)",
+        ("reviewer_cross_lab_fallback", json.dumps(["openai/gpt-6-astra"])),
+    )
+    store._conn.commit()
+    assert store.get_settings()["reviewer_cross_lab_fallback"] == [
+        {"ref": "openai/gpt-6-astra", "effort": None}
+    ]
+    settings = store.set_setting(
+        "reviewer_cross_lab_fallback",
+        [{"ref": "openai/gpt-6-astra", "effort": "high"}, {"ref": "sonnet", "effort": None}],
+    )
+    assert settings["reviewer_cross_lab_fallback"] == [
+        {"ref": "openai/gpt-6-astra", "effort": "high"},
+        {"ref": "anthropic/sonnet", "effort": None},
+    ]
+    with pytest.raises(ValueError, match="effort"):
+        store.set_setting(
+            "reviewer_cross_lab_fallback", [{"ref": "openai/gpt-6-astra", "effort": "max"}]
+        )
+
+
 def test_export_import_and_backup_preserve_mixed_labs(store, tmp_path):
     board = store.create_board("mixed")
     store.create_card(board["id"], None, "legacy", model="sonnet")
     card = store.create_card(
-        board["id"], None, "new", lab="openai", model="gpt-6-astra", complexity=3
+        board["id"], None, "new", lab="openai", model="gpt-6-astra", complexity=3, effort="high"
     )
     store.set_settings({"fold_lab": "openai", "fold_model": "gpt-6-astra"})
     spend = store.add_board_spend(board["id"], "fold", 0.5, lab="openai", model="gpt-6-astra")

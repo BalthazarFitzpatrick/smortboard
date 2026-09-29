@@ -180,6 +180,7 @@ def _fold(
         criteria=criteria,
         model=model_source.get("model"),
         lab=model_source.get("lab"),
+        effort=model_source.get("effort"),
         ledger_task=ledger[0] if ledger else None,
         # a fold merges scope, never shrinks it - the merged card is at least as complex as its
         # most complex member

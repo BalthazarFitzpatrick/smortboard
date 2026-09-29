@@ -35,6 +35,7 @@ CARD_WRITABLE_FIELDS = {
     "model",
     "lab",
     "complexity",
+    "effort",
 }
 
 # 1/2/3 = low/medium/high - see schema.py migration 19
@@ -163,6 +164,14 @@ def _check_effort(key: str, value: Any) -> None:
     # reaches claude or codex argv, so only the named levels pass
     if value is not None and value not in EFFORT_LEVELS:
         raise ValueError(f"{key} must be one of {EFFORT_LEVELS} or null, not {value!r}")
+
+
+def _fallback_entry(item: Any) -> dict[str, Any]:
+    """one fallback as {ref, effort}; a bare "lab/model" string is the shape stored before a
+    fallback carried its own effort, and reads as the role's effort"""
+    if isinstance(item, dict):
+        return {"ref": item.get("ref"), "effort": item.get("effort")}
+    return {"ref": item, "effort": None}
 
 
 def _model_pair(lab: Any, model: Any) -> tuple[str | None, str | None]:
@@ -599,10 +608,12 @@ class Store:
         depends_on: list[str] | None = None,
         complexity: int | None = None,
         lab: str | None = None,
+        effort: str | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
         lab, model = _model_pair(lab, model)
         _check_complexity(complexity)
+        _check_effort("effort", effort)
         # validated before any insert - a brand new card can never be part of an existing
         # cycle or depend on itself (its id does not exist yet), so only existence matters
         cleaned_deps = list(dict.fromkeys(depends_on or []))
@@ -613,8 +624,8 @@ class Store:
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
                 blocked_reason_code, description, position, review_flag, model, ledger_task,
-                complexity, created_at, updated_at, lab)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                complexity, created_at, updated_at, lab, effort)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -633,6 +644,7 @@ class Store:
                 now,
                 now,
                 lab,
+                effort,
             ),
         )
         for i, text in enumerate(tasks or []):
@@ -773,6 +785,8 @@ class Store:
             fields.update(lab=lab, model=model)
         if "complexity" in fields:
             _check_complexity(fields["complexity"])
+        if "effort" in fields:
+            _check_effort("effort", fields["effort"])
 
         merged = {**fields, "status": next_status, "blocked_reason_code": next_reason}
         assignments = ", ".join(f"{key} = ?" for key in merged)
@@ -811,7 +825,9 @@ class Store:
                 value = json.loads(stored.get(key) or "[]")
             except (json.JSONDecodeError, TypeError):
                 value = []
-            settings[key] = value if isinstance(value, list) else []
+            settings[key] = (
+                [_fallback_entry(item) for item in value] if isinstance(value, list) else []
+            )
         return settings
 
     def spend_cap(self, key: str, default: float) -> float:
@@ -880,13 +896,15 @@ class Store:
                         value = []
                     if not isinstance(value, list):
                         raise ValueError(f"{key} must be a list of model refs")
-                    refs = []
+                    entries = []
                     for item in value:
-                        ref = resolve_ref(item, catalog)
+                        entry = _fallback_entry(item)
+                        ref = resolve_ref(entry["ref"], catalog)
                         if ref is None:
                             raise ValueError(f"unknown fallback model: {item!r}")
-                        refs.append("/".join(ref))
-                    stored = json.dumps(refs) if refs else None
+                        _check_effort(f"{key} effort", entry["effort"])
+                        entries.append({"ref": "/".join(ref), "effort": entry["effort"]})
+                    stored = json.dumps(entries) if entries else None
             updates[key] = stored
         with self._conn:
             for key, stored in updates.items():
@@ -1030,6 +1048,7 @@ class Store:
             "model",
             "lab",
             "complexity",
+            "effort",
             "ledger_task",
             "findings_route",
             "created_at",
@@ -1062,8 +1081,8 @@ class Store:
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
                 blocked_reason_code, description, position, review_flag, model, findings_route,
-                created_at, updated_at, lab, complexity, ledger_task)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, lab, complexity, ledger_task, effort)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card["id"],
@@ -1083,6 +1102,7 @@ class Store:
                 card.get("lab"),
                 card.get("complexity"),
                 card.get("ledger_task"),
+                card.get("effort"),
             ),
         )
         for task in payload["tasks"]:

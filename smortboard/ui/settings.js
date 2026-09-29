@@ -207,62 +207,96 @@ const SETTINGS_SECTIONS = [
 const roleModels = {node: document.createElement('div')};
 roleModels.node.className = 'settings-stack';
 
-function fallbackSummary(refs) {
-  if (!refs.length) return 'no fallbacks selected';
-  return `${refs.length} selected: ${refs.join(' → ')}`;
+// one fallback as people say it: "openai/gpt-x @ high"
+function fallbackText(entry) {
+  return entry.effort ? `${entry.ref} @ ${entry.effort}` : entry.ref;
 }
 
-async function openFallbackPicker(role, initialRefs, anchor, status, onSaved) {
+function fallbackSummary(entries) {
+  if (!entries.length) return 'no fallbacks selected';
+  return `${entries.length} selected: ${entries.map(fallbackText).join(' → ')}`;
+}
+
+async function openFallbackPicker(role, initialEntries, anchor, status, onSaved) {
   const catalog = await loadModelCatalog();
   const labs = Object.keys(catalog);
-  let selectedLab = initialRefs.map(ref => ref.split('/')[0]).find(lab => catalog[lab])
+  let selectedLab = initialEntries.map(entry => entry.ref.split('/')[0]).find(lab => catalog[lab])
     || (catalog.anthropic ? 'anthropic' : labs[0]);
-  let selectedRefs = [...initialRefs];
+  let selected = initialEntries.map(entry => ({...entry}));
+  // the ref the effort column describes: the model row the arrows sit on, or the last one ticked
+  let focusedRef = selected.length ? selected[selected.length - 1].ref : null;
   let saved = false;
   let menu = null;
 
-  const buildSections = () => [{
-    kind: 'columns',
-    columns: [
-      {
-        label: 'lab',
-        multi: false,
-        items: labs.map(lab => ({id: lab, label: lab, on: lab === selectedLab})),
-        onPick: item => {
-          selectedLab = item.id;
-          menu.refresh(buildSections());
+  const showSummary = () => {
+    anchor.textContent = fallbackSummary(selected);
+    anchor.title = selected.map(fallbackText).join('\n');
+  };
+  const focusedEntry = () => selected.find(entry => entry.ref === focusedRef) || null;
+
+  const buildSections = () => {
+    const entry = focusedEntry();
+    const effort = effortColumn(entry?.effort || null, level => {
+      entry.effort = level;
+      showSummary();
+      menu.refresh(buildSections());
+    }, entry ? `effort: ${entry.ref}` : 'effort');
+    if (!entry) {
+      effort.items = [];
+      effort.empty = 'tick a model';
+    }
+    return [{
+      kind: 'columns',
+      columns: [
+        {
+          label: 'lab',
+          multi: false,
+          items: labs.map(lab => ({id: lab, label: lab, on: lab === selectedLab})),
+          onPick: item => {
+            selectedLab = item.id;
+            menu.refresh(buildSections());
+          },
         },
-      },
-      {
-        label: 'models',
-        multi: true,
-        empty: selectedLab ? 'no models' : 'choose a lab',
-        items: (catalog[selectedLab]?.models || []).map(model => {
-          const ref = `${selectedLab}/${model.id}`;
-          return {id: ref, label: model.label, stats: model.tier, on: selectedRefs.includes(ref)};
-        }),
-        onPick: (item, on) => {
-          if (on && !selectedRefs.includes(item.id)) selectedRefs.push(item.id);
-          if (!on) selectedRefs = selectedRefs.filter(ref => ref !== item.id);
-          anchor.textContent = fallbackSummary(selectedRefs);
-          anchor.title = selectedRefs.join('\n');
+        {
+          label: 'models',
+          multi: true,
+          items: (catalog[selectedLab]?.models || []).map(model => {
+            const ref = `${selectedLab}/${model.id}`;
+            return {id: ref, label: model.label, stats: model.tier,
+              on: selected.some(entry => entry.ref === ref)};
+          }),
+          empty: selectedLab ? 'no models' : 'choose a lab',
+          onPick: (item, on) => {
+            if (on && !selected.some(entry => entry.ref === item.id)) {
+              selected.push({ref: item.id, effort: null});
+            }
+            if (!on) selected = selected.filter(entry => entry.ref !== item.id);
+            focusedRef = item.id;
+            showSummary();
+            menu.refresh(buildSections());
+          },
+          onFocus: item => {
+            focusedRef = item.id;
+            menu.refresh(buildSections());
+          },
         },
-      },
-    ],
-  }, {
-    kind: 'buttons',
-    buttons: [{id: 'save-fallbacks', label: 'save fallbacks', onClick: async openMenu => {
-      const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({[`${role}_cross_lab_fallback`]: selectedRefs})});
-      status.textContent = ok ? 'saved' : body?.error || 'could not save fallbacks';
-      if (ok) {
-        saved = true;
-        onSaved([...selectedRefs]);
-        openMenu.close();
-      }
-    }}],
-  }];
+        effort,
+      ],
+    }, {
+      kind: 'buttons',
+      buttons: [{id: 'save-fallbacks', label: 'save fallbacks', onClick: async openMenu => {
+        const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({[`${role}_cross_lab_fallback`]: selected})});
+        status.textContent = ok ? 'saved' : body?.error || 'could not save fallbacks';
+        if (ok) {
+          saved = true;
+          onSaved(selected.map(entry => ({...entry})));
+          openMenu.close();
+        }
+      }}],
+    }];
+  };
 
   menu = new Menu({
     title: `${role} fallback order`,
@@ -270,32 +304,11 @@ async function openFallbackPicker(role, initialRefs, anchor, status, onSaved) {
     sections: buildSections(),
     onDismiss: () => {
       if (saved) return;
-      anchor.textContent = fallbackSummary(initialRefs);
-      anchor.title = initialRefs.join('\n');
+      anchor.textContent = fallbackSummary(initialEntries);
+      anchor.title = initialEntries.map(fallbackText).join('\n');
     },
   });
   menu.openAt(anchor);
-}
-
-// unset is the cli's own default and passes no flag; a level becomes --effort (claude) or
-// model_reasoning_effort (codex) on that role's runs - store/schema.py EFFORT_LEVELS
-const ROLE_EFFORT_LEVELS = ['low', 'medium', 'high'];
-
-function openEffortPicker(role, current, anchor, status) {
-  const items = ['default', ...ROLE_EFFORT_LEVELS].map(level => ({
-    id: level, label: level, on: level === (current || 'default'),
-  }));
-  new Menu({
-    title: `${role} effort`,
-    sections: [{kind: 'list', items, onPick: async item => {
-      const value = item.id === 'default' ? null : item.id;
-      const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({[`${role}_effort`]: value})});
-      if (ok) loadRoleModels();
-      else status.textContent = body?.error || 'could not save effort';
-    }}],
-  }).openAt(anchor);
 }
 
 async function loadRoleModels() {
@@ -323,16 +336,20 @@ async function loadRoleModels() {
       const picker = document.createElement('button');
       picker.className = 'toggle role-model';
       picker.dataset.role = role;
-      picker.textContent = modelLabel(settings[`${role}_model`], settings[`${role}_lab`]);
+      const roleEffort = settings[`${role}_effort`];
+      picker.textContent = modelLabel(settings[`${role}_model`], settings[`${role}_lab`])
+        + (roleEffort ? ` @ ${roleEffort}` : '');
       picker.onclick = async () => {
         try {
-          await openModelPicker(async (lab, model) => {
+          await openModelPicker(async (lab, model, effort) => {
             const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
               headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({[`${role}_lab`]: lab, [`${role}_model`]: model})});
+              body: JSON.stringify({[`${role}_lab`]: lab, [`${role}_model`]: model,
+                [`${role}_effort`]: effort})});
             if (ok) loadRoleModels();
             else status.textContent = body?.error || 'could not save model';
-          }, picker);
+          }, picker, null, {lab: settings[`${role}_lab`], model: settings[`${role}_model`],
+            effort: roleEffort});
         } catch (err) { status.textContent = err.message; }
       };
       primaryRow.append(primaryLabel, picker);
@@ -347,7 +364,7 @@ async function loadRoleModels() {
       fallback.dataset.role = role;
       let fallbackRefs = settings[`${role}_cross_lab_fallback`] || [];
       fallback.textContent = fallbackSummary(fallbackRefs);
-      fallback.title = fallbackRefs.join('\n');
+      fallback.title = fallbackRefs.map(fallbackText).join('\n');
       fallback.setAttribute('aria-label', `${role} fallback models in order`);
       fallback.onclick = async () => {
         try {
@@ -357,19 +374,7 @@ async function loadRoleModels() {
         }
       };
       fallbackRow.append(fallbackLabel, fallback);
-
-      const effortRow = document.createElement('div');
-      effortRow.className = 'settings-role-control';
-      const effortLabel = document.createElement('span');
-      effortLabel.className = 'field-label';
-      effortLabel.textContent = 'effort';
-      const effort = document.createElement('button');
-      effort.className = 'toggle role-effort';
-      effort.dataset.role = role;
-      effort.textContent = settings[`${role}_effort`] || 'default';
-      effort.onclick = () => openEffortPicker(role, settings[`${role}_effort`], effort, status);
-      effortRow.append(effortLabel, effort);
-      block.append(heading, primaryRow, fallbackRow, effortRow);
+      block.append(heading, primaryRow, fallbackRow);
       roleModels.node.appendChild(block);
       if (index < roles.length - 1) {
         const divider = document.createElement('div');

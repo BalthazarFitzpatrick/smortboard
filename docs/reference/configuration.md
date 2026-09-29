@@ -44,8 +44,8 @@ each is a stored setting:
 
 | kind | keys |
 |---|---|
-| lab and model per role | the `*_lab` and `*_model` pairs, and their `*_cross_lab_fallback` lists |
-| effort per role (unset passes no effort flag) | `worker_effort`, `reviewer_effort`, `orchestrator_effort`, `fold_effort` |
+| lab and model per role | the `*_lab` and `*_model` pairs, and their `*_cross_lab_fallback` lists, each entry a `{ref, effort}` whose effort is its own |
+| effort per role, picked beside the role's model (unset passes no effort flag). a card's own effort wins for its worker, a fallback's own for its one run | `worker_effort`, `reviewer_effort`, `orchestrator_effort`, `fold_effort` |
 | what a usage limit does: unset waits for the reset, `attention` asks in the inbox, `switch` moves to the next credential profile, then the fallback model | `usage_limit_route` |
 | spend cap per run | `worker_budget_usd`, `reviewer_budget_usd`, `orchestrator_budget_usd`, `fold_budget_usd` |
 | spend cap per card, across every run | `card_total_budget_usd` |

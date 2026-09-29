@@ -124,12 +124,12 @@ def record_fallback(
     card_id: str,
     role: str,
     from_lab: str,
-    target: tuple[str, str, str],
+    target: tuple[str, str, str, str | None],
     limited_until: float | None,
 ) -> None:
     """queues a one-shot switch of `role` to `target` for the card's next run (run_ref consumes it)
     and says so on the card - the board's own fallback and the inbox's retry both land here"""
-    target_lab, target_model, target_profile = target
+    target_lab, target_model, target_profile, target_effort = target
     profiles.set_active(target_profile, lab=target_lab)
     store.append_event(
         card_id,
@@ -139,6 +139,7 @@ def record_fallback(
             "lab": target_lab,
             "model": target_model,
             "profile": target_profile,
+            "effort": target_effort,
             "from_lab": from_lab,
             "limited_until": limited_until,
         },
