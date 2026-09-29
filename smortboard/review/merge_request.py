@@ -1,8 +1,9 @@
 """push a card branch and open, inspect, close or retarget its pull request.
 
-The board lands on unprotected bases after acceptance in review mode or automatically in free
-mode. This module cannot merge a pull request: gh pr merge is absent from the allowlist, and
-pushes to protected branches are refused. Retargeting only changes the review base.
+The board lands on a base that is not off limits after acceptance in review mode or automatically
+in free mode, by merging the card's pull request (review/integrate.py). _gh refuses a merge that
+waits, bypasses or deletes, and a card branch is never pushed under main, master or trunk.
+Retargeting only changes the review base.
 """
 
 from __future__ import annotations
@@ -18,18 +19,32 @@ from typing import Any
 
 from smortboard.exec.worktrees import repo_lock
 from smortboard.review.screenshot import latest_screenshot
+from smortboard.store.schema import DEFAULT_OFF_LIMITS
 
 # the branches nothing here may ever write, however it is spelled. a push whose destination is one
 # of these is a bug, and the bug it would be is the one that writes main
-PROTECTED_BRANCHES = frozenset({"main", "master", "trunk"})
+# a card branch is never pushed under one of these names, whatever a board allows as a base -
+# pushing main:main from a card worktree is always a bug. where a card may LAND is the board's own
+# list, Store.off_limit_branches
+PROTECTED_BRANCHES = frozenset(DEFAULT_OFF_LIMITS)
 
-# the only gh subcommands this module may run. `merge` is not on it, and cannot be added by a
-# caller - see _gh, which matches the first two words of the invocation against this set.
-# `close` is for a rejected card, and close_merge_request never passes --delete-branch
-# pr edit --base retargets a review and lands nothing; pr merge remains absent
+# the only gh subcommands the board may run - see _gh, which matches the first two words of the
+# invocation against this set. `close` is for a rejected card and never passes --delete-branch;
+# `edit --base` retargets a review and lands nothing; `merge` lands a card through its own pull
+# request (review/integrate.py), never with --auto or --admin
 ALLOWED_GH_COMMANDS = frozenset(
-    {("pr", "create"), ("pr", "list"), ("pr", "view"), ("pr", "close"), ("pr", "edit")}
+    {
+        ("pr", "create"),
+        ("pr", "list"),
+        ("pr", "view"),
+        ("pr", "close"),
+        ("pr", "edit"),
+        ("pr", "merge"),
+    }
 )
+
+# a merge the board runs waits for nothing and bypasses nothing
+_REFUSED_MERGE_FLAGS = frozenset({"--auto", "--admin", "--delete-branch", "-d"})
 
 # a push or a pr create that has not answered in two minutes is a network problem, not slow work
 GH_TIMEOUT_SECONDS = 120
@@ -85,16 +100,20 @@ def _run(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedP
 
 
 def _gh(args: list[str], cwd: str | Path) -> subprocess.CompletedProcess:
-    """runs one gh command, and only one of three.
+    """runs one gh command, and only one on the allowlist.
 
-    THE ALLOWLIST IS THE GUARANTEE. A caller cannot reach `gh pr merge` through here whatever it
-    passes, because the check is on the invocation itself rather than on the intent behind it.
+    THE ALLOWLIST IS THE GUARANTEE: the check is on the invocation itself rather than on the intent
+    behind it. a merge may not wait for checks or bypass a ruleset - where the base is off limits
+    is decided before any merge is asked for (Store.off_limit_branches).
     """
     if tuple(args[:2]) not in ALLOWED_GH_COMMANDS:
         raise MergeRequestUnavailable(
             f"gh {' '.join(args[:2])} is not something the board may run. "
-            f"allowed: {sorted(' '.join(a) for a in ALLOWED_GH_COMMANDS)}. "
-            "merging is the operator's, never the board's."
+            f"allowed: {sorted(' '.join(a) for a in ALLOWED_GH_COMMANDS)}."
+        )
+    if tuple(args[:2]) == ("pr", "merge") and _REFUSED_MERGE_FLAGS & set(args):
+        raise MergeRequestUnavailable(
+            "the board merges now and plainly: never auto, never admin, never deleting the branch"
         )
     return _run(["gh", *args], cwd=cwd)
 
@@ -421,7 +440,7 @@ def merge_request_is_configured(repo_path: str | Path) -> bool:
 
 
 def retarget_merge_request(repo, url, base):
-    """pr edit --base changes only the review target; pr merge remains forbidden"""
+    """pr edit --base changes only the review target; it lands nothing"""
     from smortboard.exec.worktrees import default_branch
 
     if base != default_branch(repo):

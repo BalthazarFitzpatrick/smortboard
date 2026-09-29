@@ -64,6 +64,73 @@ function gatedBoardToggle({board, className, field, choices, lit, allowed, offNo
   return wrap;
 }
 
+// the branches this board never lands on: one row each with remove, and an add field. an empty list
+// is allowed and means every branch; while the global switch in o is off, none of it applies
+function offLimitEditor(board, settings) {
+  const box = document.createElement('div');
+  box.className = 'settings-stack';
+  const list = document.createElement('div');
+  list.className = 'boards-list';
+  const status = boardSettingsStatus();
+  const lifted = settings.off_limit_branches === 'off';
+
+  const save = async names => {
+    if (await patchBoard(board, {off_limit_branches: names}, status)) draw();
+  };
+  const draw = () => {
+    clearChildren(list);
+    const names = board.off_limit_branches || [];
+    if (!names.length) list.appendChild(boardSettingsNote('none - this board may land on any branch.'));
+    names.forEach(name => {
+      const row = document.createElement('div');
+      row.className = 'board-row off-limit-row';
+      const label = document.createElement('span');
+      label.className = 'board-name field-label';
+      label.textContent = name;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'toggle board-delete';
+      remove.textContent = 'remove';
+      remove.disabled = lifted;
+      remove.onclick = () => save(names.filter(other => other !== name));
+      row.append(label, remove);
+      list.appendChild(row);
+    });
+  };
+
+  const addRow = document.createElement('div');
+  addRow.className = 'boards-create-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'board-name-input text-field off-limit-input';
+  input.placeholder = 'release';
+  input.disabled = lifted;
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'toggle off-limit-add';
+  add.textContent = 'add';
+  add.disabled = lifted;
+  const addName = async () => {
+    const name = input.value.trim();
+    if (!name) return;
+    await save([...(board.off_limit_branches || []), name]);
+    if (!status.textContent) input.value = '';
+  };
+  add.onclick = addName;
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    addName();
+  });
+  addRow.append(input, add);
+  draw();
+  box.append(list, addRow, status, boardSettingsNote(lifted
+    ? 'off-limit branches are off for every board - turn them on in settings (o) to use this list.'
+    : 'the board never lands a card on these. main, master and trunk unless you change it.'));
+  return box;
+}
+
 function boardNumberField({board, field, placeholder, className, inputMode, parse, invalid}) {
   const row = document.createElement('div');
   row.className = 'boards-create-row';
@@ -106,7 +173,7 @@ function renderBoardSettings(board, settings) {
     lit: board.merge_mode === 'free' ? 'free' : 'review',
     allowed: settings.allow_free_merge === 'on',
     onNote: 'review: a passing card opens a pull request and waits for you. free: it merges into '
-      + 'the base by itself. main is never merged either way.',
+      + 'the base by itself. off-limit branches are never merged either way.',
     offNote: 'free merge is off for every board - turn it on in settings (o) first.',
   });
   const lease = gatedBoardToggle({
@@ -141,6 +208,7 @@ function renderBoardSettings(board, settings) {
   });
   bs.listEl.append(
     boardSettingsSection('merge mode', merge),
+    boardSettingsSection('off-limit branches', offLimitEditor(board, settings)),
     boardSettingsSection('file lease', lease),
     boardSettingsSection('cards at once', parallel,
       boardSettingsNote(`blank: only the global cap in o (${globalCap}) applies.`)),

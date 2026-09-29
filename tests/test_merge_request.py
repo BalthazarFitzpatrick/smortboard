@@ -241,23 +241,25 @@ def test_an_existing_pr_is_reported_not_duplicated(tmp_path, monkeypatch):
     store.close()
 
 
-def test_no_code_path_anywhere_can_merge(tmp_path, monkeypatch):
-    """the structural claim, tested structurally: the allowlist refuses the verb itself"""
+def test_a_merge_the_board_runs_is_plain(tmp_path, monkeypatch):
+    """the structural claim, tested structurally: merging is on the allowlist, waiting for checks,
+    bypassing a ruleset and deleting the branch are not"""
     _fake(monkeypatch)
-    assert ("pr", "merge") not in mr.ALLOWED_GH_COMMANDS
+    assert ("pr", "merge") in mr.ALLOWED_GH_COMMANDS
+    for flag in ("--auto", "--admin", "--delete-branch", "-d"):
+        with pytest.raises(mr.MergeRequestUnavailable):
+            mr._gh(["pr", "merge", "https://x/pull/1", "--merge", flag], cwd=tmp_path)
     with pytest.raises(mr.MergeRequestUnavailable):
-        mr._gh(["pr", "merge", "--squash"], cwd=tmp_path)
-    with pytest.raises(mr.MergeRequestUnavailable):
-        mr._gh(["pr", "merge"], cwd=tmp_path)
+        mr._gh(["repo", "delete"], cwd=tmp_path)
 
 
-def test_the_source_mentions_no_merge_and_no_auto_merge():
-    """a grep, deliberately: a later edit that adds `--auto` to pr create would pass every other
-    test in this file, because it would still open exactly one pull request"""
+def test_the_source_never_asks_for_auto_merge():
+    """a grep, deliberately: a later edit that adds `--auto` to a gh call would pass every other
+    test in this file. the only mention allowed is the set of flags _gh refuses"""
     source = Path(mr.__file__).read_text()
-    code = "\n".join(line for line in source.splitlines() if not line.strip().startswith("#"))
-    assert "--auto" not in code
-    assert '"merge"' not in code.replace('("pr", "merge")', "")
+    code = [line for line in source.splitlines() if not line.strip().startswith("#")]
+    mentions = [line for line in code if "--auto" in line]
+    assert mentions == [line for line in code if line.startswith("_REFUSED_MERGE_FLAGS")]
 
 
 def test_a_run_that_opens_a_pr_records_it_as_an_event(tmp_path, monkeypatch):

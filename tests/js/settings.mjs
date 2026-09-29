@@ -183,13 +183,13 @@ assert.deepEqual(settingsGroups.map(group => group.querySelector('.settings-grou
   ['general', 'labs and models', 'cost control']);
 assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-section')
   .map(section => section.children[0].textContent)), [
-  ['soft file leases', 'free merge', 'mission control can read',
+  ['soft file leases', 'free merge', 'off-limit branches', 'mission control can read',
     'where new repos go', 'how many cards run at once',
     'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup', 'mouse'],
   ['usage limits', 'models by role'],
   ['spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 11);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 12);
 assert.equal(mod.st.listEl.querySelectorAll('.board-row').length, 0,
   'o holds only what every board shares - no per-board rows');
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
@@ -386,6 +386,13 @@ assert.deepEqual(lastSettingsPatch(), {allow_free_merge: 'on'});
 await choice('settings-free-merge-choice', 'disabled').onclick();
 assert.deepEqual(lastSettingsPatch(), {allow_free_merge: null});
 assert.deepEqual(lit('settings-free-merge-choice'), ['disabled']);
+
+// ---- off-limit branches: on unless switched off, and off is the stored value -----------------------
+assert.deepEqual(lit('settings-off-limit-choice'), ['enabled'], 'unset keeps every board list');
+await choice('settings-off-limit-choice', 'disabled').onclick();
+assert.deepEqual(lastSettingsPatch(), {off_limit_branches: 'off'});
+await choice('settings-off-limit-choice', 'enabled').onclick();
+assert.deepEqual(lastSettingsPatch(), {off_limit_branches: null});
 
 // ---- where new repos go: saved on enter or blur, expanded by the server, refused when missing -----
 {

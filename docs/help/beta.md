@@ -31,8 +31,8 @@ one machine and one set of habits.
 keep your boards. but this is `0.x`: settings, defaults and panel shapes will move.
 
 what will not: [cards](../practices/cards.md), [leases](../practices/leases.md),
-[the two gates](../practices/gates.md), [the landing lock](../practices/landing.md), and human-only
-merges into main.
+[the two gates](../practices/gates.md), [the landing lock](../practices/landing.md), and off-limit
+branches, `main` by default.
 
 ## try it end to end
 

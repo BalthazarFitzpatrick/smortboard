@@ -1,10 +1,12 @@
-"""smortboard.review.integrate: the board landing a card on development. real git, no fakes."""
+"""smortboard.review.integrate: the board landing a card through its pull request. real git; github's
+side of the merge is tests/fake_github.py."""
 
 import subprocess
 
 import pytest
 
 from smortboard.review.integrate import integrate
+from tests import fake_github
 
 
 def _git(repo, *args):
@@ -47,10 +49,18 @@ def card(tmp_path, origin):
     return path
 
 
-def test_the_card_lands_on_development_as_one_two_parent_merge(origin, card):
+URL = "https://github.com/o/r/pull/7"
+
+
+@pytest.fixture
+def github(monkeypatch, origin):
+    return fake_github.install(monkeypatch, origin, {URL: "development"})
+
+
+def test_the_card_lands_through_its_pull_request_as_one_two_parent_merge(origin, card, github):
     before = _git(origin, "rev-parse", "development")
     tip = _git(card, "rev-parse", "card/x")
-    result = integrate(card, "card/x", "development", "a card")
+    result = integrate(card, "card/x", "development", "a card", URL)
     assert result.sha
     assert _git(origin, "rev-parse", "development") == result.sha
     assert _git(origin, "rev-list", "--parents", "-n", "1", result.sha).split()[1:] == [before, tip]
@@ -58,18 +68,36 @@ def test_the_card_lands_on_development_as_one_two_parent_merge(origin, card):
     assert _git(origin, "rev-parse", f"{result.sha}^{{tree}}") == _git(
         card, "rev-parse", "card/x^{tree}"
     )
-    # and the card branch itself was pushed, so its pull request shows the merged commits
+    # the card branch itself was pushed, and the merge was pinned to that exact head
     assert _git(origin, "rev-parse", "card/x") == tip
+    (merge,) = github.merges
+    assert merge[:4] == ["pr", "merge", URL, "--merge"]
+    assert merge[merge.index("--match-head-commit") + 1] == tip
 
 
-def test_main_is_never_written(origin, card):
+def test_an_off_limit_base_is_never_written(origin, card, github):
     before = _git(origin, "rev-parse", "main")
-    result = integrate(card, "card/x", "main", "a card")
-    assert result.sha is None and "protected" in result.reason
+    result = integrate(card, "card/x", "main", "a card", URL)
+    assert result.sha is None and "off limits" in result.reason
     assert _git(origin, "rev-parse", "main") == before
+    assert github.merges == []
 
 
-def test_a_base_that_moved_is_a_retry_not_an_overwrite(tmp_path, origin, card):
+def test_main_lands_like_any_base_once_it_is_not_off_limits(origin, card, monkeypatch):
+    github = fake_github.install(monkeypatch, origin, {URL: "main"})
+    _git(card, "merge", "-q", "origin/main")
+    result = integrate(card, "card/x", "main", "a card", URL, off_limits=frozenset())
+    assert result.sha and _git(origin, "rev-parse", "main") == result.sha
+    assert len(github.merges) == 1
+
+
+def test_no_pull_request_means_no_merge(origin, card, github):
+    result = integrate(card, "card/x", "development", "a card", None)
+    assert result.sha is None and not result.moved
+    assert github.merges == []
+
+
+def test_a_base_that_moved_is_a_retry_not_an_untested_merge(tmp_path, origin, card, github):
     other = tmp_path / "other"
     _clone(origin, other)
     _git(other, "checkout", "-q", "development")
@@ -77,20 +105,25 @@ def test_a_base_that_moved_is_a_retry_not_an_overwrite(tmp_path, origin, card):
     _git(other, "push", "-q", "origin", "development")
     moved_to = _git(origin, "rev-parse", "development")
 
-    # the card's view of origin/development is stale but still contained, so only the push can tell
-    result = integrate(card, "card/x", "development", "a card")
-    assert result.sha is None and result.moved
-    assert _git(origin, "rev-parse", "development") == moved_to
-
-
-def test_a_branch_that_does_not_contain_the_base_is_sent_back_to_sync(tmp_path, origin, card):
-    other = tmp_path / "other"
-    _clone(origin, other)
-    _git(other, "checkout", "-q", "development")
-    _commit(other, "other.txt", "landed first\n")
-    _git(other, "push", "-q", "origin", "development")
-    _git(card, "fetch", "-q", "origin")
-
-    result = integrate(card, "card/x", "development", "a card")
+    # the card's view of origin/development is stale: the fetch right before the merge catches it
+    result = integrate(card, "card/x", "development", "a card", URL)
     assert result.sha is None and result.moved
     assert "does not contain" in result.reason
+    assert _git(origin, "rev-parse", "development") == moved_to
+    assert github.merges == [], "nothing is merged that the tests did not see"
+
+
+def test_a_head_that_moved_after_the_gates_is_a_retry(origin, card, github):
+    github.refuse = "Head branch was modified. Review and try the merge again."
+    result = integrate(card, "card/x", "development", "a card", URL)
+    assert result.sha is None and result.moved
+    assert "Head branch was modified" in result.reason
+
+
+def test_a_ruleset_refusal_is_shown_not_retried(origin, card, github):
+    github.refuse = (
+        "Base branch policy prohibits the merge: 2 of 2 required status checks are expected"
+    )
+    result = integrate(card, "card/x", "development", "a card", URL)
+    assert result.sha is None and not result.moved
+    assert "required status checks" in result.reason

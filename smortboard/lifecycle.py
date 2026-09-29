@@ -11,9 +11,10 @@ grading its own homework, so the board re-runs them; the agent's own view that t
 the same, so a separate reviewer reads the diff. A card reaches a pull request by passing two things
 that do not care what it thinks.
 
-The board never merges into main. On a repo whose base is main, the chain ends with an open pull
-request and a link, which is the point at which a human takes over. On a repo whose base is not
-protected, review mode waits for acceptance before landing; free mode lands automatically.
+The board never lands on its off-limit branches (main, master and trunk unless its list says
+otherwise). On such a base the chain ends with an open pull request and a link, which is the point
+at which a human takes over. On any other base, review mode waits for acceptance before landing;
+free mode lands automatically.
 Review-mode dependents may stack on one waiting parent, up to three cards deep. Merging
 development into main stays the operator's.
 """
@@ -60,7 +61,6 @@ from smortboard.review.base_red import check_base_red
 from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.integrate import integrate, open_release_request
 from smortboard.review.merge_request import (
-    PROTECTED_BRANCHES,
     MergeRequestUnavailable,
     branch_has_commits,
     open_merge_request,
@@ -984,11 +984,8 @@ def _run_attempt(
     if not request.url:
         return _refuse(store, state, f"both gates passed, but: {request.refusal}")
 
-    if (
-        base not in PROTECTED_BRANCHES
-        and store.board_merges_freely(card["board_id"])
-        and target == base
-    ):
+    off_limits = store.off_limit_branches(card["board_id"])
+    if base not in off_limits and store.board_merges_freely(card["board_id"]) and target == base:
         return _integrate(store, state, card, tree, repo, base, request.url)
 
     _note(
@@ -998,7 +995,7 @@ def _run_attempt(
             f"tests passed, the reviewer approved, and the pull request is open:\n{request.url}\n\n"
             + (
                 "merging into this protected base is yours."
-                if base in PROTECTED_BRANCHES
+                if base in off_limits
                 else "waiting for y to accept and merge this card."
             ),
             "review",

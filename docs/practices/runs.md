@@ -36,4 +36,4 @@ a card runs through these in order, then ends `opened`, `blocked`, `refused` or 
 | `reviewing` | a second, read-only agent reviews the diff. |
 | `fixing` | on the `fix` findings route only: findings go back to the worker, at most **twice**, then the gates run again. |
 | `opening` | the board pushes the branch and opens a pull request. |
-| `opened` | the pull request is open. a free-merge board then **lands** it on its unprotected base; a review-required board, the default, waits for your `y`. `main` is never landed ([landing and main](landing.md)). |
+| `opened` | the pull request is open. a free-merge board then **lands** it on its unprotected base; a review-required board, the default, waits for your `y`. a base on the board's off-limit list, `main` by default, is never landed ([landing and main](landing.md)). |

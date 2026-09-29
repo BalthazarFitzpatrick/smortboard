@@ -123,10 +123,24 @@ def test_the_lock_survives_a_store_restart(tmp_path):
     assert rows[0]["holder"]["holder"] == "agent1"
 
 
-def test_client_refuses_main_master_or_trunk_as_target():
-    for target in ("main", "master", "trunk"):
-        args = land_cli.main(["--repo", "/tmp/nonexistent-repo", "--target", target, "--", "true"])
-        assert args != 0
+def test_the_board_refuses_an_off_limit_target_until_the_switch_is_off(tmp_path):
+    # the client keeps no list of its own: the board answers for the repo's boards
+    for _server, base in _run_server(tmp_path):
+        for target in ("main", "master", "trunk"):
+            status, refused = _call(
+                f"{base}/api/repos/repoA/landing",
+                "POST",
+                {"holder": "agent1", "branch": "feature/x", "target": target},
+            )
+            assert status == 400 and "off limits" in refused["error"]
+        status, _ = _call(f"{base}/api/settings", "PATCH", {"off_limit_branches": "off"})
+        assert status == 200
+        status, granted = _call(
+            f"{base}/api/repos/repoA/landing",
+            "POST",
+            {"holder": "agent1", "branch": "feature/x", "target": "main"},
+        )
+        assert status == 200 and granted["granted"] is True
 
 
 # ---- the http routes, over real http -------------------------------------------------------
