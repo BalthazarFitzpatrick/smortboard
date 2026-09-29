@@ -17,7 +17,9 @@ const EXPANDS = {'~/Documents/screenshots': '/home/op/Documents/screenshots'};
 const settingsState = {
   mission_control_read_paths: [],
   max_parallel: null,
-  fold_cross_lab_fallback: ['anthropic/opus', 'openai/gpt-6-astra'],
+  fold_cross_lab_fallback: [
+    {ref: 'anthropic/opus', effort: null}, {ref: 'openai/gpt-6-astra', effort: 'high'},
+  ],
 };
 const boardsState = [
   {id: 'b1', name: 'alpha', max_parallel: null, daily_budget_usd: null},
@@ -209,8 +211,9 @@ const roleBlocks = mod.st.listEl.querySelectorAll('.settings-role-block');
 assert.equal(roleBlocks.length, 4, 'each model role has its own settings block');
 assert.deepEqual(roleBlocks.map(block => block.querySelector('.settings-role-name').textContent),
   ['worker', 'reviewer', 'orchestrator', 'fold']);
-assert.ok(roleBlocks.every(block => block.querySelectorAll('.settings-role-control').length === 3),
-  'each role separates the primary model, the fallback order and the effort');
+assert.ok(roleBlocks.every(block => block.querySelectorAll('.settings-role-control').length === 2),
+  'each role has its primary model and its fallback order; effort lives in both pickers');
+assert.equal(mod.st.listEl.querySelectorAll('.role-effort').length, 0, 'no separate effort row');
 assert.ok(roleBlocks.every(block => block.querySelector('.settings-role-status')),
   'each role keeps save status beside its heading');
 const reviewerPicker = rolePickers.find(row => row.dataset.role === 'reviewer');
@@ -227,18 +230,22 @@ primaryColumns[0].onPick({id: 'openai'});
 primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
 primaryColumns[1].onPick({id: 'gpt-6-astra'});
 assert.equal(primaryMenu.closed, false, 'selecting a primary model keeps the menu open');
+primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.equal(primaryColumns[2].label, 'effort', 'the role picker carries the effort column too');
+primaryColumns[2].onPick({id: 'high'});
 const primarySave = primaryMenu.opts.sections.find(section => section.kind === 'buttons')
   .buttons.find(button => button.id === 'save-model');
 assert.equal(primarySave.enabled, true);
 await primarySave.onClick(primaryMenu);
 await flush();
 assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-  {reviewer_lab: 'openai', reviewer_model: 'gpt-6-astra'});
+  {reviewer_lab: 'openai', reviewer_model: 'gpt-6-astra', reviewer_effort: 'high'});
 
 const fallbackTrigger = mod.st.listEl.querySelectorAll('.role-fallback')
   .find(row => row.dataset.role === 'fold');
 assert.equal(fallbackTrigger.textContent,
-  '2 selected: anthropic/opus → openai/gpt-6-astra', 'the trigger summarizes the saved order');
+  '2 selected: anthropic/opus → openai/gpt-6-astra @ high',
+  'the trigger summarizes the saved order and each fallback\'s own effort');
 await fallbackTrigger.onclick();
 const fallbackMenu = modelMenus.at(-1);
 assert.equal(fallbackMenu.opts.persistent, true, 'fallback selection stays open for multiple picks');
@@ -258,34 +265,28 @@ columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns')
 columns[1].onPick({id: 'anthropic/fable'}, true);
 columns[1].onPick({id: 'anthropic/opus'}, false);
 assert.equal(fallbackTrigger.textContent,
-  '3 selected: openai/gpt-6-astra → openai/gpt-5.6-sol → anthropic/fable',
+  '3 selected: openai/gpt-6-astra @ high → openai/gpt-5.6-sol → anthropic/fable',
   'new picks append while deselection removes without reordering the rest');
+// the effort column describes the focused model row, and only a ticked one
+columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.deepEqual(columns[2].items, [], 'an unticked model has no effort to set');
+assert.equal(columns[2].empty, 'tick a model');
+columns[1].onFocus({id: 'openai/gpt-5.6-sol'});
+columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.equal(columns[2].label, 'effort: openai/gpt-5.6-sol');
+assert.equal(columns[2].items.find(item => item.on).id, 'default');
+columns[2].onPick({id: 'medium'});
+assert.equal(fallbackTrigger.textContent,
+  '3 selected: openai/gpt-6-astra @ high → openai/gpt-5.6-sol @ medium → anthropic/fable');
 const saveFallbacks = fallbackMenu.opts.sections.find(section => section.kind === 'buttons').buttons[0];
 await saveFallbacks.onClick(fallbackMenu);
 assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-  {fold_cross_lab_fallback: ['openai/gpt-6-astra', 'openai/gpt-5.6-sol', 'anthropic/fable']});
+  {fold_cross_lab_fallback: [
+    {ref: 'openai/gpt-6-astra', effort: 'high'},
+    {ref: 'openai/gpt-5.6-sol', effort: 'medium'},
+    {ref: 'anthropic/fable', effort: null},
+  ]});
 assert.equal(fallbackMenu.closed, true, 'a successful save closes the picker');
-
-// ---- effort: unset shows default, a pick PATCHes that role's own key, default clears it ---------
-{
-  const effortTrigger = mod.st.listEl.querySelectorAll('.role-effort')
-    .find(row => row.dataset.role === 'reviewer');
-  assert.equal(effortTrigger.textContent, 'default', 'unset effort reads as the cli default');
-  effortTrigger.onclick();
-  const effortMenu = modelMenus.at(-1);
-  assert.equal(effortMenu.opts.title, 'reviewer effort');
-  assert.equal(effortMenu.anchor, effortTrigger, 'the effort menu opens at its trigger');
-  const list = effortMenu.opts.sections.find(section => section.kind === 'list');
-  assert.deepEqual(list.items.map(item => item.label), ['default', 'low', 'medium', 'high']);
-  assert.deepEqual(list.items.filter(item => item.on).map(item => item.id), ['default']);
-  await list.onPick({id: 'low'});
-  assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-    {reviewer_effort: 'low'});
-  await list.onPick({id: 'default'});
-  assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-    {reviewer_effort: null}, 'default clears the setting rather than storing a level');
-  await flush();
-}
 
 // ---- the mouse is opt-in: two toggles, disabled lit when unset, and enabled PATCHes "on" ---------
 {
