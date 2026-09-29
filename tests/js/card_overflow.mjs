@@ -192,6 +192,11 @@ modelColumns[0].onPick({id: 'openai'});
 assert.equal(menus.length, 2, 'picking a lab updates the same menu');
 modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns').columns;
 modelColumns[1].onPick({id: 'x'});
+modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns').columns;
+assert.equal(modelColumns[2].label, 'effort', 'effort is the third column beside lab and model');
+assert.deepEqual(modelColumns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high']);
+assert.equal(modelColumns[2].items.find(item => item.on).id, 'default', 'unset reads as default');
+modelColumns[2].onPick({id: 'high'});
 assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0,
   'selecting a model waits for the save action');
 const saveModel = menus[1].opts.sections.find(section => section.kind === 'buttons')
@@ -199,8 +204,8 @@ const saveModel = menus[1].opts.sections.find(section => section.kind === 'butto
 saveModel.onClick(menus[1]);
 await flush();
 const modelPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
-assert.deepEqual(JSON.parse(modelPatch.opts.body), {lab: 'openai', model: 'x'},
-  "the picker patches both parts of the card's model ref");
+assert.deepEqual(JSON.parse(modelPatch.opts.body), {lab: 'openai', model: 'x', effort: 'high'},
+  "the picker patches the card's model ref and its effort");
 assert.ok(!calls.some(c => c.path.startsWith('/api/cards/c2')), 'and never touch the focused card instead');
 
 // ---- e, j and del retired into the menu: m is the only key, and every action is still two

@@ -129,6 +129,8 @@ const opusHead = sectionOf(mod.cardPanelHtml({...card, model: 'anthropic/claude-
 assert.ok(opusHead.includes('<span class="card-model">opus 5</span>'), 'a model is named the way people say it');
 const haikuHead = sectionOf(mod.cardPanelHtml({...card, model: 'anthropic/claude-haiku-4-5-20251001'}, outcome), 'title');
 assert.ok(haikuHead.includes('<span class="card-model">haiku 4.5</span>'), 'a version keeps its dot, a date suffix goes');
+const effortHead = sectionOf(mod.cardPanelHtml({...card, model: 'anthropic/claude-opus-5', effort: 'high'}, outcome), 'title');
+assert.ok(effortHead.includes('<span class="card-model">opus 5 @ high</span>'), "the card's own effort follows its model");
 assert.ok(!headHtml.includes('complexity'), 'complexity stays in the card menu, not the head line');
 assert.ok(headHtml.includes('<div class="section-value">the title</div>'), 'the title sits under the meta line');
 assert.ok(!sectionOf(mod.cardPanelHtml(card, outcome), 'title').includes('runs'), 'no spend part for a card with no runs');
