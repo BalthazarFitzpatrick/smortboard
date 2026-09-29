@@ -306,11 +306,11 @@ def _sweep_checking_prs(
 
 
 def _sweep_repo(store, key, cards, now):
-    _, path, base = key
+    board_id, path, base = key
     if not has_remote(path) or not fetch_base(path, base):
         return
     # a pull request merged on github by hand moves origin only - bring the local base along
-    fast_forward_base(path, base)
+    fast_forward_base(path, base, off_limits=store.off_limit_branches(board_id))
     sha = _read_base_sha(path, base)
     if not sha:
         return

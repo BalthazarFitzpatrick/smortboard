@@ -104,6 +104,8 @@ def integrate(
 def open_release_request(repo_path: str | Path, base: str, into: str = "main") -> str | None:
     """the one standing pull request from base into main, opened if there is none. Merging it is
     the operator's; this only makes sure there is something to merge. None when gh cannot say"""
+    if base == into:
+        return None  # a card landed on main itself - there is nothing left to release
     listed = _gh(
         [
             "pr",

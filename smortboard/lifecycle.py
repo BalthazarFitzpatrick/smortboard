@@ -60,7 +60,6 @@ from smortboard.review.base_red import check_base_red
 from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.integrate import integrate, open_release_request
 from smortboard.review.merge_request import (
-    PROTECTED_BRANCHES,
     MergeRequestUnavailable,
     branch_has_commits,
     open_merge_request,
@@ -984,11 +983,8 @@ def _run_attempt(
     if not request.url:
         return _refuse(store, state, f"both gates passed, but: {request.refusal}")
 
-    if (
-        base not in PROTECTED_BRANCHES
-        and store.board_merges_freely(card["board_id"])
-        and target == base
-    ):
+    off_limits = store.off_limit_branches(card["board_id"])
+    if base not in off_limits and store.board_merges_freely(card["board_id"]) and target == base:
         return _integrate(store, state, card, tree, repo, base, request.url)
 
     _note(
@@ -998,7 +994,7 @@ def _run_attempt(
             f"tests passed, the reviewer approved, and the pull request is open:\n{request.url}\n\n"
             + (
                 "merging into this protected base is yours."
-                if base in PROTECTED_BRANCHES
+                if base in off_limits
                 else "waiting for y to accept and merge this card."
             ),
             "review",

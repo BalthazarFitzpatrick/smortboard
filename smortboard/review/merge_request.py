@@ -18,10 +18,14 @@ from typing import Any
 
 from smortboard.exec.worktrees import repo_lock
 from smortboard.review.screenshot import latest_screenshot
+from smortboard.store.schema import DEFAULT_OFF_LIMITS
 
 # the branches nothing here may ever write, however it is spelled. a push whose destination is one
 # of these is a bug, and the bug it would be is the one that writes main
-PROTECTED_BRANCHES = frozenset({"main", "master", "trunk"})
+# a card branch is never pushed under one of these names, whatever a board allows as a base -
+# pushing main:main from a card worktree is always a bug. where a card may LAND is the board's own
+# list, Store.off_limit_branches
+PROTECTED_BRANCHES = frozenset(DEFAULT_OFF_LIMITS)
 
 # the only gh subcommands this module may run. `merge` is not on it, and cannot be added by a
 # caller - see _gh, which matches the first two words of the invocation against this set.

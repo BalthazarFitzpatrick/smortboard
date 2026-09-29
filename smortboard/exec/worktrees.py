@@ -13,6 +13,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from smortboard.store.schema import DEFAULT_OFF_LIMITS
+
 
 class WorktreeError(Exception):
     """a git worktree/branch operation failed"""
@@ -235,7 +237,7 @@ def _try_git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 # the board never moves these, even locally - they are the operator's
-_NEVER_MOVED = frozenset({"main", "master", "trunk"})
+_NEVER_MOVED = frozenset(DEFAULT_OFF_LIMITS)
 
 
 def _checked_out_at(repo_path: Path, branch: str) -> Path | None:
@@ -255,14 +257,20 @@ def _checked_out_at(repo_path: Path, branch: str) -> Path | None:
     return None
 
 
-def fast_forward_base(repo_path: str | Path, base: str, remote: str = "origin") -> str:
+def fast_forward_base(
+    repo_path: str | Path,
+    base: str,
+    remote: str = "origin",
+    off_limits: frozenset[str] = _NEVER_MOVED,
+) -> str:
     """moves the local `base` up to `remote`/`base` when that is a plain fast-forward.
 
     landing pushes to origin and never writes the local branch, so it lagged forever and every
     reader of it saw the scaffold (comet catcher, 2026-09-24). returns what happened: moved,
     current, protected, missing, diverged or dirty - a branch with local work is never touched
     """
-    if base in _NEVER_MOVED:
+    # the board's own off-limit list when the caller has one (Store.off_limit_branches)
+    if base in off_limits:
         return "protected"
     root = Path(repo_path).resolve()
     with repo_lock(root):

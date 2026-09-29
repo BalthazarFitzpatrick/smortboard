@@ -64,6 +64,43 @@ def test_a_main_card_is_never_merged_by_the_board(board, monkeypatch):
     assert store.get_card(card_id)["status"] == "checking"
 
 
+def _free(store, card_id):
+    store.set_setting("allow_free_merge", "on")
+    store.set_board_merge_mode(store.get_card(card_id)["board_id"], "free")
+
+
+def test_a_main_card_lands_once_the_board_takes_main_off_its_list(board, monkeypatch):
+    store, card_id = board
+    _free(store, card_id)
+    chain._stub_gates(monkeypatch)
+    calls = _fake_integrate(monkeypatch, IntegrateResult("abcdef1234567"))
+    store.set_board_off_limit_branches(store.get_card(card_id)["board_id"], ["master", "trunk"])
+    lifecycle.run_card_lifecycle(store, card_id, backend=chain._Backend())
+    assert calls == ["main"]
+    assert store.get_card(card_id)["status"] == "accepted"
+
+
+def test_a_main_card_lands_while_the_global_switch_is_off(board, monkeypatch):
+    store, card_id = board
+    _free(store, card_id)
+    chain._stub_gates(monkeypatch)
+    calls = _fake_integrate(monkeypatch, IntegrateResult("abcdef1234567"))
+    store.set_setting("off_limit_branches", "off")
+    lifecycle.run_card_lifecycle(store, card_id, backend=chain._Backend())
+    assert calls == ["main"]
+
+
+def test_a_free_board_still_leaves_main_alone_by_default(board, monkeypatch):
+    store, card_id = board
+    _free(store, card_id)
+    chain._stub_gates(monkeypatch)
+    calls = _fake_integrate(monkeypatch)
+    lifecycle.run_card_lifecycle(store, card_id, backend=chain._Backend())
+    assert calls == []
+    note = store.get_card(card_id)["comments"][-1]["body"]
+    assert "merging into this protected base is yours" in note
+
+
 def test_a_moved_base_is_synced_and_tried_again(board, repo, monkeypatch):
     store, card_id = board
     _on_development(store, card_id, repo)
@@ -108,7 +145,9 @@ def test_after_a_landing_the_local_base_follows_origin(board, repo, monkeypatch)
     _fake_integrate(monkeypatch, IntegrateResult("abcdef1234567"))
     asked = []
     monkeypatch.setattr(
-        land_card, "fast_forward_base", lambda path, base: asked.append((path, base)) or "moved"
+        land_card,
+        "fast_forward_base",
+        lambda path, base, **_: asked.append((path, base)) or "moved",
     )
     lifecycle.run_card_lifecycle(store, card_id, backend=chain._Backend())
     assert asked == [(store.get_repo(store.get_card(card_id)["repo_id"])["path"], "development")]
@@ -124,6 +163,6 @@ def test_a_landing_that_failed_never_moves_the_local_base(board, repo, monkeypat
     chain._stub_gates(monkeypatch)
     _fake_integrate(monkeypatch, *[IntegrateResult(None, reason="conflict", moved=False)])
     asked = []
-    monkeypatch.setattr(land_card, "fast_forward_base", lambda *a: asked.append(a) or "moved")
+    monkeypatch.setattr(land_card, "fast_forward_base", lambda *a, **_: asked.append(a) or "moved")
     lifecycle.run_card_lifecycle(store, card_id, backend=chain._Backend())
     assert asked == []
