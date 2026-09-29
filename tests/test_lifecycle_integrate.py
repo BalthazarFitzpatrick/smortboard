@@ -26,7 +26,7 @@ def _fake_integrate(monkeypatch, *results):
     calls = []
     answers = iter(results)
 
-    def fake(tree_path, branch, base, title, remote="origin"):
+    def fake(tree_path, branch, base, title, url=None, remote="origin", **_):
         calls.append(base)
         return next(answers)
 

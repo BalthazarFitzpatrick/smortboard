@@ -1,15 +1,15 @@
-"""lands a finished card on a base that is not protected - a repo's development branch.
+"""lands a finished card on its base - usually a repo's development branch.
 
-The operator runs off main and merges development into main when they choose; the board lands each
-finished card on development itself, so the next card starts on top of it instead of every card
-waiting on a human merge. main, master and trunk stay out of reach: `integrate` refuses them the
-same way merge_request._push does, and `gh pr merge` is still not on merge_request's allowlist.
+The board lands each finished card itself, so the next card starts on top of it instead of every
+card waiting on a human merge. a board's off-limit branches (main, master and trunk unless its list
+says otherwise, Store.off_limit_branches) stay out of reach: `integrate` refuses them.
 
-THE MERGE IS BUILT WITHOUT A CHECKOUT. The caller has already merged the base into the card branch
-(and rerun the tests when that brought anything in), so the merged tree IS the card's tree: `git
-commit-tree` makes the two-parent commit and a plain push of it fast-forwards the base. Two parents
-keep one card revertable with `git revert -m 1` after others have built on it. A base that moved
-between the fetch and the push is a rejected push, never an overwrite - the caller syncs again.
+THE CARD'S OWN PULL REQUEST IS WHAT MERGES. `gh pr merge --merge --match-head-commit <tip>`: a
+two-parent merge (one card stays revertable with `git revert -m 1`), refused by github if the head
+moved after the gates passed, and accepted by a ruleset that only takes pull requests - a direct push
+is not. The caller has merged the base into the branch and retested, and the base is fetched again
+right before the merge, so the merged tree is the tested one. The one gap left: a push to the base
+by something outside the landing lock in the seconds between that fetch and github's merge.
 """
 
 from __future__ import annotations
@@ -62,14 +62,29 @@ def _git(path: str | Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+# github's answers that mean the base or the head moved since the sync - syncing again can help.
+# anything else (a ruleset wanting checks, a token without merge rights) will not change on retry
+_RETRYABLE = ("not mergeable", "head branch was modified", "not up to date", "is behind")
+
+
 def integrate(
-    tree_path: str | Path, branch: str, base: str, title: str, remote: str = "origin"
+    tree_path: str | Path,
+    branch: str,
+    base: str,
+    title: str,
+    url: str | None,
+    remote: str = "origin",
+    off_limits: frozenset[str] = PROTECTED_BRANCHES,
 ) -> IntegrateResult:
-    """merges `branch` (checked out at `tree_path`, already containing `remote`/`base`) into base
-    as one merge commit and pushes it. Never touches a protected base, never forces"""
-    if base in PROTECTED_BRANCHES:
-        return IntegrateResult(None, f"{base} is protected - merging into it is the operator's")
+    """merges the card's pull request `url` into base, pinned to the commit the gates passed.
+    Never an off-limit base, never forced; the caller has merged base into `branch` and retested"""
+    if base in off_limits:
+        return IntegrateResult(None, f"{base} is off limits - merging into it is the operator's")
+    if not url:
+        return IntegrateResult(None, "there is no pull request to merge")
     base_ref = f"{remote}/{base}"
+    # fetched now, so a base that moved since the sync is caught here rather than merged untested
+    _git(tree_path, "fetch", remote, base)
     if _git(tree_path, "merge-base", "--is-ancestor", base_ref, branch).returncode != 0:
         return IntegrateResult(None, f"{branch} does not contain {base_ref} yet", moved=True)
     # the pull request's head follows the branch, so the merged commits are the reviewed ones
@@ -77,27 +92,29 @@ def integrate(
         return IntegrateResult(None, f"pushing {branch} failed")
 
     tip = _git(tree_path, "rev-parse", branch).stdout.strip()
-    base_tip = _git(tree_path, "rev-parse", base_ref).stdout.strip()
-    tree = _git(tree_path, "rev-parse", f"{branch}^{{tree}}").stdout.strip()
-    made = _git(
-        tree_path,
-        "commit-tree",
-        tree,
-        "-p",
-        base_tip,
-        "-p",
-        tip,
-        "-m",
-        f"merged {branch} into {base}: {title}",
+    # --match-head-commit: github refuses if anything reached the head after the gates passed
+    merged = _gh(
+        [
+            "pr",
+            "merge",
+            url,
+            "--merge",
+            "--match-head-commit",
+            tip,
+            "--subject",
+            f"merged {branch} into {base}: {title}",
+        ],
+        cwd=tree_path,
     )
-    if made.returncode != 0:
-        return IntegrateResult(None, f"could not make the merge commit: {made.stderr.strip()}")
-    sha = made.stdout.strip()
+    if merged.returncode != 0:
+        said = (merged.stderr or merged.stdout).strip()
+        retry = any(phrase in said.lower() for phrase in _RETRYABLE)
+        return IntegrateResult(None, f"github refused the merge: {said}", moved=retry)
 
-    pushed = _git(tree_path, "push", remote, f"{sha}:refs/heads/{base}")
-    if pushed.returncode != 0:
-        # rejected as not a fast-forward: another card landed first, so sync and try again
-        return IntegrateResult(None, f"pushing {base} failed: {pushed.stderr.strip()}", moved=True)
+    _git(tree_path, "fetch", remote, base)
+    sha = _git(tree_path, "rev-parse", base_ref).stdout.strip()
+    if _git(tree_path, "merge-base", "--is-ancestor", tip, base_ref).returncode != 0:
+        return IntegrateResult(None, f"github said merged, but {base_ref} does not hold {tip[:10]}")
     return IntegrateResult(sha)
 
 

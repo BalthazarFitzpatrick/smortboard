@@ -15,6 +15,7 @@ from smortboard.review.gates import GateResult
 from smortboard.review.reviewer import ReviewResult
 from smortboard.review.stacks import active_stack
 from smortboard.store.api import Store
+from tests import fake_github
 
 
 def run_git(path, *args):
@@ -44,8 +45,9 @@ class CommitWorker:
 
 
 class FakeGithub:
-    def __init__(self, run_command):
+    def __init__(self, run_command, origin=None):
         self.run_command = run_command
+        self.origin = origin
         self.prs = {}
         self.edits = []
         self.view_error = False
@@ -76,6 +78,13 @@ class FakeGithub:
                 return subprocess.CompletedProcess(command, 1, "", "github unavailable")
             pr = self.prs[args[2]]
             output = json.dumps({**pr, "baseRefName": pr["base"]})
+        elif args[:2] == ["pr", "merge"]:
+            # github's side of the landing: a real merge into the bare origin, see fake_github
+            pr = self.prs[args[2]]
+            merged = fake_github.FakeGithub(self.origin, {args[2]: pr["base"]})(args, cwd)
+            if merged.returncode == 0:
+                pr.update(state="MERGED", mergedAt="2026-09-29T00:00:00Z")
+            return subprocess.CompletedProcess(command, merged.returncode, "", merged.stderr)
         elif args[:2] == ["pr", "edit"]:
             base = args[args.index("--base") + 1]
             self.prs[args[2]]["base"] = base
@@ -100,7 +109,7 @@ def system(tmp_path, monkeypatch):
     run_git(repo, "push", "-q", "origin", "main", "main:development")
     run_git(repo, "branch", "development", "origin/development")
 
-    github = FakeGithub(merge_request._run)
+    github = FakeGithub(merge_request._run, origin)
     monkeypatch.setattr(merge_request, "_run", github.run)
     which = merge_request.shutil.which
     monkeypatch.setattr(
@@ -263,3 +272,33 @@ def test_conflicted_parent_landing_keeps_child_stacked(system):
     assert active_stack(store, child["id"])["parent_id"] == parent["id"]
     assert github.prs[child_result.pr_url]["base"] == branch_name(parent["id"])
     assert github.edits == []
+
+
+def test_a_free_board_lands_on_main_only_once_main_is_off_its_list(system):
+    """the whole-system case: one free board on a repo whose base is main. by default the card
+    stops at its open pull request; with main off the board's list, the board merges that pull
+    request into main itself, pinned to the reviewed commit"""
+    store, board, registered, repo, origin, github = system
+    board_id, repo_id = board["id"], registered["id"]
+    store.set_repo_default_branch(repo_id, "main")
+    store.set_setting("allow_free_merge", "on")
+    store.set_board_merge_mode(board_id, "free")
+    main_before = run_git(origin, "rev-parse", "main")
+
+    held = store.create_card(board_id, repo_id, "held", tasks=["commit"], leases=["*.txt"])
+    held_result = lifecycle.run_card_lifecycle(store, held["id"], backend=CommitWorker())
+    assert held_result.phase == "opened"
+    assert store.get_card(held["id"])["status"] == "checking"
+    assert run_git(origin, "rev-parse", "main") == main_before
+    assert "protected base is yours" in store.list_comments(held["id"])[-1]["body"]
+
+    store.set_board_off_limit_branches(board_id, ["master", "trunk"])
+    landed = store.create_card(board_id, repo_id, "landed", tasks=["commit"], leases=["*.txt"])
+    result = lifecycle.run_card_lifecycle(store, landed["id"], backend=CommitWorker())
+    assert store.get_card(landed["id"])["status"] == "accepted", store.list_comments(landed["id"])
+    main_after = run_git(origin, "rev-parse", "main")
+    assert main_after != main_before
+    assert run_git(origin, "show", f"main:{landed['id']}.txt") == f"work for {landed['id']}"
+    assert github.prs[result.pr_url]["state"] == "MERGED"
+    integrated = [e for e in store.list_events(landed["id"]) if e["kind"] == "integrated"]
+    assert integrated[-1]["payload"]["sha"] == main_after

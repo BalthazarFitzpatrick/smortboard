@@ -114,9 +114,13 @@ def land_card(
         for _ in range(INTEGRATE_ATTEMPTS):
             if (blocked := sync(store, state, card_id, tree, repo, base)) is not None:
                 return blocked
-            result = integrate_fn(tree.path, tree.branch, base, card["title"])
+            result = integrate_fn(
+                tree.path, tree.branch, base, card["title"], url, off_limits=off_limits
+            )
+            # the last refusal is what the card shows, github's own words included
+            reason = result.reason or reason
             if result.sha or not result.moved:
-                landed, reason = result.sha, result.reason or reason
+                landed = result.sha
                 break
         if landed is not None:
             # the push moved origin/<base> only - the local branch follows, or everything reading

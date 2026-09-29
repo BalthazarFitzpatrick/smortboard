@@ -27,13 +27,23 @@ from smortboard.store.schema import DEFAULT_OFF_LIMITS
 # list, Store.off_limit_branches
 PROTECTED_BRANCHES = frozenset(DEFAULT_OFF_LIMITS)
 
-# the only gh subcommands this module may run. `merge` is not on it, and cannot be added by a
-# caller - see _gh, which matches the first two words of the invocation against this set.
-# `close` is for a rejected card, and close_merge_request never passes --delete-branch
-# pr edit --base retargets a review and lands nothing; pr merge remains absent
+# the only gh subcommands the board may run - see _gh, which matches the first two words of the
+# invocation against this set. `close` is for a rejected card and never passes --delete-branch;
+# `edit --base` retargets a review and lands nothing; `merge` lands a card through its own pull
+# request (review/integrate.py), never with --auto or --admin
 ALLOWED_GH_COMMANDS = frozenset(
-    {("pr", "create"), ("pr", "list"), ("pr", "view"), ("pr", "close"), ("pr", "edit")}
+    {
+        ("pr", "create"),
+        ("pr", "list"),
+        ("pr", "view"),
+        ("pr", "close"),
+        ("pr", "edit"),
+        ("pr", "merge"),
+    }
 )
+
+# a merge the board runs waits for nothing and bypasses nothing
+_REFUSED_MERGE_FLAGS = frozenset({"--auto", "--admin", "--delete-branch", "-d"})
 
 # a push or a pr create that has not answered in two minutes is a network problem, not slow work
 GH_TIMEOUT_SECONDS = 120
@@ -89,16 +99,20 @@ def _run(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedP
 
 
 def _gh(args: list[str], cwd: str | Path) -> subprocess.CompletedProcess:
-    """runs one gh command, and only one of three.
+    """runs one gh command, and only one on the allowlist.
 
-    THE ALLOWLIST IS THE GUARANTEE. A caller cannot reach `gh pr merge` through here whatever it
-    passes, because the check is on the invocation itself rather than on the intent behind it.
+    THE ALLOWLIST IS THE GUARANTEE: the check is on the invocation itself rather than on the intent
+    behind it. a merge may not wait for checks or bypass a ruleset - where the base is off limits
+    is decided before any merge is asked for (Store.off_limit_branches).
     """
     if tuple(args[:2]) not in ALLOWED_GH_COMMANDS:
         raise MergeRequestUnavailable(
             f"gh {' '.join(args[:2])} is not something the board may run. "
-            f"allowed: {sorted(' '.join(a) for a in ALLOWED_GH_COMMANDS)}. "
-            "merging is the operator's, never the board's."
+            f"allowed: {sorted(' '.join(a) for a in ALLOWED_GH_COMMANDS)}."
+        )
+    if tuple(args[:2]) == ("pr", "merge") and _REFUSED_MERGE_FLAGS & set(args):
+        raise MergeRequestUnavailable(
+            "the board merges now and plainly: never auto, never admin, never deleting the branch"
         )
     return _run(["gh", *args], cwd=cwd)
 
