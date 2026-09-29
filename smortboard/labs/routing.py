@@ -35,8 +35,8 @@ def command_model(lab: str, model: str) -> str:
     return model if lab == "anthropic" else f"{lab}/{model}"
 
 
-def run_ref(store, role: str, card: dict, *, consume: bool = False) -> tuple[str, str]:
-    """a queued fallback applies once to its role, leaving the stored card choice intact"""
+def _queued_fallback(store, role: str, card: dict) -> tuple[dict, tuple[str, str]] | None:
+    """the latest unconsumed lab_fallback for the role, with its resolved ref"""
     events = store.list_events(card["id"])
     consumed = {
         event["payload"].get("fallback_seq")
@@ -53,9 +53,29 @@ def run_ref(store, role: str, card: dict, *, consume: bool = False) -> tuple[str
             continue
         ref = resolve_ref(f"{payload.get('lab')}/{payload.get('model')}")
         if ref is not None:
-            if consume:
-                store.append_event(
-                    card["id"], "fallback_consumed", {"fallback_seq": event["seq"], "role": role}
-                )
-            return ref
+            return event, ref
+    return None
+
+
+def run_ref(store, role: str, card: dict, *, consume: bool = False) -> tuple[str, str]:
+    """a queued fallback applies once to its role, leaving the stored card choice intact"""
+    queued = _queued_fallback(store, role, card)
+    if queued is not None:
+        event, ref = queued
+        if consume:
+            store.append_event(
+                card["id"], "fallback_consumed", {"fallback_seq": event["seq"], "role": role}
+            )
+        return ref
     return role_ref(store.get_settings(), role, card if role == "worker" else None)
+
+
+def run_effort(store, role: str, card: dict) -> str | None:
+    """the effort for the run run_ref names: a queued fallback's own, else the card's (worker
+    only, like the card's model), else the role's. read before run_ref consumes the fallback"""
+    queued = _queued_fallback(store, role, card)
+    if queued is not None and queued[0]["payload"].get("effort") in EFFORT_LEVELS:
+        return queued[0]["payload"]["effort"]
+    if role == "worker" and card.get("effort") in EFFORT_LEVELS:
+        return card["effort"]
+    return role_effort(store.get_settings(), role)

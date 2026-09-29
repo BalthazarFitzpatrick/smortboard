@@ -745,9 +745,11 @@ class _ModelBackend(_Backend):
     def __init__(self):
         super().__init__()
         self.models = []
+        self.efforts = []
 
     def run_card(self, store, card_id, worktree_path, prompt, settings_path, **kwargs):
         self.models.append(kwargs.get("model"))
+        self.efforts.append(kwargs.get("effort"))
         return self.result
 
 
@@ -1147,6 +1149,50 @@ def test_no_test_command_gets_a_short_pointer_at_the_repo_setting(board, monkeyp
     assert result.phase == "refused"
     assert result.refusal.startswith("repo has no test command - set it in b")
     assert "mission control" in result.refusal
+
+
+def _capture_reviewer_effort(monkeypatch):
+    efforts = []
+
+    def review(*args, **kwargs):
+        efforts.append(kwargs.get("effort"))
+        return ReviewResult(approved=True, findings=[])
+
+    monkeypatch.setattr(lifecycle, "run_review", review)
+    return efforts
+
+
+def test_the_card_effort_reaches_its_worker_and_not_the_reviewer(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    reviewed = _capture_reviewer_effort(monkeypatch)
+    store.set_settings({"worker_effort": "low", "reviewer_effort": "low"})
+    store.update_card(card_id, effort="high")
+    backend = _ModelBackend()
+    lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert backend.efforts == ["high"]
+    assert reviewed == ["low"]
+
+
+def test_a_queued_fallback_runs_on_its_own_effort_once(board, monkeypatch):
+    from smortboard.labs.routing import run_effort
+
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _capture_reviewer_effort(monkeypatch)
+    store.set_settings({"worker_effort": "low"})
+    store.update_card(card_id, effort="high")
+    store.append_event(
+        card_id,
+        "lab_fallback",
+        {"role": "worker", "lab": "openai", "model": "gpt-5.6-sol", "effort": "medium"},
+    )
+    backend = _ModelBackend()
+    lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert backend.models == ["openai/gpt-5.6-sol"]
+    assert backend.efforts == ["medium"]
+    # consumed: the card's own effort is back for the next run
+    assert run_effort(store, "worker", store.get_card(card_id)) == "high"
 
 
 def test_the_reviewer_budget_setting_reaches_the_review(board, monkeypatch):

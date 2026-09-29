@@ -53,7 +53,7 @@ from smortboard.exec.worktrees import (
     rev_parse,
     worktree_path,
 )
-from smortboard.labs.routing import command_model, run_ref
+from smortboard.labs.routing import command_model, run_effort, run_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.repo_image import rebuild_if_stale
 from smortboard.review.base_red import check_base_red
@@ -620,6 +620,9 @@ def _run_attempt(
     configured = store.get_settings()
     worker_lab, worker_id = run_ref(store, "worker", card)
     reviewer_lab, reviewer_id = run_ref(store, "reviewer", card)
+    # resolved beside the model, before either run consumes its queued fallback
+    worker_effort = run_effort(store, "worker", card)
+    reviewer_effort = run_effort(store, "reviewer", card)
     worker_model = command_model(worker_lab, worker_id)
     reviewer_model = command_model(reviewer_lab, reviewer_id)
 
@@ -753,6 +756,7 @@ def _run_attempt(
             model=worker_model,
             pending_notes=pending_notes,
             on_process=on_process,
+            effort=worker_effort,
         )
         # a stop kills the process underneath run_card, which then reports some ordinary-looking
         # blocked_reason_code (CRASH, most likely) - checked BEFORE that interpretation, so a
@@ -890,6 +894,7 @@ def _run_attempt(
                 repo=repo,
                 token_path=token_path,
                 model=reviewer_model,
+                effort=reviewer_effort,
                 budget_usd=store.spend_cap("reviewer_budget_usd", DEFAULT_REVIEW_BUDGET_USD),
                 on_process=on_process,
                 head=head,

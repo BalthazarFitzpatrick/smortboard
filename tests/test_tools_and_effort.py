@@ -129,6 +129,28 @@ def test_each_role_gets_its_own_effort(tmp_path, monkeypatch):
         assert _flag(_board_argv(store, board["id"], monkeypatch, "fold"), "--effort") == "low"
 
 
+def test_a_passed_effort_wins_over_the_role_setting(tmp_path, monkeypatch):
+    with Store(tmp_path / "b.db") as store:
+        store.set_settings({"worker_effort": "low", "reviewer_effort": "low"})
+        board = store.create_board("b")
+        card = store.create_card(board["id"], None, "c")
+        cmd = ContainerBackend(image="img")._docker_command(
+            tmp_path / "clone", "p", tmp_path / "s.json", "sonnet", REPO, store, effort="high"
+        )
+        assert _flag(_agent_argv(cmd), "--effort") == "high"
+        calls = []
+        _fake_runs(monkeypatch, "review.reviewer", calls)
+        run_review(
+            store,
+            card["id"],
+            "diff --git a/x b/x\n+x\n",
+            tmp_path,
+            tmp_path / "s.json",
+            effort="medium",
+        )
+        assert _flag(_agent_argv(calls[0]), "--effort") == "medium"
+
+
 def test_claude_and_codex_spell_effort_their_own_way():
     claude = ClaudeCodeAdapter().build_command(RunRequest("brief", effort="high"))
     assert _flag(claude, "--effort") == "high"
