@@ -1,7 +1,7 @@
 """accept or reject a finished card, with an explicit optional landing step.
 
 Review mode lands on an unprotected base before acceptance releases the checkout. Free mode
-lands after the gates. Protected bases still need an operator merge. Rejection keeps a parent's
+lands after the gates. An off-limit base still needs an operator merge. Rejection keeps a parent's
 local branch while undecided cards are stacked on it, and keeps every remote branch.
 """
 

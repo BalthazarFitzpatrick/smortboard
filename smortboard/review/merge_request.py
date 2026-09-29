@@ -1,8 +1,9 @@
 """push a card branch and open, inspect, close or retarget its pull request.
 
-The board lands on unprotected bases after acceptance in review mode or automatically in free
-mode. This module cannot merge a pull request: gh pr merge is absent from the allowlist, and
-pushes to protected branches are refused. Retargeting only changes the review base.
+The board lands on a base that is not off limits after acceptance in review mode or automatically
+in free mode, by merging the card's pull request (review/integrate.py). _gh refuses a merge that
+waits, bypasses or deletes, and a card branch is never pushed under main, master or trunk.
+Retargeting only changes the review base.
 """
 
 from __future__ import annotations
@@ -439,7 +440,7 @@ def merge_request_is_configured(repo_path: str | Path) -> bool:
 
 
 def retarget_merge_request(repo, url, base):
-    """pr edit --base changes only the review target; pr merge remains forbidden"""
+    """pr edit --base changes only the review target; it lands nothing"""
     from smortboard.exec.worktrees import default_branch
 
     if base != default_branch(repo):

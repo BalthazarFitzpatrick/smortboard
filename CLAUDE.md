@@ -40,8 +40,10 @@ code (`CRASH`, `USAGE_LIMIT`, `LEASE_CONFLICT`, `AGENT_QUESTION`, `TESTS_FAILED`
 not a column: the card keeps the status it was in and the board renders it in **attention**, a
 presentation column between doing and checking. reaching checking requires unit tests passing and the
 reviewer approving. boards default to review-required: they open a pr and wait for accept before
-landing on an unprotected base. free-merge boards land after the gates pass. neither mode merges
-into main/master/trunk. review mode can stack one unmerged parent, at most three cards deep.
+landing on an unprotected base. free-merge boards land after the gates pass. neither mode lands on a
+board's off-limit branches: main, master and trunk by default, editable per board in `shift`+`o`, all
+lifted by one switch in `o`. every landing merges the card's own pr, pinned to the reviewed commit;
+nothing is ever force-pushed. review mode can stack one unmerged parent, at most three cards deep.
 
 see `docs/plan.md` for the full flowchart.
 

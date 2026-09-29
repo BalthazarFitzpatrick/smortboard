@@ -11,9 +11,10 @@ grading its own homework, so the board re-runs them; the agent's own view that t
 the same, so a separate reviewer reads the diff. A card reaches a pull request by passing two things
 that do not care what it thinks.
 
-The board never merges into main. On a repo whose base is main, the chain ends with an open pull
-request and a link, which is the point at which a human takes over. On a repo whose base is not
-protected, review mode waits for acceptance before landing; free mode lands automatically.
+The board never lands on its off-limit branches (main, master and trunk unless its list says
+otherwise). On such a base the chain ends with an open pull request and a link, which is the point
+at which a human takes over. On any other base, review mode waits for acceptance before landing;
+free mode lands automatically.
 Review-mode dependents may stack on one waiting parent, up to three cards deep. Merging
 development into main stays the operator's.
 """
