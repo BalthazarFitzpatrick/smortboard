@@ -11,8 +11,10 @@ const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
 const settingsState = {max_parallel: 3, allow_soft_leases: null, allow_free_merge: null};
 const boardsState = [
-  {id: 'b1', name: 'alpha', merge_mode: null, lease_mode: null, max_parallel: null, daily_budget_usd: null},
-  {id: 'b2', name: 'beta', merge_mode: null, lease_mode: null, max_parallel: 1, daily_budget_usd: null},
+  {id: 'b1', name: 'alpha', merge_mode: null, lease_mode: null, max_parallel: null, daily_budget_usd: null,
+    off_limit_branches: ['main', 'master', 'trunk']},
+  {id: 'b2', name: 'beta', merge_mode: null, lease_mode: null, max_parallel: 1, daily_budget_usd: null,
+    off_limit_branches: ['main', 'master', 'trunk']},
 ];
 const calls = [];
 function stubJson(status, body) {
@@ -103,7 +105,7 @@ assert.ok(mod.bs.backdrop.parentNode, 'shift+o opens the board panel');
 assert.ok(!mod.st.backdrop || !mod.st.backdrop.parentNode, 'shift+o does not open o');
 assert.equal(mod.bs.titleEl.textContent, 'board settings: alpha');
 assert.deepEqual(panel().querySelectorAll('.settings-section').map(s => s.children[0].textContent),
-  ['merge mode', 'file lease', 'cards at once', 'daily budget, usd']);
+  ['merge mode', 'off-limit branches', 'file lease', 'cards at once', 'daily budget, usd']);
 
 // ---- with the global switches off, review and strict are shown and free and soft are locked ------
 assert.deepEqual(lit('merge mode'), ['review']);
@@ -167,8 +169,35 @@ await flush();
 assert.deepEqual(lastBoardPatch(), {path: '/api/boards/b1', body: {daily_budget_usd: 5.5}});
 assert.equal(boardsState[0].daily_budget_usd, 5.5);
 
+// ---- off-limit branches: one row each, remove and add save the whole list to this board ---------
+const offLimitNames = () => section('off-limit branches').querySelectorAll('.off-limit-row')
+  .map(row => row.children[0].textContent);
+assert.deepEqual(offLimitNames(), ['main', 'master', 'trunk'], 'the default list is shown as it is');
+const removeMain = section('off-limit branches').querySelectorAll('.off-limit-row')[0]
+  .querySelector('.board-delete');
+await removeMain.onclick();
+await flush();
+assert.deepEqual(lastBoardPatch(), {path: '/api/boards/b1', body: {off_limit_branches: ['master', 'trunk']}});
+assert.deepEqual(offLimitNames(), ['master', 'trunk'], 'the list redraws after the save');
+section('off-limit branches').querySelector('.off-limit-input').value = 'release';
+await section('off-limit branches').querySelector('.off-limit-add').onclick();
+await flush();
+assert.deepEqual(lastBoardPatch(),
+  {path: '/api/boards/b1', body: {off_limit_branches: ['master', 'trunk', 'release']}});
+assert.deepEqual(boardsState[1].off_limit_branches, ['main', 'master', 'trunk'], 'beta is untouched');
+
 press('KeyO', true);
 assert.ok(!mod.bs.backdrop.parentNode, 'a second shift+o closes it');
+
+// ---- with the global switch off, the list stays visible but cannot be edited ---------------------
+settingsState.off_limit_branches = 'off';
+press('KeyO', true);
+await flush();
+assert.equal(section('off-limit branches').querySelector('.off-limit-add').disabled, true);
+assert.ok(text(section('off-limit branches')).includes('turn them on in settings (o)'));
+settingsState.off_limit_branches = null;
+press('KeyO', true);
+assert.ok(!mod.bs.backdrop.parentNode);
 
 // ---- no board open: the panel says so instead of editing nothing -------------------------------
 mod.setCurrent(null);

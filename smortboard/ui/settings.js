@@ -105,6 +105,20 @@ const freeMerge = choiceToggle({
   save: value => saveSettings({allow_free_merge: value}),
 });
 
+// off_limit_branches: unset keeps each board's own list (shift+o); "off" lifts every list
+const offLimits = choiceToggle({
+  className: 'settings-off-limit-choice',
+  choices: [['enabled', null], ['disabled', 'off']],
+  save: value => saveSettings({off_limit_branches: value}),
+});
+
+function buildOffLimitToggle() {
+  offLimits.show(null);
+  return toggleWithNote(offLimits, 'enabled: a board never lands on its off-limit branches - main, '
+    + 'master and trunk unless its own list in shift+o says otherwise. disabled: a board may land on '
+    + 'any branch, main included. no branch is ever force-pushed either way.');
+}
+
 function buildSoftLeasesToggle() {
   softLeases.show(null);
   return toggleWithNote(softLeases, 'enabled: a board may let its cards write unprotected paths no other '
@@ -114,8 +128,8 @@ function buildSoftLeasesToggle() {
 function buildFreeMergeToggle() {
   freeMerge.show(null);
   return toggleWithNote(freeMerge, 'enabled: a board may merge passing cards into its base without '
-    + 'asking - pick it per board in shift+o. disabled: every board waits for your review. main is '
-    + 'never merged either way.');
+    + 'asking - pick it per board in shift+o. disabled: every board waits for your review. a board\'s '
+    + 'off-limit branches are never merged either way.');
 }
 
 async function loadFeatureToggles() {
@@ -123,6 +137,7 @@ async function loadFeatureToggles() {
     const settings = await api('/api/settings');
     softLeases.show(settings.allow_soft_leases === 'on' ? 'on' : null);
     freeMerge.show(settings.allow_free_merge === 'on' ? 'on' : null);
+    offLimits.show(settings.off_limit_branches === 'off' ? 'off' : null);
   } catch {
     // leave both disabled lit - disabled is what the server assumes for an unset key
   }
@@ -202,6 +217,7 @@ const SETTINGS_SECTIONS = [
   {group: 'labs', label: 'usage limits', node: buildUsageLimitToggle(), onOpen: loadUsageLimitToggle},
   {group: 'general', label: 'soft file leases', node: buildSoftLeasesToggle(), onOpen: loadFeatureToggles},
   {group: 'general', label: 'free merge', node: buildFreeMergeToggle()},
+  {group: 'general', label: 'off-limit branches', node: buildOffLimitToggle()},
 ];
 
 const roleModels = {node: document.createElement('div')};
