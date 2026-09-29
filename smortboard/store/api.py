@@ -35,6 +35,7 @@ CARD_WRITABLE_FIELDS = {
     "model",
     "lab",
     "complexity",
+    "effort",
 }
 
 # 1/2/3 = low/medium/high - see schema.py migration 19
@@ -599,10 +600,12 @@ class Store:
         depends_on: list[str] | None = None,
         complexity: int | None = None,
         lab: str | None = None,
+        effort: str | None = None,
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
         lab, model = _model_pair(lab, model)
         _check_complexity(complexity)
+        _check_effort("effort", effort)
         # validated before any insert - a brand new card can never be part of an existing
         # cycle or depend on itself (its id does not exist yet), so only existence matters
         cleaned_deps = list(dict.fromkeys(depends_on or []))
@@ -613,8 +616,8 @@ class Store:
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
                 blocked_reason_code, description, position, review_flag, model, ledger_task,
-                complexity, created_at, updated_at, lab)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                complexity, created_at, updated_at, lab, effort)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -633,6 +636,7 @@ class Store:
                 now,
                 now,
                 lab,
+                effort,
             ),
         )
         for i, text in enumerate(tasks or []):
@@ -773,6 +777,8 @@ class Store:
             fields.update(lab=lab, model=model)
         if "complexity" in fields:
             _check_complexity(fields["complexity"])
+        if "effort" in fields:
+            _check_effort("effort", fields["effort"])
 
         merged = {**fields, "status": next_status, "blocked_reason_code": next_reason}
         assignments = ", ".join(f"{key} = ?" for key in merged)
@@ -1030,6 +1036,7 @@ class Store:
             "model",
             "lab",
             "complexity",
+            "effort",
             "ledger_task",
             "findings_route",
             "created_at",
@@ -1062,8 +1069,8 @@ class Store:
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
                 blocked_reason_code, description, position, review_flag, model, findings_route,
-                created_at, updated_at, lab, complexity, ledger_task)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, lab, complexity, ledger_task, effort)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card["id"],
@@ -1083,6 +1090,7 @@ class Store:
                 card.get("lab"),
                 card.get("complexity"),
                 card.get("ledger_task"),
+                card.get("effort"),
             ),
         )
         for task in payload["tasks"]:

@@ -562,6 +562,9 @@ _MIGRATIONS: list[str] = [
     # 27: soft leases and free merge sit behind global gates now - a board already using one turns
     # its gate on, so nobody's running setup changes on upgrade
     BOARD_MODE_GATES_SQL,
+    # 28: a card's own reasoning effort for its worker, beside its own lab and model. null is the
+    # role's effort
+    """ALTER TABLE cards ADD COLUMN effort TEXT;""",
 ]
 
 
