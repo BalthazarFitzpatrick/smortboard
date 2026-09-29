@@ -109,7 +109,7 @@ def _limit_of(store: Store, card: dict[str, Any], settings: dict[str, Any]) -> t
 
 def _next_fallback(
     settings: dict[str, Any], role: str, lab: str, paused_labs: dict[str, float]
-) -> tuple[str, str, str] | None:
+) -> tuple[str, str, str, str | None] | None:
     now = time.time()
     return profiles.usable_fallback(
         settings.get(f"{role}_cross_lab_fallback") or [],

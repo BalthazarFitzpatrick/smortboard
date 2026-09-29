@@ -212,7 +212,11 @@ def _real_runner(
     """
 
     def run_once(
-        prompt: str, model: str, budget_usd: float, screenshot_path: Path | None
+        prompt: str,
+        model: str,
+        budget_usd: float,
+        screenshot_path: Path | None,
+        effort: str | None = None,
     ) -> RunResult:
         if not docker_available():
             raise RuntimeError("docker is not running, and the orchestrator runs in a container.")
@@ -259,7 +263,8 @@ def _real_runner(
                     schema_path="/smortboard-schema/schema.json",
                     read_only=True,
                     role=role,
-                    effort=role_effort(store.get_settings(), role),
+                    # a fallback's own effort, else the role's
+                    effort=effort or role_effort(store.get_settings(), role),
                 )
             )
             # read-only by allowlist as well as by mount: nothing that could write, shell out or
@@ -325,8 +330,9 @@ def _real_runner(
     def run(prompt: str, model: str, budget_usd: float, screenshot_path: Path | None = None) -> str:
         settings = store.get_settings()
         tried = set()
+        effort = None
         while True:
-            result = run_once(prompt, model, budget_usd, screenshot_path)
+            result = run_once(prompt, model, budget_usd, screenshot_path, effort)
             if result.blocked_reason_code != "USAGE_LIMIT":
                 break
             lab, profile = result.lab, result.profile
@@ -352,7 +358,7 @@ def _real_runner(
             )
             if target is None:
                 break
-            target_lab, target_model, target_profile = target
+            target_lab, target_model, target_profile, effort = target
             profiles.set_active(target_profile, lab=target_lab)
             store.add_orchestrator_message(
                 board_id,

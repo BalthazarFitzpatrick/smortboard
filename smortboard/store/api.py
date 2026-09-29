@@ -166,6 +166,14 @@ def _check_effort(key: str, value: Any) -> None:
         raise ValueError(f"{key} must be one of {EFFORT_LEVELS} or null, not {value!r}")
 
 
+def _fallback_entry(item: Any) -> dict[str, Any]:
+    """one fallback as {ref, effort}; a bare "lab/model" string is the shape stored before a
+    fallback carried its own effort, and reads as the role's effort"""
+    if isinstance(item, dict):
+        return {"ref": item.get("ref"), "effort": item.get("effort")}
+    return {"ref": item, "effort": None}
+
+
 def _model_pair(lab: Any, model: Any) -> tuple[str | None, str | None]:
     """retain legacy bare model ids; explicit lab refs must exist in the catalog"""
     if model is not None and isinstance(model, str) and "/" in model:
@@ -817,7 +825,9 @@ class Store:
                 value = json.loads(stored.get(key) or "[]")
             except (json.JSONDecodeError, TypeError):
                 value = []
-            settings[key] = value if isinstance(value, list) else []
+            settings[key] = (
+                [_fallback_entry(item) for item in value] if isinstance(value, list) else []
+            )
         return settings
 
     def spend_cap(self, key: str, default: float) -> float:
@@ -886,13 +896,15 @@ class Store:
                         value = []
                     if not isinstance(value, list):
                         raise ValueError(f"{key} must be a list of model refs")
-                    refs = []
+                    entries = []
                     for item in value:
-                        ref = resolve_ref(item, catalog)
+                        entry = _fallback_entry(item)
+                        ref = resolve_ref(entry["ref"], catalog)
                         if ref is None:
                             raise ValueError(f"unknown fallback model: {item!r}")
-                        refs.append("/".join(ref))
-                    stored = json.dumps(refs) if refs else None
+                        _check_effort(f"{key} effort", entry["effort"])
+                        entries.append({"ref": "/".join(ref), "effort": entry["effort"]})
+                    stored = json.dumps(entries) if entries else None
             updates[key] = stored
         with self._conn:
             for key, stored in updates.items():
