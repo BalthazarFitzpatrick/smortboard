@@ -1,7 +1,6 @@
 """event-backed parent branches for review-required cards"""
 
 from smortboard.exec.worktrees import default_branch
-from smortboard.review.merge_request import PROTECTED_BRANCHES
 
 
 def integrated_event(store, card_id, base=None):
@@ -20,7 +19,8 @@ def dependency_landed(store, card):
         return True
     repo = store.get_repo(card["repo_id"])
     base = default_branch(repo)
-    if base not in PROTECTED_BRANCHES:
+    # accepting a card on a landable base landed it; an off-limit base needs proof of the merge
+    if base not in store.off_limit_branches(card["board_id"]):
         return True
     if integrated_event(store, card["id"], base):
         return True

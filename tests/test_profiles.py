@@ -697,7 +697,7 @@ def test_cross_lab_worker_fallback_is_opt_in_and_does_not_rewrite_the_card(store
     board_id, repo_id = board_and_repo
     model = load_catalog()["openai"]["models"][0]["id"]
     profiles.add_profile("work", "key", lab="openai", kind="api_key")
-    store.set_setting("worker_cross_lab_fallback", [f"openai/{model}"])
+    store.set_setting("worker_cross_lab_fallback", [{"ref": f"openai/{model}", "effort": "high"}])
     store.set_setting("usage_limit_route", "switch")
     card = store.create_card(board_id, repo_id, "a")
     runs = FakeRuns()
@@ -711,6 +711,7 @@ def test_cross_lab_worker_fallback_is_opt_in_and_does_not_rewrite_the_card(store
     events = store.list_events(card["id"])
     fallback = next(event["payload"] for event in events if event["kind"] == "lab_fallback")
     assert fallback["profile"] == "work" and fallback["from_lab"] == "anthropic"
+    assert fallback["effort"] == "high", "the fallback's own effort rides with its switch"
     assert any(f"openai/{model}" in comment["body"] for comment in current["comments"])
     assert run_ref(store, "worker", current, consume=True) == ("openai", model)
     assert run_ref(store, "worker", current) == ("anthropic", "sonnet")

@@ -85,7 +85,7 @@ def test_board_role_cross_lab_retry_requires_its_own_fallback(
     calls = []
 
     def run_process(*args, **kwargs):
-        calls.append(kwargs)
+        calls.append({**kwargs, "args": args})
         limited = kwargs["lab"] == "anthropic"
         return RunResult(
             subtype="error" if limited else "success",
@@ -102,7 +102,9 @@ def test_board_role_cross_lab_retry_requires_its_own_fallback(
         board = store.create_board("b")
         store.set_setting("usage_limit_route", "switch")
         if fallback_enabled:
-            store.set_setting(f"{role}_cross_lab_fallback", ["openai/gpt-5.6-sol"])
+            store.set_setting(
+                f"{role}_cross_lab_fallback", [{"ref": "openai/gpt-5.6-sol", "effort": "high"}]
+            )
         run = _real_runner(store, board["id"], None, "rules", [], role=role)
         if fallback_enabled:
             assert run("brief", "sonnet", 1) == GOOD_JSON
@@ -116,6 +118,8 @@ def test_board_role_cross_lab_retry_requires_its_own_fallback(
         assert sum(row["cost_usd"] for row in rows) == len(calls) * 0.1
         if fallback_enabled:
             assert calls[-1]["stdin_text"] == "test-key\n"
+            # the retry runs on the fallback's own effort, codex's spelling
+            assert 'model_reasoning_effort="high"' in calls[-1]["args"][2][-1]
             assert all(row["role"] == role for row in rows)
             assert any(
                 "retrying" in row["body"] for row in store.list_orchestrator_messages(board["id"])

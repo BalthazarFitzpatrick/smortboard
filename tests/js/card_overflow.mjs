@@ -139,32 +139,34 @@ const moved = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'P
 assert.ok(moved, 'move status should PATCH the card');
 assert.equal(JSON.parse(moved.opts.body).status, 'checking');
 
-// ---- change complexity cycles low -> medium -> high, same confirm-then-patch shape as model
+// ---- change complexity is a pick from the three levels: one menu, no confirm, escape goes back
 calls.length = 0;
-setResponse('GET', '/api/cards/c1', 200, {id: 'c1', complexity: null});
-setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', complexity: 1});
+setResponse('GET', '/api/cards/c1', 200, {id: 'c1', complexity: 2});
+setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', complexity: 3});
 menus = [];
 overflow.onclick({stopPropagation(){}});
 menus[0].pick('complexity');
 await flush();
-assert.equal(menus.length, 2, 'change complexity should open a confirm before it patches anything');
-menus[1].pick('confirm');
+assert.equal(menus.length, 2, 'change complexity opens one list');
+const levels = menus[1].opts.sections[0].items;
+assert.deepEqual(levels.map(item => item.label), ['low', 'medium', 'high']);
+assert.deepEqual(levels.filter(item => item.on).map(item => item.label), ['medium'],
+  'the current level is lit');
+menus[1].pick('3');
 await flush();
+assert.equal(menus.length, 2, 'a pick sets it - no confirm');
 const complexityPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
-assert.ok(complexityPatch, 'change complexity should PATCH the card');
-assert.equal(JSON.parse(complexityPatch.opts.body).complexity, 1, 'unrated cycles to low first');
+assert.equal(JSON.parse(complexityPatch.opts.body).complexity, 3, 'high is picked directly');
 
+// escape out of the list without a pick reopens the card menu and writes nothing
 calls.length = 0;
-setResponse('GET', '/api/cards/c1', 200, {id: 'c1', complexity: 3});
-setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', complexity: 1});
 menus = [];
 overflow.onclick({stopPropagation(){}});
 menus[0].pick('complexity');
 await flush();
-menus[1].pick('confirm');
-await flush();
-const wrapPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
-assert.equal(JSON.parse(wrapPatch.opts.body).complexity, 1, 'high wraps back to low');
+menus[1].opts.onDismiss();
+assert.equal(menus.length, 3, 'backing out reopens the card menu');
+assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0);
 
 // ---- change model reuses cycleCardModel exactly, and acts on the card whose ... was clicked -
 // even while a different card holds keyboard focus
@@ -192,6 +194,11 @@ modelColumns[0].onPick({id: 'openai'});
 assert.equal(menus.length, 2, 'picking a lab updates the same menu');
 modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns').columns;
 modelColumns[1].onPick({id: 'x'});
+modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns').columns;
+assert.equal(modelColumns[2].label, 'effort', 'effort is the third column beside lab and model');
+assert.deepEqual(modelColumns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high']);
+assert.equal(modelColumns[2].items.find(item => item.on).id, 'default', 'unset reads as default');
+modelColumns[2].onPick({id: 'high'});
 assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0,
   'selecting a model waits for the save action');
 const saveModel = menus[1].opts.sections.find(section => section.kind === 'buttons')
@@ -199,8 +206,8 @@ const saveModel = menus[1].opts.sections.find(section => section.kind === 'butto
 saveModel.onClick(menus[1]);
 await flush();
 const modelPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
-assert.deepEqual(JSON.parse(modelPatch.opts.body), {lab: 'openai', model: 'x'},
-  "the picker patches both parts of the card's model ref");
+assert.deepEqual(JSON.parse(modelPatch.opts.body), {lab: 'openai', model: 'x', effort: 'high'},
+  "the picker patches the card's model ref and its effort");
 assert.ok(!calls.some(c => c.path.startsWith('/api/cards/c2')), 'and never touch the focused card instead');
 
 // ---- e, j and del retired into the menu: m is the only key, and every action is still two

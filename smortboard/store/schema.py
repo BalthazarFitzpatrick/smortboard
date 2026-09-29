@@ -37,6 +37,10 @@ BACKUP_RETENTION_DAYS = 7
 # the cli's own default
 EFFORT_LEVELS = ("low", "medium", "high")
 
+# the branches a board never lands on unless its own list says otherwise, or the global
+# off_limit_branches setting is off. never forced either way - see review/rebase_guard._force_push
+DEFAULT_OFF_LIMITS = ("main", "master", "trunk")
+
 # folds settings rows from before the usage-limit route became one setting - run as a migration
 # and again after a full bundle restore, since an old bundle carries the old rows. idempotent
 USAGE_LIMIT_FOLD_SQL = """
@@ -562,6 +566,11 @@ _MIGRATIONS: list[str] = [
     # 27: soft leases and free merge sit behind global gates now - a board already using one turns
     # its gate on, so nobody's running setup changes on upgrade
     BOARD_MODE_GATES_SQL,
+    # 28: a card's own reasoning effort for its worker, beside its own lab and model. null is the
+    # role's effort
+    """ALTER TABLE cards ADD COLUMN effort TEXT;""",
+    # 29: a board's own off-limit branches, a json list. null is DEFAULT_OFF_LIMITS, [] is none
+    """ALTER TABLE boards ADD COLUMN off_limit_branches TEXT;""",
 ]
 
 

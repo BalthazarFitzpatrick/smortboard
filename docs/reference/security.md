@@ -35,8 +35,11 @@
   for every run.
 - **proof from outside the agent.** tests re-run offline, the reviewer can only read, and only a
   note carrying the run's own marker counts as you.
-- **no path to `main`.** the board lands a card on `development` itself, but `integrate` and the
-  push both refuse `main`, `master` and `trunk`, and `gh pr merge` is not on the allowlist.
+- **no path to an off-limit branch.** the board lands a card on `development` itself by merging the
+  card's pull request, and `integrate` refuses the board's off-limit branches: `main`, `master` and
+  `trunk` unless its list says otherwise. the switch in `o` can lift every list; that is the
+  operator's decision, never an agent's. `gh pr merge` never runs with `--auto` or `--admin`, and no
+  branch is ever force-pushed.
 
 ## architecture
 

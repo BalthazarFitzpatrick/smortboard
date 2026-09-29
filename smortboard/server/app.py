@@ -69,6 +69,7 @@ from smortboard.store.errors import (
     UnknownFieldError,
 )
 from smortboard.store.repo_validation import validate_repo
+from smortboard.store.schema import DEFAULT_OFF_LIMITS
 from smortboard.telemetry import (
     board_costs,
     boards_overview,
@@ -219,6 +220,22 @@ def _tests_reply(repo: dict[str, Any], tests: RepoTests) -> dict[str, Any]:
     """what the boards panel needs to ask for tests up front: the command stored on the repo, which
     a request's own command wins over detection for, and whether any test exists yet"""
     return {"command": repo["test_command"], "has_tests": tests.has_tests}
+
+
+def _landing_off_limits(store: Store, repo_key: str) -> frozenset[str]:
+    """the off-limit branches of every board holding this repo, or the default for a repo no
+    board knows - an outside agent gets no more reach than the board itself"""
+    if store.get_settings()["off_limit_branches"] == "off":
+        return frozenset()
+    boards = {
+        board["id"]
+        for board in store.list_boards()
+        for repo in store.list_repos(board["id"])
+        if str(Path(repo["path"]).expanduser().resolve()) == repo_key
+    }
+    if not boards:
+        return frozenset(DEFAULT_OFF_LIMITS)
+    return frozenset().union(*(store.off_limit_branches(board_id) for board_id in boards))
 
 
 def _make_new_folder(parent: Path, name: object) -> Path:
@@ -557,6 +574,10 @@ def _make_handler(
                     store.set_board_max_parallel(params["board_id"], body["max_parallel"])
                 if "daily_budget_usd" in body:
                     store.set_board_daily_budget(params["board_id"], body["daily_budget_usd"])
+                if "off_limit_branches" in body:
+                    store.set_board_off_limit_branches(
+                        params["board_id"], body["off_limit_branches"]
+                    )
                 self._send_json(200, store.get_board(params["board_id"]))
             elif "task_id" in params and method == "PATCH":
                 self._handle_patch_task(params["task_id"])
@@ -716,11 +737,15 @@ def _make_handler(
                 self._send_json(400, {"error": "holder and branch must not be empty"})
                 return
             repo_key = resolve_repo_key(unquote(repo_id), store)
+            target = body.get("target") or "development"
+            if target in _landing_off_limits(store, repo_key):
+                self._send_json(400, {"error": f"{target} is off limits for this repo's board"})
+                return
             result = store.request_landing(
                 repo_key,
                 holder,
                 branch,
-                target=body.get("target") or "development",
+                target=target,
                 ttl_s=int(body.get("ttl_s") or DEFAULT_LANDING_TTL_S),
                 lease_id=body.get("lease_id"),
             )

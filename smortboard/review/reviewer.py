@@ -380,6 +380,7 @@ def run_review(
     head: str | None = None,
     excluded_paths: list[str] | tuple[str, ...] = (),
     expanded: list[str] | None = None,
+    effort: str | None = None,
 ) -> ReviewResult:
     """runs the reviewer over `diff` in a throwaway container, and records the verdict.
 
@@ -433,7 +434,8 @@ def run_review(
         budget_usd,
         name,
         kind,
-        effort=role_effort(store.get_settings(), "reviewer") if store is not None else None,
+        effort=effort
+        or (role_effort(store.get_settings(), "reviewer") if store is not None else None),
     )
     run_result = run_process(
         store,

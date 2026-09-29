@@ -29,7 +29,8 @@ windows). see [credential files](credentials.md).
 
 **`o` holds what every board shares. `shift`+`o` holds one board's own.**
 
-`o` has three groups. general: soft file leases and free merge (enabled or disabled), folders
+`o` has three groups. general: soft file leases, free merge and off-limit branches (enabled or
+disabled), folders
 mission control can read, where new repos go, how many cards run at once, the mall cam interval,
 backup and the mouse. labs and models: what a usage limit does, and the lab, model, fallbacks and
 effort per role. cost control: spend caps per run and per card.
@@ -44,19 +45,21 @@ each is a stored setting:
 
 | kind | keys |
 |---|---|
-| lab and model per role | the `*_lab` and `*_model` pairs, and their `*_cross_lab_fallback` lists |
-| effort per role (unset passes no effort flag) | `worker_effort`, `reviewer_effort`, `orchestrator_effort`, `fold_effort` |
+| lab and model per role | the `*_lab` and `*_model` pairs, and their `*_cross_lab_fallback` lists, each entry a `{ref, effort}` whose effort is its own |
+| effort per role, picked beside the role's model (unset passes no effort flag). a card's own effort wins for its worker, a fallback's own for its one run | `worker_effort`, `reviewer_effort`, `orchestrator_effort`, `fold_effort` |
 | what a usage limit does: unset waits for the reset, `attention` asks in the inbox, `switch` moves to the next credential profile, then the fallback model | `usage_limit_route` |
 | spend cap per run | `worker_budget_usd`, `reviewer_budget_usd`, `orchestrator_budget_usd`, `fold_budget_usd` |
 | spend cap per card, across every run | `card_total_budget_usd` |
 | absolute paths mission control may also read | `mission_control_read_paths` |
 | per-board mode gates: `on` or unset. unset refuses the mode; turning one off resets every board to strict or review | `allow_soft_leases`, `allow_free_merge` |
+| off-limit branches: unset keeps each board's own list, `off` lets every board land on any branch | `off_limit_branches` |
 | where new board and from online repo open their folder picker (unset: home) | `repos_home` |
 | cards run at once across the install (unset: 2) | `max_parallel` |
 | workforce drawer auto-cycle, seconds (unset: 10) | `mall_cam_interval_seconds` |
 | pointer affordances: hover focus, right-click menu (unset: keyboard only) | `enable_mouse` |
 | the rest | `findings_route`, `resume_briefing`, `gate_timeout_seconds` |
 
-per board, in `shift`+`o`: merge mode (review or free), file lease (strict or soft), cards at once
+per board, in `shift`+`o`: merge mode (review or free), off-limit branches (`main`, `master` and
+`trunk` until you edit the list; an empty list means none), file lease (strict or soft), cards at once
 and a daily budget in usd. free and soft are only on offer while their switch in `o` is enabled.
 `shift`+`a` also flips the merge mode, after a confirmation.

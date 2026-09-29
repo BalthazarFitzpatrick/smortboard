@@ -367,17 +367,19 @@ def handle_usage_limit(
 
 
 def usable_fallback(
-    refs: list[str],
+    entries: list[dict[str, Any]],
     from_lab: str,
     skip: Callable[[str, str], bool] | None = None,
-) -> tuple[str, str, str] | None:
-    """the first fallback ref whose lab has a readable, unlimited credential: (lab, model, profile).
+) -> tuple[str, str, str, str | None] | None:
+    """the first fallback whose lab has a readable, unlimited credential:
+    (lab, model, profile, effort). entries are get_settings' {ref, effort}; effort None is the
+    role's own.
 
     every observed limit is an account-wide five_hour/seven_day window, so a ref in the limited lab
     itself is never a fallback. `skip(lab, profile)` drops a candidate the caller already knows is
     out - a paused lab, a profile this turn already tried."""
-    for ref in refs or []:
-        target = resolve_ref(ref)
+    for entry in entries or []:
+        target = resolve_ref(entry.get("ref"))
         if target is None or target[0] == from_lab:
             continue
         lab, model = target
@@ -388,7 +390,7 @@ def usable_fallback(
             read_profile_token(lab, profile)
         except ProfileError:
             continue
-        return lab, model, profile
+        return lab, model, profile, entry.get("effort")
     return None
 
 

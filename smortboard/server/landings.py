@@ -10,7 +10,6 @@ from smortboard.lifecycle import LifecycleResult, _sync_and_retest
 from smortboard.review.decide import DecisionRefused, accept_card
 from smortboard.review.integrate import open_release_request
 from smortboard.review.land_card import already_landed, land_card, retarget_children
-from smortboard.review.merge_request import PROTECTED_BRANCHES
 from smortboard.review.outcome import card_outcome
 from smortboard.review.stacks import integrated_event
 from smortboard.store.api import Store
@@ -21,7 +20,8 @@ def needs_landing(store, card):
         return False
     repo = store.get_repo(card["repo_id"])
     base = default_branch(repo)
-    return base not in PROTECTED_BRANCHES and not integrated_event(store, card["id"], base)
+    off_limits = store.off_limit_branches(card["board_id"])
+    return base not in off_limits and not integrated_event(store, card["id"], base)
 
 
 def perform_landing(store, card_id):
@@ -38,7 +38,7 @@ def perform_landing(store, card_id):
             author="smortboard",
             body=f"already merged into {base}; accepted without another merge.",
         )
-        if base not in PROTECTED_BRANCHES:
+        if base not in store.off_limit_branches(card["board_id"]):
             open_release_request(repo["path"], base)
         retarget_children(store, card, repo, base)
         return accepted

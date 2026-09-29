@@ -11,9 +11,10 @@ grading its own homework, so the board re-runs them; the agent's own view that t
 the same, so a separate reviewer reads the diff. A card reaches a pull request by passing two things
 that do not care what it thinks.
 
-The board never merges into main. On a repo whose base is main, the chain ends with an open pull
-request and a link, which is the point at which a human takes over. On a repo whose base is not
-protected, review mode waits for acceptance before landing; free mode lands automatically.
+The board never lands on its off-limit branches (main, master and trunk unless its list says
+otherwise). On such a base the chain ends with an open pull request and a link, which is the point
+at which a human takes over. On any other base, review mode waits for acceptance before landing;
+free mode lands automatically.
 Review-mode dependents may stack on one waiting parent, up to three cards deep. Merging
 development into main stays the operator's.
 """
@@ -53,14 +54,13 @@ from smortboard.exec.worktrees import (
     rev_parse,
     worktree_path,
 )
-from smortboard.labs.routing import command_model, run_ref
+from smortboard.labs.routing import command_model, run_effort, run_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.repo_image import rebuild_if_stale
 from smortboard.review.base_red import check_base_red
 from smortboard.review.gates import GateUnavailable, NoTestCommand, run_test_gate
 from smortboard.review.integrate import integrate, open_release_request
 from smortboard.review.merge_request import (
-    PROTECTED_BRANCHES,
     MergeRequestUnavailable,
     branch_has_commits,
     open_merge_request,
@@ -620,6 +620,9 @@ def _run_attempt(
     configured = store.get_settings()
     worker_lab, worker_id = run_ref(store, "worker", card)
     reviewer_lab, reviewer_id = run_ref(store, "reviewer", card)
+    # resolved beside the model, before either run consumes its queued fallback
+    worker_effort = run_effort(store, "worker", card)
+    reviewer_effort = run_effort(store, "reviewer", card)
     worker_model = command_model(worker_lab, worker_id)
     reviewer_model = command_model(reviewer_lab, reviewer_id)
 
@@ -753,6 +756,7 @@ def _run_attempt(
             model=worker_model,
             pending_notes=pending_notes,
             on_process=on_process,
+            effort=worker_effort,
         )
         # a stop kills the process underneath run_card, which then reports some ordinary-looking
         # blocked_reason_code (CRASH, most likely) - checked BEFORE that interpretation, so a
@@ -890,6 +894,7 @@ def _run_attempt(
                 repo=repo,
                 token_path=token_path,
                 model=reviewer_model,
+                effort=reviewer_effort,
                 budget_usd=store.spend_cap("reviewer_budget_usd", DEFAULT_REVIEW_BUDGET_USD),
                 on_process=on_process,
                 head=head,
@@ -979,11 +984,8 @@ def _run_attempt(
     if not request.url:
         return _refuse(store, state, f"both gates passed, but: {request.refusal}")
 
-    if (
-        base not in PROTECTED_BRANCHES
-        and store.board_merges_freely(card["board_id"])
-        and target == base
-    ):
+    off_limits = store.off_limit_branches(card["board_id"])
+    if base not in off_limits and store.board_merges_freely(card["board_id"]) and target == base:
         return _integrate(store, state, card, tree, repo, base, request.url)
 
     _note(
@@ -993,7 +995,7 @@ def _run_attempt(
             f"tests passed, the reviewer approved, and the pull request is open:\n{request.url}\n\n"
             + (
                 "merging into this protected base is yours."
-                if base in PROTECTED_BRANCHES
+                if base in off_limits
                 else "waiting for y to accept and merge this card."
             ),
             "review",

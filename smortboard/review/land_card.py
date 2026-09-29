@@ -14,7 +14,7 @@ from smortboard.exec.worktrees import branch_name, fast_forward_base, fetch_base
 from smortboard.review.decide import DecisionRefused, accept_card
 from smortboard.review.integrate import _git, integrate, integration_lock, open_release_request
 from smortboard.review.landing import landing_lock, resolve_repo_key
-from smortboard.review.merge_request import PROTECTED_BRANCHES, pr_view
+from smortboard.review.merge_request import pr_view
 from smortboard.review.stacks import active_stack, dependency_landed, integrated_event
 
 INTEGRATE_ATTEMPTS = 3
@@ -88,8 +88,9 @@ def land_card(
     integrate_fn = integrate_fn or integrate
     release_fn = release_fn or open_release_request
     card_id = card["id"]
-    if base in PROTECTED_BRANCHES:
-        raise DecisionRefused(f"{base} is protected")
+    off_limits = store.off_limit_branches(card["board_id"])
+    if base in off_limits:
+        raise DecisionRefused(f"{base} is off limits for this board")
     stack = active_stack(store, card_id)
     if stack and store.get_card(stack["parent_id"])["status"] != "accepted":
         raise DecisionRefused("accept the stacked parent before landing this card")
@@ -113,14 +114,18 @@ def land_card(
         for _ in range(INTEGRATE_ATTEMPTS):
             if (blocked := sync(store, state, card_id, tree, repo, base)) is not None:
                 return blocked
-            result = integrate_fn(tree.path, tree.branch, base, card["title"])
+            result = integrate_fn(
+                tree.path, tree.branch, base, card["title"], url, off_limits=off_limits
+            )
+            # the last refusal is what the card shows, github's own words included
+            reason = result.reason or reason
             if result.sha or not result.moved:
-                landed, reason = result.sha, result.reason or reason
+                landed = result.sha
                 break
         if landed is not None:
             # the push moved origin/<base> only - the local branch follows, or everything reading
             # it (a card cut, mission control) keeps seeing the base from before this landing
-            moved = fast_forward_base(repo["path"], base)
+            moved = fast_forward_base(repo["path"], base, off_limits=off_limits)
             store.append_event(card_id, "local_base", {"base": base, "outcome": moved})
 
     if landed is None:
@@ -138,12 +143,17 @@ def land_card(
         store.append_event(card_id, "integrated", {"base": base, "sha": landed, "url": url})
         accept_card(store, card_id)
         release = release_fn(repo["path"], base)
+        # a card landed on main has no release left to ask for
+        release_line = ""
+        if base != "main":
+            release_line = f"\n\nmerging {base} into main is yours" + (
+                f":\n{release}" if release else "."
+            )
         _note(
             store,
             card_id,
             f"tests passed, the reviewer approved, and the board merged it into {base} as "
-            f"{landed[:10]}:\n{url}\n\nmerging {base} into main is yours"
-            + (f":\n{release}" if release else "."),
+            f"{landed[:10]}:\n{url}{release_line}",
         )
         retarget_children(store, card, repo, base)
         from smortboard.scheduler import sweep_checking_prs

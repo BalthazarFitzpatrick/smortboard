@@ -311,6 +311,7 @@ class RunnerBackend(Protocol):
         token_path: str | Path | None = None,
         pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
         on_process: Callable[[ProcessHandle], None] | None = None,
+        effort: str | None = None,
     ) -> RunResult: ...
 
 
@@ -342,6 +343,7 @@ class ContainerBackend:
         token_path: str | Path | None = None,
         pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
         on_process: Callable[[ProcessHandle], None] | None = None,
+        effort: str | None = None,
     ) -> RunResult:
         # re-read, not the repo dict the caller is holding: a card's fix rounds all run through
         # this one method, and an operator's edit to test_command between rounds must scope the
@@ -426,7 +428,16 @@ class ContainerBackend:
             # carries) - see F4, a fixed marker is guessable from anything the worker reads
             note_marker = new_note_marker()
             cmd = self._docker_command(
-                clone_path, brief, settings_path, model, repo, store, note_marker, name, kind
+                clone_path,
+                brief,
+                settings_path,
+                model,
+                repo,
+                store,
+                note_marker,
+                name,
+                kind,
+                effort,
             )
             # the token is a plain first line the container's shell consumes with `read -r`; the
             # brief follows as the first stream-json turn, and stdin stays open for live steering
@@ -551,6 +562,7 @@ class ContainerBackend:
         note_marker: str | None = None,
         name: str | None = None,
         kind: str | None = None,
+        effort: str | None = None,
     ) -> list[str]:
         lab, model_id = parse_ref(model)
         adapter = get_adapter(lab)
@@ -574,7 +586,9 @@ class ContainerBackend:
                 + (SCREENSHOT_RULE if (Path(clone_path) / "smortboard" / "ui").is_dir() else "")
                 + note_marker_paragraph(note_marker or new_note_marker()),
                 stream_input=adapter.capabilities.live_steering,
-                effort=role_effort(store.get_settings(), "worker") if store is not None else None,
+                # lifecycle resolves card and fallback effort (routing.run_effort); unset is the role's
+                effort=effort
+                or (role_effort(store.get_settings(), "worker") if store is not None else None),
             )
         )
         # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK INSIDE THE CONTAINER. the host's token

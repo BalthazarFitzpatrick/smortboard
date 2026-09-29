@@ -183,7 +183,7 @@ function toggleBoardMergeMode() {
   if (!board) return;
   const mode = board.merge_mode === 'free' ? 'review' : 'free';
   const title = mode === 'free'
-    ? 'merge cards into their base branch without asking? main stays protected'
+    ? 'merge cards into their base branch without asking? off-limit branches stay protected'
     : 'stop at a pull request for review?';
   openActionConfirm(title, 'confirm', 'cancel', async () => {
     const {ok, body} = await apiOrError(`/api/boards/${board.id}`, {
