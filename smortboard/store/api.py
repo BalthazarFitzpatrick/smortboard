@@ -15,6 +15,7 @@ from smortboard.store.schema import (
     BACKUP_RETENTION_DAYS,
     BLOCKED_REASON_CODES,
     DEFAULT_FINDINGS_ROUTE,
+    DEFAULT_OFF_LIMITS,
     EFFORT_LEVELS,
     FINDINGS_ROUTES,
     STATUSES,
@@ -74,6 +75,9 @@ _SETTING_KEYS = (
     "usage_limit_route",
     "allow_soft_leases",
     "allow_free_merge",
+    # off_limit_branches: unset keeps each board's off-limit list; "off" lets a board land on any
+    # branch, main included
+    "off_limit_branches",
     "mall_cam_interval_seconds",
     "enable_mouse",
     # repos_home: the folder new boards and clones start in (the folder pickers open there) - an
@@ -143,6 +147,33 @@ _BOARD_MODE_GATES = {
 def _check_gate(key: str, value: str | None) -> None:
     if value is not None and value != "on":
         raise ValueError(f"{key} must be on or null, not {value!r}")
+
+
+# a branch name as git allows it, never an option: it reaches git and gh argv
+_BRANCH_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$")
+
+
+def _check_branch_list(value: Any) -> list[str] | None:
+    """a board's off-limit list, deduped in order. None keeps the default"""
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError("off_limit_branches must be a list of branch names or null")
+    names: list[str] = []
+    for name in value:
+        bad = not isinstance(name, str) or not _BRANCH_NAME.match(name)
+        if bad or ".." in name or name.endswith((".", "/", ".lock")) or "//" in name:
+            raise ValueError(f"not a branch name: {name!r}")
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def _board_dict(row: sqlite3.Row) -> dict[str, Any]:
+    board = dict(row)
+    stored = board.get("off_limit_branches")
+    board["off_limit_branches"] = json.loads(stored) if stored else list(DEFAULT_OFF_LIMITS)
+    return board
 
 
 # both reach docker or claude argv as their own item, so a leading "-" would read as a flag
@@ -370,11 +401,31 @@ class Store:
         row = self._conn.execute("SELECT * FROM boards WHERE id = ?", (board_id,)).fetchone()
         if row is None:
             raise NotFoundError(f"no board {board_id}")
-        return _row_to_dict(row)
+        return _board_dict(row)
 
     def list_boards(self) -> list[dict[str, Any]]:
         rows = self._conn.execute("SELECT * FROM boards ORDER BY position").fetchall()
-        return [_row_to_dict(r) for r in rows]
+        return [_board_dict(r) for r in rows]
+
+    def set_board_off_limit_branches(
+        self, board_id: str, value: list[str] | None
+    ) -> dict[str, Any]:
+        """the branches this board never lands on - None puts back main, master and trunk"""
+        self.get_board(board_id)
+        names = _check_branch_list(value)
+        stored = None if names is None else json.dumps(names)
+        self._conn.execute(
+            "UPDATE boards SET off_limit_branches = ? WHERE id = ?", (stored, board_id)
+        )
+        self._conn.commit()
+        return self.get_board(board_id)
+
+    def off_limit_branches(self, board_id: str) -> frozenset[str]:
+        """what this board may never land on: its own list, or nothing while the global
+        off_limit_branches setting is off"""
+        if self.get_settings()["off_limit_branches"] == "off":
+            return frozenset()
+        return frozenset(self.get_board(board_id)["off_limit_branches"])
 
     def set_board_max_parallel(self, board_id: str, value: int | None) -> dict[str, Any]:
         """this board's own cap, on top of the global one - None means no board-specific limit,
@@ -874,6 +925,8 @@ class Store:
                 _check_usage_limit_route(value)
             if key in _BOARD_MODE_GATES:
                 _check_gate(key, value)
+            if key == "off_limit_branches" and value not in (None, "off"):
+                raise ValueError(f"off_limit_branches must be off or null, not {value!r}")
             if key in {"max_parallel", "mall_cam_interval_seconds"}:
                 _check_positive_int(key, value)
             if key in SPEND_CAP_KEYS:

@@ -557,6 +557,10 @@ def _make_handler(
                     store.set_board_max_parallel(params["board_id"], body["max_parallel"])
                 if "daily_budget_usd" in body:
                     store.set_board_daily_budget(params["board_id"], body["daily_budget_usd"])
+                if "off_limit_branches" in body:
+                    store.set_board_off_limit_branches(
+                        params["board_id"], body["off_limit_branches"]
+                    )
                 self._send_json(200, store.get_board(params["board_id"]))
             elif "task_id" in params and method == "PATCH":
                 self._handle_patch_task(params["task_id"])
