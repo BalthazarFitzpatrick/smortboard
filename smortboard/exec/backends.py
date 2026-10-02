@@ -53,7 +53,7 @@ from smortboard.exec.worktrees import (
     rev_parse,
 )
 from smortboard.labs.base import BashPolicy, RunRequest
-from smortboard.labs.catalog import parse_ref
+from smortboard.labs.catalog import compatible_effort, parse_ref
 from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import role_effort
 from smortboard.prompts import LOWERCASE_RULE, active_prompt
@@ -587,8 +587,12 @@ class ContainerBackend:
                 + note_marker_paragraph(note_marker or new_note_marker()),
                 stream_input=adapter.capabilities.live_steering,
                 # lifecycle resolves card and fallback effort (routing.run_effort); unset is the role's
-                effort=effort
-                or (role_effort(store.get_settings(), "worker") if store is not None else None),
+                effort=compatible_effort(
+                    lab,
+                    model_id,
+                    effort
+                    or (role_effort(store.get_settings(), "worker") if store is not None else None),
+                ),
             )
         )
         # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK INSIDE THE CONTAINER. the host's token

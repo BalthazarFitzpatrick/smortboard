@@ -58,9 +58,9 @@ def test_card_effort_is_its_own_and_only_a_named_level(store):
     assert card["effort"] is None
     assert store.update_card(card["id"], effort="high")["effort"] == "high"
     with pytest.raises(ValueError, match="effort"):
-        store.update_card(card["id"], effort="max")
+        store.update_card(card["id"], effort="unknown")
     with pytest.raises(ValueError, match="effort"):
-        store.create_card(board["id"], None, "d", effort="max")
+        store.create_card(board["id"], None, "d", effort="unknown")
     # a model change leaves the effort alone; clearing it hands the worker back the role's
     assert store.update_card(card["id"], model="openai/gpt-6-astra")["effort"] == "high"
     assert store.update_card(card["id"], effort=None)["effort"] is None
@@ -108,8 +108,61 @@ def test_fallback_entries_carry_their_own_effort(store):
     ]
     with pytest.raises(ValueError, match="effort"):
         store.set_setting(
-            "reviewer_cross_lab_fallback", [{"ref": "openai/gpt-6-astra", "effort": "max"}]
+            "reviewer_cross_lab_fallback", [{"ref": "openai/gpt-6-astra", "effort": "ultra"}]
         )
+
+
+def test_exact_card_version_and_effort_survive_reopen(tmp_path):
+    path = tmp_path / "exact.db"
+    with Store(path) as store:
+        board = store.create_board("exact")
+        card = store.create_card(
+            board["id"], None, "c", model="anthropic/claude-opus-5-5", effort="max"
+        )
+    with Store(path) as store:
+        restored = store.get_card(card["id"])
+        assert (restored["lab"], restored["model"], restored["effort"]) == (
+            "anthropic",
+            "claude-opus-5-5",
+            "max",
+        )
+
+
+def test_card_effort_only_patch_validates_the_existing_model(store):
+    board = store.create_board("exact")
+    card = store.create_card(board["id"], None, "c", model="claude-haiku-4-5")
+    with pytest.raises(ValueError, match="effort"):
+        store.update_card(card["id"], effort="high")
+    assert store.get_card(card["id"]) == card
+    with pytest.raises(ValueError, match="effort"):
+        store.create_card(board["id"], None, "d", model="claude-haiku-4-5", effort="low")
+
+
+@pytest.mark.parametrize("role", ["worker", "reviewer", "orchestrator", "fold"])
+def test_settings_effort_only_patch_validates_the_existing_model_atomically(store, role):
+    settings = store.set_settings({f"{role}_model": "claude-haiku-4-5"})
+    with pytest.raises(ValueError, match="effort"):
+        store.set_settings({"max_parallel": 10, f"{role}_effort": "high"})
+    assert store.get_settings() == settings
+    changed = store.set_settings({f"{role}_model": "claude-opus-5-5", f"{role}_effort": "max"})
+    assert changed[f"{role}_model"] == "claude-opus-5-5"
+    assert changed[f"{role}_effort"] == "max"
+    with pytest.raises(ValueError, match="effort"):
+        store.set_setting(f"{role}_model", "claude-haiku-4-5")
+    assert store.get_settings() == changed
+
+
+def test_fallback_effort_uses_the_fallback_model_support(store):
+    with pytest.raises(ValueError, match="effort"):
+        store.set_setting(
+            "worker_cross_lab_fallback", [{"ref": "anthropic/claude-haiku-4-5", "effort": "high"}]
+        )
+    settings = store.set_setting(
+        "worker_cross_lab_fallback", [{"ref": "openai/gpt-6.1-sol", "effort": "xhigh"}]
+    )
+    assert settings["worker_cross_lab_fallback"] == [
+        {"ref": "openai/gpt-6.1-sol", "effort": "xhigh"}
+    ]
 
 
 def test_export_import_and_backup_preserve_mixed_labs(store, tmp_path):

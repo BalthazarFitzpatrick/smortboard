@@ -2,19 +2,29 @@
   "anthropic": {
     "adapter": "claude-code",
     "models": [
-      {"id": "fable", "label": "Fable", "tier": "deep"},
-      {"id": "opus", "label": "Opus", "tier": "deep", "prefer_for": ["orchestrator", "fold"]},
-      {"id": "sonnet", "label": "Sonnet", "tier": "standard", "prefer_for": ["worker", "reviewer"]},
-      {"id": "haiku", "label": "Haiku", "tier": "light"}
+      {"id": "fable", "label": "fable (alias)", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": null},
+      {"id": "opus", "label": "opus (alias)", "tier": "deep", "prefer_for": ["orchestrator", "fold"], "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": null},
+      {"id": "sonnet", "label": "sonnet (alias)", "tier": "standard", "prefer_for": ["worker", "reviewer"], "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": null},
+      {"id": "haiku", "label": "haiku (alias)", "tier": "light", "effort_levels": [], "default_effort": null},
+      {"id": "claude-fable-5", "label": "fable 5", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high"},
+      {"id": "claude-fable-5-1", "label": "fable 5.1", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high"},
+      {"id": "claude-opus-5", "label": "opus 5", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high"},
+      {"id": "claude-opus-5-5", "label": "opus 5.5", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium"},
+      {"id": "claude-sonnet-5", "label": "sonnet 5", "tier": "standard", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high"},
+      {"id": "claude-sonnet-5-5", "label": "sonnet 5.5", "tier": "standard", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium"},
+      {"id": "claude-haiku-4-5", "label": "haiku 4.5", "tier": "light", "effort_levels": [], "default_effort": null}
     ]
   },
   "openai": {
     "adapter": "codex",
     "models": [
-      {"id": "gpt-6-astra", "label": "Astra", "tier": "deep"},
-      {"id": "gpt-5.6-sol", "label": "Sol", "tier": "standard"},
-      {"id": "gpt-5.6-terra", "label": "Terra", "tier": "standard"},
-      {"id": "gpt-5.6-luna", "label": "Luna", "tier": "light"}
+      {"id": "gpt-6-astra", "label": "gpt-6 astra", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium"},
+      {"id": "gpt-5.6-sol", "label": "gpt-5.6 sol", "tier": "standard"},
+      {"id": "gpt-5.6-terra", "label": "gpt-5.6 terra", "tier": "standard"},
+      {"id": "gpt-5.6-luna", "label": "gpt-5.6 luna", "tier": "light"},
+      {"id": "gpt-6.1-sol", "label": "gpt-6.1 sol", "tier": "standard", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium"},
+      {"id": "gpt-6-sol", "label": "gpt-6 sol", "tier": "standard", "effort_levels": ["none", "low", "medium", "high", "xhigh", "max"], "default_effort": "medium"},
+      {"id": "gpt-6-luna", "label": "gpt-6 luna", "tier": "light", "effort_levels": ["none", "low", "medium", "high", "xhigh", "max"], "default_effort": "medium"}
     ]
   }
 }

@@ -85,7 +85,7 @@ def test_an_unknown_route_or_setting_is_refused(store, card_id):
 
 
 def test_effort_takes_only_the_named_levels_per_role(store, card_id):
-    for bad in ("max", "xhigh", "LOW", "", 1, True, "--effort"):
+    for bad in ("unsupported", "LOW", "", 1, True, "--effort"):
         with pytest.raises(ValueError):
             store.set_setting("reviewer_effort", bad)
     settings = store.set_settings({"worker_effort": "low", "fold_effort": "high"})

@@ -35,7 +35,14 @@ from smortboard.exec.backends import (
 from smortboard.exec.repo_snapshot import MOUNT_PARENT, build_repo_snapshot
 from smortboard.exec.runner import RunResult, run_process
 from smortboard.labs.base import BashPolicy, RunRequest
-from smortboard.labs.catalog import load_catalog, parse_ref, resolve_ref
+from smortboard.labs.catalog import (
+    EFFORT_LEVELS,
+    compatible_effort,
+    load_catalog,
+    parse_ref,
+    resolve_ref,
+    validate_effort,
+)
 from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import command_model, role_effort, role_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
@@ -67,6 +74,8 @@ ORCHESTRATOR_PROMPT = (
     "- `lab`, `model`: from the catalog, or null for the board default. Prefer the cheapest model "
     "the snapshot's `evidence` shows reaching pull requests cleanly (no fix rounds) on cards like "
     "this one; say why if you pick a deep-tier one\n"
+    "- `effort`: a level from that model's `effort_levels`, or null to inherit the worker role's "
+    "effort. Preserve an exact model version and effort the operator requests.\n"
     "- `leases`: path globs, relative to the repo root, the worker may Edit or Write. Empty means "
     "the card cannot run. Cover every file it must touch: its tests, anything it moves or deletes. "
     "Cards meant to run in parallel share no glob - overlapping leases never run at once\n"
@@ -102,6 +111,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "leases": {"type": "array", "items": {"type": "string"}},
                     "depends_on": {"type": "array", "items": {"type": "string"}},
                     "model": {"type": ["string", "null"]},
+                    "effort": {"type": ["string", "null"], "enum": [None, *EFFORT_LEVELS]},
                     "lab": {"type": ["string", "null"]},
                     "task_id": {"type": ["string", "null"]},
                     "complexity": {"type": "string", "enum": ["low", "medium", "high"]},
@@ -115,6 +125,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "leases",
                     "depends_on",
                     "model",
+                    "effort",
                     "lab",
                     "task_id",
                     "complexity",
@@ -264,7 +275,9 @@ def _real_runner(
                     read_only=True,
                     role=role,
                     # a fallback's own effort, else the role's
-                    effort=effort or role_effort(store.get_settings(), role),
+                    effort=compatible_effort(
+                        lab, model_id, effort or role_effort(store.get_settings(), role)
+                    ),
                 )
             )
             # read-only by allowlist as well as by mount: nothing that could write, shell out or
@@ -894,6 +907,13 @@ def run_orchestrator_turn(
         model, warning = _clean_model(proposed_ref)
         if warning:
             warnings.append(warning)
+        effort = spec.get("effort")
+        selection = {"model": model}
+        try:
+            validate_effort(*role_ref(store.get_settings(), "worker", selection), effort)
+        except ValueError as exc:
+            warnings.append(f'"{title}": {exc}; effort uses the worker default')
+            effort = None
         task_id = spec.get("task_id")
         task_id = str(task_id).strip() or None if task_id is not None else None
         if task_id and not repo_id:
@@ -929,6 +949,7 @@ def run_orchestrator_turn(
             lab=parse_ref(model)[0] if model else None,
             ledger_task=task_id,
             complexity=_clean_complexity(spec.get("complexity")),
+            effort=effort,
         )
         created_by_title[title] = card["id"]
         created_summaries.append({"id": card["id"], "title": title})

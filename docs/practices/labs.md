@@ -71,11 +71,44 @@ add or override entries in `~/.config/smortboard/catalog.json` (under `XDG_CONFI
 {
   "openai": {
     "models": [
-      {"id": "your-model-id", "label": "Your model", "tier": "standard"}
+      {
+        "id": "gpt-6.1-sol",
+        "label": "gpt-6.1 sol",
+        "tier": "standard",
+        "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+        "default_effort": "medium"
+      }
     ]
   }
 }
 ```
+
+each `id` is passed unchanged to the lab cli. versioned entries let you choose opus 5 or 5.5,
+sonnet 5 or 5.5, and gpt-6 sol or gpt-6.1 sol separately. entries marked `(alias)` follow the
+cli's family alias. existing role defaults stay unchanged; choose a version to pin your work.
+
+the card, role and fallback pickers show that model's `effort_levels`. changing model clears an
+effort the new model cannot use. direct api writes with an unsupported pair are refused. mission
+control can also assign a card's model and effort together.
+
+`default` stores null: card effort inherits the worker role, and a role without an effort sends
+no cli flag. `default_effort` records the model/runtime default; it does not override inheritance.
+if an inherited effort is unsupported by the selected model, the run sends no effort flag.
+an empty `effort_levels` means no explicit effort support. older custom entries without metadata
+retain low, medium and high. a `none` effort, where supported, is an explicit value, not null.
+
+to maintain the list, edit the packaged catalog for a release or the local override for one
+installation. overrides merge by lab and model id and reload on reads; reopen the picker after
+changing the file. partial overrides retain other fields. include a version in new labels and
+set `default_effort` to null when the cli default is unknown. adding a catalog entry does not
+grant account access or upgrade the installed cli.
+
+versioned model metadata checked on 2026-10-02 against the
+[openai model catalog](https://developers.openai.com/api/docs/models),
+[claude effort reference](https://platform.claude.com/docs/en/build-with-claude/effort), and
+[claude code model configuration](https://code.claude.com/docs/en/model-config).
+claude code defaults can differ from the api defaults. legacy gpt-5.6 entries retain their
+previous effort range until their runtime capabilities are refreshed.
 
 ### codex spend
 
