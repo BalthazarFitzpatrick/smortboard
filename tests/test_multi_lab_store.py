@@ -147,9 +147,10 @@ def test_settings_effort_only_patch_validates_the_existing_model_atomically(stor
     changed = store.set_settings({f"{role}_model": "claude-opus-5-5", f"{role}_effort": "max"})
     assert changed[f"{role}_model"] == "claude-opus-5-5"
     assert changed[f"{role}_effort"] == "max"
-    with pytest.raises(ValueError, match="effort"):
-        store.set_setting(f"{role}_model", "claude-haiku-4-5")
-    assert store.get_settings() == changed
+    # switching to a model without that effort clears it instead of refusing
+    cleared = store.set_setting(f"{role}_model", "claude-haiku-4-5")
+    assert cleared[f"{role}_model"] == "claude-haiku-4-5"
+    assert cleared[f"{role}_effort"] is None
 
 
 def test_fallback_effort_uses_the_fallback_model_support(store):

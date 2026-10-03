@@ -10,7 +10,14 @@ from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 from typing import Any
 
-from smortboard.labs.catalog import ROLES, load_catalog, parse_ref, resolve_ref, validate_effort
+from smortboard.labs.catalog import (
+    ROLES,
+    compatible_effort,
+    load_catalog,
+    parse_ref,
+    resolve_ref,
+    validate_effort,
+)
 from smortboard.labs.routing import role_ref
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
 from smortboard.store.schema import (
@@ -1015,6 +1022,13 @@ class Store:
             _check_complexity(fields["complexity"])
         if "effort" in fields:
             _check_effort("effort", fields["effort"])
+        elif {"lab", "model"} & fields.keys():
+            # a stored effort the new model cannot take is dropped, not a reason to refuse
+            selection = {**dict(current), **fields}
+            if selection.get("effort") is not None:
+                fields["effort"] = compatible_effort(
+                    *role_ref(self.get_settings(), "worker", selection), selection["effort"]
+                )
         if {"lab", "model", "effort"} & fields.keys():
             selection = {**dict(current), **fields}
             validate_effort(
@@ -1101,7 +1115,16 @@ class Store:
 
         selection = {**current, **fields}
         for role in ROLES:
-            if {f"{role}_lab", f"{role}_model", f"{role}_effort"} & fields.keys():
+            effort_key = f"{role}_effort"
+            model_changed = (
+                effort_key not in fields and {f"{role}_lab", f"{role}_model"} & fields.keys()
+            )
+            # a stored effort the new model cannot take is dropped, not a reason to refuse
+            if model_changed and selection.get(effort_key) is not None:
+                fields[effort_key] = selection[effort_key] = compatible_effort(
+                    *role_ref(selection, role), selection[effort_key]
+                )
+            if {f"{role}_lab", f"{role}_model", effort_key} & fields.keys():
                 validate_effort(
                     *role_ref(selection, role), selection.get(f"{role}_effort"), catalog
                 )

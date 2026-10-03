@@ -250,6 +250,16 @@ async function openFallbackPicker(role, initialEntries, anchor, status, onSaved)
   };
   const focusedEntry = () => selected.find(entry => entry.ref === focusedRef) || null;
 
+  // an effort saved before the model's levels changed is dropped, so a re-save never sends it
+  const clearStaleEfforts = () => {
+    for (const entry of selected) {
+      const [lab, model] = entry.ref.split('/');
+      const row = catalog[lab]?.models.find(row => row.id === model);
+      if (entry.effort && row && !modelEffortLevels(row).includes(entry.effort)) entry.effort = null;
+    }
+  };
+  clearStaleEfforts();
+
   const buildSections = () => {
     const entry = focusedEntry();
     const [lab, model] = entry?.ref.split('/') || [];

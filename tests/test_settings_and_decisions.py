@@ -358,3 +358,31 @@ def test_repos_home_is_an_existing_folder_stored_absolute(store, tmp_path):
         store.set_setting("repos_home", "relative/dir")
     assert store.get_settings()["repos_home"] == str(folder), "a refused value changes nothing"
     assert store.set_setting("repos_home", "")["repos_home"] is None, "blank clears it"
+
+
+def _stale_effort(store, key, model_key, effort):
+    # effort saved under a model that supported it, then the model changed underneath
+    store.set_settings({model_key: "claude-opus-5-5", key: effort})
+    with store._conn:
+        store._conn.execute(
+            "UPDATE settings SET value = 'claude-haiku-4-5' WHERE key = ?", (model_key,)
+        )
+
+
+def test_resaving_a_role_model_clears_a_stored_effort_it_no_longer_supports(store):
+    _stale_effort(store, "worker_effort", "worker_model", "max")
+    settings = store.set_settings({"worker_model": "claude-haiku-4-5"})
+    assert settings["worker_effort"] is None
+
+
+def test_an_explicit_unsupported_effort_is_still_refused(store):
+    with pytest.raises(ValueError, match="not supported"):
+        store.set_settings({"worker_model": "claude-haiku-4-5", "worker_effort": "max"})
+
+
+def test_resaving_a_card_model_clears_a_stored_effort_it_no_longer_supports(store, card_id):
+    store.update_card(card_id, model="claude-opus-5-5", effort="max")
+    with store._conn:
+        store._conn.execute("UPDATE cards SET model = 'claude-haiku-4-5' WHERE id = ?", (card_id,))
+    card = store.update_card(card_id, model="claude-haiku-4-5")
+    assert card["effort"] is None
