@@ -3,7 +3,7 @@
 // (lifecycle.py), so watching only which cards are "running" missed both - the board now polls
 // every card's status and updated_at and redraws just the strips that moved. an open card's own
 // strip is left alone until it closes; every other strip still redraws while a panel is open.
-// run: node tests/js/follow_runs.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/follow_runs.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

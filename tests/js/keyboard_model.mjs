@@ -3,7 +3,7 @@
 // a panel standing over the board owns the keys that would otherwise act on the card behind it;
 // and a confirmation opens on yes when the move is reversible, on no when it spends or destroys.
 // the expectations here come from the operator's model, not from what the code happened to do.
-// run: node tests/js/keyboard_model.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/keyboard_model.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

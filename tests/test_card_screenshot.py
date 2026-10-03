@@ -550,6 +550,7 @@ def test_stop_kills_a_process_that_ignores_termination(tmp_path):
         ("http://127.0.0.1:8000/ui/index.html", "GET", True),
         ("http://127.0.0.1:8000/api/boards", "GET", True),
         ("http://127.0.0.1:8000/api/boards/synthetic/cards", "GET", True),
+        ("http://127.0.0.1:8000/api/boards/synthetic/schedule", "GET", True),
         ("http://127.0.0.1:8001/ui/index.html", "GET", False),
         ("https://127.0.0.1:8000/ui/index.html", "GET", False),
         ("http://localhost:8000/ui/index.html", "GET", False),

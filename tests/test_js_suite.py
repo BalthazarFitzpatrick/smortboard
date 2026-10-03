@@ -35,6 +35,8 @@ def ui_base_assets_dir():
 def test_js_suite(ui_base_assets_dir):
     """runs each tests/js/*.mjs with node, stopping at and naming the first one that fails"""
     env = {**os.environ, "UI_BASE_ASSETS_DIR": str(ui_base_assets_dir)}
+    # the dev override would win over the installed package and test assets the app does not ship
+    env.pop("UI_BASE_DEV_ASSETS_DIR", None)
     for js_test in JS_TESTS:
         result = subprocess.run(
             [NODE, str(js_test)],

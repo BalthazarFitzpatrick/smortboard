@@ -1,7 +1,7 @@
 // settings panel (o): the top-right button and the o key open it, esc and an outside click close
 // it, and it renders an extensible section list - "mission control can read" is the first real
 // section, added, refused and removed through the whole-list-replace PATCH /api/settings.
-// run: node tests/js/settings.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/settings.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

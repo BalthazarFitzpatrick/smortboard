@@ -1,6 +1,6 @@
 // live steering, workforce panel side: the subheader and the reply after sending a note both
 // reflect how the board says the note was delivered - "live" (agent's next step) vs "next_run".
-// run: node tests/js/steering.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/steering.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

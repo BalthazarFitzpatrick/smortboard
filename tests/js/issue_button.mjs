@@ -1,7 +1,7 @@
 // the beta's "submit issue" control: first in the bar corner, ahead of the board's own numbers,
 // opening the repo's bug form in a new tab with the running version prefilled into the one field
 // id that form actually declares (version, .github/ISSUE_TEMPLATE/bug.yml).
-// run: node tests/js/issue_button.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/issue_button.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

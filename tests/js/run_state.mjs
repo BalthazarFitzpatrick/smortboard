@@ -2,7 +2,7 @@
 // scheduler each learn a card's run state on their own clock, and used to write the foot directly -
 // which let the two race and flicker between labels for the same card. now both funnel through
 // board.js's setLiveRunPhase/setQueueState, and this is what proves the foot never flickers again.
-// run: node tests/js/run_state.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/run_state.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, queryAll, uiBaseAsset} from './dom_stub.mjs';

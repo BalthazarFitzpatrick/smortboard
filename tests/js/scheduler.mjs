@@ -1,5 +1,5 @@
 // scheduler.js: run-all/stop over w, the board-bar status line, and the digest popup over d.
-// run: node tests/js/scheduler.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/scheduler.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, queryAll, uiBaseAsset} from './dom_stub.mjs';

@@ -1,6 +1,6 @@
 // board settings (shift+o): the open board's own merge mode, file lease, parallel cap and daily
 // budget. soft and free only unlock once o turns the feature on; o itself keeps no per-board rows.
-// run: node tests/js/board_settings.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/board_settings.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

@@ -1,6 +1,6 @@
 // mission control's composer: starts collapsed at one line, grows upward with typed content up
 // to a configurable max (falling back to 6), and leaves the rest to the textarea's own scrolling.
-// run: node tests/js/composer.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/composer.mjs
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

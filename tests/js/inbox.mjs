@@ -5,7 +5,7 @@
 // shortcuts, a refusal renders inline instead of clearing the card, the header scope cycles all
 // boards <-> each board with waiting cards and falls back when one empties, and arrow keys move
 // focus card by card.
-// run: node tests/js/inbox.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/inbox.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset, stubLayout} from './dom_stub.mjs';

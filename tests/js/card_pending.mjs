@@ -1,7 +1,7 @@
 // a card the scheduler has queued shows in DOING as pending - a grey strip under the cards an agent
 // is actually running - rather than sitting in ATTENTION until the queue reaches it. presentation
 // only: the queue emptying puts every card back in its own column with its own colour, and nothing
-// about the card itself is written. run: node tests/js/card_pending.mjs
+// about the card itself is written. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/card_pending.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

@@ -1,7 +1,7 @@
 // the first board on a fresh install: the empty state hides the columns rather than removing them,
 // so the board created from b renders into them and the panel refreshes to show it. before this, the
 // empty state wiped the columns and the first create threw before the panel re-rendered.
-// run: node tests/js/first_board.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/first_board.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

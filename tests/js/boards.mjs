@@ -4,7 +4,7 @@
 // folder or names a new one, a folder with files asks before its first commit, and main's one push
 // is shown to the operator. a new repo's tests come back as one status line, or as a notice held on
 // its row when it has none. from online repo lists what gh sees, then clones into a picked folder.
-// run: node tests/js/boards.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/boards.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

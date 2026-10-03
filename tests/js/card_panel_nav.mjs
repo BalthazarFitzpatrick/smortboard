@@ -1,6 +1,6 @@
 // proves the open card's arrow keys follow its masonry columns as drawn: up/down stay in a column,
 // left/right cross to the section beside, a full-width band belongs to every column, and a panel
-// re-rendered after a comment never answers one press twice. run: node tests/js/card_panel_nav.mjs
+// re-rendered after a comment never answers one press twice. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/card_panel_nav.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

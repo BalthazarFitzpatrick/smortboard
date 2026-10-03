@@ -2,7 +2,7 @@
 // riding into the card's new column. it lands on the card directly above the mover in its old
 // column, else hops left across empty columns to the nearest non-empty one's topmost card, else
 // parks on nothing - which the board must still recover from on the next keypress, not by falling
-// through to the board bar. run: node tests/js/board_focus_after_move.mjs
+// through to the board bar. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/board_focus_after_move.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

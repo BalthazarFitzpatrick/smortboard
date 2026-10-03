@@ -1,6 +1,6 @@
 // dense column presentation: sort order, column motion option C (a group of at most n cards between
 // two piles, one card per step, top/bottom anchoring), header counts/letters, and expand via the
-// button or a pile click. run: node tests/js/dense_columns.mjs
+// button or a pile click. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/dense_columns.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, stubMotion, stubLayout, uiBaseAsset} from './dom_stub.mjs';

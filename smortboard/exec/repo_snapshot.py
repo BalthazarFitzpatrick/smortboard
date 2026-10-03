@@ -53,13 +53,17 @@ class RepoSnapshot:
 
 
 def _clone_repo(source: str, branch: str, dest: Path) -> None:
-    """a shallow single-branch clone: no history, no other branches, no worktrees"""
+    """a shallow single-branch clone: no history, no other branches, no worktrees
+
+    --no-local copies objects instead of hardlinking them, so the clone shares none with the source
+    """
     result = subprocess.run(
         [
             "git",
             "clone",
             "--depth",
             "1",
+            "--no-local",
             "--single-branch",
             "--branch",
             branch,

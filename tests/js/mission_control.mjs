@@ -1,7 +1,7 @@
 // phase 4 frontend: roster rows, usage rows, mission control send/poll, workforce target
 // selection. the backend endpoints do not exist yet in this worktree - every case here stubs
 // fetch and proves the panel degrades to a readable line rather than throwing.
-// run: node tests/js/mission_control.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/mission_control.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
@@ -504,5 +504,5 @@ assert.equal(mod.wf.cardId, null);
 console.log('ok');
 // the workforce drawer's own rotate/poll timers (wf.rotate, wf.poll) are not proven cleared by
 // the , close above, unlike mc.poll - rather than guess at board.js's close handler, end the
-// process explicitly so a leftover timer cannot hang `node tests/js/mission_control.mjs`
+// process explicitly so a leftover timer cannot hang `UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/mission_control.mjs`
 process.exit(0);

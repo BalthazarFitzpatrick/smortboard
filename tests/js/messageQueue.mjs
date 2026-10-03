@@ -1,6 +1,6 @@
 // messageQueue: a local outbound queue that persists to localStorage before sending, retries a
 // failed send with backoff rather than dropping it, and keeps messages in the order they were
-// written even across a retry. run: node tests/js/messageQueue.mjs
+// written even across a retry. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/messageQueue.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom} from './dom_stub.mjs';
