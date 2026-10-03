@@ -275,6 +275,7 @@ _ATTENTION_RECIPE = [
     ("checking", "OUTDATED"),
     ("doing", "API_UNREACHABLE"),
     ("doing", "USAGE_LIMIT"),
+    ("doing", "BUDGET_EXCEEDED"),
 ]
 
 # the reason the board handles itself, so it stays in the doing column with the gold outline
@@ -655,6 +656,7 @@ _BLOCK_NOTES = {
     "API_UNREACHABLE": "the api could not be reached. the board is retrying on its own.",
     "OUTDATED": "OUTDATED: origin/development moved and this card's commits no longer rebase onto "
     "it - they conflict in: src/ledger/settle.py.",
+    "BUDGET_EXCEEDED": "the daily budget is spent; the next model call was not started.",
     "DEPENDENCY_REJECTED": "the card this one waits on was rejected, so it cannot start.",
 }
 

@@ -29,6 +29,7 @@ const REASON_LABELS = {
   MERGE_CONFLICT: 'merge conflict',
   API_UNREACHABLE: 'api unreachable',
   OUTDATED: 'outdated - base moved',
+  BUDGET_EXCEEDED: 'budget cap reached',
 };
 
 function reasonLabel(reason) {

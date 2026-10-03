@@ -133,8 +133,13 @@ def test_worker_spend_stops_reviewer_admission(board, monkeypatch, cap):
 
     backend = SpendingBackend()
     result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
-    assert result.phase == "refused"
-    assert "spent" in result.refusal
+    assert result.phase == "blocked"
+    assert result.blocked_reason_code == "BUDGET_EXCEEDED"
+    card = store.get_card(card_id)
+    assert card["blocked_reason_code"] == "BUDGET_EXCEEDED"
+    assert card["status"] == "doing"
+    assert card["review_flag"]
+    assert "spent" in card["comments"][-1]["body"]
     assert len(backend.calls) == 1
     assert reviews == []
 
@@ -167,7 +172,8 @@ def test_review_spend_stops_fix_round_admission(board, monkeypatch):
 
     backend = AccountedBackend()
     result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
-    assert result.phase == "refused"
+    assert result.phase == "blocked"
+    assert result.blocked_reason_code == "BUDGET_EXCEEDED"
     assert len(backend.calls) == 1
     assert reviews == [1]
 

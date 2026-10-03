@@ -57,6 +57,11 @@ _ACTIONS = {
         "the base moved and its commits no longer rebase onto it. answer in the inbox (n) to "
         "redo it on a fresh tree at the current base - the old commits stay on a backup ref.",
     ),
+    "BUDGET_EXCEEDED": (
+        "raise cap, answer",
+        "a spend cap stopped it mid-run. raise the cap or wait for the daily reset, then answer in "
+        "the inbox (n) to resume it in its own worktree.",
+    ),
     "refused": ("fix, then r", "fix what the note says, then press r to run it again."),
     "stopped": ("press r", "press r to run it again - its worktree and commits are kept."),
     "review": ("y or x", "review the pull request, then press y to accept or x to reject."),

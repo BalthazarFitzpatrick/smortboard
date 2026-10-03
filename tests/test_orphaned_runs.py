@@ -136,3 +136,19 @@ def test_telemetry_reads_an_orphaned_attempt_as_a_crash_not_in_progress():
         {"kind": "run_orphaned", "payload": {}},
     ]
     assert _attempt_outcome(segment) == "blocked: CRASH"
+
+
+def test_a_call_the_dead_board_left_open_stops_blocking_starts(store, board_id):
+    from smortboard.budgets import spend_refusal
+
+    card_id = _started(store, board_id)
+    store.append_event(card_id, "model_call_started", {"role": "worker"})
+    store.set_board_daily_budget(board_id, 10)
+    store.set_setting("card_total_budget_usd", 10)
+    assert "no recorded cost" in spend_refusal(store, store.get_card(card_id))
+    runs_module.recover_orphaned_runs(store)
+    assert spend_refusal(store, store.get_card(card_id)) is None
+    # a later attempt keeps its own open call unknown: only the dead one was settled
+    store.append_event(card_id, "lifecycle_started", {})
+    store.append_event(card_id, "model_call_started", {"role": "worker"})
+    assert "no recorded cost" in spend_refusal(store, store.get_card(card_id))

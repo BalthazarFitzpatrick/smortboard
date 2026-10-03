@@ -264,6 +264,13 @@ _ROLE_AFTER_RESULT = {"worker_summary": "worker", "review_gate": "reviewer"}
 def _attempts(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     """splits one card's events into attempts, oldest first. no lifecycle_started at all means the
     whole log is one (pre-telemetry or refused-before-start) attempt."""
+    # a call settled at startup (see settle_dead_calls) is marked on its started event, which sits
+    # in an earlier segment than the settling event
+    settled = {e["payload"].get("started_id") for e in events if e["kind"] == "model_call_settled"}
+    events = [
+        {**e, "payload": {**e["payload"], "settled": True}} if e["id"] in settled else e
+        for e in events
+    ]
     starts = [i for i, event in enumerate(events) if event["kind"] == "lifecycle_started"]
     if not starts:
         return [events] if events else []
@@ -303,6 +310,8 @@ def _attempt_outcome(segment: list[dict[str, Any]]) -> str:
     for event in reversed(segment):
         if event["kind"] == "merge_request" and event["payload"].get("url"):
             return "pull request"
+    if any(event["kind"] == "budget_exceeded" for event in segment):
+        return "blocked: BUDGET_EXCEEDED"
     if any(event["kind"] == "run_refused" for event in segment):
         return "refused"
     if any(event["kind"] == "run_stopped" for event in segment):
@@ -348,12 +357,21 @@ def _main_model(spend: dict[str, float]) -> str | None:
     return max(spend, key=spend.__getitem__) if spend else None
 
 
+def unsettled_calls(store: Store, card_id: str) -> list[dict[str, Any]]:
+    """the started events of model calls that never reported a result and were not settled"""
+    return [
+        event
+        for segment in _attempts(store.list_events(card_id))
+        for _role, event in _unreported_calls(segment)
+    ]
+
+
 def _unreported_calls(segment: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
     """processes started but never accounted for; selection alone incurs no spend"""
     pending = {}
     missing = []
     for index, event in enumerate(segment):
-        if event["kind"] == "model_call_started":
+        if event["kind"] == "model_call_started" and not event["payload"].get("settled"):
             role = event["payload"]["role"]
             if role in pending:
                 missing.append((role, pending[role]))
@@ -1017,9 +1035,15 @@ def _finished_attempt_evidence(store: Store, card: dict[str, Any]) -> list[dict[
                 "turns": summary["turns"],
                 "fix_rounds": summary["fix_rounds"],
                 "outcome": summary["outcome"],
-                "eventually_accepted": card["status"] == "accepted",
+                "eventually_accepted": False,
             }
         )
+    # acceptance belongs to the attempt that opened the pull request now accepted - an earlier
+    # attempt that failed its tests does not share the credit of the one that landed the card
+    if card["status"] == "accepted":
+        landed = [row for row in rows if row["outcome"] == "pull request"]
+        if landed:
+            landed[-1]["eventually_accepted"] = True
     return rows
 
 

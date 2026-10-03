@@ -374,10 +374,10 @@ def test_live_selection_is_not_a_finished_failure_and_missing_crash_cost_is_unkn
     assert evidence["model_scorecard"][0]["attempts"] == 1
     assert board_spend_today(store, board["id"]) is None
     store.set_board_daily_budget(board["id"], 10)
-    assert "without token usage remain unknown" in spend_refusal(store, card)
+    assert "has no recorded cost" in spend_refusal(store, card)
     store.set_board_daily_budget(board["id"], None)
     store.set_setting("card_total_budget_usd", 10)
-    assert "without token usage remain unknown" in spend_refusal(store, card)
+    assert "has no recorded cost" in spend_refusal(store, card)
 
 
 def test_mixed_models_inside_one_attempt_are_not_attributed_to_the_costliest_model(store):
@@ -488,3 +488,25 @@ def test_board_costs_route(running_server):
 
     status, _ = _request(f"{running_server}/api/boards/does-not-exist/costs")
     assert status == 404
+
+
+def test_only_the_attempt_that_landed_a_card_gets_the_acceptance(store):
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "retried")
+    for model, landed in [("claude-haiku-4", False), ("claude-opus-4", True)]:
+        store.append_event(card["id"], "lifecycle_started", {})
+        store.append_event(
+            card["id"], "worker_selection", {"lab": "anthropic", "model": model, "effort": "low"}
+        )
+        store.append_event(card["id"], "result", _worker_result(cost=0.1, model=model))
+        store.append_event(card["id"], "worker_summary", {"text": "done"})
+        if landed:
+            store.append_event(card["id"], "merge_request", {"url": "https://example.test/pr/1"})
+        else:
+            store.append_event(card["id"], "test_gate", {"passed": False})
+    store.update_card(card["id"], status="accepted")
+    rates = {
+        row["model"]: row["eventual_acceptance_rate"]
+        for row in board_evidence(store, board["id"])["model_scorecard"]
+    }
+    assert rates == {"anthropic/claude-haiku-4": 0.0, "anthropic/claude-opus-4": 1.0}
