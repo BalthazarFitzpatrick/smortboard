@@ -148,6 +148,7 @@ const CTA_BLOCKED_LABELS = new Map([
   ['MERGE_CONFLICT', 'resume to rebase'],
   ['API_UNREACHABLE', 'retrying automatically'],
   ['OUTDATED', 'redo on fresh base'],
+  ['BUDGET_EXCEEDED', 'raise cap, resume'],
 ]);
 
 // the one action a card wants next, off the same status and reason code cardClasses reads - never

@@ -48,6 +48,7 @@ RESUMABLE_REASONS = frozenset(
         "LEASE_CONFLICT",
         "MERGE_CONFLICT",
         "OUTDATED",
+        "BUDGET_EXCEEDED",
     }
 )
 # USAGE_LIMIT clears on its own once the rate-limit window resets - answering it does not change

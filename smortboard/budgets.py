@@ -17,6 +17,13 @@ from typing import Any
 from smortboard import telemetry
 from smortboard.store.api import Store
 
+# unknown has two causes and the message names both: a model with no price needs one configured,
+# and a call with no recorded result is closed on the next board start (runs.settle_dead_calls)
+_UNKNOWN_SPEND = (
+    "{scope} is unknown: a model call has no recorded cost, either its model has no configured "
+    "price, or the run died before reporting (restart the board to close it)"
+)
+
 
 def _card_total_spend(store: Store, card_id: str) -> float | None:
     return telemetry.card_telemetry(store, card_id)["totals"]["cost_usd"]
@@ -29,7 +36,7 @@ def board_spend_refusal(store: Store, board_id: str) -> str | None:
     if daily_budget is not None:
         spent_today = telemetry.board_spend_today(store, board["id"])
         if spent_today is None:
-            return "daily spend is unknown; configure missing model prices; records without token usage remain unknown"
+            return _UNKNOWN_SPEND.format(scope="daily spend")
         if spent_today >= daily_budget:
             return (
                 f"daily budget of ${daily_budget:.2f} for {board['name']} is spent "
@@ -49,7 +56,7 @@ def spend_refusal(store: Store, card: dict[str, Any]) -> str | None:
         cap = float(raw_cap)
         spent = _card_total_spend(store, card["id"])
         if spent is None:
-            return "this card's spend is unknown; configure missing model prices; records without token usage remain unknown"
+            return _UNKNOWN_SPEND.format(scope="this card's spend")
         if spent >= cap:
             return f"this card has spent ${spent:.2f} of its ${cap:.2f} total cap"
 

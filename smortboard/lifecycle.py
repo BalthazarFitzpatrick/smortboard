@@ -418,6 +418,13 @@ def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
     return state
 
 
+def _block_on_budget(store: Store, state: LifecycleResult, refusal: str) -> LifecycleResult:
+    """a spend cap refused a model call after the attempt had started - the card keeps its
+    column, worktree and commits, and answering it resumes once the cap allows"""
+    store.append_event(state.card_id, "budget_exceeded", {"note": refusal})
+    return _block(store, state, "BUDGET_EXCEEDED", refusal)
+
+
 def _stopped(store: Store, state: LifecycleResult) -> LifecycleResult:
     """the operator pulled the run. the card keeps its worktree and commits for a later run to resume -
     this only records that it stopped short, deliberately, of gates/reviewer/pull request.
@@ -756,7 +763,7 @@ def _run_attempt(
         short"""
         refusal = spend_refusal(store, card)
         if refusal:
-            return _refuse(store, state, refusal)
+            return _block_on_budget(store, state, refusal)
         if not worker_started:
             run_ref(store, "worker", card, consume=True)
             worker_started = True
@@ -908,7 +915,7 @@ def _run_attempt(
         phase("reviewing")
         refusal = spend_refusal(store, card)
         if refusal:
-            return _refuse(store, state, refusal)
+            return _block_on_budget(store, state, refusal)
         try:
             if not reviewer_started:
                 run_ref(store, "reviewer", card, consume=True)

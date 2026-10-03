@@ -286,6 +286,20 @@ def test_answer_refuses_a_card_past_its_boards_daily_budget(store, repo):
     assert [c for c in updated["comments"] if c["author"] == "operator"] == []
 
 
+def test_a_budget_blocked_card_resumes_once_the_cap_allows(store, repo):
+    board, card = _board_and_card(store, repo)
+    store.set_board_daily_budget(board["id"], 1.0)
+    store.append_event(card["id"], "result", {"total_cost_usd": 1.5})
+    store.update_card(card["id"], blocked_reason_code="BUDGET_EXCEEDED", review_flag=True)
+    runs = _FakeRuns()
+    with pytest.raises(AnswerRefused, match="daily budget"):
+        answer_card(store, runs, card["id"], "go on")
+    store.set_board_daily_budget(board["id"], 5.0)
+    answer_card(store, runs, card["id"], "go on")
+    assert runs.started == [card["id"]]
+    assert store.get_card(card["id"])["blocked_reason_code"] is None
+
+
 # ---- worktree reuse on resume (lifecycle.py's worktree-cutting step only) -----------------------
 
 

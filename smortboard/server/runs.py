@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from smortboard import profiles
+from smortboard import profiles, telemetry
 from smortboard.actions import with_next
 from smortboard.exec.runner import ProcessHandle
 from smortboard.lifecycle import BOARD_AUTHOR, LifecycleResult, _stopped, run_card_lifecycle
@@ -63,6 +63,22 @@ def _left_mid_run(events: list[dict[str, Any]]) -> bool:
     return not any(event["kind"] == "run_ended" for event in events[starts[-1] :])
 
 
+def settle_dead_calls(store: Store) -> int:
+    """closes every model call that never reported a result, at startup when nothing can be live.
+
+    The dead process may have spent money on it, but the amount is lost; left open it reads as an
+    unknown cost and refuses every start under a spend cap until the cap resets, or forever for a
+    per-card cap. Settled, it counts as no recorded cost.
+    """
+    settled = 0
+    for board in store.list_boards():
+        for card in store.list_cards(board["id"]):
+            for started in telemetry.unsettled_calls(store, card["id"]):
+                store.append_event(card["id"], "model_call_settled", {"started_id": started["id"]})
+                settled += 1
+    return settled
+
+
 def recover_orphaned_runs(store: Store) -> list[str]:
     """blocks every card a previous board process left mid-run as CRASH, and returns their ids.
 
@@ -70,6 +86,7 @@ def recover_orphaned_runs(store: Store) -> list[str]:
     reason code, no run_ended since its last start - lost its board. Left alone it sits in doing
     forever, out of the inbox; CRASH puts it there, and an answer resumes it in its own worktree.
     """
+    settle_dead_calls(store)
     recovered = []
     for board in store.list_boards():
         for card in store.list_cards(board["id"]):
