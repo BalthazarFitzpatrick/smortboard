@@ -163,37 +163,28 @@ def _fold(
     if len(ledger) > 1:
         description += "\n\nALSO COVERS LEDGER TASKS:\n" + "\n".join(f"- {t}" for t in ledger[1:])
 
-    # the originals go first: a repo's ledger task sits on one card only [unique repo_id,
-    # ledger_task], and it is not a writable field. the snapshots above keep every edge to re-point
-    for card in fresh:
-        store.delete_card(card["id"])
     model_source = next((card for card in fresh if card["model"]), {})
-    merged = store.create_card(
+    merged = store.replace_cards(
         board_id,
-        fresh[0]["repo_id"],
-        title,
-        workstream=fresh[0]["workstream"],
-        status=FOLDABLE_STATUS,
-        description=description.strip() or None,
-        position=min(card["position"] for card in fresh),
-        tasks=[t["text"] for card in fresh for t in card["tasks"] if not t["done"]],
-        criteria=criteria,
-        model=model_source.get("model"),
-        lab=model_source.get("lab"),
-        effort=model_source.get("effort"),
-        ledger_task=ledger[0] if ledger else None,
-        # a fold merges scope, never shrinks it - the merged card is at least as complex as its
-        # most complex member
-        complexity=max((c["complexity"] for c in fresh if c["complexity"]), default=None),
+        list(ids),
+        {
+            "repo_id": fresh[0]["repo_id"],
+            "title": title,
+            "workstream": fresh[0]["workstream"],
+            "status": FOLDABLE_STATUS,
+            "description": description.strip() or None,
+            "position": min(card["position"] for card in fresh),
+            "tasks": [t["text"] for card in fresh for t in card["tasks"] if not t["done"]],
+            "criteria": criteria,
+            "leases": leases,
+            "model": model_source.get("model"),
+            "lab": model_source.get("lab"),
+            "effort": model_source.get("effort"),
+            "ledger_task": ledger[0] if ledger else None,
+            # a fold cannot lower its most complex member's scope
+            "complexity": max((c["complexity"] for c in fresh if c["complexity"]), default=None),
+        },
     )
-    store.set_leases(merged["id"], leases)
-    for card in fresh:
-        for dep in card["depends_on"]:
-            if dep not in ids:
-                store.add_dependency(merged["id"], dep)
-        for dependent in card["depended_on_by"]:
-            if dependent not in ids:
-                store.add_dependency(dependent, merged["id"])
 
     # the same board notes mission control leaves for its own cards: reported, never cut
     for note in notes:
@@ -256,8 +247,12 @@ def apply_folds(store: Store, board_id: str, groups: list[Any]) -> list[str]:
         elif loose:
             line = f'not folded: "{title}" - {", ".join(loose)} shares no lease with the rest'
         else:
-            line = _fold(store, board_id, members, group, title)
-            used.update(member["id"] for member in members)
+            try:
+                line = _fold(store, board_id, members, group, title)
+            except ValueError as exc:
+                line = f'not folded: "{title}" - {exc}'
+            else:
+                used.update(member["id"] for member in members)
         lines.append(f"{line}; skipped {', '.join(skipped)}" if skipped else line)
     return lines
 

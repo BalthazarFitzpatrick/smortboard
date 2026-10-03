@@ -824,6 +824,55 @@ class Store:
         ).fetchall()
         return {row["ledger_task"]: row["id"] for row in rows}
 
+    def replace_cards(
+        self, board_id: str, card_ids: list[str], fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        """contract a fold's dependency graph and replace its originals in one transaction"""
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            ids = set(card_ids)
+            if len(ids) < 2:
+                raise ValueError("fewer than two distinct cards to fold")
+            originals = [self.get_card(card_id) for card_id in ids]
+            if any(
+                card["board_id"] != board_id
+                or card["status"] != "todo"
+                or card["repo_id"] != fields.get("repo_id")
+                for card in originals
+            ):
+                raise ValueError("fold members must still be todo cards on the same board and repo")
+            merged_id = _new_id()
+            graph: dict[str, set[str]] = {merged_id: set()}
+            for edge in self._conn.execute("SELECT card_id, depends_on_card_id FROM card_deps"):
+                source, target = edge["card_id"], edge["depends_on_card_id"]
+                if source in ids and target in ids:
+                    continue
+                source = merged_id if source in ids else source
+                target = merged_id if target in ids else target
+                graph.setdefault(source, set()).add(target)
+            try:
+                list(TopologicalSorter(graph).static_order())
+            except CycleError as exc:
+                raise ValueError("fold would create a dependency cycle") from exc
+            # snapshot all edges before removing any member, so each backup remains complete
+            for card in originals:
+                self._backup_card(card)
+            for card in originals:
+                self._delete_card_rows(card["id"])
+            self._insert_card(
+                board_id, **{**fields, "depends_on": sorted(graph[merged_id])}, card_id=merged_id
+            )
+            for source, dependencies in graph.items():
+                if source != merged_id and merged_id in dependencies:
+                    self._conn.execute(
+                        "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
+                        (source, merged_id),
+                    )
+                    self._conn.execute(
+                        "UPDATE cards SET updated_at = ? WHERE id = ?", (_now(), source)
+                    )
+            return self.get_card(merged_id)
+
     def _card_row(self, card_id: str) -> sqlite3.Row:
         row = self._conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
         if row is None:
@@ -1162,8 +1211,12 @@ class Store:
         the card is snapshotted into card_backups first (see _backup_card), so this delete is
         reversible through restore_card for BACKUP_RETENTION_DAYS days rather than destructive.
         """
-        card = self.get_card(card_id)  # raises NotFoundError; doubles as the backup snapshot
-        self._backup_card(card)
+        with self._conn:
+            card = self.get_card(card_id)  # raises NotFoundError; doubles as the backup snapshot
+            self._backup_card(card)
+            self._delete_card_rows(card_id)
+
+    def _delete_card_rows(self, card_id: str) -> None:
         for table in self._CARD_CHILDREN:
             self._conn.execute(f"DELETE FROM {table} WHERE card_id = ?", (card_id,))
         # a dependency edge names a card at either end, so both directions have to go
@@ -1172,7 +1225,6 @@ class Store:
             (card_id, card_id),
         )
         self._conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
-        self._conn.commit()
 
     def _backup_card(self, card: dict[str, Any]) -> None:
         """writes one card_backups row holding everything restore_card needs to recreate the card
