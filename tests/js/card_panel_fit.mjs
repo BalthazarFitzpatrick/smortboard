@@ -1,6 +1,6 @@
 // proves the open card asks its expander to hug its content, after the first layout and again on
 // every re-layout (a fold opening), with the content's laid-out height
-// run: node tests/js/card_panel_fit.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/card_panel_fit.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

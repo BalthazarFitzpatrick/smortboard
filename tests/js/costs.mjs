@@ -1,5 +1,5 @@
 // board cost overview (c): every board's spend, costliest first, plus totals - a centred panel
-// like usage and telemetry. stubs fetch and reads the rendered node tree. run: node tests/js/costs.mjs
+// like usage and telemetry. stubs fetch and reads the rendered node tree. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/costs.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

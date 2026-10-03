@@ -1,7 +1,7 @@
 // the prompt editor (p): opens and loads the three roles, switching role shows its own body,
 // saving PATCHes the edited body and shows the returned version, typing p inside the textarea
 // never fires a board shortcut, and a failed save renders an error line rather than throwing.
-// run: node tests/js/prompt_editor.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/prompt_editor.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

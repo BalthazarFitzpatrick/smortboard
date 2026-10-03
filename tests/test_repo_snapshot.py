@@ -169,3 +169,23 @@ def test_mission_control_reads_what_landed_on_origin_not_the_stale_local_branch(
         assert (Path(clone_mount.split(":")[0]) / "game.js").exists()
     finally:
         snapshot.cleanup()
+
+
+def test_the_clone_shares_no_objects_with_the_source(tmp_path):
+    repo = tmp_path / "src"
+    _make_repo(repo)
+
+    snapshot = build_repo_snapshot(
+        [{"name": "src", "path": str(repo), "default_branch": "main"}], []
+    )
+    try:
+        clone_mount = next(m for m in snapshot.mount_args if f"{REPOS_MOUNT}/src:ro" in m)
+        clone_git = Path(clone_mount.split(":")[0]) / ".git"
+
+        assert not (clone_git / "objects" / "info" / "alternates").exists()
+        # hardlinked objects would share inodes with the source repo
+        source_inodes = {p.stat().st_ino for p in (repo / ".git" / "objects").rglob("*")}
+        clone_inodes = {p.stat().st_ino for p in (clone_git / "objects").rglob("*") if p.is_file()}
+        assert not source_inodes & clone_inodes
+    finally:
+        snapshot.cleanup()

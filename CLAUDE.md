@@ -116,8 +116,8 @@ and gitignored. nothing in it is needed to work on this repo.
 ## constraints and gotchas
 
 - **the js tests read the installed `ui_base` package**, matching production. use
-  `UI_BASE_DEV_ASSETS_DIR=/path/to/smortui/ui_base/assets` only for explicit co-development;
-  release verification runs without that override
+  `UI_BASE_DEV_ASSETS_DIR=/path/to/smortui/ui_base/assets` only when running a js test with node
+  directly; `tests/test_js_suite.py` drops it so the pre-push suite always tests the installed package
 - **the database is gitignored and lives in the platform's data dir**, never the working directory;
   `smortboard export` is the portable bundle
 - **a card cannot run without docker, a credential and a repo image.** the preflight check (`h`)

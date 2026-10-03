@@ -1,6 +1,6 @@
 // cost telemetry (i): a focused/open card's attempts, or the board's cost table with nothing
 // focused. stubs fetch and reads the rendered node tree, same pattern as mission_control.mjs.
-// run: node tests/js/telemetry.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/telemetry.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

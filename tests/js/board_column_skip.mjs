@@ -1,7 +1,7 @@
 // exercises board.js's column-skip wiring: left/right should jump over any run of empty status
 // buckets to the nearest column that actually has a card, stay put with no wrap when nothing
 // non-empty lies further that way, and leave a plain adjacent move to the real ui_base nav
-// untouched. run: node tests/js/board_column_skip.mjs
+// untouched. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/board_column_skip.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

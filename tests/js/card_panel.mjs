@@ -1,6 +1,6 @@
 // proves the outcome section renders what the checking-and-rejection contract promises, and that
 // accept/reject handle both the happy path and a 409 refusal without throwing.
-// run: node tests/js/card_panel.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/card_panel.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

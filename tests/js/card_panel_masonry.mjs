@@ -1,6 +1,6 @@
 // proves the card panel's sections stack by their own measured height, per column, instead of a
 // css-grid row snapping every column to the tallest cell in it - see layoutCardSections in board.js
-// run: node tests/js/card_panel_masonry.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/card_panel_masonry.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

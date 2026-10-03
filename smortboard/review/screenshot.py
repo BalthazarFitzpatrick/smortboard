@@ -70,7 +70,7 @@ _STAGE_IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 
 # screenshot javascript may read the invented board, but cannot drive host operations
 _READ_API_PATH = re.compile(
-    r"^/api/(?:boards(?:/[^/]+/(?:cards|repos))?|cards/[^/]+"
+    r"^/api/(?:boards(?:/[^/]+/(?:cards|repos|schedule))?|cards/[^/]+"
     r"(?:/(?:events|outcome|run|attachments/[^/]+))?|settings|catalog|prompts|attention|"
     r"costs|usage|roster)$"
 )

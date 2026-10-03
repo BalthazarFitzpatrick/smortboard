@@ -1,6 +1,6 @@
 // pre-flight checklist (h): h opens/closes the panel (not a Menu), the summary line counts ready
 // checks, rows group by the api's group field, a fix line only shows for non-ok rows, and the
-// re-check button reloads. run: node tests/js/preflight.mjs
+// re-check button reloads. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/preflight.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

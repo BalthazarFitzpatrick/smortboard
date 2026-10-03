@@ -1,6 +1,6 @@
 // credential profiles (shift+p): the panel lists profiles from /api/profiles, adds one by pasting
 // a token, activates and removes a row, and the token field never survives a submit.
-// run: node tests/js/profiles.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/profiles.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

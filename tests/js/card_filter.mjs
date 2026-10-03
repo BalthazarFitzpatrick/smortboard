@@ -2,7 +2,7 @@
 // case-insensitively on a card's title, short id, description, comments and column name, draws only
 // the matching cards without reordering them or asking the server, clears on escape or an empty
 // value, survives every redraw, and never lets the arrow keys land on a card it left out.
-// run: node tests/js/card_filter.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/card_filter.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

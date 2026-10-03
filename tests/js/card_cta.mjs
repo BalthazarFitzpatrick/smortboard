@@ -1,7 +1,7 @@
 // proves ctaFor's label/action logic, and the compact action note 3919ce56 replaced the oversized
 // full-width CTA button with: one per card, coloured by state, left-aligned ahead of the
 // workstream, no click handler of its own.
-// run: node tests/js/card_cta.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/card_cta.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

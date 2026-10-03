@@ -1,6 +1,6 @@
 // the docs site's keyboard page against the app's own BINDINGS table: every key the board binds has
 // its row on docs/reference/keyboard.md, word for word, so the published list cannot drift from
-// what the keys do. run: node tests/js/keyboard_docs.mjs
+// what the keys do. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/keyboard_docs.mjs
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';

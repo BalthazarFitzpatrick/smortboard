@@ -2,7 +2,7 @@
 // (not a Menu), rows render board/title/state/link, conflicting and dependency-unmerged markers
 // show only when the row carries them, enter opens the active row's PR in a new tab, y accepts the
 // active row's card without closing the panel and refuses without dropping the row.
-// run: node tests/js/pulls.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/pulls.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

@@ -1,7 +1,7 @@
 // RUN REPLAY (t): opens for the focused/open card, renders the rail with the right verdict markers,
 // j/k/arrows/home/end scrub without leaking to the board's global handler, an edit step renders a
 // removed/added diff, and t again closes the panel.
-// run: node tests/js/replay.mjs
+// run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/replay.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

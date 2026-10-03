@@ -1,7 +1,7 @@
 // proves the card overflow menu (...) wires edit/delete/change-model/move-status without forking
 // any of their logic, that delete always confirms first, and that each action also has its own
 // keyboard shortcut scoped to whichever card is focused - or, for a menu pick, the card whose menu
-// was actually opened, even if focus sits elsewhere. run: node tests/js/card_overflow.mjs
+// was actually opened, even if focus sits elsewhere. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/card_overflow.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

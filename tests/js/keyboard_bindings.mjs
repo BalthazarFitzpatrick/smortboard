@@ -1,6 +1,6 @@
 // proves the phase-1 keyboard model cannot drift: every key the contract lists actually triggers
 // a handler branch in board.js's global keydown listener, and the `s` overlay is built from the
-// exact same BINDINGS table those branches dispatch on. run: node tests/js/keyboard_bindings.mjs
+// exact same BINDINGS table those branches dispatch on. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/keyboard_bindings.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';

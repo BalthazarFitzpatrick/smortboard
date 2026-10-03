@@ -1,6 +1,6 @@
 // exercises the contract's verify line against real ui_base sources (buckets.js, expand.js) plus
 // board.js's own wiring: five status buckets render, arrow keys move focus across buckets and
-// rows, and enter/escape open and close a card. run: node tests/js/board_navigation.mjs
+// rows, and enter/escape open and close a card. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/board_navigation.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {installStubDom, element, uiBaseAsset} from './dom_stub.mjs';
