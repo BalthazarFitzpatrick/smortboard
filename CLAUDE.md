@@ -115,9 +115,9 @@ and gitignored. nothing in it is needed to work on this repo.
 
 ## constraints and gotchas
 
-- **the js tests read `ui_base` from a sibling checkout first** (`tests/js/dom_stub.mjs`), falling
-  back to the pinned install. a sibling sitting on an older commit than `pyproject.toml` pins means
-  the suite tests a stylesheet the app does not ship - check the pin before trusting a green run
+- **the js tests read the installed `ui_base` package**, matching production. use
+  `UI_BASE_DEV_ASSETS_DIR=/path/to/smortui/ui_base/assets` only for explicit co-development;
+  release verification runs without that override
 - **the database is gitignored and lives in the platform's data dir**, never the working directory;
   `smortboard export` is the portable bundle
 - **a card cannot run without docker, a credential and a repo image.** the preflight check (`h`)
