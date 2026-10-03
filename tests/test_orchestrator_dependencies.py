@@ -61,36 +61,87 @@ def test_forward_references_resolve_in_one_batch(store):
     "specs,error",
     [
         (
-            [{"title": "valid"}, {"title": "invalid", "depends_on": ["missing"]}],
-            "missing dependency",
-        ),
-        (
             [{"title": "a", "depends_on": ["b"]}, {"title": "b", "depends_on": ["a"]}],
             "dependency cycle",
         ),
         ([{"title": "self", "depends_on": ["self"]}], "dependency cycle"),
-        (
-            [{"title": "same"}, {"title": "same"}, {"title": "child", "depends_on": ["same"]}],
-            "ambiguous dependency",
-        ),
     ],
 )
-def test_invalid_graph_creates_nothing_and_preserves_plan(store, specs, error):
+def test_proposed_cycle_creates_nothing_but_keeps_reply_and_plan(store, specs, error):
     board = store.create_board("board")
     store.set_plan(board["id"], "previous decisions")
     result = _propose(store, board, specs)
-    assert error in result.error
+    assert result.error is None and result.reply_message["body"] == "done"
     assert store.list_cards(board["id"]) == []
-    assert store.get_plan(board["id"]) == "previous decisions"
-    assert error in store.list_orchestrator_messages(board["id"])[-1]["body"]
+    assert store.get_plan(board["id"]) == "new plan"
+    assert any(error in m["body"] for m in store.list_orchestrator_messages(board["id"]))
+
+
+@pytest.mark.parametrize(
+    "extra,problem",
+    [
+        ([], "missing dependency"),
+        ([{"title": "same"}, {"title": "same"}], "ambiguous dependency"),
+    ],
+)
+def test_bad_reference_is_dropped_and_the_rest_of_the_turn_survives(store, extra, problem):
+    board = store.create_board("board")
+    reference = extra[0]["title"] if extra else "missing"
+    specs = [*extra, {"title": "child", "depends_on": [reference]}]
+    result = _propose(store, board, specs)
+    assert result.error is None and result.reply_message["body"] == "done"
+    child = next(card for card in store.list_cards(board["id"]) if card["title"] == "child")
+    assert child["depends_on"] == []
+    assert store.get_plan(board["id"]) == "new plan"
+    assert any(problem in m["body"] for m in store.list_orchestrator_messages(board["id"]))
+
+
+def test_dependency_on_a_rejected_card_is_dropped_with_a_note(store):
+    board = store.create_board("board")
+    rejected = store.create_card(board["id"], None, "old", status="rejected")
+    result = _propose(store, board, [{"title": "child", "depends_on": [rejected["title"]]}])
+    assert result.error is None
+    child = next(card for card in store.list_cards(board["id"]) if card["title"] == "child")
+    assert child["depends_on"] == []
+    assert any(
+        "rejected dependency" in m["body"] for m in store.list_orchestrator_messages(board["id"])
+    )
+
+
+def test_create_card_refuses_a_rejected_dependency(store):
+    board = store.create_board("board")
+    rejected = store.create_card(board["id"], None, "old", status="rejected")
+    with pytest.raises(ValueError, match="rejected"):
+        store.create_card(board["id"], None, "child", depends_on=[rejected["id"]])
+    with pytest.raises(ValueError, match="rejected dependency"):
+        store.create_cards_with_dependencies(
+            board["id"], [{"title": "child", "depends_on": [rejected["id"]]}]
+        )
+
+
+def test_stored_cycle_elsewhere_does_not_block_proposals(store):
+    board = store.create_board("board")
+    a = store.create_card(board["id"], None, "a")
+    b = store.create_card(board["id"], None, "b")
+    # a legacy cycle, written past the guard
+    store._conn.execute(
+        "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?), (?, ?)",
+        (a["id"], b["id"], b["id"], a["id"]),
+    )
+    store._conn.commit()
+    result = _propose(store, board, [{"title": "child", "depends_on": [a["id"]]}])
+    assert result.error is None
+    assert any(card["title"] == "child" for card in store.list_cards(board["id"]))
 
 
 def test_existing_and_new_same_title_are_ambiguous(store):
     board = store.create_board("board")
     parent = store.create_card(board["id"], None, "same")
     result = _propose(store, board, [{"title": "same"}, {"title": "child", "depends_on": ["same"]}])
-    assert "ambiguous dependency" in result.error
-    assert [card["id"] for card in store.list_cards(board["id"])] == [parent["id"]]
+    assert result.error is None
+    child = next(card for card in store.list_cards(board["id"]) if card["title"] == "child")
+    assert child["depends_on"] == []
+    assert parent["id"] in [card["id"] for card in store.list_cards(board["id"])]
 
 
 def test_colliding_short_ids_are_refused_but_exact_ids_work(store, monkeypatch):
@@ -101,8 +152,8 @@ def test_colliding_short_ids_are_refused_but_exact_ids_work(store, monkeypatch):
         first = store.create_card(board["id"], None, "one")
         store.create_card(board["id"], None, "two")
     result = _propose(store, board, [{"title": "child", "depends_on": ["12345678"]}])
-    assert "ambiguous dependency" in result.error
-    assert len(store.list_cards(board["id"])) == 2
+    child = next(card for card in store.list_cards(board["id"]) if card["title"] == "child")
+    assert result.error is None and child["depends_on"] == []
     assert _propose(store, board, [{"title": "child", "depends_on": [first["id"]]}]).error is None
 
 

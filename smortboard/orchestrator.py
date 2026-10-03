@@ -51,7 +51,13 @@ from smortboard.prompts import LOWERCASE_RULE, active_prompt
 from smortboard.repo_tests import has_tests, safe_test_command, tracked_files
 from smortboard.scheduler import usage_limit_route
 from smortboard.screenshots import ScreenshotTaker, take_board_screenshot
-from smortboard.store.api import BOARD_SPEND_TOKENS, Store, _clean_leases, _is_catch_all
+from smortboard.store.api import (
+    BOARD_SPEND_TOKENS,
+    ProposedCycleError,
+    Store,
+    _clean_leases,
+    _is_catch_all,
+)
 from smortboard.telemetry import board_evidence
 
 # where a screenshot lands inside the orchestrator's re-run container - mounted read-only, and
@@ -68,7 +74,10 @@ ORCHESTRATOR_PROMPT = (
     "board.\n"
     "YOU DO NOT CREATE CARDS - the board does, from your `cards`. It resolves `repo` by name "
     "against this board's repos (unknown: no repo and a note, never a guess) and `depends_on` "
-    "against titles in this reply or cards already on the board.\n"
+    "against this reply's titles, and against cards already on the board by exact title, full "
+    "id or an id prefix of 8+ characters (the short ids in the snapshot). An unknown, ambiguous "
+    "or rejected-card reference is dropped with a note and the card is still created; never "
+    "depend on a rejected card; a loop among your own cards creates none of them.\n"
     "- cards are feature-sized, not edit-sized\n"
     "- `plan`: your ledger of what the board works toward, reconciled with the cards that exist, "
     "not a copy of them\n"
@@ -990,12 +999,20 @@ def run_orchestrator_turn(
             }
         )
 
+    dropped: list[str] = []
     try:
-        created = store.create_cards_with_dependencies(board_id, prepared) if prepared else []
+        created = (
+            store.create_cards_with_dependencies(board_id, prepared, dropped) if prepared else []
+        )
+    except ProposedCycleError as exc:
+        # keep the reply and plan, only the cards are lost
+        created = []
+        warnings.append(f"no proposed cards were created: {exc}")
     except ValueError as exc:
         error = f"no proposed cards were created: {exc}"
         store.add_orchestrator_message(board_id, _BOARD_AUTHOR, error)
         return OrchestratorTurnResult(reply_message=None, error=error)
+    warnings.extend(f"{problem} - dependency dropped" for problem in dropped)
     created_summaries = [{"id": card["id"], "title": card["title"]} for card in created]
 
     warnings.extend(_apply_test_commands(store, board_id, test_commands))
