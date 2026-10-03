@@ -16,6 +16,12 @@ attempts gets its own line.
 "+ n unknown" beside it for runs that reported no price. a figure with no price at all reads
 `unknown`.
 
+mission control's model evidence counts every finished attempt, including failures before a
+successful retry. first-attempt clean results and eventual acceptance are separate rates. model
+comparisons split by recorded effort and complexity; missing historical effort stays unknown.
+older complexity uses the current rating or scope estimate, labelled as such. model choice never
+raises the scope estimate. these are observed outcomes, not a controlled model comparison.
+
 **`u` counts only smortboard's own runs.** one section per credential profile, one line per window:
 percent used, when it resets, time left. it adds up what smortboard's runs reported, not your lab
 account; use outside smortboard does not show.
@@ -47,7 +53,8 @@ each is optional and independent.
 | a board's **daily budget** | that board's whole day, utc | `shift`+`o` |
 | a card's **total cap** | one card across every run it has ever made, restarts included | `o` -> cost control -> spend caps |
 
-- the daily budget also counts mission control and fold turns, even one that failed or hit its own
-  per-run cap. once today's spend reaches it, new cards stop starting.
+- the daily budget counts worker, reviewer, mission control and fold calls, including failures.
+  each new call checks recorded spend, including fix rounds, fallbacks and screenshot retries.
 - the scheduler, a manual `r`, an inbox answer and a lease approval all check the same caps.
-- running cards always finish.
+- a running model call can finish; its next call is checked again. admission does not reserve
+  money for concurrent calls, so concurrent or in-flight work can exceed a cumulative cap.

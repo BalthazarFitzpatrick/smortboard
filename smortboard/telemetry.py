@@ -13,13 +13,20 @@ from datetime import UTC, datetime
 from math import ceil
 from typing import Any
 
-from smortboard.labs.catalog import tier_of
 from smortboard.labs.events import cost_sum, event_cost, model_ref, neutral_events, result_fields
 from smortboard.store.api import Store
 
 # result subtype set when a run is stopped by --max-budget-usd - see review.reviewer.BUDGET_STOP
 _BUDGET_STOP_SUBTYPE = "error_max_budget_usd"
 _MIN_RUNS_FOR_CAP_SUGGESTION = 5
+_ATTEMPT_END_KINDS = {
+    "run_ended",
+    "run_refused",
+    "run_stopped",
+    "run_crashed",
+    "run_orphaned",
+    "merge_request",
+}
 
 # tool_use -> the activity phrase it reads as. order matters only for readability; lookup is by key
 _TOOL_ACTIVITY = {
@@ -53,9 +60,9 @@ def estimate_complexity(
     """a guess at an unrated card's complexity (1/2/3), used only by cost analysis - never written
     back to the card, since a real rating always wins once set.
 
-    score = criteria_count + task_count, plus 2 for a broad lease (one glob holding `**`, which
-    reaches arbitrarily deep) or 1 for any lease at all, plus 2 more if the model is an opus alias
-    (mission control reaches for opus when it already expects the work to need more judgement).
+    score = criteria_count + task_count, plus 2 for a broad lease or 1 for any lease at all
+    model is retained for callers but never affects the estimate: model choice is the outcome
+    being evaluated, so using it to rate complexity would make the comparison circular
     score <= 5 is low (1), <= 9 is medium (2), anything higher is high (3) - a typical card with
     three criteria, three tasks and a narrow lease scores 7, which is medium.
     """
@@ -64,8 +71,6 @@ def estimate_complexity(
         score += 2
     elif lease_glob_count:
         score += 1
-    if tier_of(model) == "deep":
-        score += 2
     if score <= 5:
         return 1
     if score <= 9:
@@ -343,6 +348,21 @@ def _main_model(spend: dict[str, float]) -> str | None:
     return max(spend, key=spend.__getitem__) if spend else None
 
 
+def _unreported_selections(segment: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    """calls admitted but never accounted for; a missing result is not proof of free work"""
+    pending = {}
+    missing = []
+    for index, event in enumerate(segment):
+        if event["kind"] in ("worker_selection", "reviewer_selection"):
+            role = event["kind"].removesuffix("_selection")
+            if role in pending:
+                missing.append((role, pending[role]))
+            pending[role] = event
+        elif result_fields(event) is not None:
+            pending.pop(_result_role(segment, index), None)
+    return missing + list(pending.items())
+
+
 def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
     worker_cost = reviewer_cost = 0.0
     worker_turns = reviewer_turns = 0
@@ -355,6 +375,9 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
     estimates = {"worker": False, "reviewer": False}
     cost_estimated = False
     identities = []
+    selection = next(
+        (event["payload"] for event in segment if event["kind"] == "worker_selection"), {}
+    )
 
     for i, event in enumerate(segment):
         kind = event["kind"]
@@ -396,10 +419,14 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
         elif kind == "fix_round":
             fix_rounds += 1
 
+    for role, _event in _unreported_selections(segment):
+        unknown[role] += 1
     return {
         "started_at": segment[0]["created_at"] if segment else None,
         "outcome": _attempt_outcome(segment),
-        "worker_model": _main_model(worker_spend),
+        "worker_model": _main_model(worker_spend) or model_ref(selection),
+        "worker_effort": selection.get("effort"),
+        "complexity_snapshot": selection.get("complexity"),
         "reviewer_model": _main_model(reviewer_spend),
         "worker_cost_usd": None if unknown["worker"] else round(worker_cost, 6),
         "reviewer_cost_usd": None if unknown["reviewer"] else round(reviewer_cost, 6),
@@ -496,10 +523,18 @@ def board_spend_today(store: Store, board_id: str, *, today: str | None = None) 
     day = today or datetime.now(UTC).date().isoformat()
     costs = []
     for card in store.list_cards(board_id):
-        for event in store.list_events(card["id"]):
+        events = store.list_events(card["id"])
+        for event in events:
             if result_fields(event) is None or not str(event["created_at"]).startswith(day):
                 continue
             costs.append(event_cost(event))
+        for segment in _attempts(events):
+            if any(event["kind"] in _ATTEMPT_END_KINDS for event in segment):
+                costs.extend(
+                    None
+                    for _role, event in _unreported_selections(segment)
+                    if str(event["created_at"]).startswith(day)
+                )
     for row in store.list_board_spend(board_id):
         if str(row["created_at"]).startswith(day):
             costs.append(row["cost_usd"])
@@ -849,48 +884,49 @@ def _waste(store: Store, cards: list[dict[str, Any]]) -> dict[str, Any]:
 def _model_fit(cards: list[dict[str, Any]], store: Store) -> list[dict[str, Any]]:
     """per model x complexity: how many cards, how many got accepted, what each accepted card
     cost, and how often the attempt needed a fix round before it got there"""
-    groups: dict[tuple[str, int], dict[str, Any]] = {}
+    groups: dict[tuple, dict[str, Any]] = {}
     for card in cards:
-        level, _rated = _card_complexity(card)
-        attempts = _attempts(store.list_events(card["id"]))
-        summaries = [_summarize_attempt(s) for s in attempts]
-        model = (
-            next((s["worker_model"] for s in reversed(summaries) if s["worker_model"]), None)
-            or model_ref(card)
-            or "default"
-        )
-        key = (model, level)
-        group = groups.setdefault(
-            key,
-            {
-                "model": model,
-                "complexity": level,
-                "cards": 0,
-                "accepted_cards": 0,
-                "accepted_cost_usd": 0.0,
-                "attempts": 0,
-                "attempts_needing_fix": 0,
-            },
-        )
-        group["cards"] += 1
-        group["attempts"] += len(summaries)
-        group["attempts_needing_fix"] += sum(1 for s in summaries if s["fix_rounds"] > 0)
-        if card.get("status") == "accepted":
-            group["accepted_cards"] += 1
-            group["accepted_cost_usd"] = cost_sum(
-                [group["accepted_cost_usd"], *[s["cost_usd"] for s in summaries]]
+        for attempt in _finished_attempt_evidence(store, card):
+            key = (
+                attempt["model"] or "unknown",
+                attempt["effort"],
+                attempt["complexity"],
+                attempt["complexity_source"],
             )
+            group = groups.setdefault(
+                key,
+                {
+                    "model": key[0],
+                    "effort": key[1],
+                    "complexity": key[2],
+                    "complexity_source": key[3],
+                    "cards": set(),
+                    "accepted_cards": set(),
+                    "cost_usd": 0.0,
+                    "attempts": 0,
+                    "attempts_needing_fix": 0,
+                },
+            )
+            group["cards"].add(card["id"])
+            group["attempts"] += 1
+            group["attempts_needing_fix"] += attempt["fix_rounds"] > 0
+            group["cost_usd"] = cost_sum([group["cost_usd"], attempt["cost_usd"]])
+            if attempt["eventually_accepted"]:
+                group["accepted_cards"].add(card["id"])
     rows = []
     for group in groups.values():
         rows.append(
             {
                 "model": group["model"],
                 "complexity": group["complexity"],
-                "cards": group["cards"],
-                "accepted_cards": group["accepted_cards"],
+                "effort": group["effort"],
+                "complexity_source": group["complexity_source"],
+                "cards": len(group["cards"]),
+                "accepted_cards": len(group["accepted_cards"]),
+                "cost_usd": group["cost_usd"],
                 "cost_per_accepted_card_usd": (
-                    round(group["accepted_cost_usd"] / group["accepted_cards"], 6)
-                    if group["accepted_cards"] and group["accepted_cost_usd"] is not None
+                    round(group["cost_usd"] / len(group["accepted_cards"]), 6)
+                    if group["accepted_cards"] and group["cost_usd"] is not None
                     else None
                 ),
                 "fix_round_share": (
@@ -938,23 +974,41 @@ def cost_optimisation(store: Store, board_id: str | None = None) -> dict[str, An
     }
 
 
-def _finished_card_evidence(store: Store, card: dict[str, Any]) -> dict[str, Any] | None:
-    """this card's latest attempt, as evidence for the orchestrator - None while it is still
-    running or has never been run, so an in-progress card never counts toward a model's record"""
+def _finished_attempt_evidence(store: Store, card: dict[str, Any]) -> list[dict[str, Any]]:
+    """completed attempts keep their own model and effort; old failures survive later retries"""
     attempts = _attempts(store.list_events(card["id"]))
-    if not attempts:
-        return None
-    summary = _summarize_attempt(attempts[-1])
-    if summary["outcome"] == "in progress":
-        return None
-    return {
-        "id": card["id"][:8],
-        "model": summary["worker_model"] or model_ref(card),
-        "cost_usd": summary["cost_usd"],
-        "turns": summary["turns"],
-        "fix_rounds": summary["fix_rounds"],
-        "outcome": summary["outcome"],
-    }
+    level, rated = _card_complexity(card)
+    rows = []
+    for index, segment in enumerate(attempts):
+        summary = _summarize_attempt(segment)
+        ended = any(event["kind"] in _ATTEMPT_END_KINDS for event in segment)
+        if index == len(attempts) - 1 and not ended:
+            if card["status"] == "doing" and not card.get("blocked_reason_code"):
+                continue
+            if summary["outcome"] == "refused" and not any(
+                result_fields(event) is not None for event in segment
+            ):
+                continue
+        if summary["outcome"] == "in progress":
+            continue
+        rows.append(
+            {
+                "id": card["id"],
+                "attempt": index + 1,
+                "model": summary["worker_model"],
+                "effort": summary["worker_effort"],
+                "complexity": summary["complexity_snapshot"] or level,
+                "complexity_source": "run_rating"
+                if summary["complexity_snapshot"]
+                else ("current_rating" if rated else "current_estimate"),
+                "cost_usd": summary["cost_usd"],
+                "turns": summary["turns"],
+                "fix_rounds": summary["fix_rounds"],
+                "outcome": summary["outcome"],
+                "eventually_accepted": card["status"] == "accepted",
+            }
+        )
+    return rows
 
 
 # the newest finished cards listed one by one in mission control's evidence; the scorecard still
@@ -967,26 +1021,69 @@ def board_evidence(store: Store, board_id: str) -> dict[str, Any]:
     and outcome, plus a scorecard per worker model over all of them - finished cards and rounded
     numbers only, so it stays small in every turn's prompt."""
     cards = sorted(store.list_cards(board_id), key=lambda card: card["updated_at"], reverse=True)
-    finished = [row for card in cards if (row := _finished_card_evidence(store, card)) is not None]
+    by_card = {card["id"]: _finished_attempt_evidence(store, card) for card in cards}
+    attempts = [row for rows in by_card.values() for row in rows]
+    finished = []
+    for card in cards:
+        rows = by_card[card["id"]]
+        if not rows:
+            continue
+        models = {row["model"] for row in rows}
+        efforts = {row["effort"] for row in rows}
+        finished.append(
+            {
+                **rows[-1],
+                "id": card["id"][:8],
+                "model": next(iter(models)) if len(models) == 1 else None,
+                "effort": next(iter(efforts)) if len(efforts) == 1 else None,
+                "models": sorted(model for model in models if model),
+                "cost_scope": "all_finished_attempts",
+                "cost_usd": cost_sum(row["cost_usd"] for row in rows),
+                "turns": sum(row["turns"] for row in rows),
+                "fix_rounds": sum(row["fix_rounds"] for row in rows),
+                "attempts": len(rows),
+                "first_attempt_clean": rows[0]["attempt"] == 1
+                and rows[0]["outcome"] == "pull request"
+                and rows[0]["fix_rounds"] == 0,
+            }
+        )
 
-    by_model: dict[str, list[dict[str, Any]]] = {}
-    for row in finished:
+    by_model: dict[tuple, list[dict[str, Any]]] = {}
+    for row in attempts:
         if row["model"]:
-            by_model.setdefault(row["model"], []).append(row)
+            key = (row["model"], row["effort"], row["complexity"], row["complexity_source"])
+            by_model.setdefault(key, []).append(row)
 
     scorecard = []
-    for model, rows in sorted(by_model.items()):
+    for (model, effort, complexity, source), rows in sorted(
+        by_model.items(), key=lambda item: str(item[0])
+    ):
         clean_prs = sum(1 for r in rows if r["outcome"] == "pull request" and r["fix_rounds"] == 0)
+        card_ids = {row["id"] for row in rows}
+        first = [row for row in rows if row["attempt"] == 1]
+        accepted = {row["id"] for row in rows if row["eventually_accepted"]}
+        total = cost_sum(row["cost_usd"] for row in rows)
         scorecard.append(
             {
                 "model": model,
-                "cards": len(rows),
+                "effort": effort,
+                "complexity": complexity,
+                "complexity_source": source,
+                "cards": len(card_ids),
+                "attempts": len(rows),
+                "cost_usd": total,
+                "first_attempt_clean_rate": round(
+                    sum(
+                        row["outcome"] == "pull request" and row["fix_rounds"] == 0 for row in first
+                    )
+                    / len(first),
+                    2,
+                )
+                if first
+                else None,
+                "eventual_acceptance_rate": round(len(accepted) / len(card_ids), 2),
                 "clean_pr_rate": round(clean_prs / len(rows), 2),
-                "avg_cost_usd": (
-                    round(sum(r["cost_usd"] for r in rows) / len(rows), 4)
-                    if all(r["cost_usd"] is not None for r in rows)
-                    else None
-                ),
+                "avg_cost_usd": (round(total / len(card_ids), 4) if total is not None else None),
             }
         )
 

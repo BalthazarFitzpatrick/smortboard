@@ -749,6 +749,16 @@ def _run_attempt(
         if not worker_started:
             run_ref(store, "worker", card, consume=True)
             worker_started = True
+        store.append_event(
+            card_id,
+            "worker_selection",
+            {
+                "lab": worker_lab,
+                "model": worker_id,
+                "effort": worker_effort,
+                "complexity": card.get("complexity"),
+            },
+        )
         run = runtime.run_card(
             store,
             card_id,
@@ -892,6 +902,15 @@ def _run_attempt(
             if not reviewer_started:
                 run_ref(store, "reviewer", card, consume=True)
                 reviewer_started = True
+            store.append_event(
+                card_id,
+                "reviewer_selection",
+                {
+                    "lab": reviewer_lab,
+                    "model": reviewer_id,
+                    "effort": reviewer_effort,
+                },
+            )
             review = run_review(
                 store,
                 card_id,

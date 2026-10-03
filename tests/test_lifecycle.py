@@ -144,8 +144,10 @@ def test_review_spend_stops_fix_round_admission(board, monkeypatch):
     _stub_gates(monkeypatch)
     store.set_setting("card_total_budget_usd", 0.1)
     store.set_setting("findings_route", "fix")
+    reviews = []
 
     def review(*args, **kwargs):
+        reviews.append(1)
         store.append_event(card_id, "result", {"total_cost_usd": 0.1})
         return ReviewResult(
             approved=False,
@@ -157,10 +159,17 @@ def test_review_spend_stops_fix_round_admission(board, monkeypatch):
         )
 
     monkeypatch.setattr(lifecycle, "run_review", review)
-    backend = _Backend()
+
+    class AccountedBackend(_Backend):
+        def run_card(self, store, card_id, *args, **kwargs):
+            store.append_event(card_id, "result", {"total_cost_usd": 0})
+            return super().run_card(store, card_id, *args, **kwargs)
+
+    backend = AccountedBackend()
     result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
     assert result.phase == "refused"
     assert len(backend.calls) == 1
+    assert reviews == [1]
 
 
 def test_the_phases_are_reported_in_order(board, monkeypatch):
