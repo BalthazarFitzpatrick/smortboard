@@ -39,7 +39,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from smortboard.server.access import API_KEY_PATH_ENV, cookie_name, load_or_create_api_key
 from smortboard.store import Store
 
 # the diff prefix that triggers a screenshot - this repo's own ui/, not a per-repo setting: only
@@ -212,6 +211,8 @@ class ThrowawayBoard:
         self.api_key: str | None = None
 
     def __enter__(self) -> ThrowawayBoard:
+        from smortboard.server.access import API_KEY_PATH_ENV, load_or_create_api_key
+
         self._stage_dir = tempfile.mkdtemp(prefix="smortboard-screenshot-stage-")
         try:
             _stage_host_backend(self.worktree_path, Path(self._stage_dir))
@@ -294,6 +295,8 @@ def _capture(base_url: str, view: str, api_key: str | None = None) -> bytes:
     """opens the board and screenshots it. lazy playwright import: a host with no browsers
     installed fails exactly here, into the note the caller writes, rather than at module import."""
     from playwright.sync_api import sync_playwright
+
+    from smortboard.server.access import cookie_name
 
     parsed = urlsplit(base_url)
     if parsed.scheme != "http" or parsed.hostname != LOCALHOST or not parsed.port:

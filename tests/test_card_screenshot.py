@@ -6,6 +6,7 @@ stdlib http.server standing in for the board's own /ui/index.html."""
 import http.server
 import json
 import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -54,6 +55,19 @@ rename to smortboard/ui/new_name.js
 
 
 # -- diff_touches_ui ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "module", ["smortboard.lifecycle", "smortboard.attention", "smortboard.review.gates"]
+)
+def test_screenshot_support_does_not_create_an_import_cycle(module):
+    subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
 
 
 def test_a_diff_touching_ui_is_detected():
