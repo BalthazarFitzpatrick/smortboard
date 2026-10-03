@@ -17,6 +17,7 @@ const EXPANDS = {'~/Documents/screenshots': '/home/op/Documents/screenshots'};
 const settingsState = {
   mission_control_read_paths: [],
   max_parallel: null,
+  worker_lab: 'openai',
   fold_cross_lab_fallback: [
     {ref: 'anthropic/opus', effort: null}, {ref: 'openai/gpt-6-astra', effort: 'high'},
   ],
@@ -40,14 +41,14 @@ function fetchStub(path, opts) {
   calls.push({path, opts});
   if (path === '/api/catalog') return Promise.resolve(stubJson(200, {
     anthropic: {available: true, models: [
-      {id: 'fable', label: 'Fable', tier: 'deep'},
+      {id: 'fable', label: 'fable 5', tier: 'deep', effort_levels: ['low', 'high', 'max'], default_effort: 'high'},
       {id: 'opus', label: 'Opus', tier: 'deep'},
       {id: 'sonnet', label: 'Sonnet', tier: 'standard'},
       {id: 'haiku', label: 'Haiku', tier: 'light'},
     ]},
     openai: {available: true, models: [
-      {id: 'gpt-6-astra', label: 'Astra', tier: 'deep'},
-      {id: 'gpt-5.6-sol', label: 'Sol', tier: 'standard'},
+      {id: 'gpt-6-astra', label: 'gpt-6-astra', tier: 'deep', effort_levels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], default_effort: 'medium'},
+      {id: 'gpt-5.6-sol', label: 'gpt-5.6-sol', tier: 'standard', effort_levels: ['low', 'medium', 'high', 'xhigh'], default_effort: 'low'},
       {id: 'gpt-5.6-terra', label: 'Terra', tier: 'standard'},
       {id: 'gpt-5.6-luna', label: 'Luna', tier: 'light'},
     ]},
@@ -146,6 +147,7 @@ const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), u
   smort('board.js'), smort('settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, BINDINGS, mc, mallCam, spendCaps,
+  openModelPicker, resolvePickerRole,
   mouseAffordances,
   buttonRef: () => document.querySelector('.settings-button'),
   addButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'add'),
@@ -217,6 +219,16 @@ assert.equal(mod.st.listEl.querySelectorAll('.role-effort').length, 0, 'no separ
 assert.ok(roleBlocks.every(block => block.querySelector('.settings-role-status')),
   'each role keeps save status beside its heading');
 const reviewerPicker = rolePickers.find(row => row.dataset.role === 'reviewer');
+const workerPicker = rolePickers.find(row => row.dataset.role === 'worker');
+await workerPicker.onclick();
+const workerMenu = modelMenus.at(-1);
+let workerColumns = workerMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.equal(workerColumns[0].items.find(item => item.on).id, 'openai', 'unset model keeps the configured role lab');
+assert.deepEqual(workerColumns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high', 'xhigh']);
+await workerMenu.opts.sections.find(section => section.kind === 'buttons').buttons
+  .find(button => button.id === 'save-model').onClick(workerMenu);
+assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
+  {worker_lab: 'openai', worker_model: null, worker_effort: null});
 await reviewerPicker.onclick();
 const primaryMenu = modelMenus.at(-1);
 assert.equal(primaryMenu.anchor, reviewerPicker,
@@ -232,6 +244,16 @@ primaryColumns[1].onPick({id: 'gpt-6-astra'});
 assert.equal(primaryMenu.closed, false, 'selecting a primary model keeps the menu open');
 primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
 assert.equal(primaryColumns[2].label, 'effort', 'the role picker carries the effort column too');
+assert.deepEqual(primaryColumns[2].items.map(item => item.id),
+  ['default', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+primaryColumns[2].onPick({id: 'ultra'});
+primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
+primaryColumns[1].onPick({id: 'gpt-5.6-sol'});
+primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.equal(primaryColumns[2].items.find(item => item.on).id, 'default', 'incompatible effort clears when the model changes');
+assert.ok(!primaryColumns[2].items.some(item => item.id === 'ultra'));
+primaryColumns[1].onPick({id: 'gpt-6-astra'});
+primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
 primaryColumns[2].onPick({id: 'high'});
 const primarySave = primaryMenu.opts.sections.find(section => section.kind === 'buttons')
   .buttons.find(button => button.id === 'save-model');
@@ -252,13 +274,13 @@ assert.equal(fallbackMenu.opts.persistent, true, 'fallback selection stays open 
 assert.equal(fallbackMenu.anchor, fallbackTrigger, 'the fallback menu opens at its trigger');
 let columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
 assert.deepEqual(columns[0].items.map(item => item.label), ['anthropic', 'openai']);
-assert.deepEqual(columns[1].items.map(item => item.label), ['Fable', 'Opus', 'Sonnet', 'Haiku']);
+assert.deepEqual(columns[1].items.map(item => item.label), ['fable 5', 'Opus', 'Sonnet', 'Haiku']);
 assert.equal(columns[1].items.find(item => item.label === 'Opus').on, true,
   'saved fallbacks start selected');
 
 columns[0].onPick({id: 'openai'});
 columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.deepEqual(columns[1].items.map(item => item.label), ['Astra', 'Sol', 'Terra', 'Luna']);
+assert.deepEqual(columns[1].items.map(item => item.label), ['gpt-6-astra', 'gpt-5.6-sol', 'Terra', 'Luna']);
 columns[1].onPick({id: 'openai/gpt-5.6-sol'}, true);
 columns[0].onPick({id: 'anthropic'});
 columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
@@ -274,6 +296,8 @@ assert.equal(columns[2].empty, 'tick a model');
 columns[1].onFocus({id: 'openai/gpt-5.6-sol'});
 columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
 assert.equal(columns[2].label, 'effort: openai/gpt-5.6-sol');
+assert.deepEqual(columns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high', 'xhigh'],
+  'focused fallback uses its own model even while another lab is visible');
 assert.equal(columns[2].items.find(item => item.on).id, 'default');
 columns[2].onPick({id: 'medium'});
 assert.equal(fallbackTrigger.textContent,
@@ -287,6 +311,33 @@ assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1)
     {ref: 'anthropic/fable', effort: null},
   ]});
 assert.equal(fallbackMenu.closed, true, 'a successful save closes the picker');
+
+await mod.openModelPicker(() => {}, undefined, null, {default_settings: settingsState});
+const defaultCardMenu = modelMenus.at(-1);
+const defaultCardColumns = defaultCardMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.deepEqual(defaultCardColumns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high', 'xhigh'],
+  'card default resolves the worker model from its configured lab');
+assert.equal(defaultCardColumns[2].items.find(item => item.on).id, 'default', 'catalog default effort remains inherited');
+assert.deepEqual(mod.resolvePickerRole({openai: {models: [{id: 'worker', tier: 'standard'},
+  {id: 'planner', tier: 'deep'}]}}, {orchestrator_lab: 'openai', orchestrator_model: 'planner'}, 'fold'),
+  {lab: 'openai', model: 'planner'}, 'unset fold inherits the orchestrator lab and model');
+assert.deepEqual(mod.resolvePickerRole({openai: {models: [{id: 'first', tier: 'standard'},
+  {id: 'preferred', tier: 'standard', prefer_for: ['worker']}]}}, {worker_lab: 'openai'}),
+  {lab: 'openai', model: 'preferred'}, 'role preference wins over the first matching tier');
+
+let savedFold;
+await mod.openModelPicker((...selection) => { savedFold = selection; }, undefined, null,
+  {default_role: 'fold', default_settings: {orchestrator_lab: 'openai', orchestrator_model: 'gpt-5.6-sol'}});
+const inheritedFoldMenu = modelMenus.at(-1);
+let inheritedFoldColumns = inheritedFoldMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.deepEqual(inheritedFoldColumns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high', 'xhigh']);
+inheritedFoldColumns[2].onPick({id: 'xhigh'});
+inheritedFoldMenu.opts.sections.find(section => section.kind === 'buttons').buttons
+  .find(button => button.id === 'save-model').onClick(inheritedFoldMenu);
+assert.deepEqual(savedFold, [null, null, 'xhigh'], 'effort-only fold save keeps model inheritance');
+inheritedFoldMenu.opts.sections.find(section => section.kind === 'buttons').buttons
+  .find(button => button.id === 'model-default').onClick(inheritedFoldMenu);
+assert.deepEqual(savedFold, [null, null, null], 'board default restores inheritance');
 
 // ---- the mouse is opt-in: two toggles, disabled lit when unset, and enabled PATCHes "on" ---------
 {

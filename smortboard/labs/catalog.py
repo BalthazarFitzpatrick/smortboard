@@ -12,6 +12,8 @@ _LAB = re.compile(r"[a-z][a-z0-9_-]{0,49}\Z")
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,99}\Z")
 _TIERS = {"light", "standard", "deep"}
 ROLES = ("worker", "reviewer", "orchestrator", "fold")
+EFFORT_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+LEGACY_EFFORT_LEVELS = ("low", "medium", "high")
 
 
 def parse_ref(value: str) -> tuple[str, str]:
@@ -46,6 +48,16 @@ def _validate(catalog: Any) -> None:
                 raise ValueError(f"invalid tier for {lab}/{name}")
             if not isinstance(model.get("label"), str) or not model["label"]:
                 raise ValueError(f"missing label for {lab}/{name}")
+            levels = model.setdefault("effort_levels", list(LEGACY_EFFORT_LEVELS))
+            if (
+                not isinstance(levels, list)
+                or any(not isinstance(level, str) or level not in EFFORT_LEVELS for level in levels)
+                or len(set(levels)) != len(levels)
+            ):
+                raise ValueError(f"invalid effort_levels for {lab}/{name}")
+            default = model.setdefault("default_effort", None)
+            if default is not None and default not in levels:
+                raise ValueError(f"invalid default_effort for {lab}/{name}")
             preferred = model.get("prefer_for", [])
             if not isinstance(preferred, list) or any(role not in ROLES for role in preferred):
                 raise ValueError(f"invalid prefer_for for {lab}/{name}")
@@ -115,3 +127,20 @@ def tier_of(value: str | None, catalog: dict[str, Any] | None = None) -> str | N
         return None
     lab, model = ref
     return next(row["tier"] for row in catalog[lab]["models"] if row["id"] == model)
+
+
+def supported_efforts(lab: str, model: str, catalog: dict | None = None) -> list[str]:
+    """legacy uncatalogued names retain the old effort contract"""
+    catalog = load_catalog() if catalog is None else catalog
+    row = next((row for row in catalog.get(lab, {}).get("models", []) if row["id"] == model), {})
+    return list(row.get("effort_levels", LEGACY_EFFORT_LEVELS))
+
+
+def validate_effort(lab: str, model: str, effort: Any, catalog: dict | None = None) -> None:
+    if effort is not None and effort not in supported_efforts(lab, model, catalog):
+        raise ValueError(f"effort {effort!r} is not supported by {lab}/{model}")
+
+
+def compatible_effort(lab: str, model: str, effort: str | None) -> str | None:
+    """an inherited setting from another model must not send an unsupported cli flag"""
+    return effort if effort in supported_efforts(lab, model) else None

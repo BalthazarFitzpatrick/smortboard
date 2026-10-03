@@ -35,7 +35,7 @@ from smortboard.exec.backends import (
 from smortboard.exec.runner import ProcessHandle, RunResult, run_process
 from smortboard.exec.worktrees import branch_changed_paths, branch_diff
 from smortboard.labs.base import BashPolicy, RunRequest
-from smortboard.labs.catalog import parse_ref
+from smortboard.labs.catalog import compatible_effort, parse_ref
 from smortboard.labs.registry import get_adapter
 from smortboard.labs.routing import role_effort
 from smortboard.prompts import LOWERCASE_RULE, active_prompt
@@ -243,7 +243,7 @@ def _docker_command(
             schema_path="/smortboard/review-schema.json",
             read_only=True,
             role="reviewer",
-            effort=effort,
+            effort=compatible_effort(lab, model_id, effort),
         )
     )
     # same stdin handoff as ContainerBackend: the token touches no disk and no env var, so

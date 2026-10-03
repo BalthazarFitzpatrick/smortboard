@@ -232,7 +232,9 @@ def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_the
     """strict output sends every key, the optional ones as null: no repo, no model, no ledger
     link, no screenshot re-run, and no board note about any of them"""
     card_schema = ORCHESTRATOR_JSON_SCHEMA["properties"]["cards"]["items"]["properties"]
-    assert all("null" in card_schema[key]["type"] for key in ("repo", "model", "lab", "task_id"))
+    assert all(
+        "null" in card_schema[key]["type"] for key in ("repo", "model", "lab", "task_id", "effort")
+    )
     bare = {
         "title": "bare",
         "description": "GOAL: bare",
@@ -243,6 +245,7 @@ def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_the
         "depends_on": [],
         "model": None,
         "lab": None,
+        "effort": None,
         "task_id": None,
         "complexity": "low",
     }
@@ -286,6 +289,39 @@ def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_the
     assert made_full["depends_on"] == [made_bare["id"]]
     authors = [m["author"] for m in store.list_orchestrator_messages(board["id"])]
     assert authors == ["operator", "orchestrator"]
+
+
+@pytest.mark.parametrize(
+    "model,effort",
+    [
+        ("anthropic/claude-opus-5-5", "max"),
+        ("openai/gpt-6.1-sol", "xhigh"),
+    ],
+)
+def test_proposed_exact_model_and_effort_are_saved(store, board, model, effort):
+    spec = {**TWO_CARDS["cards"][0], "model": model, "effort": effort}
+    result = run_orchestrator_turn(
+        store, board["id"], "go", runner=_runner({"reply": "ok", "plan": "p", "cards": [spec]})
+    )
+    assert result.error is None
+    card = store.list_cards(board["id"])[0]
+    assert (card["lab"], card["model"], card["effort"]) == (*model.split("/"), effort)
+
+
+@pytest.mark.parametrize("effort", ["high", "unknown", ["high"]])
+def test_proposed_unsupported_effort_is_dropped_with_a_warning(store, board, effort):
+    spec = {**TWO_CARDS["cards"][0], "model": "claude-haiku-4-5", "effort": effort}
+    result = run_orchestrator_turn(
+        store, board["id"], "go", runner=_runner({"reply": "ok", "plan": "p", "cards": [spec]})
+    )
+    assert result.error is None
+    card = store.list_cards(board["id"])[0]
+    assert card["model"] == "claude-haiku-4-5"
+    assert card["effort"] is None
+    notes = [
+        m["body"] for m in store.list_orchestrator_messages(board["id"]) if m["author"] == "board"
+    ]
+    assert any("effort" in note for note in notes)
 
 
 # -- test_commands: the runner mission control names for a repo that has none --

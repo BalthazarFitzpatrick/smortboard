@@ -974,16 +974,38 @@ async function loadModelCatalog() {
   return modelCatalog;
 }
 
-// unset is the role's effort; a level becomes --effort (claude) or model_reasoning_effort (codex) -
-// store/schema.py EFFORT_LEVELS
+// older custom catalogs retain the original effort choices
 const EFFORT_LEVELS = ['low', 'medium', 'high'];
 
+function modelEffortLevels(model) {
+  return model?.effort_levels ?? EFFORT_LEVELS;
+}
+
+function resolvePickerRole(catalog, settings = {}, role = 'worker') {
+  let model = settings[`${role}_model`];
+  let lab = settings[`${role}_lab`];
+  if (role === 'fold' && !model && !lab) {
+    model = settings.orchestrator_model;
+    lab = settings.orchestrator_lab;
+  }
+  if (model) {
+    const parts = model.includes('/') ? model.split('/') : ['anthropic', model];
+    return {lab: lab || parts[0], model: parts[1]};
+  }
+  lab = lab || 'anthropic';
+  const models = catalog[lab]?.models || [];
+  const tier = ['orchestrator', 'fold'].includes(role) ? 'deep' : 'standard';
+  const row = models.find(row => row.prefer_for?.includes(role))
+    || models.find(row => row.tier === tier) || models[0];
+  return {lab, model: row?.id};
+}
+
 // the third column of every lab | model picker. `selected` null is the default row
-function effortColumn(selected, onPick, label = 'effort') {
+function effortColumn(selected, onPick, label = 'effort', model = null) {
   return {
     label,
     multi: false,
-    items: ['default', ...EFFORT_LEVELS].map(level => ({
+    items: ['default', ...modelEffortLevels(model)].map(level => ({
       id: level, label: level, on: level === (selected || 'default'),
     })),
     onPick: item => onPick(item.id === 'default' ? null : item.id),
@@ -995,13 +1017,28 @@ async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200,
   current = {}) {
   const catalog = await loadModelCatalog();
   const labs = Object.keys(catalog);
-  const currentLab = current.model ? current.lab || 'anthropic' : null;
+  const defaults = resolvePickerRole(catalog, current.default_settings, current.default_role);
+  const currentLab = current.lab || (current.model
+    ? current.model.includes('/') ? current.model.split('/')[0] : 'anthropic' : defaults.lab);
   let selectedLab = catalog[currentLab] ? currentLab
     : labs.find(lab => catalog[lab].available !== false) || labs[0];
-  let selectedModel = catalog[currentLab] ? current.model : null;
+  let selectedModel = catalog[currentLab] && current.model ? current.model.split('/').pop() : null;
   let selectedEffort = current.effort || null;
+  let selectedRoleLab = current.lab || null;
+  let selectedRoleDefault = resolvePickerRole(catalog, {...current.default_settings,
+    [`${current.default_role}_model`]: null}, current.default_role);
   let picked = false;
   let menu = null;
+
+  const selectedRow = () => {
+    const roleDefaults = current.default_role ? selectedRoleDefault : defaults;
+    const ref = selectedModel ? {lab: selectedLab, model: selectedModel} : roleDefaults;
+    return catalog[ref.lab]?.models.find(row => row.id === ref.model);
+  };
+  const resetEffort = () => {
+    if (selectedEffort && !modelEffortLevels(selectedRow()).includes(selectedEffort)) selectedEffort = null;
+  };
+  resetEffort();
 
   const buildSections = () => [{
     kind: 'columns',
@@ -1018,7 +1055,11 @@ async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200,
         })),
         onPick: item => {
           selectedLab = item.id;
+          selectedRoleLab = item.id;
           selectedModel = null;
+          selectedRoleDefault = resolvePickerRole(catalog,
+            {[`${current.default_role}_lab`]: selectedLab}, current.default_role);
+          resetEffort();
           menu.refresh(buildSections());
         },
       },
@@ -1032,23 +1073,26 @@ async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200,
           })),
         onPick: item => {
           selectedModel = item.id;
+          resetEffort();
           menu.refresh(buildSections());
         },
       },
       effortColumn(selectedEffort, effort => {
         selectedEffort = effort;
         menu.refresh(buildSections());
-      }),
+      }, 'effort', selectedRow()),
     ],
   }, {
     kind: 'buttons',
     buttons: [
       // an effort alone is a choice too: it rides on the default model
-      {id: 'save-model', label: 'save', enabled: selectedModel !== null || selectedEffort !== null,
+      {id: 'save-model', label: 'save', enabled: selectedModel !== null || selectedEffort !== null
+          || !!current.default_role,
         onClick: openMenu => {
           picked = true;
           openMenu.close();
-          onPick(selectedModel === null ? null : selectedLab, selectedModel, selectedEffort);
+          onPick(selectedModel === null ? (current.default_role ? selectedRoleLab : null) : selectedLab,
+            selectedModel, selectedEffort);
         }},
       {id: 'model-default', label: 'board default', onClick: openMenu => {
         picked = true;
@@ -1070,9 +1114,9 @@ async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200,
 async function cycleCardModel(cardId = actionableCardId()) {
   if (!cardId) return;
   try {
-    const card = await api(`/api/cards/${cardId}`);
+    const [card, settings] = await Promise.all([api(`/api/cards/${cardId}`), api('/api/settings')]);
     await openModelPicker((lab, model, effort) => doCycleCardModel(cardId, model, lab, effort),
-      undefined, () => openCardActionsMenu(cardId), card);
+      undefined, () => openCardActionsMenu(cardId), {...card, default_settings: settings});
   } catch (err) {
     showRun(cardId, "can't change model", null, err.message);
   }
