@@ -1,7 +1,8 @@
 """cuts, tracks and destroys a git worktree + branch per card
 
-follows the convention the operator's other repos already run by hand: worktrees live under the repo's
-`.claude/worktrees/<name>`. S1/S2 showed a card left on main either names its own branch or
+follows the convention the operator's other repos already run by hand: a repo at `<name>/<name>`
+keeps its worktrees in the sibling `<name>/worktrees/<id>`; a repo with no such sibling dir keeps
+the older `.claude/worktrees/<id>`. S1/S2 showed a card left on main either names its own branch or
 deadlocks asking permission to make one, so the worktree handed back is already checked out
 on the card's branch — never on `base`.
 """
@@ -44,7 +45,9 @@ class WorktreeInfo:
 
 
 def _worktree_root(repo_path: Path) -> Path:
-    return repo_path / ".claude" / "worktrees"
+    """sibling worktrees dir when the repo sits in the top-dir layout, else the in-repo one"""
+    beside = repo_path.parent / "worktrees"
+    return beside if beside.is_dir() else repo_path / ".claude" / "worktrees"
 
 
 def branch_name(card_id: str) -> str:
@@ -427,8 +430,8 @@ def current_branch(worktree_path: str | Path) -> str:
 
 
 def list_worktrees(repo_path: str | Path) -> list[WorktreeInfo]:
-    """lists worktrees under the card convention — plain `git worktree list` includes the main
-    checkout too, which is not a card worktree, so it is filtered out here"""
+    """lists card worktrees — plain `git worktree list` includes the main checkout, and the shared
+    worktrees dir also holds hand-made trees, so only a tree on its own `card/<id>` branch counts"""
     repo_path = Path(repo_path).resolve()
     root = _worktree_root(repo_path)
     result = _run_git(repo_path, "worktree", "list", "--porcelain")
@@ -441,9 +444,13 @@ def list_worktrees(repo_path: str | Path) -> list[WorktreeInfo]:
         elif line.startswith("branch "):
             branch = line.removeprefix("branch ").removeprefix("refs/heads/")
         elif line == "" and path is not None:
-            if root in path.parents:
+            if _is_card_tree(root, path, branch):
                 infos.append(WorktreeInfo(card_id=path.name, path=path, branch=branch or ""))
             path, branch = None, None
-    if path is not None and root in path.parents:
+    if path is not None and _is_card_tree(root, path, branch):
         infos.append(WorktreeInfo(card_id=path.name, path=path, branch=branch or ""))
     return infos
+
+
+def _is_card_tree(root: Path, path: Path, branch: str | None) -> bool:
+    return root in path.parents and branch == branch_name(path.name)

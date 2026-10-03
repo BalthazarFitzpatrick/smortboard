@@ -4,7 +4,7 @@ Mission control plans against files it should be able to read but never change. 
 a fresh shallow clone of each board repo, plus any extra host paths the operator named, all mounted
 read-only and torn down when the turn ends.
 
-The live checkout is never mounted: it holds card worktrees under .claude/worktrees and lease files,
+The live checkout is never mounted: it holds card worktrees (under .claude/worktrees, or beside it in the top-dir layout) and lease files,
 none of which mission control should see. A `git clone --depth 1 --single-branch --branch <default>`
 carries only the default branch's committed tree - no card/* branches and no worktree dirs.
 """

@@ -54,6 +54,42 @@ def _with_bare_origin(repo):
 # -- worktrees ---------------------------------------------------------------
 
 
+def test_top_dir_layout_puts_card_trees_beside_the_repo(tmp_path):
+    """repo at <top>/<name> with a sibling worktrees dir: cards go there, hand-made trees stay out"""
+    top = tmp_path / "proj"
+    repo = top / "proj"
+    repo.mkdir(parents=True)
+    _init_repo(repo)
+    (top / "worktrees").mkdir()
+    tree = create_worktree(repo, "card1")
+    assert tree.path == (top / "worktrees" / "card1").resolve()
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "hand",
+            str(top / "worktrees" / "hand"),
+        ],
+        check=True,
+    )
+    assert [info.card_id for info in list_worktrees(repo)] == ["card1"]
+    destroy_worktree(repo, "card1")
+    assert list_worktrees(repo) == []
+
+
+def test_repo_without_a_sibling_worktrees_dir_keeps_the_old_root(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    tree = create_worktree(repo, "card2")
+    assert tree.path == (repo / ".claude" / "worktrees" / "card2").resolve()
+
+
 def test_branch_diverged_from_origin_detects_a_moved_branch(tmp_path):
     """found for real: a worktree held one commit while origin had two newer ones"""
     repo = tmp_path / "repo"
