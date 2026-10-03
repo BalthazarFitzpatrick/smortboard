@@ -4,10 +4,14 @@ either a stand-in context manager, or (for the one test that drives real playwri
 stdlib http.server standing in for the board's own /ui/index.html."""
 
 import http.server
+import json
 import subprocess
+import sys
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +21,7 @@ from smortboard.review import screenshot
 from smortboard.review.gates import GateResult
 from smortboard.review.merge_request import MergeRequestResult
 from smortboard.review.reviewer import ReviewResult
+from smortboard.server.access import KEY_HEADER, cookie_name
 from smortboard.store.api import Store
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +55,19 @@ rename to smortboard/ui/new_name.js
 
 
 # -- diff_touches_ui ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "module", ["smortboard.lifecycle", "smortboard.attention", "smortboard.review.gates"]
+)
+def test_screenshot_support_does_not_create_an_import_cycle(module):
+    subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
 
 
 def test_a_diff_touching_ui_is_detected():
@@ -392,6 +410,13 @@ def test_capture_takes_a_real_screenshot_of_a_faked_server():
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_capture_takes_a_real_screenshot_of_a_faked_server_authenticated_board():
+    pytest.importorskip("playwright.sync_api")
+    with screenshot.ThrowawayBoard(REPO_ROOT) as board:
+        png = screenshot._capture(board.base_url, screenshot.DEFAULT_VIEW, board.api_key)
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+
+
 # -- the real throwaway board subprocess ---------------------------------------
 
 
@@ -402,4 +427,229 @@ def test_throwaway_board_serves_the_worktree_and_tears_down_after():
         assert db_path.exists()
         with urllib.request.urlopen(f"{board.base_url}/health", timeout=5) as resp:
             assert resp.status == 200
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            urllib.request.urlopen(f"{board.base_url}/api/boards", timeout=5)
+        assert refused.value.code == 401
+        request = urllib.request.Request(
+            f"{board.base_url}/api/boards", headers={KEY_HEADER: board.api_key}
+        )
+        with urllib.request.urlopen(request, timeout=5) as resp:
+            boards = json.load(resp)
+        assert len(boards) == 1
+        assert boards[0]["name"] == "ui review — invented content"
+        request = urllib.request.Request(
+            f"{board.base_url}/api/boards/{boards[0]['id']}/cards",
+            headers={KEY_HEADER: board.api_key},
+        )
+        with urllib.request.urlopen(request, timeout=5) as resp:
+            cards = json.load(resp)
+        assert {card["status"] for card in cards} == {"todo", "checking", "accepted", "rejected"}
+        assert all(card["repo_id"] is None for card in cards)
     assert not db_path.exists()
+
+
+@pytest.mark.parametrize("target", ["file", "folder", "ui", "package"])
+def test_ui_overlay_refuses_symlinks_without_reading_their_targets(tmp_path, target):
+    worktree = tmp_path / "worktree"
+    ui = worktree / "smortboard" / "ui"
+    ui.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "marker.txt").write_text("harmless host fixture")
+    if target == "file":
+        (ui / "linked.txt").symlink_to(outside / "marker.txt")
+    elif target == "folder":
+        (ui / "linked").symlink_to(outside, target_is_directory=True)
+    elif target == "ui":
+        ui.rmdir()
+        ui.symlink_to(outside, target_is_directory=True)
+    else:
+        ui.rmdir()
+        ui.parent.rmdir()
+        ui.parent.symlink_to(outside, target_is_directory=True)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    with pytest.raises(screenshot.ScreenshotUnavailable, match="symlink"):
+        screenshot._stage_host_backend(worktree, stage)
+    assert list(stage.iterdir()) == []
+
+
+def test_staging_uses_trusted_backend_and_only_the_worktree_ui(tmp_path):
+    ui = tmp_path / "worktree" / "smortboard" / "ui"
+    ui.mkdir(parents=True)
+    (ui / "board.js").write_text("synthetic-ui-change")
+    (ui.parent / "cli.py").write_text("raise RuntimeError('untrusted backend must not run')")
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    screenshot._stage_host_backend(ui.parents[1], stage)
+    assert (stage / "smortboard" / "ui" / "board.js").read_text() == "synthetic-ui-change"
+    assert (stage / "smortboard" / "cli.py").read_bytes() == (
+        REPO_ROOT / "smortboard" / "cli.py"
+    ).read_bytes()
+
+
+def test_startup_timeout_stops_before_draining_and_removes_temporary_files(tmp_path, monkeypatch):
+    events = []
+
+    class Process:
+        stdout = stderr = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            events.append("terminated")
+
+        def communicate(self, timeout):
+            assert events == ["terminated"]
+            assert timeout == 5
+            events.append("drained")
+            return "", "synthetic startup failure"
+
+    monkeypatch.setattr(screenshot, "_stage_host_backend", lambda *args: None)
+    monkeypatch.setattr(screenshot.subprocess, "Popen", lambda *args, **kwargs: Process())
+    monkeypatch.setattr(screenshot, "_wait_until_ready", lambda *args: False)
+    board = screenshot.ThrowawayBoard(tmp_path)
+    with pytest.raises(screenshot.ScreenshotUnavailable, match="synthetic startup failure"):
+        board.__enter__()
+    assert events == ["terminated", "drained"]
+    assert not Path(board._db_path).exists()
+    assert not Path(board._stage_dir).exists()
+
+
+def test_stop_kills_a_process_that_ignores_termination(tmp_path):
+    events = []
+
+    class Process:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            events.append("terminated")
+
+        def kill(self):
+            events.append("killed")
+
+        def communicate(self, timeout):
+            assert timeout == 5
+            if events == ["terminated"]:
+                raise subprocess.TimeoutExpired("synthetic board", timeout)
+            events.append("drained")
+            return "", "stopped"
+
+    board = screenshot.ThrowawayBoard(tmp_path)
+    board._process = Process()
+    assert board._stop() == "stopped"
+    assert events == ["terminated", "killed", "drained"]
+    Path(board._db_path).unlink()
+
+
+@pytest.mark.parametrize(
+    ("request_url", "method", "allowed"),
+    [
+        ("http://127.0.0.1:8000/ui/index.html", "GET", True),
+        ("http://127.0.0.1:8000/api/boards", "GET", True),
+        ("http://127.0.0.1:8000/api/boards/synthetic/cards", "GET", True),
+        ("http://127.0.0.1:8001/ui/index.html", "GET", False),
+        ("https://127.0.0.1:8000/ui/index.html", "GET", False),
+        ("http://localhost:8000/ui/index.html", "GET", False),
+        ("https://outside.invalid/fixture", "GET", False),
+        ("http://127.0.0.1:8000/api/folders", "GET", False),
+        ("http://127.0.0.1:8000/api/online-repos", "GET", False),
+        ("http://127.0.0.1:8000/api/export", "GET", False),
+        ("http://127.0.0.1:8000/api/boards", "POST", False),
+        ("http://127.0.0.1:8000/api/cards/synthetic/run", "POST", False),
+    ],
+)
+def test_capture_requests_are_read_only_and_confined_to_the_synthetic_board(
+    request_url, method, allowed
+):
+    assert screenshot._capture_request_ok("http://127.0.0.1:8000", request_url, method) is allowed
+
+
+def test_capture_authenticates_and_waits_for_content_with_network_guards(monkeypatch):
+    playwright = pytest.importorskip("playwright.sync_api")
+    seen = {}
+
+    class Context:
+        def route(self, pattern, handler):
+            seen["route"] = handler
+
+        def route_web_socket(self, pattern, handler):
+            seen["websocket"] = handler
+
+        def add_cookies(self, cookies):
+            seen["cookies"] = cookies
+
+        def new_page(self):
+            return self
+
+        def set_default_timeout(self, timeout):
+            pass
+
+        def goto(self, url):
+            seen["url"] = url
+
+        def locator(self, selector):
+            assert selector == ".card-strip"
+            return SimpleNamespace(first=self)
+
+        def wait_for(self, state):
+            seen["wait"] = state
+
+        def screenshot(self, full_page):
+            assert full_page
+            return b"synthetic-png"
+
+    class Browser:
+        def new_context(self, **kwargs):
+            seen["context"] = kwargs
+            return Context()
+
+        def close(self):
+            seen["closed"] = True
+
+    class Playwright:
+        chromium = None
+
+        def __enter__(self):
+            self.chromium = self
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def launch(self, **kwargs):
+            seen["launch"] = kwargs
+            return Browser()
+
+    monkeypatch.setattr(playwright, "sync_playwright", Playwright)
+    assert (
+        screenshot._capture("http://127.0.0.1:8000", screenshot.DEFAULT_VIEW, "synthetic-key")
+        == b"synthetic-png"
+    )
+    assert seen["launch"]["headless"] is True
+    assert seen["context"] == {"service_workers": "block", "accept_downloads": False}
+    assert seen["url"] == "http://127.0.0.1:8000/ui/index.html"
+    assert seen["cookies"] == [
+        {
+            "name": cookie_name(8000),
+            "value": "synthetic-key",
+            "url": "http://127.0.0.1:8000",
+            "httpOnly": True,
+            "sameSite": "Strict",
+        }
+    ]
+    assert seen["wait"] == "visible"
+    assert seen["closed"]
+    route_events = []
+    seen["route"](
+        SimpleNamespace(
+            request=SimpleNamespace(url="http://127.0.0.1:8001/ui/index.html", method="GET"),
+            abort=lambda: route_events.append("blocked"),
+            continue_=lambda: route_events.append("allowed"),
+        )
+    )
+    assert route_events == ["blocked"]
+    seen["websocket"](SimpleNamespace(close=lambda: route_events.append("websocket blocked")))
+    assert route_events[-1] == "websocket blocked"

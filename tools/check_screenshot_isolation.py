@@ -47,7 +47,9 @@ def main() -> int:
         return pytest.main(
             [
                 "tests/test_card_screenshot.py::test_capture_takes_a_real_screenshot_of_a_faked_server",
+                "tests/test_card_screenshot.py::test_capture_takes_a_real_screenshot_of_a_faked_server_authenticated_board",
                 "-q",
+                "-n0",
                 "-p",
                 "no:cacheprovider",
                 "--basetemp=/tmp/capture-test",
