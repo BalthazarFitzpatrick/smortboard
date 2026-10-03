@@ -65,14 +65,30 @@ def host_ok(host_header: str | None, allowed: frozenset[str]) -> bool:
 
 
 def origin_ok(
-    method: str, origin: str | None, fetch_site: str | None, allowed: frozenset[str]
+    method: str,
+    origin: str | None,
+    fetch_site: str | None,
+    host_header: str | None,
+    port: int,
 ) -> bool:
     """a state-changing request from a browser must come from the board's own page; a request with
     neither header is not from a browser and is left to the key check"""
     if method in _SAFE_METHODS:
         return True
     if origin is not None:
-        return origin != "null" and _hostname(urlsplit(origin).netloc) in allowed
+        try:
+            parsed = urlsplit(origin)
+            origin_port = parsed.port if parsed.port is not None else 80
+            return (
+                parsed.scheme == "http"
+                and parsed.hostname == _hostname(host_header or "")
+                and origin_port == port
+                and parsed.username is None
+                and parsed.password is None
+                and not (parsed.path or parsed.query or parsed.fragment)
+            )
+        except ValueError:
+            return False
     if fetch_site is not None:
         return fetch_site in _SAME_SITE_FETCH
     return True

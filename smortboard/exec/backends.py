@@ -506,7 +506,8 @@ class ContainerBackend:
         # a clone, not a mount of the worktree itself: the worktree's .git is a pointer file into
         # the parent repo, so mounting it alone leaves git dead and the card unable to commit
         result = subprocess.run(
-            ["git", "clone", "--branch", branch, str(worktree_path), str(clone_path)],
+            # local clones share objects by hardlink; container chmod must never touch the source
+            ["git", "clone", "--no-local", "--branch", branch, str(worktree_path), str(clone_path)],
             capture_output=True,
             text=True,
             check=False,

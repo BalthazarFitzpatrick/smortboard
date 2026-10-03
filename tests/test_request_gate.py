@@ -110,6 +110,53 @@ def test_same_origin_post_is_served(board):
     assert _call(f"{base}/api/boards", "POST", {"name": "x"}, headers)[0] == 201
 
 
+@pytest.mark.parametrize(
+    "origin", ["http://127.0.0.1:{other}", "https://127.0.0.1:{port}", "http://localhost:{port}"]
+)
+def test_another_local_origin_cannot_mutate_with_the_cookie(board, origin):
+    base, port = board
+    headers = {
+        "Origin": origin.format(port=port, other=port + 1),
+        "Cookie": f"{access.cookie_name(port)}={KEY}",
+    }
+    status, _ = _call(f"{base}/api/boards", "POST", {"name": "x"}, headers, "text/plain")
+    assert status == 403
+
+
+def test_localhost_page_can_mutate_its_own_origin(board):
+    base, port = board
+    headers = {
+        "Host": f"localhost:{port}",
+        "Origin": f"http://localhost:{port}",
+        access.KEY_HEADER: KEY,
+    }
+    assert _call(f"{base}/api/boards", "POST", {"name": "x"}, headers)[0] == 201
+
+
+def test_cli_post_without_browser_headers_is_served(board):
+    base, _ = board
+    assert _call(f"{base}/api/boards", "POST", {"name": "x"}, {access.KEY_HEADER: KEY})[0] == 201
+
+
+def test_same_site_browser_request_without_origin_is_refused(board):
+    base, _ = board
+    headers = {"Sec-Fetch-Site": "same-site", access.KEY_HEADER: KEY}
+    assert _call(f"{base}/api/boards", "POST", {"name": "x"}, headers)[0] == 403
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "null",
+        "http://127.0.0.1:invalid",
+        "http://user@127.0.0.1:8000",
+        "http://127.0.0.1:8000/path",
+    ],
+)
+def test_malformed_or_non_origin_values_are_refused(origin):
+    assert not access.origin_ok("POST", origin, None, "127.0.0.1:8000", 8000)
+
+
 def test_non_json_body_is_refused(board):
     # a cross-site html form can only send text/plain or form encodings
     base, _ = board

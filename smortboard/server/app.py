@@ -340,7 +340,9 @@ def _make_handler(
             if not access.host_ok(headers.get("Host"), allowed_hosts):
                 return 403, {"error": "unexpected Host header"}
             origin, fetch_site = headers.get("Origin"), headers.get("Sec-Fetch-Site")
-            if not access.origin_ok(method, origin, fetch_site, allowed_hosts):
+            if not access.origin_ok(
+                method, origin, fetch_site, headers.get("Host"), self.server.server_address[1]
+            ):
                 return 403, {"error": "cross-origin request refused"}
             if api_key is None or not path.startswith("/api/"):
                 return None

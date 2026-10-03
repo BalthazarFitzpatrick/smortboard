@@ -6,7 +6,8 @@
 
 - **loopback and keyed.** it binds `127.0.0.1`. every `/api/` call needs the key in
   `~/.config/smortboard/api_key` (mode 600), sent as the printed link's cookie or an
-  `X-Smortboard-Key` header. a foreign `Host` (dns rebinding), a cross-site `Origin` or a non-json
+  `X-Smortboard-Key` header. a foreign `Host` (dns rebinding), a different `Origin` scheme, host
+  or port, or a non-json
   body is refused before any route runs. `--host` is an explicit opt-in; the key is not network
   authentication.
 - **strict content-security-policy.** scripts and styles load only from the board's own files, so
@@ -22,6 +23,8 @@
 - **sealed containers.** non-root, `--cap-drop=ALL`, `no-new-privileges`, memory and process limits.
   no docker socket, home directory, `~/.ssh`, `~/.claude` or `~/.codex`. the test gate has no network; reviewer
   and orchestrator mounts are read-only. without docker a card refuses to run.
+- **independent git objects.** card clones use git's transport instead of local hardlinks or
+  borrowed objects. making the container's clone writable cannot change source object permissions.
 - **token on stdin.** never on the `docker` command line, never mounted, never in `docker inspect`.
   in the container it reaches only the agent: the `claude` process, or for codex an `auth.json`
   in the container's memory-backed `CODEX_HOME`.
@@ -40,6 +43,18 @@
   `trunk` unless its list says otherwise. the switch in `o` can lift every list; that is the
   operator's decision, never an agent's. `gh pr merge` never runs with `--auto` or `--admin`, and no
   branch is ever force-pushed.
+
+## ui screenshots
+
+ui review stages the running host's trusted backend and overlays only the card's ui files.
+symlinks in that overlay are refused. the temporary board contains invented cards, no connected
+repo, and a private api key and config. no scheduler starts.
+
+headless chromium authenticates to that temporary board and waits for cards before capturing.
+request interception permits only that board's assets and read-only board data; other origins,
+mutations, host discovery, service workers and websockets are blocked. this browser policy is
+defense in depth, not an operating-system network sandbox. ci also runs the real captures in a
+read-only container with `--network none` and no unrelated host mounts.
 
 ## architecture
 
