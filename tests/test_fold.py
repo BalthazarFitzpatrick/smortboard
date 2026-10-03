@@ -352,3 +352,19 @@ def test_a_terse_fold_leaves_no_note_whatever_the_ledger_line_adds(store, board)
     apply_folds(store, board_id, [group])
     assert "- t2" in store.list_cards(board_id)[0]["description"]
     assert _board_notes(store, board_id) == []
+
+
+def test_fold_ignores_a_stored_cycle_elsewhere(store, board):
+    board_id, repo_id, _ = board
+    a = _card(store, board_id, repo_id, "a", leases=["src/**"])
+    b = _card(store, board_id, repo_id, "b", leases=["src/**"])
+    x = _card(store, board_id, repo_id, "x", leases=["src/**"])
+    y = _card(store, board_id, repo_id, "y", leases=["src/**"])
+    # a legacy cycle between x and y, written past the guard
+    store._conn.execute(
+        "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?), (?, ?)",
+        (x["id"], y["id"], y["id"], x["id"]),
+    )
+    store._conn.commit()
+    lines = apply_folds(store, board_id, [{"cards": [a["id"], b["id"]], "title": "merged"}])
+    assert lines[0].startswith("folded ")

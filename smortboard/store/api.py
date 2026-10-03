@@ -41,6 +41,11 @@ CARD_WRITABLE_FIELDS = {
     "effort",
 }
 
+
+class ProposedCycleError(ValueError):
+    """the proposed cards depend on each other in a loop"""
+
+
 # 1/2/3 = low/medium/high - see schema.py migration 19
 COMPLEXITY_LEVELS = (1, 2, 3)
 
@@ -719,6 +724,7 @@ class Store:
         # cycle or depend on itself (its id does not exist yet), so only existence matters
         cleaned_deps = list(dict.fromkeys(depends_on or []))
         self._check_dependency_ids_exist(cleaned_deps)
+        self._check_dependencies_not_rejected(cleaned_deps)
         card_id = card_id or _new_id()
         now = _now()
         self._conn.execute(
@@ -771,9 +777,15 @@ class Store:
         return self.get_card(card_id)
 
     def create_cards_with_dependencies(
-        self, board_id: str, specs: list[dict[str, Any]]
+        self,
+        board_id: str,
+        specs: list[dict[str, Any]],
+        dropped: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """validate the complete proposed graph, then publish cards and edges together"""
+        """validate the complete proposed graph, then publish cards and edges together.
+
+        with `dropped` given, a bad reference (missing, ambiguous, rejected) is skipped and
+        described in that list instead of failing the batch."""
         with self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             self.get_board(board_id)
@@ -781,7 +793,10 @@ class Store:
             existing_ids = {card["id"] for card in existing}
             proposed = [{**spec, "id": _new_id()} for spec in specs]
             candidates = existing + proposed
-            graph = {card["id"]: list(card.get("depends_on") or []) for card in existing}
+            status_by_id = {row["id"]: row["status"] for row in existing}
+            # only edges among proposed cards can close a new cycle: stored cards never point
+            # at them, so a cycle already stored elsewhere must not block this batch
+            graph: dict[str, list[str]] = {}
             for card in proposed:
                 dependencies = []
                 for reference in card.get("depends_on") or []:
@@ -803,20 +818,27 @@ class Store:
                     )
                     if len(matches) != 1:
                         reason = "ambiguous" if matches else "missing"
-                        raise ValueError(f'{reason} dependency "{reference}" on "{card["title"]}"')
-                    dependencies.append(matches[0])
-                graph[card["id"]] = list(dict.fromkeys(dependencies))
+                        problem = f'{reason} dependency "{reference}" on "{card["title"]}"'
+                    elif status_by_id.get(matches[0]) == "rejected":
+                        problem = f'rejected dependency "{reference}" on "{card["title"]}"'
+                    else:
+                        dependencies.append(matches[0])
+                        continue
+                    if dropped is None:
+                        raise ValueError(problem)
+                    dropped.append(problem)
+                card["depends_on"] = list(dict.fromkeys(dependencies))
+                graph[card["id"]] = [d for d in card["depends_on"] if d not in existing_ids]
             try:
                 ordered = list(TopologicalSorter(graph).static_order())
             except CycleError as exc:
-                raise ValueError("dependency cycle in proposed cards") from exc
+                raise ProposedCycleError("dependency cycle in proposed cards") from exc
             proposed_by_id = {card["id"]: card for card in proposed}
             for card_id in ordered:
                 if card_id not in proposed_by_id:
                     continue
                 fields = dict(proposed_by_id[card_id])
                 fields.pop("id")
-                fields["depends_on"] = graph[card_id]
                 self._insert_card(board_id, card_id=card_id, **fields)
             return [self.get_card(card["id"]) for card in proposed]
 
@@ -854,10 +876,17 @@ class Store:
                 source = merged_id if source in ids else source
                 target = merged_id if target in ids else target
                 graph.setdefault(source, set()).add(target)
-            try:
-                list(TopologicalSorter(graph).static_order())
-            except CycleError as exc:
-                raise ValueError("fold would create a dependency cycle") from exc
+            # a fold can only close a cycle through the merged card, so walk from it and ignore
+            # any cycle stored elsewhere
+            stack = list(graph[merged_id])
+            seen: set[str] = set()
+            while stack:
+                node = stack.pop()
+                if node == merged_id:
+                    raise ValueError("fold would create a dependency cycle")
+                if node not in seen:
+                    seen.add(node)
+                    stack.extend(graph.get(node, ()))
             # snapshot all edges before removing any member, so each backup remains complete
             for card in originals:
                 self._backup_card(card)
@@ -1398,6 +1427,18 @@ class Store:
         missing = [dep_id for dep_id in card_ids if dep_id not in found]
         if missing:
             raise ValueError(f"no card {missing[0]}")
+
+    def _check_dependencies_not_rejected(self, card_ids: list[str]) -> None:
+        # a card waiting on a rejected card never becomes ready, so refuse it at creation
+        if not card_ids:
+            return
+        placeholders = ",".join("?" * len(card_ids))
+        row = self._conn.execute(
+            f"SELECT id FROM cards WHERE status = 'rejected' AND id IN ({placeholders})",
+            card_ids,
+        ).fetchone()
+        if row:
+            raise ValueError(f"cannot depend on rejected card {row['id']}")
 
     def _check_no_dependency_cycle(self, card_id: str, new_deps: list[str]) -> None:
         """raises ValueError if giving card_id exactly new_deps would create a cycle.
