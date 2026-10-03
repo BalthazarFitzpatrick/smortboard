@@ -9,11 +9,11 @@ const root = new URL('../../', import.meta.url);
 const uiBase = p => uiBaseAsset(root, p);
 const smort = p => readFileSync(new URL(`smortboard/ui/${p}`, root), 'utf8');
 
-const settingsState = {max_parallel: 3, allow_soft_leases: null, allow_free_merge: null};
+const settingsState = {max_parallel: 3, allow_soft_leases: null, allow_free_merge: null, allow_open_mode: null};
 const boardsState = [
-  {id: 'b1', name: 'alpha', merge_mode: null, lease_mode: null, max_parallel: null, daily_budget_usd: null,
+  {id: 'b1', name: 'alpha', merge_mode: null, lease_mode: null, run_mode: null, max_parallel: null, daily_budget_usd: null,
     off_limit_branches: ['main', 'master', 'trunk']},
-  {id: 'b2', name: 'beta', merge_mode: null, lease_mode: null, max_parallel: 1, daily_budget_usd: null,
+  {id: 'b2', name: 'beta', merge_mode: null, lease_mode: null, run_mode: null, max_parallel: 1, daily_budget_usd: null,
     off_limit_branches: ['main', 'master', 'trunk']},
 ];
 const calls = [];
@@ -105,7 +105,7 @@ assert.ok(mod.bs.backdrop.parentNode, 'shift+o opens the board panel');
 assert.ok(!mod.st.backdrop || !mod.st.backdrop.parentNode, 'shift+o does not open o');
 assert.equal(mod.bs.titleEl.textContent, 'board settings: alpha');
 assert.deepEqual(panel().querySelectorAll('.settings-section').map(s => s.children[0].textContent),
-  ['merge mode', 'off-limit branches', 'file lease', 'cards at once', 'daily budget, usd']);
+  ['merge mode', 'off-limit branches', 'file lease', 'run mode', 'cards at once', 'daily budget, usd']);
 
 // ---- with the global switches off, review and strict are shown and free and soft are locked ------
 assert.deepEqual(lit('merge mode'), ['review']);
@@ -114,6 +114,9 @@ assert.equal(buttons('merge mode')[1].disabled, true, 'free waits for the switch
 assert.equal(buttons('file lease')[1].disabled, true, 'soft waits for the switch in o');
 assert.ok(text(section('merge mode')).includes('turn it on in settings (o)'));
 assert.ok(text(section('file lease')).includes('turn them on in settings (o)'));
+assert.deepEqual(lit('run mode'), ['sealed']);
+assert.equal(buttons('run mode')[1].disabled, true, 'open waits for the switch in o');
+assert.ok(text(section('run mode')).includes('turn it on in settings (o)'));
 assert.ok(text(section('cards at once')).includes('(3)'), 'the note names the global cap');
 
 // ---- escape closes it; the key that opens also closes -------------------------------------------
@@ -123,6 +126,7 @@ assert.ok(!mod.bs.backdrop.parentNode, 'escape closes the board panel');
 // ---- switches on: free and soft unlock and save to this board only ------------------------------
 settingsState.allow_free_merge = 'on';
 settingsState.allow_soft_leases = 'on';
+settingsState.allow_open_mode = 'on';
 press('KeyO', true);
 await flush();
 assert.equal(buttons('merge mode')[1].disabled, false);
@@ -135,6 +139,11 @@ await buttons('file lease')[1].onclick();
 assert.deepEqual(lastBoardPatch(), {path: '/api/boards/b1', body: {lease_mode: 'soft'}});
 assert.deepEqual(lit('file lease'), ['soft']);
 assert.equal(boardsState[1].lease_mode, null, 'beta is untouched');
+assert.ok(text(section('run mode')).includes('weaker than a container'));
+await buttons('run mode')[1].onclick();
+assert.deepEqual(lastBoardPatch(), {path: '/api/boards/b1', body: {run_mode: 'open'}});
+assert.deepEqual(lit('run mode'), ['open']);
+assert.equal(boardsState[1].run_mode, null, 'beta is untouched');
 
 // ---- a refused save leaves the lit button where it was and says why -----------------------------
 await buttons('merge mode')[0].onclick();

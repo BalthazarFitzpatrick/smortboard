@@ -615,6 +615,8 @@ _MIGRATIONS: list[str] = [
 
     PRAGMA foreign_keys = ON;
     """,
+    # 31: a board's run mode, sealed or open. null is sealed, see store.api.run_mode
+    """ALTER TABLE boards ADD COLUMN run_mode TEXT;""",
 ]
 
 
