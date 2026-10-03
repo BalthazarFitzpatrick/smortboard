@@ -365,6 +365,7 @@ def test_live_selection_is_not_a_finished_failure_and_missing_crash_cost_is_unkn
     )
     assert board_evidence(store, board["id"])["model_scorecard"] == []
     assert board_evidence(store, board["id"])["cards"] == []
+    store.append_event(card["id"], "model_call_started", {"role": "worker"})
     store.append_event(card["id"], "run_crashed", {"error": "worker lost"})
     store.append_event(card["id"], "run_ended", {"phase": "blocked"})
     evidence = board_evidence(store, board["id"])
@@ -377,6 +378,46 @@ def test_live_selection_is_not_a_finished_failure_and_missing_crash_cost_is_unkn
     store.set_board_daily_budget(board["id"], None)
     store.set_setting("card_total_budget_usd", 10)
     assert "without token usage remain unknown" in spend_refusal(store, card)
+
+
+def test_mixed_models_inside_one_attempt_are_not_attributed_to_the_costliest_model(store):
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "mixed calls")
+    store.append_event(card["id"], "lifecycle_started", {})
+    for model, effort, cost in [("claude-sonnet-4", "low", 0.1), ("claude-opus-4", "high", 0.8)]:
+        store.append_event(
+            card["id"], "worker_selection", {"lab": "anthropic", "model": model, "effort": effort}
+        )
+        store.append_event(card["id"], "result", _worker_result(cost=cost, model=model))
+        store.append_event(card["id"], "worker_summary", {"text": "done"})
+    store.append_event(card["id"], "merge_request", {"url": "https://example.test/pr/1"})
+    evidence = board_evidence(store, board["id"])
+    row = evidence["cards"][0]
+    assert row["cost_usd"] == 0.9
+    assert row["model"] is None
+    assert row["effort"] is None
+    assert row["models"] == ["anthropic/claude-opus-4", "anthropic/claude-sonnet-4"]
+    assert row["efforts"] == ["high", "low"]
+    assert evidence["model_scorecard"] == []
+
+
+def test_empty_review_selection_is_not_unknown_spend(store, monkeypatch, tmp_path):
+    from smortboard.review import reviewer
+    from smortboard.telemetry import board_spend_today
+
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "no review call")
+    store.append_event(card["id"], "lifecycle_started", {})
+    store.append_event(card["id"], "result", _worker_result(cost=0.1))
+    store.append_event(card["id"], "worker_summary", {"text": "done"})
+    store.append_event(card["id"], "reviewer_selection", {"lab": "anthropic", "model": "sonnet"})
+    monkeypatch.setattr(reviewer, "docker_available", lambda: True)
+    monkeypatch.setattr(reviewer, "read_card_token", lambda *a: "test-token")
+    result = reviewer.run_review(store, card["id"], "", tmp_path, tmp_path / "settings.json")
+    assert result.approved
+    store.append_event(card["id"], "run_ended", {"phase": "opened"})
+    assert board_spend_today(store, board["id"]) == 0.1
+    assert card_telemetry(store, card["id"])["totals"]["cost_usd"] == 0.1
 
 
 # -- the two routes, end to end over real http --------------------------------------------

@@ -506,6 +506,12 @@ def run_process(
         text=True,
     )
     handle = ProcessHandle(process, container_name=container_name)
+    if store is not None:
+        store.append_event(
+            card_id,
+            "model_call_started",
+            {"role": role, "lab": lab, "model": model, "profile": profile},
+        )
     if on_process is not None:
         on_process(handle)
     if time_cap_seconds is None:

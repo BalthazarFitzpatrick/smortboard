@@ -116,3 +116,25 @@ def test_missing_historical_counts_stay_unknown_even_with_prices(store, monkeypa
     board = store.create_board("b")
     store.add_board_spend(board["id"], "fold", None, lab="openai", model="priced")
     assert board_spend_today(store, board["id"]) is None
+
+
+def test_spend_start_marker_requires_a_started_process(store, tmp_path):
+    import sys
+
+    from smortboard.exec.runner import run_process
+
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "c")
+    with pytest.raises(FileNotFoundError):
+        run_process(store, card["id"], [str(tmp_path / "missing-program")])
+    assert store.list_events(card["id"]) == []
+    run_process(
+        store,
+        card["id"],
+        [sys.executable, "-c", 'print(\'{"type":"result","total_cost_usd":0.1}\')'],
+        model="sonnet",
+    )
+    events = store.list_events(card["id"])
+    assert events[0]["kind"] == "model_call_started"
+    assert events[0]["payload"]["role"] == "worker"
+    assert board_spend_today(store, board["id"]) == 0.1

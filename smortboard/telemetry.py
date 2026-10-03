@@ -348,13 +348,13 @@ def _main_model(spend: dict[str, float]) -> str | None:
     return max(spend, key=spend.__getitem__) if spend else None
 
 
-def _unreported_selections(segment: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
-    """calls admitted but never accounted for; a missing result is not proof of free work"""
+def _unreported_calls(segment: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    """processes started but never accounted for; selection alone incurs no spend"""
     pending = {}
     missing = []
     for index, event in enumerate(segment):
-        if event["kind"] in ("worker_selection", "reviewer_selection"):
-            role = event["kind"].removesuffix("_selection")
+        if event["kind"] == "model_call_started":
+            role = event["payload"]["role"]
             if role in pending:
                 missing.append((role, pending[role]))
             pending[role] = event
@@ -367,7 +367,6 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
     worker_cost = reviewer_cost = 0.0
     worker_turns = reviewer_turns = 0
     # cost per model name - claude code bills a small helper model on the side of every run
-    worker_spend: dict[str, float] = {}
     reviewer_spend: dict[str, float] = {}
     denials: list[dict[str, str]] = []
     fix_rounds = 0
@@ -378,6 +377,10 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
     selection = next(
         (event["payload"] for event in segment if event["kind"] == "worker_selection"), {}
     )
+    worker_models = set()
+    worker_efforts = {
+        event["payload"].get("effort") for event in segment if event["kind"] == "worker_selection"
+    } or {None}
 
     for i, event in enumerate(segment):
         kind = event["kind"]
@@ -411,7 +414,10 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
             elif role == "worker":
                 worker_cost += cost or 0
                 worker_turns += turns
-                _add_model_spend(worker_spend, event)
+                run_spend = {}
+                _add_model_spend(run_spend, event)
+                if run_model := _main_model(run_spend):
+                    worker_models.add(run_model)
             for denial in (item.get("tool", {}) for item in items if item["kind"] == "tool_denied"):
                 denials.append(
                     {"tool": denial.get("tool_name") or "", "target": _denial_target(denial)}
@@ -419,13 +425,17 @@ def _summarize_attempt(segment: list[dict[str, Any]]) -> dict[str, Any]:
         elif kind == "fix_round":
             fix_rounds += 1
 
-    for role, _event in _unreported_selections(segment):
+    for role, _event in _unreported_calls(segment):
         unknown[role] += 1
+    if not worker_models and model_ref(selection):
+        worker_models.add(model_ref(selection))
     return {
         "started_at": segment[0]["created_at"] if segment else None,
         "outcome": _attempt_outcome(segment),
-        "worker_model": _main_model(worker_spend) or model_ref(selection),
-        "worker_effort": selection.get("effort"),
+        "worker_model": next(iter(worker_models)) if len(worker_models) == 1 else None,
+        "worker_models": sorted(worker_models),
+        "worker_effort": next(iter(worker_efforts)) if len(worker_efforts) == 1 else None,
+        "worker_efforts": sorted(worker_efforts, key=str),
         "complexity_snapshot": selection.get("complexity"),
         "reviewer_model": _main_model(reviewer_spend),
         "worker_cost_usd": None if unknown["worker"] else round(worker_cost, 6),
@@ -532,7 +542,7 @@ def board_spend_today(store: Store, board_id: str, *, today: str | None = None) 
             if any(event["kind"] in _ATTEMPT_END_KINDS for event in segment):
                 costs.extend(
                     None
-                    for _role, event in _unreported_selections(segment)
+                    for _role, event in _unreported_calls(segment)
                     if str(event["created_at"]).startswith(day)
                 )
     for row in store.list_board_spend(board_id):
@@ -996,7 +1006,9 @@ def _finished_attempt_evidence(store: Store, card: dict[str, Any]) -> list[dict[
                 "id": card["id"],
                 "attempt": index + 1,
                 "model": summary["worker_model"],
+                "models": summary["worker_models"],
                 "effort": summary["worker_effort"],
+                "efforts": summary["worker_efforts"],
                 "complexity": summary["complexity_snapshot"] or level,
                 "complexity_source": "run_rating"
                 if summary["complexity_snapshot"]
@@ -1028,8 +1040,8 @@ def board_evidence(store: Store, board_id: str) -> dict[str, Any]:
         rows = by_card[card["id"]]
         if not rows:
             continue
-        models = {row["model"] for row in rows}
-        efforts = {row["effort"] for row in rows}
+        models = {model for row in rows for model in (row["models"] or [None])}
+        efforts = {effort for row in rows for effort in row["efforts"]}
         finished.append(
             {
                 **rows[-1],
@@ -1037,6 +1049,7 @@ def board_evidence(store: Store, board_id: str) -> dict[str, Any]:
                 "model": next(iter(models)) if len(models) == 1 else None,
                 "effort": next(iter(efforts)) if len(efforts) == 1 else None,
                 "models": sorted(model for model in models if model),
+                "efforts": sorted(efforts, key=str),
                 "cost_scope": "all_finished_attempts",
                 "cost_usd": cost_sum(row["cost_usd"] for row in rows),
                 "turns": sum(row["turns"] for row in rows),
