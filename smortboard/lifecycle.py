@@ -55,7 +55,8 @@ from smortboard.exec.worktrees import (
     rev_parse,
     worktree_path,
 )
-from smortboard.labs.routing import command_model, run_effort, run_ref
+from smortboard.labs.catalog import compatible_effort
+from smortboard.labs.routing import command_model, role_effort, run_effort, run_ref
 from smortboard.operator import AUTHOR_KEY, OPERATOR_NAME
 from smortboard.repo_image import rebuild_if_stale
 from smortboard.review.base_red import check_base_red
@@ -622,8 +623,18 @@ def _run_attempt(
     worker_lab, worker_id = run_ref(store, "worker", card)
     reviewer_lab, reviewer_id = run_ref(store, "reviewer", card)
     # resolved beside the model, before either run consumes its queued fallback
-    worker_effort = run_effort(store, "worker", card)
-    reviewer_effort = run_effort(store, "reviewer", card)
+    # filtered the way the backends filter it, so the event names the effort that ran
+    settings_now = store.get_settings()
+    worker_effort = compatible_effort(
+        worker_lab,
+        worker_id,
+        run_effort(store, "worker", card) or role_effort(settings_now, "worker"),
+    )
+    reviewer_effort = compatible_effort(
+        reviewer_lab,
+        reviewer_id,
+        run_effort(store, "reviewer", card) or role_effort(settings_now, "reviewer"),
+    )
     worker_model = command_model(worker_lab, worker_id)
     reviewer_model = command_model(reviewer_lab, reviewer_id)
 

@@ -1347,3 +1347,23 @@ def _passing():
     from smortboard.review.gates import GateResult
 
     return GateResult(passed=True, command="true", exit_code=0, output="ok")
+
+
+def _store_stale_effort(store, key, model_key, effort):
+    # effort saved under a model that supported it, then the model changed underneath
+    store.set_settings({model_key: "claude-opus-5-5", key: effort})
+    with store._conn:
+        store._conn.execute(
+            "UPDATE settings SET value = 'claude-haiku-4-5' WHERE key = ?", (model_key,)
+        )
+
+
+def test_selection_events_record_the_effort_that_ran_not_the_unsupported_one(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    _store_stale_effort(store, "worker_effort", "worker_model", "max")
+    _store_stale_effort(store, "reviewer_effort", "reviewer_model", "max")
+    lifecycle.run_card_lifecycle(store, card_id, backend=_Backend())
+    events = {e["kind"]: e["payload"] for e in store.list_events(card_id)}
+    assert events["worker_selection"]["effort"] is None
+    assert events["reviewer_selection"]["effort"] is None

@@ -21,6 +21,8 @@ const settingsState = {
   fold_cross_lab_fallback: [
     {ref: 'anthropic/opus', effort: null}, {ref: 'openai/gpt-6-astra', effort: 'high'},
   ],
+  // saved before the model's effort levels narrowed: sol has no max
+  worker_cross_lab_fallback: [{ref: 'openai/gpt-5.6-sol', effort: 'max'}],
 };
 const boardsState = [
   {id: 'b1', name: 'alpha', max_parallel: null, daily_budget_usd: null},
@@ -311,6 +313,17 @@ assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1)
     {ref: 'anthropic/fable', effort: null},
   ]});
 assert.equal(fallbackMenu.closed, true, 'a successful save closes the picker');
+
+// a stored effort the model no longer offers is cleared, never re-sent
+const staleTrigger = mod.st.listEl.querySelectorAll('.role-fallback')
+  .find(row => row.dataset.role === 'worker');
+await staleTrigger.onclick();
+const staleMenu = modelMenus.at(-1);
+const staleColumns = staleMenu.opts.sections.find(section => section.kind === 'columns').columns;
+assert.equal(staleColumns[2].items.find(item => item.on).id, 'default', 'unsupported effort shows as default');
+await staleMenu.opts.sections.find(section => section.kind === 'buttons').buttons[0].onClick(staleMenu);
+assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
+  {worker_cross_lab_fallback: [{ref: 'openai/gpt-5.6-sol', effort: null}]});
 
 await mod.openModelPicker(() => {}, undefined, null, {default_settings: settingsState});
 const defaultCardMenu = modelMenus.at(-1);
