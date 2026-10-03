@@ -69,7 +69,6 @@ def origin_ok(
     origin: str | None,
     fetch_site: str | None,
     host_header: str | None,
-    port: int,
 ) -> bool:
     """a state-changing request from a browser must come from the board's own page; a request with
     neither header is not from a browser and is left to the key check"""
@@ -78,15 +77,25 @@ def origin_ok(
     if origin is not None:
         try:
             parsed = urlsplit(origin)
+            expected = urlsplit(f"http://{host_header or ''}")
+            for value in (parsed, expected):
+                if (
+                    value.scheme != "http"
+                    or not value.hostname
+                    or value.username is not None
+                    or value.password is not None
+                    or value.netloc.endswith(":")
+                    or value.path
+                    or value.query
+                    or value.fragment
+                ):
+                    return False
+            if any(char in origin or char in (host_header or "") for char in "?#"):
+                return False
             origin_port = parsed.port if parsed.port is not None else 80
-            return (
-                parsed.scheme == "http"
-                and parsed.hostname == _hostname(host_header or "")
-                and origin_port == port
-                and parsed.username is None
-                and parsed.password is None
-                and not (parsed.path or parsed.query or parsed.fragment)
-            )
+            expected_port = expected.port if expected.port is not None else 80
+            # the host authority is the browser's target, including ports forwarded by docker
+            return (parsed.hostname, origin_port) == (expected.hostname, expected_port)
         except ValueError:
             return False
     if fetch_site is not None:
