@@ -187,6 +187,18 @@ function renderBoardSettings(board, settings) {
       + 'paths no other card holds, and each one is shown on the card.',
     offNote: 'soft leases are off for every board - turn them on in settings (o) first.',
   });
+  const run = gatedBoardToggle({
+    board,
+    className: 'board-settings-run-mode-choice',
+    field: 'run_mode',
+    choices: [['sealed', 'sealed'], ['open', 'open']],
+    lit: board.run_mode === 'open' && settings.allow_open_mode === 'on' ? 'open' : 'sealed',
+    allowed: settings.allow_open_mode === 'on',
+    onNote: 'sealed: cards run in a container. open: cards run on your machine, protected only by '
+      + 'file leases and hooks, which is weaker than a container.',
+    offNote: 'open mode is off for every board - turn it on in settings (o) first. every board runs '
+      + 'sealed, in a container.',
+  });
   const globalCap = settings.max_parallel == null ? 2 : settings.max_parallel;
   const parallel = boardNumberField({
     board,
@@ -210,6 +222,7 @@ function renderBoardSettings(board, settings) {
     boardSettingsSection('merge mode', merge),
     boardSettingsSection('off-limit branches', offLimitEditor(board, settings)),
     boardSettingsSection('file lease', lease),
+    boardSettingsSection('run mode', run),
     boardSettingsSection('cards at once', parallel,
       boardSettingsNote(`blank: only the global cap in o (${globalCap}) applies.`)),
     boardSettingsSection('daily budget, usd', budget,

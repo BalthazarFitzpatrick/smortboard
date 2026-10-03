@@ -89,6 +89,9 @@ _SETTING_KEYS = (
     "usage_limit_route",
     "allow_soft_leases",
     "allow_free_merge",
+    # allow_open_mode: "on" lets a board pick the open run mode (shift+o). unlike the two gates
+    # above, turning it off keeps each board's stored choice - run_mode() just resolves it sealed
+    "allow_open_mode",
     # off_limit_branches: unset keeps each board's off-limit list; "off" lets a board land on any
     # branch, main included
     "off_limit_branches",
@@ -156,6 +159,9 @@ _BOARD_MODE_GATES = {
         "free merge is off - turn it on in settings (o) first",
     ),
 }
+
+
+RUN_MODES = ("sealed", "open")
 
 
 def _check_gate(key: str, value: str | None) -> None:
@@ -471,6 +477,25 @@ class Store:
         self._conn.execute("UPDATE boards SET lease_mode = ? WHERE id = ?", (value, board_id))
         self._conn.commit()
         return self.get_board(board_id)
+
+    def set_board_run_mode(self, board_id: str, value: str | None) -> dict[str, Any]:
+        """sealed (or null) runs cards in a container; open runs them on the host under leases and
+        hooks. open needs the global allow_open_mode switch. nothing executes from this yet"""
+        self.get_board(board_id)
+        if value not in (None, *RUN_MODES):
+            raise ValueError("run_mode must be sealed, open, or null")
+        if value == "open" and self.get_settings()["allow_open_mode"] != "on":
+            raise ValueError("open mode is off - turn it on in settings (o) first")
+        self._conn.execute("UPDATE boards SET run_mode = ? WHERE id = ?", (value, board_id))
+        self._conn.commit()
+        return self.get_board(board_id)
+
+    def run_mode(self, board_id: str) -> str:
+        """the one reader of the raw setting: open only while the global switch is on and the
+        board stores open, else sealed. a stored open survives the switch going off"""
+        if self.get_settings()["allow_open_mode"] != "on":
+            return "sealed"
+        return "open" if self.get_board(board_id)["run_mode"] == "open" else "sealed"
 
     def _require_gate(self, key: str) -> None:
         if self.get_settings()[key] != "on":
@@ -1135,7 +1160,7 @@ class Store:
                 _check_findings_route(value)
             if key == "usage_limit_route":
                 _check_usage_limit_route(value)
-            if key in _BOARD_MODE_GATES:
+            if key in _BOARD_MODE_GATES or key == "allow_open_mode":
                 _check_gate(key, value)
             if key == "off_limit_branches" and value not in (None, "off"):
                 raise ValueError(f"off_limit_branches must be off or null, not {value!r}")

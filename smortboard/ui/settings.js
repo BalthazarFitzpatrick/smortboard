@@ -105,6 +105,14 @@ const freeMerge = choiceToggle({
   save: value => saveSettings({allow_free_merge: value}),
 });
 
+// allow_open_mode: lets a board pick the open run mode in shift+o. turning it off keeps each
+// board's choice stored but every board runs sealed again
+const openMode = choiceToggle({
+  className: 'settings-open-mode-choice',
+  choices: [['enabled', 'on'], ['disabled', null]],
+  save: value => saveSettings({allow_open_mode: value}),
+});
+
 // off_limit_branches: unset keeps each board's own list (shift+o); "off" lifts every list
 const offLimits = choiceToggle({
   className: 'settings-off-limit-choice',
@@ -125,6 +133,13 @@ function buildSoftLeasesToggle() {
     + 'card holds - pick it per board in shift+o. disabled: every board is strict.');
 }
 
+function buildOpenModeToggle() {
+  openMode.show(null);
+  return toggleWithNote(openMode, 'enabled: a board may run its cards in open mode - pick it per board '
+    + 'in shift+o. open mode is weaker than sealed: cards run on your machine, not in a container, '
+    + 'protected only by file leases and hooks. disabled: every board runs sealed, in a container.');
+}
+
 function buildFreeMergeToggle() {
   freeMerge.show(null);
   return toggleWithNote(freeMerge, 'enabled: a board may merge passing cards into its base without '
@@ -137,6 +152,7 @@ async function loadFeatureToggles() {
     const settings = await api('/api/settings');
     softLeases.show(settings.allow_soft_leases === 'on' ? 'on' : null);
     freeMerge.show(settings.allow_free_merge === 'on' ? 'on' : null);
+    openMode.show(settings.allow_open_mode === 'on' ? 'on' : null);
     offLimits.show(settings.off_limit_branches === 'off' ? 'off' : null);
   } catch {
     // leave both disabled lit - disabled is what the server assumes for an unset key
@@ -217,6 +233,7 @@ const SETTINGS_SECTIONS = [
   {group: 'labs', label: 'usage limits', node: buildUsageLimitToggle(), onOpen: loadUsageLimitToggle},
   {group: 'general', label: 'soft file leases', node: buildSoftLeasesToggle(), onOpen: loadFeatureToggles},
   {group: 'general', label: 'free merge', node: buildFreeMergeToggle()},
+  {group: 'general', label: 'open run mode', node: buildOpenModeToggle()},
   {group: 'general', label: 'off-limit branches', node: buildOffLimitToggle()},
 ];
 

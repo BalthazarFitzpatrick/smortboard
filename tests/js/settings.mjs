@@ -187,13 +187,13 @@ assert.deepEqual(settingsGroups.map(group => group.querySelector('.settings-grou
   ['general', 'labs and models', 'cost control']);
 assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-section')
   .map(section => section.children[0].textContent)), [
-  ['soft file leases', 'free merge', 'off-limit branches', 'mission control can read',
+  ['soft file leases', 'free merge', 'open run mode', 'off-limit branches', 'mission control can read',
     'where new repos go', 'how many cards run at once',
     'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup', 'mouse'],
   ['usage limits', 'models by role'],
   ['spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 12);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 13);
 assert.equal(mod.st.listEl.querySelectorAll('.board-row').length, 0,
   'o holds only what every board shares - no per-board rows');
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
@@ -450,6 +450,15 @@ assert.deepEqual(lastSettingsPatch(), {allow_free_merge: 'on'});
 await choice('settings-free-merge-choice', 'disabled').onclick();
 assert.deepEqual(lastSettingsPatch(), {allow_free_merge: null});
 assert.deepEqual(lit('settings-free-merge-choice'), ['disabled']);
+
+// ---- open run mode: one global switch, off by default, and the note says it is weaker ----------
+assert.deepEqual(lit('settings-open-mode-choice'), ['disabled']);
+const allText = el => [el.textContent, ...(el.children || []).map(allText)].join(' ');
+assert.ok(allText(mod.st.listEl).includes('weaker than sealed'));
+await choice('settings-open-mode-choice', 'enabled').onclick();
+assert.deepEqual(lastSettingsPatch(), {allow_open_mode: 'on'});
+await choice('settings-open-mode-choice', 'disabled').onclick();
+assert.deepEqual(lastSettingsPatch(), {allow_open_mode: null});
 
 // ---- off-limit branches: on unless switched off, and off is the stored value -----------------------
 assert.deepEqual(lit('settings-off-limit-choice'), ['enabled'], 'unset keeps every board list');
