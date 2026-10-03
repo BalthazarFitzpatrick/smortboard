@@ -20,17 +20,11 @@ function recordAnimation(el, keyframes, options) {
   return anim;
 }
 
-// ui_base's assets: a sibling ../smortui checkout when developing the two repos in lockstep, else
-// the installed package's own copy (UI_BASE_ASSETS_DIR, set by test_js_suite.py) - so the same
-// test runs unchanged on a machine with the sibling checkout and inside the gate container, which
-// has neither the checkout nor a fetchable one
-export function uiBaseAsset(root, name) {
-  try {
-    return readFileSync(new URL(`../smortui/ui_base/assets/${name}`, root), 'utf8');
-  } catch (err) {
-    if (err.code !== 'ENOENT' || !process.env.UI_BASE_ASSETS_DIR) throw err;
-    return readFileSync(`${process.env.UI_BASE_ASSETS_DIR}/${name}`, 'utf8');
-  }
+// the test runner supplies the installed package; local co-development is an explicit override
+export function uiBaseAsset(_root, name) {
+  const assets = process.env.UI_BASE_DEV_ASSETS_DIR || process.env.UI_BASE_ASSETS_DIR;
+  if (!assets) throw new Error('run uv run pytest tests/test_js_suite.py or set UI_BASE_ASSETS_DIR');
+  return readFileSync(`${assets}/${name}`, 'utf8');
 }
 
 function compoundMatch(el, compound) {

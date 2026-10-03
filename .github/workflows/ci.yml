@@ -70,7 +70,7 @@ jobs:
       # a broken link or anchor fails here, not for a reader on github
       - name: docs links
         if: steps.changes.outputs.docs == 'true'
-        run: uv run --python ${{ matrix.python }} pytest -q -n0 tests/test_docs_links.py
+        run: uv run --locked --python ${{ matrix.python }} pytest -q -n0 tests/test_docs_links.py
 
       - uses: actions/setup-node@v4
         if: steps.changes.outputs.code == 'true'
@@ -79,19 +79,19 @@ jobs:
 
       - name: sync
         if: steps.changes.outputs.code == 'true'
-        run: uv sync --dev --python ${{ matrix.python }}
+        run: uv sync --locked --dev --python ${{ matrix.python }}
 
       - name: ruff check
         if: steps.changes.outputs.code == 'true'
-        run: uv run ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: ruff format --check
         if: steps.changes.outputs.code == 'true'
-        run: uv run ruff format --check .
+        run: uv run --no-sync ruff format --check .
 
       - name: pytest
         if: steps.changes.outputs.code == 'true'
-        run: uv run pytest -q -k 'not test_capture_takes_a_real_screenshot_of_a_faked_server'
+        run: uv run --no-sync pytest -q -k 'not test_capture_takes_a_real_screenshot_of_a_faked_server'
 
       - name: provision screenshot image
         if: steps.changes.outputs.code == 'true'
