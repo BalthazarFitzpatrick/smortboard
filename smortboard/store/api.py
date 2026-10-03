@@ -10,7 +10,8 @@ from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 from typing import Any
 
-from smortboard.labs.catalog import ROLES, load_catalog, parse_ref, resolve_ref
+from smortboard.labs.catalog import ROLES, load_catalog, parse_ref, resolve_ref, validate_effort
+from smortboard.labs.routing import role_ref
 from smortboard.store.errors import BlockedReasonInvalidError, NotFoundError, UnknownFieldError
 from smortboard.store.schema import (
     BACKUP_RETENTION_DAYS,
@@ -711,6 +712,9 @@ class Store:
         lab, model = _model_pair(lab, model)
         _check_complexity(complexity)
         _check_effort("effort", effort)
+        validate_effort(
+            *role_ref(self.get_settings(), "worker", {"lab": lab, "model": model}), effort
+        )
         # validated before any insert - a brand new card can never be part of an existing
         # cycle or depend on itself (its id does not exist yet), so only existence matters
         cleaned_deps = list(dict.fromkeys(depends_on or []))
@@ -982,6 +986,11 @@ class Store:
             _check_complexity(fields["complexity"])
         if "effort" in fields:
             _check_effort("effort", fields["effort"])
+        if {"lab", "model", "effort"} & fields.keys():
+            selection = {**dict(current), **fields}
+            validate_effort(
+                *role_ref(self.get_settings(), "worker", selection), selection.get("effort")
+            )
 
         merged = {**fields, "status": next_status, "blocked_reason_code": next_reason}
         assignments = ", ".join(f"{key} = ?" for key in merged)
@@ -1061,6 +1070,13 @@ class Store:
                 if resolve_ref(f"{lab}/{model}", catalog) is None:
                     raise ValueError(f"unknown model: {lab}/{model}")
 
+        selection = {**current, **fields}
+        for role in ROLES:
+            if {f"{role}_lab", f"{role}_model", f"{role}_effort"} & fields.keys():
+                validate_effort(
+                    *role_ref(selection, role), selection.get(f"{role}_effort"), catalog
+                )
+
         updates = {}
         for key, value in fields.items():
             if key == "findings_route":
@@ -1100,6 +1116,7 @@ class Store:
                         if ref is None:
                             raise ValueError(f"unknown fallback model: {item!r}")
                         _check_effort(f"{key} effort", entry["effort"])
+                        validate_effort(*ref, entry["effort"], catalog)
                         entries.append({"ref": "/".join(ref), "effort": entry["effort"]})
                     stored = json.dumps(entries) if entries else None
             updates[key] = stored
@@ -1675,10 +1692,19 @@ class Store:
         return {**_row_to_dict(row), "lab": row["lab"] or "anthropic"}
 
     def list_board_spend(self, board_id: str) -> list[dict[str, Any]]:
+        from smortboard.labs.events import recover_usage
+
         rows = self._conn.execute(
             "SELECT * FROM board_spend WHERE board_id = ? ORDER BY created_at", (board_id,)
         ).fetchall()
-        return [{**_row_to_dict(r), "lab": r["lab"] or "anthropic"} for r in rows]
+        return [
+            recover_usage(
+                {**_row_to_dict(r), "lab": r["lab"] or "anthropic"},
+                r["lab"] or "anthropic",
+                r["model"],
+            )
+            for r in rows
+        ]
 
     def get_plan(self, board_id: str) -> str | None:
         row = self._conn.execute(

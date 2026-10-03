@@ -125,8 +125,8 @@ def test_unknown_board_turn_spend_survives_export_and_blocks_budget(store, tmp_p
     assert boards_overview(store)["totals"]["turn_cost_usd"] is None
 
 
-def test_complexity_uses_catalog_tier_across_labs():
-    assert estimate_complexity(2, 2, 0, False, "openai/gpt-6-astra") == 2
+def test_complexity_does_not_use_selected_model_tier():
+    assert estimate_complexity(2, 2, 0, False, "openai/gpt-6-astra") == 1
     assert estimate_complexity(2, 2, 0, False, "openai/gpt-5.6-luna") == 1
 
 

@@ -121,13 +121,13 @@ def test_estimate_complexity_a_broad_lease_pushes_a_bigger_card_to_high():
     assert estimate_complexity(4, 4, 1, True, "sonnet") == 3
 
 
-def test_estimate_complexity_opus_raises_the_estimate():
+def test_estimate_complexity_is_independent_of_model():
     assert estimate_complexity(2, 2, 1, False, "sonnet") == 1
-    assert estimate_complexity(2, 2, 1, False, "opus") == 2
+    assert estimate_complexity(2, 2, 1, False, "opus") == 1
 
 
-def test_estimate_complexity_opus_plus_broad_lease_is_high():
-    assert estimate_complexity(3, 3, 1, True, "opus") == 3
+def test_estimate_complexity_broad_lease_does_not_add_a_model_penalty():
+    assert estimate_complexity(3, 3, 1, True, "opus") == 2
 
 
 def test_estimate_complexity_no_model_no_leases():

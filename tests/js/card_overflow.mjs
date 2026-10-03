@@ -175,6 +175,7 @@ todoRows.appendChild(strip2);
 strip2.focus();
 calls.length = 0;
 setResponse('GET', '/api/cards/c1', 200, {id: 'c1', model: null});
+setResponse('GET', '/api/settings', 200, {});
 setResponse('GET', '/api/catalog', 200, {
   anthropic: {available: false, unavailable_reason: 'no usable profile', models: [{id: 'haiku', label: 'Haiku', tier: 'light'}]},
   openai: {available: true, models: [{id: 'x', label: 'X', tier: 'standard'}]},

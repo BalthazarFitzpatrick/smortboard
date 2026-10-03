@@ -1,9 +1,8 @@
 """the js half of the test gate: every tests/js/*.mjs run with node.
 
 without this the gate only ever proved the python side, so a card could break board.js and still
-reach a pull request (#82, #90 both did). node resolves ui_base's assets from a sibling ../smortui
-checkout when one exists, else from the installed ui_base package - the same fallback assets.py
-uses via read_asset, so the suite runs unchanged inside the gate container and on a fresh clone.
+reach a pull request (#82, #90 both did). node reads the installed ui_base package, as production
+does. UI_BASE_DEV_ASSETS_DIR explicitly opts into a development checkout for local co-development.
 """
 
 from __future__ import annotations

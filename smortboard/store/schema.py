@@ -2,6 +2,8 @@
 
 import sqlite3
 
+from smortboard.labs.catalog import EFFORT_LEVELS as EFFORT_LEVELS
+
 # THE FIVE KANBAN COLUMNS, AND NOTHING ELSE. blocked is not among them: a blocked card keeps the
 # status it was in and raises blocked_reason_code, which is what draws the gold outline. a sixth
 # status would throw away what the card was doing, which the resume briefing needs
@@ -32,10 +34,6 @@ DEFAULT_USAGE_LIMIT_ROUTE = "wait"
 # a deleted card is kept as a backup for this many days before it is purged for good - see
 # Store.delete_card, Store.restore_card and Store._purge_expired_backups
 BACKUP_RETENTION_DAYS = 7
-
-# a role's reasoning effort - claude --effort, codex model_reasoning_effort. unset passes no flag,
-# the cli's own default
-EFFORT_LEVELS = ("low", "medium", "high")
 
 # the branches a board never lands on unless its own list says otherwise, or the global
 # off_limit_branches setting is off. never forced either way - see review/rebase_guard._force_push

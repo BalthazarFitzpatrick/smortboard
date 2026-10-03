@@ -162,3 +162,79 @@ def test_claude_and_codex_spell_effort_their_own_way():
     assert codex[-1] == "brief", "the prompt stays the last argument"
     plain = CodexAdapter().build_command(RunRequest("brief", model="gpt-5.6-sol"))
     assert not any("model_reasoning_effort" in word for word in plain)
+
+
+@pytest.mark.parametrize(
+    "model,effort",
+    [
+        ("anthropic/claude-opus-5-5", "max"),
+        ("openai/gpt-6.1-sol", "xhigh"),
+    ],
+)
+def test_saved_exact_model_and_effort_reach_the_adapter_argv(tmp_path, model, effort):
+    path = tmp_path / "b.db"
+    with Store(path) as store:
+        board = store.create_board("exact")
+        card = store.create_card(board["id"], None, "c", model=model, effort=effort)
+    with Store(path) as store:
+        card = store.get_card(card["id"])
+        cmd = ContainerBackend(image="img")._docker_command(
+            tmp_path / "clone",
+            "p",
+            tmp_path / "s.json",
+            f"{card['lab']}/{card['model']}",
+            REPO,
+            store,
+            effort=card["effort"],
+            kind="auth_json",
+        )
+    words = shlex.split(cmd[-1])
+    adapter_name = "claude" if card["lab"] == "anthropic" else "codex"
+    argv = words[words.index(adapter_name) :]
+    assert _flag(argv, "--model") == model.split("/")[1]
+    if card["lab"] == "anthropic":
+        assert _flag(argv, "--effort") == effort
+    else:
+        assert f'model_reasoning_effort="{effort}"' in argv
+
+
+def test_worker_drops_inherited_effort_for_a_model_without_support(tmp_path):
+    with Store(tmp_path / "b.db") as store:
+        store.set_settings({"worker_model": "claude-opus-5-5", "worker_effort": "max"})
+        cmd = ContainerBackend(image="img")._docker_command(
+            tmp_path / "clone", "p", tmp_path / "s.json", "claude-haiku-4-5", REPO, store
+        )
+    assert "--effort" not in _agent_argv(cmd)
+
+
+@pytest.mark.parametrize("role", ["orchestrator", "fold"])
+def test_board_runner_drops_inherited_effort_after_selecting_another_model(
+    tmp_path, monkeypatch, role
+):
+    with Store(tmp_path / "b.db") as store:
+        store.set_settings({f"{role}_model": "claude-opus-5-5", f"{role}_effort": "max"})
+        board = store.create_board("exact")
+        calls = []
+        _fake_runs(monkeypatch, "orchestrator", calls)
+        _real_runner(store, board["id"], None, "rules", [], role=role)(
+            "brief", "claude-haiku-4-5", 1.0
+        )
+    assert "--effort" not in _agent_argv(calls[0])
+
+
+def test_reviewer_drops_inherited_effort_after_selecting_another_model(tmp_path, monkeypatch):
+    with Store(tmp_path / "b.db") as store:
+        store.set_settings({"reviewer_model": "claude-opus-5-5", "reviewer_effort": "max"})
+        board = store.create_board("exact")
+        card = store.create_card(board["id"], None, "c")
+        calls = []
+        _fake_runs(monkeypatch, "review.reviewer", calls)
+        run_review(
+            store,
+            card["id"],
+            "diff --git a/x b/x\n+x\n",
+            tmp_path,
+            tmp_path / "s.json",
+            model="claude-haiku-4-5",
+        )
+    assert "--effort" not in _agent_argv(calls[0])

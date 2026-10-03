@@ -1,7 +1,6 @@
 """resolve role and card choices without changing legacy stored settings"""
 
-from smortboard.labs.catalog import load_catalog, parse_ref, resolve_ref
-from smortboard.store.schema import EFFORT_LEVELS
+from smortboard.labs.catalog import EFFORT_LEVELS, load_catalog, parse_ref, resolve_ref
 
 
 def role_ref(settings: dict, role: str, card: dict | None = None) -> tuple[str, str]:

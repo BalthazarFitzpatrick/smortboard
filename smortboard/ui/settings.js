@@ -252,11 +252,13 @@ async function openFallbackPicker(role, initialEntries, anchor, status, onSaved)
 
   const buildSections = () => {
     const entry = focusedEntry();
+    const [lab, model] = entry?.ref.split('/') || [];
+    const row = catalog[lab]?.models.find(row => row.id === model);
     const effort = effortColumn(entry?.effort || null, level => {
       entry.effort = level;
       showSummary();
       menu.refresh(buildSections());
-    }, entry ? `effort: ${entry.ref}` : 'effort');
+    }, entry ? `effort: ${entry.ref}` : 'effort', row);
     if (!entry) {
       effort.items = [];
       effort.empty = 'tick a model';
@@ -365,7 +367,7 @@ async function loadRoleModels() {
             if (ok) loadRoleModels();
             else status.textContent = body?.error || 'could not save model';
           }, picker, null, {lab: settings[`${role}_lab`], model: settings[`${role}_model`],
-            effort: roleEffort});
+            effort: roleEffort, default_settings: settings, default_role: role});
         } catch (err) { status.textContent = err.message; }
       };
       primaryRow.append(primaryLabel, picker);

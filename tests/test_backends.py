@@ -327,6 +327,35 @@ def test_the_board_sets_the_card_git_identity_in_the_clone(tmp_path):
     assert _config("user.email") == backends.CARD_GIT_EMAIL
 
 
+def test_clone_objects_cannot_change_linked_worktree_source_permissions(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    info = create_worktree(repo, "isolated-objects")
+    source_objects = {
+        path.relative_to(repo / ".git" / "objects"): (path.stat(), path.read_bytes())
+        for path in (repo / ".git" / "objects").glob("??/*")
+        if path.is_file()
+    }
+    assert source_objects
+
+    clone_path = tmp_path / "clone"
+    ContainerBackend()._clone(info.path, clone_path, info.branch)
+    subprocess.run(["chmod", "-R", "go+rwX", str(clone_path)], check=True)
+    assert not (clone_path / ".git" / "objects" / "info" / "alternates").exists()
+    cloned_inodes = {
+        (path.stat().st_dev, path.stat().st_ino)
+        for path in (clone_path / ".git" / "objects").rglob("*")
+        if path.is_file()
+    }
+    assert cloned_inodes
+    for relative, (before, content) in source_objects.items():
+        source = repo / ".git" / "objects" / relative
+        assert source.stat().st_mode == before.st_mode
+        assert source.read_bytes() == content
+        assert (source.stat().st_dev, source.stat().st_ino) not in cloned_inodes
+
+
 def test_clone_of_missing_source_raises_worktree_error(tmp_path):
     backend = ContainerBackend()
     with pytest.raises(WorktreeError):

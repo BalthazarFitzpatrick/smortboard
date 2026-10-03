@@ -25,6 +25,7 @@ about the worktree is ever read into the process that runs.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -36,6 +37,9 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+from smortboard.store import Store
 
 # the diff prefix that triggers a screenshot - this repo's own ui/, not a per-repo setting: only
 # smortboard's own board has a ui to screenshot at all right now
@@ -64,6 +68,24 @@ LOCALHOST = "127.0.0.1"
 # files a host package copy never needs - build artifacts, not source the board would serve
 _STAGE_IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 
+# screenshot javascript may read the invented board, but cannot drive host operations
+_READ_API_PATH = re.compile(
+    r"^/api/(?:boards(?:/[^/]+/(?:cards|repos))?|cards/[^/]+"
+    r"(?:/(?:events|outcome|run|attachments/[^/]+))?|settings|catalog|prompts|attention|"
+    r"costs|usage|roster)$"
+)
+
+
+def _check_ui_overlay(worktree_path: str | Path) -> Path:
+    package = Path(worktree_path) / "smortboard"
+    ui = package / "ui"
+    if package.is_symlink() or ui.is_symlink():
+        raise ScreenshotUnavailable("the ui overlay contains a symlink")
+    for folder, dirs, files in os.walk(ui, followlinks=False):
+        if any((Path(folder) / name).is_symlink() for name in dirs + files):
+            raise ScreenshotUnavailable("the ui overlay contains a symlink")
+    return ui
+
 
 def _stage_host_backend(worktree_path: str | Path, stage_dir: Path) -> None:
     """copies the HOST's own smortboard package into stage_dir, then overlays smortboard/ui/ from
@@ -73,11 +95,31 @@ def _stage_host_backend(worktree_path: str | Path, stage_dir: Path) -> None:
     the worktree's copy of screenshot.py - so this always stages the code already trusted to run
     on this host, regardless of what a card changed.
     """
+    ui = _check_ui_overlay(worktree_path)
     host_package = Path(__file__).resolve().parents[1]
     staged_package = stage_dir / "smortboard"
     shutil.copytree(host_package, staged_package, ignore=_STAGE_IGNORE)
     shutil.rmtree(staged_package / "ui")
-    shutil.copytree(Path(worktree_path) / "smortboard" / "ui", staged_package / "ui")
+    # preserve links during copying so a changed source cannot make copytree read a host target
+    staged_ui = staged_package / "ui"
+    shutil.copytree(ui, staged_ui, symlinks=True)
+    if any(path.is_symlink() for path in staged_ui.rglob("*")):
+        raise ScreenshotUnavailable("the ui overlay contains a symlink")
+
+
+def _seed_screenshot_board(db_path: str) -> None:
+    with Store(db_path) as store:
+        board = store.create_board("ui review — invented content")
+        for position, status in enumerate(("todo", "checking", "accepted", "rejected")):
+            store.create_card(
+                board["id"],
+                None,
+                f"review the {status} card",
+                status=status,
+                position=position,
+                description="synthetic screenshot data; no live board or repo is connected",
+                criteria=["the card title, description and controls are readable"],
+            )
 
 
 class ScreenshotUnavailable(RuntimeError):
@@ -166,29 +208,34 @@ class ThrowawayBoard:
         os.close(self._db_fd)
         self._stage_dir: str | None = None
         self._process: subprocess.Popen | None = None
+        self.api_key: str | None = None
 
     def __enter__(self) -> ThrowawayBoard:
+        from smortboard.server.access import API_KEY_PATH_ENV, load_or_create_api_key
+
         self._stage_dir = tempfile.mkdtemp(prefix="smortboard-screenshot-stage-")
         try:
             _stage_host_backend(self.worktree_path, Path(self._stage_dir))
+            _seed_screenshot_board(self._db_path)
+            config_dir = Path(self._stage_dir) / "config"
+            key_path = config_dir / "api_key"
+            self.api_key = load_or_create_api_key(key_path)
             env = dict(os.environ)
-            existing = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = (
-                os.pathsep.join([self._stage_dir, existing]) if existing else self._stage_dir
+            env.update(
+                {
+                    "PYTHONPATH": self._stage_dir,
+                    "XDG_CONFIG_HOME": str(config_dir),
+                    "APPDATA": str(config_dir),
+                    "SMORTBOARD_PROFILES_STATE_PATH": str(config_dir / "profiles.json"),
+                    "SMORTBOARD_CARD_TOKEN_PATH": str(config_dir / "card_token"),
+                    API_KEY_PATH_ENV: str(key_path),
+                    "SMORTBOARD_DB": self._db_path,
+                    "SMORTBOARD_HOST": LOCALHOST,
+                    "SMORTBOARD_PORT": str(self.port),
+                }
             )
             self._process = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "smortboard.cli",
-                    "--host",
-                    LOCALHOST,
-                    "--port",
-                    str(self.port),
-                    "--db",
-                    self._db_path,
-                    "--no-browser",
-                ],
+                [sys.executable, "-m", "smortboard.server"],
                 cwd=self._stage_dir,
                 env=env,
                 stdout=subprocess.PIPE,
@@ -196,12 +243,13 @@ class ThrowawayBoard:
                 text=True,
             )
             if not _wait_until_ready(self.base_url, time.monotonic() + BOARD_READY_TIMEOUT_SECONDS):
-                stderr = self._process.stderr.read() if self._process.stderr else ""
-                self._stop()
+                stderr = self._stop()
                 raise ScreenshotUnavailable(
                     f"the throwaway board never answered /health: {stderr}".strip()
                 )
         except Exception:
+            self._stop()
+            Path(self._db_path).unlink(missing_ok=True)
             shutil.rmtree(self._stage_dir, ignore_errors=True)
             raise
         return self
@@ -212,28 +260,80 @@ class ThrowawayBoard:
         if self._stage_dir is not None:
             shutil.rmtree(self._stage_dir, ignore_errors=True)
 
-    def _stop(self) -> None:
+    def _stop(self) -> str:
         if self._process is None:
-            return
-        self._process.terminate()
+            return ""
+        process, self._process = self._process, None
+        if process.poll() is None:
+            process.terminate()
         try:
-            self._process.wait(timeout=10)
+            _, stderr = process.communicate(timeout=5)
         except subprocess.TimeoutExpired:
-            self._process.kill()
-            self._process.wait(timeout=10)
+            process.kill()
+            try:
+                _, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                # inherited pipes must not turn a failed screenshot into an unbounded wait
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
+                return "the throwaway board did not close its output pipes"
+        return (stderr or "")[-4096:]
 
 
-def _capture(base_url: str, view: str) -> bytes:
+def _capture_request_ok(base_url: str, request_url: str, method: str) -> bool:
+    expected, requested = urlsplit(base_url), urlsplit(request_url)
+    if (requested.scheme, requested.netloc) != (expected.scheme, expected.netloc):
+        return False
+    if method not in {"GET", "HEAD"}:
+        return False
+    path = requested.path
+    return path == "/health" or path.startswith("/ui/") or bool(_READ_API_PATH.fullmatch(path))
+
+
+def _capture(base_url: str, view: str, api_key: str | None = None) -> bytes:
     """opens the board and screenshots it. lazy playwright import: a host with no browsers
     installed fails exactly here, into the note the caller writes, rather than at module import."""
     from playwright.sync_api import sync_playwright
 
+    from smortboard.server.access import cookie_name
+
+    parsed = urlsplit(base_url)
+    if parsed.scheme != "http" or parsed.hostname != LOCALHOST or not parsed.port:
+        raise ScreenshotUnavailable("the screenshot must use its own loopback board")
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"],
+        )
         try:
-            page = browser.new_page()
+            context = browser.new_context(service_workers="block", accept_downloads=False)
+            context.route(
+                "**/*",
+                lambda route: (
+                    route.continue_()
+                    if _capture_request_ok(base_url, route.request.url, route.request.method)
+                    else route.abort()
+                ),
+            )
+            context.route_web_socket("**/*", lambda websocket: websocket.close())
+            if api_key is not None:
+                context.add_cookies(
+                    [
+                        {
+                            "name": cookie_name(parsed.port),
+                            "value": api_key,
+                            "url": base_url,
+                            "httpOnly": True,
+                            "sameSite": "Strict",
+                        }
+                    ]
+                )
+            page = context.new_page()
             page.set_default_timeout(PAGE_TIMEOUT_MS)
             page.goto(f"{base_url}/ui/index.html")
+            if api_key is not None:
+                page.locator(".card-strip").first.wait_for(state="visible")
             if view and view != DEFAULT_VIEW:
                 _open_named_view(page, view)
             return page.screenshot(full_page=True)
@@ -268,7 +368,10 @@ def take_screenshot(
     view = parse_screenshot_line(result_text)
     try:
         with board_factory(worktree_path) as board:
-            png = capture(board.base_url, view)
+            key = getattr(board, "api_key", None)
+            png = (
+                capture(board.base_url, view, api_key=key) if key else capture(board.base_url, view)
+            )
     except Exception as exc:  # noqa: BLE001 - a screenshot failure is a note, never a crash
         return ScreenshotResult(attached=False, note=f"the screenshot could not be taken: {exc}")
 

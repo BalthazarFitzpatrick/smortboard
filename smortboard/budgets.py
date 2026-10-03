@@ -15,38 +15,41 @@ from __future__ import annotations
 from typing import Any
 
 from smortboard import telemetry
-from smortboard.labs.events import cost_sum, event_cost, result_fields
 from smortboard.store.api import Store
 
 
 def _card_total_spend(store: Store, card_id: str) -> float | None:
-    return cost_sum(
-        event_cost(event)
-        for event in store.list_events(card_id)
-        if result_fields(event) is not None
-    )
+    return telemetry.card_telemetry(store, card_id)["totals"]["cost_usd"]
 
 
-def spend_refusal(store: Store, card: dict[str, Any]) -> str | None:
-    """a human reason this card must not start, or None if it may"""
-    board = store.get_board(card["board_id"])
+def board_spend_refusal(store: Store, board_id: str) -> str | None:
+    """admission against recorded spend, not a reservation or an in-flight hard cap"""
+    board = store.get_board(board_id)
     daily_budget = board.get("daily_budget_usd")
     if daily_budget is not None:
         spent_today = telemetry.board_spend_today(store, board["id"])
         if spent_today is None:
-            return "daily spend is unknown; configure model prices before enforcing a daily budget"
+            return "daily spend is unknown; configure missing model prices; records without token usage remain unknown"
         if spent_today >= daily_budget:
             return (
                 f"daily budget of ${daily_budget:.2f} for {board['name']} is spent "
                 f"(${spent_today:.2f} today); it resets at 00:00 UTC"
             )
 
+    return None
+
+
+def spend_refusal(store: Store, card: dict[str, Any]) -> str | None:
+    """a human reason this card's next model call must not start, or None if it may"""
+    refusal = board_spend_refusal(store, card["board_id"])
+    if refusal:
+        return refusal
     raw_cap = store.get_settings().get("card_total_budget_usd")
     if raw_cap is not None:
         cap = float(raw_cap)
         spent = _card_total_spend(store, card["id"])
         if spent is None:
-            return "this card's spend is unknown; configure model prices before enforcing its total cap"
+            return "this card's spend is unknown; configure missing model prices; records without token usage remain unknown"
         if spent >= cap:
             return f"this card has spent ${spent:.2f} of its ${cap:.2f} total cap"
 
