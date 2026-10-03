@@ -115,6 +115,63 @@ def test_a_clean_card_reaches_an_open_pull_request(board, monkeypatch):
     assert store.get_card(card_id)["status"] == "checking"
 
 
+@pytest.mark.parametrize("cap", ["daily", "card"])
+def test_worker_spend_stops_reviewer_admission(board, monkeypatch, cap):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    if cap == "daily":
+        store.set_board_daily_budget(store.get_card(card_id)["board_id"], 0.1)
+    else:
+        store.set_setting("card_total_budget_usd", 0.1)
+    reviews = []
+    monkeypatch.setattr(lifecycle, "run_review", lambda *a, **k: reviews.append(1))
+
+    class SpendingBackend(_Backend):
+        def run_card(self, store, card_id, *args, **kwargs):
+            store.append_event(card_id, "result", {"total_cost_usd": 0.1})
+            return super().run_card(store, card_id, *args, **kwargs)
+
+    backend = SpendingBackend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "refused"
+    assert "spent" in result.refusal
+    assert len(backend.calls) == 1
+    assert reviews == []
+
+
+def test_review_spend_stops_fix_round_admission(board, monkeypatch):
+    store, card_id = board
+    _stub_gates(monkeypatch)
+    store.set_setting("card_total_budget_usd", 0.1)
+    store.set_setting("findings_route", "fix")
+    reviews = []
+
+    def review(*args, **kwargs):
+        reviews.append(1)
+        store.append_event(card_id, "result", {"total_cost_usd": 0.1})
+        return ReviewResult(
+            approved=False,
+            findings=[
+                ReviewFinding(
+                    category="bug", severity="high", file="thing.py", line=1, message="fix it"
+                )
+            ],
+        )
+
+    monkeypatch.setattr(lifecycle, "run_review", review)
+
+    class AccountedBackend(_Backend):
+        def run_card(self, store, card_id, *args, **kwargs):
+            store.append_event(card_id, "result", {"total_cost_usd": 0})
+            return super().run_card(store, card_id, *args, **kwargs)
+
+    backend = AccountedBackend()
+    result = lifecycle.run_card_lifecycle(store, card_id, backend=backend)
+    assert result.phase == "refused"
+    assert len(backend.calls) == 1
+    assert reviews == [1]
+
+
 def test_the_phases_are_reported_in_order(board, monkeypatch):
     store, card_id = board
     _stub_gates(monkeypatch)

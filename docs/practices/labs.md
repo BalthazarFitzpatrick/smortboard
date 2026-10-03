@@ -119,6 +119,9 @@ previous effort range until their runtime capabilities are refreshed.
   prior spend is unknown.
 - the per-run watchdog acts on token usage, which the measured cli emits at turn completion. it
   cannot promise a hard dollar ceiling mid-turn.
+- adding prices also recovers historical codex estimates when model and complete input, cached
+  and output token counts were recorded. read projections carry the rates and historical-estimate
+  provenance; raw records and known actual costs stay unchanged. incomplete records stay unknown.
 
 measured limits: [event spike](../spikes/s4-codex-events.md),
 [credential spike](../spikes/s7-codex-auth.md).

@@ -282,6 +282,144 @@ def test_orchestrator_snapshot_carries_evidence_with_no_host_paths(store):
     assert str(store.path) not in str(snapshot)
 
 
+@pytest.mark.parametrize("failed_cost", [0.7, None])
+def test_evidence_keeps_failed_attempt_spend_and_distinguishes_eventual_success(store, failed_cost):
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "retried", complexity=2)
+    store.append_event(card["id"], "lifecycle_started", {})
+    store.append_event(
+        card["id"], "result", _worker_result(cost=failed_cost, model="claude-sonnet-4")
+    )
+    store.append_event(card["id"], "run_refused", {"note": "first attempt failed"})
+    _clean_run(store, card["id"], model="claude-sonnet-4")
+    store.update_card(card["id"], status="accepted")
+    evidence = board_evidence(store, board["id"])
+    row = evidence["model_scorecard"][0]
+    assert row["attempts"] == 2
+    assert row["cards"] == 1
+    assert row["first_attempt_clean_rate"] == 0
+    assert row["eventual_acceptance_rate"] == 1
+    assert row["clean_pr_rate"] == 0.5
+    assert row["effort"] is None
+    assert row["complexity_source"] == "current_rating"
+    expected = None if failed_cost is None else pytest.approx(0.83)
+    assert row["cost_usd"] == expected
+    assert evidence["cards"][0]["cost_usd"] == expected
+    assert evidence["cards"][0]["first_attempt_clean"] is False
+
+
+def test_evidence_attributes_retries_to_their_model_and_recorded_effort(store):
+    from smortboard.telemetry import cost_optimisation
+
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "switched", complexity=3)
+    store.append_event(card["id"], "lifecycle_started", {})
+    store.append_event(
+        card["id"],
+        "worker_selection",
+        {"lab": "anthropic", "model": "claude-sonnet-4", "effort": "low", "complexity": 1},
+    )
+    store.append_event(card["id"], "result", _worker_result(cost=0.7, model="claude-sonnet-4"))
+    store.append_event(card["id"], "run_refused", {"note": "failed"})
+    _clean_run(store, card["id"], model="claude-opus-4")
+    store.update_card(card["id"], status="accepted")
+    evidence = board_evidence(store, board["id"])
+    assert evidence["cards"][0]["model"] is None
+    assert len(evidence["cards"][0]["models"]) == 2
+    rows = {row["model"]: row for row in evidence["model_scorecard"]}
+    failed = rows["anthropic/claude-sonnet-4"]
+    assert failed["cost_usd"] == 0.7
+    assert failed["effort"] == "low"
+    assert failed["complexity"] == 1
+    assert failed["complexity_source"] == "run_rating"
+    assert rows["anthropic/claude-opus-4"]["first_attempt_clean_rate"] is None
+    fit = {row["model"]: row for row in cost_optimisation(store)["model_fit"]}
+    assert fit["anthropic/claude-sonnet-4"]["cost_usd"] == 0.7
+    assert fit["anthropic/claude-opus-4"]["cost_usd"] == 0.13
+
+
+def test_evidence_does_not_merge_cards_with_the_same_short_id(store, monkeypatch):
+    board = store.create_board("b")
+    ids = iter(["12345678-first", "12345678-second"])
+    with monkeypatch.context() as patch:
+        patch.setattr("smortboard.store.api._new_id", lambda: next(ids))
+        first = store.create_card(board["id"], None, "first")
+        second = store.create_card(board["id"], None, "second")
+    _clean_run(store, first["id"])
+    _clean_run(store, second["id"])
+    evidence = board_evidence(store, board["id"])
+    assert [row["attempts"] for row in evidence["cards"]] == [1, 1]
+    assert evidence["model_scorecard"][0]["cards"] == 2
+    assert evidence["model_scorecard"][0]["cost_usd"] == 0.26
+
+
+def test_live_selection_is_not_a_finished_failure_and_missing_crash_cost_is_unknown(store):
+    from smortboard.budgets import spend_refusal
+    from smortboard.telemetry import board_spend_today
+
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "running", status="doing")
+    store.append_event(card["id"], "lifecycle_started", {})
+    store.append_event(
+        card["id"], "worker_selection", {"lab": "openai", "model": "gpt-6-sol", "effort": "medium"}
+    )
+    assert board_evidence(store, board["id"])["model_scorecard"] == []
+    assert board_evidence(store, board["id"])["cards"] == []
+    store.append_event(card["id"], "model_call_started", {"role": "worker"})
+    store.append_event(card["id"], "run_crashed", {"error": "worker lost"})
+    store.append_event(card["id"], "run_ended", {"phase": "blocked"})
+    evidence = board_evidence(store, board["id"])
+    assert evidence["cards"][0]["cost_usd"] is None
+    assert evidence["model_scorecard"][0]["avg_cost_usd"] is None
+    assert evidence["model_scorecard"][0]["attempts"] == 1
+    assert board_spend_today(store, board["id"]) is None
+    store.set_board_daily_budget(board["id"], 10)
+    assert "without token usage remain unknown" in spend_refusal(store, card)
+    store.set_board_daily_budget(board["id"], None)
+    store.set_setting("card_total_budget_usd", 10)
+    assert "without token usage remain unknown" in spend_refusal(store, card)
+
+
+def test_mixed_models_inside_one_attempt_are_not_attributed_to_the_costliest_model(store):
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "mixed calls")
+    store.append_event(card["id"], "lifecycle_started", {})
+    for model, effort, cost in [("claude-sonnet-4", "low", 0.1), ("claude-opus-4", "high", 0.8)]:
+        store.append_event(
+            card["id"], "worker_selection", {"lab": "anthropic", "model": model, "effort": effort}
+        )
+        store.append_event(card["id"], "result", _worker_result(cost=cost, model=model))
+        store.append_event(card["id"], "worker_summary", {"text": "done"})
+    store.append_event(card["id"], "merge_request", {"url": "https://example.test/pr/1"})
+    evidence = board_evidence(store, board["id"])
+    row = evidence["cards"][0]
+    assert row["cost_usd"] == 0.9
+    assert row["model"] is None
+    assert row["effort"] is None
+    assert row["models"] == ["anthropic/claude-opus-4", "anthropic/claude-sonnet-4"]
+    assert row["efforts"] == ["high", "low"]
+    assert evidence["model_scorecard"] == []
+
+
+def test_empty_review_selection_is_not_unknown_spend(store, monkeypatch, tmp_path):
+    from smortboard.review import reviewer
+    from smortboard.telemetry import board_spend_today
+
+    board = store.create_board("b")
+    card = store.create_card(board["id"], None, "no review call")
+    store.append_event(card["id"], "lifecycle_started", {})
+    store.append_event(card["id"], "result", _worker_result(cost=0.1))
+    store.append_event(card["id"], "worker_summary", {"text": "done"})
+    store.append_event(card["id"], "reviewer_selection", {"lab": "anthropic", "model": "sonnet"})
+    monkeypatch.setattr(reviewer, "docker_available", lambda: True)
+    monkeypatch.setattr(reviewer, "read_card_token", lambda *a: "test-token")
+    result = reviewer.run_review(store, card["id"], "", tmp_path, tmp_path / "settings.json")
+    assert result.approved
+    store.append_event(card["id"], "run_ended", {"phase": "opened"})
+    assert board_spend_today(store, board["id"]) == 0.1
+    assert card_telemetry(store, card["id"])["totals"]["cost_usd"] == 0.1
+
+
 # -- the two routes, end to end over real http --------------------------------------------
 
 
