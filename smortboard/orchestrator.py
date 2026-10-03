@@ -183,6 +183,8 @@ _MESSAGE_HISTORY = 20
 # each of those messages, cut past this many characters: measured on the live board, 6.8k of the
 # 15.6k characters in its last 20 bodies sat past the first 800
 _MESSAGE_BODY_LIMIT = 800
+_TERMINAL_CARD_LIMIT = 40
+_PLAN_COMPACTION_CHARS = 8000
 # the operator's actual comment length is unbounded, but the snapshot's cards list stays short - see
 # _snapshot_card
 _BOARD_AUTHOR = "board"
@@ -516,9 +518,26 @@ def _snapshot_repos(store: Store, board_id: str) -> list[dict[str, Any]]:
     return repos
 
 
-def _snapshot_cards(store: Store, board_id: str) -> list[dict[str, Any]]:
+def _snapshot_cards(store: Store, board_id: str) -> tuple[list[dict[str, Any]], int]:
+    all_cards = store.list_cards(board_id)
+    by_id = {card["id"]: card for card in all_cards}
+    terminal = [card for card in all_cards if card["status"] in ("accepted", "rejected")]
+    recent = sorted(terminal, key=lambda card: card["updated_at"], reverse=True)
+    keep = {card["id"] for card in recent[:_TERMINAL_CARD_LIMIT]}
+    pending = [card["id"] for card in all_cards if card["status"] not in ("accepted", "rejected")]
+    visited = set()
+    # retain the entire prerequisite chain even when a dependency is old and terminal
+    while pending:
+        card_id = pending.pop()
+        if card_id in visited or card_id not in by_id:
+            continue
+        visited.add(card_id)
+        keep.add(card_id)
+        pending.extend(by_id[card_id]["depends_on"])
     cards = []
-    for card in store.list_cards(board_id):
+    for card in all_cards:
+        if card["id"] not in keep:
+            continue
         cards.append(
             {
                 "id": _short_id(card["id"]),
@@ -528,7 +547,7 @@ def _snapshot_cards(store: Store, board_id: str) -> list[dict[str, Any]]:
                 "depends_on": [_short_id(d) for d in card["depends_on"]],
             }
         )
-    return cards
+    return cards, len(all_cards) - len(cards)
 
 
 def build_board_snapshot(store: Store, board_id: str) -> dict[str, Any]:
@@ -538,10 +557,14 @@ def build_board_snapshot(store: Store, board_id: str) -> dict[str, Any]:
     finished card's model, cost, turns and outcome, plus a per-model scorecard - short ids and
     rounded numbers only, so it stays small in every turn's prompt.
     """
+    cards, omitted = _snapshot_cards(store, board_id)
+    plan = store.get_plan(board_id)
     return {
         "repos": _snapshot_repos(store, board_id),
-        "cards": _snapshot_cards(store, board_id),
-        "plan": store.get_plan(board_id),
+        "cards": cards,
+        "omitted_terminal_cards": omitted,
+        "plan": plan,
+        "plan_needs_compaction": len(plan or "") > _PLAN_COMPACTION_CHARS,
         "messages": [
             {"author": m["author"], "body": _cap_body(m["body"])}
             for m in store.list_orchestrator_messages(board_id, limit=_MESSAGE_HISTORY)
@@ -588,7 +611,14 @@ CARD_TEXT_RULES = (
     "- complexity: rate each card low, medium or high, by judgement and files needed.\n"
     "Telegram style: drop articles, filler, connectives, pronouns; keep exact names, numbers, "
     'paths. "The fox dug his hole and was dreaming of a nicer den" -> "fox dug hole, dreams of '
-    'nicer den". No markdown. Worker detail goes in criteria and tasks, not description.'
+    'nicer den". No markdown. Worker detail goes in criteria and tasks, not description. '
+    "each card must be self-contained: preserve agreed decisions, constraints, interfaces and "
+    "verification in criteria and tasks. workers do not receive this conversation or board plan. "
+    "use more criteria/tasks when needed; brevity must not remove execution requirements."
+    "\ncontext rules. the snapshot reports omitted_terminal_cards; missing historical cards "
+    "must not be assumed nonexistent. when plan_needs_compaction is true, rewrite the plan "
+    "concisely without losing unresolved decisions, constraints or dependencies. the complete "
+    "plan is provided; never discard requirements to meet a character target."
 )
 
 
@@ -639,8 +669,9 @@ _PLANNING_MODE_RULES = (
     "You are in PLANNING MODE. Do not create, update or delete any card - the `cards` field of "
     "your reply is ignored entirely in this mode, whatever it holds. Talk through the plan in "
     "`reply` instead, and when the plan is settled end `reply` with a terse summary, one line per "
-    'card, in exactly this form: "create: <title>", "update: <title> - <what>", '
-    '"delete: <title>". Omit the summary while the plan is still being worked out.'
+    'new card, in exactly this form: "create: <title>". managing can only create cards; '
+    "updates and deletions require the operator to edit existing cards. do not promise those "
+    "actions when switching modes. omit the summary while the plan is still being worked out."
 )
 
 _MANAGE_MODE_RULES = (
@@ -819,8 +850,8 @@ def run_orchestrator_turn(
     a `screenshot` in the reply triggers exactly one re-run with the image readable; the
     intermediate "let me look" reply is never shown to the operator - only the re-run's reply is.
 
-    `mode` is "planning" (default) or "manage" - planning never creates a card even if the reply
-    proposes some (the turn prompt tells the orchestrator so too); manage creates them as before.
+    direct callers default to "manage" for compatibility; the http endpoint explicitly defaults
+    to "planning". planning never creates a card even if the reply proposes some; manage does.
     the same holds for `test_commands`: only manage stores one, and only on a repo that has none.
     """
     if store_message:
@@ -879,8 +910,8 @@ def run_orchestrator_turn(
         if shot_warning:
             warnings.append(shot_warning)
 
-    created_by_title: dict[str, str] = {}
-    created_summaries: list[dict[str, str]] = []
+    prepared: list[dict[str, Any]] = []
+    linked_tasks: set[tuple[str, str]] = set()
 
     # PLANNING MODE NEVER TOUCHES A CARD. the prompt already told the orchestrator not to propose
     # any, but a reply is model output, not a contract - so the code enforces it too, and says so
@@ -925,12 +956,13 @@ def run_orchestrator_turn(
             task_id = None
         if task_id:
             holder = store.ledger_links(repo_id).get(task_id)
-            if holder:
+            if holder or (repo_id, task_id) in linked_tasks:
+                location = f"on card {_short_id(holder)}" if holder else "in this proposal"
                 warnings.append(
-                    f"task {task_id} is already on card {_short_id(holder)}, "
-                    f'so "{title}" was not created'
+                    f'task {task_id} is already {location}, so "{title}" was not created'
                 )
                 continue
+            linked_tasks.add((repo_id, task_id))
         # a model-proposed lease is untrusted: invalid globs are dropped, and so is a catch-all
         # like ** or */** - a human may lease the whole repo, the model may not
         valid = _clean_leases(spec.get("leases") or [])
@@ -940,41 +972,31 @@ def run_orchestrator_turn(
                 f'"{title}" has no lease, so the board will not run it until one is set'
             )
         warnings.extend(card_text_warnings(spec))
-        card = store.create_card(
-            board_id,
-            repo_id,
-            title,
-            status="todo",
-            description=spec.get("description") or None,
-            criteria=list(spec.get("criteria") or []),
-            tasks=list(spec.get("tasks") or []),
-            leases=leases,
-            model=parse_ref(model)[1] if model else None,
-            lab=parse_ref(model)[0] if model else None,
-            ledger_task=task_id,
-            complexity=_clean_complexity(spec.get("complexity")),
-            effort=effort,
+        prepared.append(
+            {
+                "repo_id": repo_id,
+                "title": title,
+                "status": "todo",
+                "description": spec.get("description") or None,
+                "criteria": list(spec.get("criteria") or []),
+                "tasks": list(spec.get("tasks") or []),
+                "leases": leases,
+                "model": parse_ref(model)[1] if model else None,
+                "lab": parse_ref(model)[0] if model else None,
+                "ledger_task": task_id,
+                "complexity": _clean_complexity(spec.get("complexity")),
+                "depends_on": spec.get("depends_on") or [],
+                "effort": effort,
+            }
         )
-        created_by_title[title] = card["id"]
-        created_summaries.append({"id": card["id"], "title": title})
 
-    # depends_on resolves against titles proposed in this same reply first, then against any
-    # existing card on the board by id or title - a name matching neither is dropped silently,
-    # since the schema gives no way to say why one dependency in a list failed to resolve
-    existing_cards = store.list_cards(board_id)
-    existing_by_title = {c["title"]: c["id"] for c in existing_cards}
-    existing_ids = {c["id"] for c in existing_cards}
-    for spec in proposed:
-        title = str(spec.get("title") or "").strip()
-        card_id = created_by_title.get(title)
-        if card_id is None:
-            continue
-        for dep_name in spec.get("depends_on") or []:
-            dep_id = created_by_title.get(dep_name) or existing_by_title.get(dep_name)
-            if dep_id is None and dep_name in existing_ids:
-                dep_id = dep_name
-            if dep_id is not None and dep_id != card_id:
-                store.add_dependency(card_id, dep_id)
+    try:
+        created = store.create_cards_with_dependencies(board_id, prepared) if prepared else []
+    except ValueError as exc:
+        error = f"no proposed cards were created: {exc}"
+        store.add_orchestrator_message(board_id, _BOARD_AUTHOR, error)
+        return OrchestratorTurnResult(reply_message=None, error=error)
+    created_summaries = [{"id": card["id"], "title": card["title"]} for card in created]
 
     warnings.extend(_apply_test_commands(store, board_id, test_commands))
 

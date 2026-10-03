@@ -6,6 +6,7 @@ import re
 import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
+from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 from typing import Any
 
@@ -662,6 +663,51 @@ class Store:
         lab: str | None = None,
         effort: str | None = None,
     ) -> dict[str, Any]:
+        with self._conn:
+            return self._insert_card(
+                board_id,
+                repo_id,
+                title,
+                workstream,
+                status,
+                blocked_reason_code,
+                description,
+                position,
+                review_flag,
+                tasks,
+                criteria,
+                leases,
+                model,
+                ledger_task,
+                depends_on,
+                complexity,
+                lab,
+                effort,
+            )
+
+    def _insert_card(
+        self,
+        board_id: str,
+        repo_id: str | None,
+        title: str,
+        workstream: str | None = None,
+        status: str = "todo",
+        blocked_reason_code: str | None = None,
+        description: str | None = None,
+        position: int = 0,
+        review_flag: bool = False,
+        tasks: list[str] | None = None,
+        criteria: list[str] | None = None,
+        leases: list[str] | None = None,
+        model: str | None = None,
+        ledger_task: str | None = None,
+        depends_on: list[str] | None = None,
+        complexity: int | None = None,
+        lab: str | None = None,
+        effort: str | None = None,
+        *,
+        card_id: str | None = None,
+    ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
         lab, model = _model_pair(lab, model)
         _check_complexity(complexity)
@@ -673,7 +719,7 @@ class Store:
         # cycle or depend on itself (its id does not exist yet), so only existence matters
         cleaned_deps = list(dict.fromkeys(depends_on or []))
         self._check_dependency_ids_exist(cleaned_deps)
-        card_id = _new_id()
+        card_id = card_id or _new_id()
         now = _now()
         self._conn.execute(
             """
@@ -722,8 +768,57 @@ class Store:
                 "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
                 (card_id, dep_id),
             )
-        self._conn.commit()
         return self.get_card(card_id)
+
+    def create_cards_with_dependencies(
+        self, board_id: str, specs: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """validate the complete proposed graph, then publish cards and edges together"""
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self.get_board(board_id)
+            existing = self.list_cards(board_id)
+            existing_ids = {card["id"] for card in existing}
+            proposed = [{**spec, "id": _new_id()} for spec in specs]
+            candidates = existing + proposed
+            graph = {card["id"]: list(card.get("depends_on") or []) for card in existing}
+            for card in proposed:
+                dependencies = []
+                for reference in card.get("depends_on") or []:
+                    if not isinstance(reference, str) or not reference.strip():
+                        raise ValueError("dependency reference must be a nonempty string")
+                    reference = reference.strip()
+                    exact = [row["id"] for row in existing if row["id"] == reference]
+                    matches = exact or list(
+                        {
+                            row["id"]
+                            for row in candidates
+                            if row["title"] == reference
+                            or (
+                                row["id"] in existing_ids
+                                and len(reference) >= 8
+                                and row["id"].startswith(reference)
+                            )
+                        }
+                    )
+                    if len(matches) != 1:
+                        reason = "ambiguous" if matches else "missing"
+                        raise ValueError(f'{reason} dependency "{reference}" on "{card["title"]}"')
+                    dependencies.append(matches[0])
+                graph[card["id"]] = list(dict.fromkeys(dependencies))
+            try:
+                ordered = list(TopologicalSorter(graph).static_order())
+            except CycleError as exc:
+                raise ValueError("dependency cycle in proposed cards") from exc
+            proposed_by_id = {card["id"]: card for card in proposed}
+            for card_id in ordered:
+                if card_id not in proposed_by_id:
+                    continue
+                fields = dict(proposed_by_id[card_id])
+                fields.pop("id")
+                fields["depends_on"] = graph[card_id]
+                self._insert_card(board_id, card_id=card_id, **fields)
+            return [self.get_card(card["id"]) for card in proposed]
 
     def ledger_links(self, repo_id: str) -> dict[str, str]:
         """which of this repo's ledger tasks already have a card: task id -> card id"""
@@ -732,6 +827,55 @@ class Store:
             (repo_id,),
         ).fetchall()
         return {row["ledger_task"]: row["id"] for row in rows}
+
+    def replace_cards(
+        self, board_id: str, card_ids: list[str], fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        """contract a fold's dependency graph and replace its originals in one transaction"""
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            ids = set(card_ids)
+            if len(ids) < 2:
+                raise ValueError("fewer than two distinct cards to fold")
+            originals = [self.get_card(card_id) for card_id in ids]
+            if any(
+                card["board_id"] != board_id
+                or card["status"] != "todo"
+                or card["repo_id"] != fields.get("repo_id")
+                for card in originals
+            ):
+                raise ValueError("fold members must still be todo cards on the same board and repo")
+            merged_id = _new_id()
+            graph: dict[str, set[str]] = {merged_id: set()}
+            for edge in self._conn.execute("SELECT card_id, depends_on_card_id FROM card_deps"):
+                source, target = edge["card_id"], edge["depends_on_card_id"]
+                if source in ids and target in ids:
+                    continue
+                source = merged_id if source in ids else source
+                target = merged_id if target in ids else target
+                graph.setdefault(source, set()).add(target)
+            try:
+                list(TopologicalSorter(graph).static_order())
+            except CycleError as exc:
+                raise ValueError("fold would create a dependency cycle") from exc
+            # snapshot all edges before removing any member, so each backup remains complete
+            for card in originals:
+                self._backup_card(card)
+            for card in originals:
+                self._delete_card_rows(card["id"])
+            self._insert_card(
+                board_id, **{**fields, "depends_on": sorted(graph[merged_id])}, card_id=merged_id
+            )
+            for source, dependencies in graph.items():
+                if source != merged_id and merged_id in dependencies:
+                    self._conn.execute(
+                        "INSERT INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
+                        (source, merged_id),
+                    )
+                    self._conn.execute(
+                        "UPDATE cards SET updated_at = ? WHERE id = ?", (_now(), source)
+                    )
+            return self.get_card(merged_id)
 
     def _card_row(self, card_id: str) -> sqlite3.Row:
         row = self._conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
@@ -1084,8 +1228,12 @@ class Store:
         the card is snapshotted into card_backups first (see _backup_card), so this delete is
         reversible through restore_card for BACKUP_RETENTION_DAYS days rather than destructive.
         """
-        card = self.get_card(card_id)  # raises NotFoundError; doubles as the backup snapshot
-        self._backup_card(card)
+        with self._conn:
+            card = self.get_card(card_id)  # raises NotFoundError; doubles as the backup snapshot
+            self._backup_card(card)
+            self._delete_card_rows(card_id)
+
+    def _delete_card_rows(self, card_id: str) -> None:
         for table in self._CARD_CHILDREN:
             self._conn.execute(f"DELETE FROM {table} WHERE card_id = ?", (card_id,))
         # a dependency edge names a card at either end, so both directions have to go
@@ -1094,7 +1242,6 @@ class Store:
             (card_id, card_id),
         )
         self._conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
-        self._conn.commit()
 
     def _backup_card(self, card: dict[str, Any]) -> None:
         """writes one card_backups row holding everything restore_card needs to recreate the card
@@ -1281,6 +1428,11 @@ class Store:
         would leave the board unable to schedule cards, so all three are refused outright and
         nothing changes.
         """
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            return self._replace_dependencies(card_id, depends_on)
+
+    def _replace_dependencies(self, card_id: str, depends_on: list[str]) -> dict[str, Any]:
         self._card_row(card_id)  # raises NotFoundError on a bad card_id itself
         cleaned = list(dict.fromkeys(depends_on))
         if card_id in cleaned:
@@ -1294,15 +1446,15 @@ class Store:
                 (card_id, dep_id),
             )
         self._conn.execute("UPDATE cards SET updated_at = ? WHERE id = ?", (_now(), card_id))
-        self._conn.commit()
         return self.get_card(card_id)
 
     def add_dependency(self, card_id: str, depends_on_card_id: str) -> None:
-        self._conn.execute(
-            "INSERT OR IGNORE INTO card_deps (card_id, depends_on_card_id) VALUES (?, ?)",
-            (card_id, depends_on_card_id),
-        )
-        self._conn.commit()
+        with self._conn:
+            # hold the write lock while checking so concurrent edges cannot create a cycle
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._replace_dependencies(
+                card_id, [*self.get_dependencies(card_id), depends_on_card_id]
+            )
 
     def remove_dependency(self, card_id: str, depends_on_card_id: str) -> None:
         self._conn.execute(

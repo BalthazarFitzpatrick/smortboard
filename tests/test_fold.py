@@ -101,6 +101,70 @@ def test_cards_on_another_repo_never_fold_and_a_lone_card_is_left_alone(store, b
     assert lines[0].startswith("not folded") and "another repo" in lines[0]
 
 
+def test_fold_rejects_contracted_cycle_before_deleting_any_original(store, board):
+    board_id, repo_id, _ = board
+    a, b, c = [
+        _card(store, board_id, repo_id, title, leases=["src/**"]) for title in ("a", "b", "c")
+    ]
+    store.add_dependency(a["id"], b["id"])
+    store.add_dependency(b["id"], c["id"])
+    before = store.list_cards(board_id)
+    backups = store.list_card_backups(board_id)
+    lines = apply_folds(store, board_id, [{"cards": [a["id"], c["id"]], "title": "merged"}])
+    assert lines == ['not folded: "merged" - fold would create a dependency cycle']
+    assert store.list_cards(board_id) == before
+    assert store.list_card_backups(board_id) == backups
+
+
+def test_fold_contracts_internal_edges_without_creating_a_self_dependency(store, board):
+    board_id, repo_id, _ = board
+    a = _card(store, board_id, repo_id, "a", leases=["src/**"])
+    b = _card(store, board_id, repo_id, "b", leases=["src/**"])
+    store.add_dependency(a["id"], b["id"])
+    lines = apply_folds(store, board_id, [{"cards": [a["id"], b["id"]], "title": "merged"}])
+    assert lines[0].startswith("folded ")
+    [merged] = store.list_cards(board_id)
+    assert merged["depends_on"] == []
+    backups = store.list_card_backups(board_id)
+    assert {row["card_id"] for row in backups} == {a["id"], b["id"]}
+
+
+def test_fold_insert_failure_restores_originals_and_edges(store, board, monkeypatch):
+    board_id, repo_id, _ = board
+    a = _card(store, board_id, repo_id, "a", leases=["src/**"])
+    b = _card(store, board_id, repo_id, "b", leases=["src/**"])
+    outside = _card(store, board_id, repo_id, "outside", depends_on=[a["id"]])
+    before = store.list_cards(board_id)
+    insert = store._insert_card
+
+    def fail_after_insert(*args, **kwargs):
+        insert(*args, **kwargs)
+        raise ValueError("injected insertion failure")
+
+    monkeypatch.setattr(store, "_insert_card", fail_after_insert)
+    lines = apply_folds(store, board_id, [{"cards": [a["id"], b["id"]], "title": "merged"}])
+    assert lines == ['not folded: "merged" - injected insertion failure']
+    assert store.list_cards(board_id) == before
+    assert store.get_dependencies(outside["id"]) == [a["id"]]
+    assert store.list_card_backups(board_id) == []
+
+
+def test_fold_deletions_remain_invisible_until_replacement_is_complete(store, board, monkeypatch):
+    board_id, repo_id, _ = board
+    a = _card(store, board_id, repo_id, "a", leases=["src/**"])
+    b = _card(store, board_id, repo_id, "b", leases=["src/**"])
+    remove = store._delete_card_rows
+    with Store(store.path) as observer:
+
+        def inspect_delete(card_id):
+            remove(card_id)
+            assert _titles(observer, board_id) == ["a", "b"]
+
+        monkeypatch.setattr(store, "_delete_card_rows", inspect_delete)
+        apply_folds(store, board_id, [{"cards": [a["id"], b["id"]], "title": "merged"}])
+        assert _titles(observer, board_id) == ["merged"]
+
+
 def test_the_snapshot_lists_which_todo_cards_share_a_lease(store, board):
     board_id, repo_id, other_id = board
     a = _card(store, board_id, repo_id, "a", leases=["ui/*.js"])

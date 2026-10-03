@@ -368,11 +368,12 @@ def test_deleting_a_card_takes_its_children_with_it(store):
     FOREIGN KEY constraint failed for any card that had ever been used."""
     board, card = _make_board_and_card(store)
     other = store.create_card(board["id"], None, "the other one")
+    downstream = store.create_card(board["id"], None, "downstream")
     store.add_comment(card["id"], "someone", "a comment")
     store.append_event(card["id"], "run_started", {"pid": 1})
     store.add_attachment(card["id"], "note.txt", "text/plain", b"bytes")
     store.add_dependency(card["id"], other["id"])
-    store.add_dependency(other["id"], card["id"])
+    store.add_dependency(downstream["id"], card["id"])
 
     store.delete_card(card["id"])
 
@@ -381,6 +382,7 @@ def test_deleting_a_card_takes_its_children_with_it(store):
     # the dependency edges named it at both ends, and both had to go
     assert store.get_dependencies(other["id"]) == []
     assert store.get_dependents(other["id"]) == []
+    assert store.get_dependencies(downstream["id"]) == []
 
 
 def test_deleting_a_board_takes_its_cards_with_it(store):
