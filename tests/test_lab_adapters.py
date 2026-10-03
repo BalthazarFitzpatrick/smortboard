@@ -268,8 +268,10 @@ def test_runner_records_run_profile_not_current_active_profile(monkeypatch):
     store = Store()
     run_process(store, "c", ["fake"], model="sonnet", profile="original")
     assert all(payload["profile"] == "original" for _, payload in store.events)
-    assert store.events[0][1]["neutral"][0]["rate_limit"]["status"] == "ok"
-    assert store.events[1][1]["neutral"][-1]["result"]["ok"]
+    assert store.events[0][0] == "model_call_started"
+    recorded = dict(store.events)
+    assert recorded["rate_limit_event"]["neutral"][0]["rate_limit"]["status"] == "ok"
+    assert recorded["result"]["neutral"][-1]["result"]["ok"]
 
 
 @pytest.mark.parametrize("cost", [None, 0.2])

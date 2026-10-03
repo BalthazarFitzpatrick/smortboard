@@ -507,11 +507,18 @@ def run_process(
     )
     handle = ProcessHandle(process, container_name=container_name)
     if store is not None:
-        store.append_event(
-            card_id,
-            "model_call_started",
-            {"role": role, "lab": lab, "model": model, "profile": profile},
-        )
+        recorded = False
+        try:
+            store.append_event(
+                card_id,
+                "model_call_started",
+                {"role": role, "lab": lab, "model": model, "profile": profile},
+            )
+            recorded = True
+        finally:
+            # the caller cannot stop an unregistered process if accounting failed before handoff
+            if not recorded:
+                handle.terminate()
     if on_process is not None:
         on_process(handle)
     if time_cap_seconds is None:

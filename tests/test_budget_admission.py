@@ -138,3 +138,42 @@ def test_spend_start_marker_requires_a_started_process(store, tmp_path):
     assert events[0]["kind"] == "model_call_started"
     assert events[0]["payload"]["role"] == "worker"
     assert board_spend_today(store, board["id"]) == 0.1
+
+
+@pytest.mark.parametrize("container_name", [None, "test-container"])
+def test_failed_start_recording_stops_and_reaps_the_process(monkeypatch, container_name):
+    import sqlite3
+    import subprocess
+    import sys
+
+    from smortboard.exec import runner
+
+    class BrokenStore:
+        def append_event(self, *args):
+            raise sqlite3.OperationalError("database is locked")
+
+    children = []
+    removed = []
+    launch = subprocess.Popen
+
+    def start(*args, **kwargs):
+        process = launch(*args, **kwargs)
+        children.append(process)
+        return process
+
+    def remove(cmd, **kwargs):
+        removed.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(runner.subprocess, "Popen", start)
+    monkeypatch.setattr(runner.subprocess, "run", remove)
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        runner.run_process(
+            BrokenStore(),
+            "c",
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            container_name=container_name,
+        )
+    assert len(children) == 1
+    assert children[0].poll() is not None
+    assert removed == ([["docker", "rm", "-f", container_name]] if container_name else [])
