@@ -1523,10 +1523,19 @@ class Store:
         return {**_row_to_dict(row), "lab": row["lab"] or "anthropic"}
 
     def list_board_spend(self, board_id: str) -> list[dict[str, Any]]:
+        from smortboard.labs.events import recover_usage
+
         rows = self._conn.execute(
             "SELECT * FROM board_spend WHERE board_id = ? ORDER BY created_at", (board_id,)
         ).fetchall()
-        return [{**_row_to_dict(r), "lab": r["lab"] or "anthropic"} for r in rows]
+        return [
+            recover_usage(
+                {**_row_to_dict(r), "lab": r["lab"] or "anthropic"},
+                r["lab"] or "anthropic",
+                r["model"],
+            )
+            for r in rows
+        ]
 
     def get_plan(self, board_id: str) -> str | None:
         row = self._conn.execute(

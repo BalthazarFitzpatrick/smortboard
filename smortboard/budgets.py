@@ -27,9 +27,9 @@ def _card_total_spend(store: Store, card_id: str) -> float | None:
     )
 
 
-def spend_refusal(store: Store, card: dict[str, Any]) -> str | None:
-    """a human reason this card must not start, or None if it may"""
-    board = store.get_board(card["board_id"])
+def board_spend_refusal(store: Store, board_id: str) -> str | None:
+    """admission against recorded spend, not a reservation or an in-flight hard cap"""
+    board = store.get_board(board_id)
     daily_budget = board.get("daily_budget_usd")
     if daily_budget is not None:
         spent_today = telemetry.board_spend_today(store, board["id"])
@@ -41,6 +41,14 @@ def spend_refusal(store: Store, card: dict[str, Any]) -> str | None:
                 f"(${spent_today:.2f} today); it resets at 00:00 UTC"
             )
 
+    return None
+
+
+def spend_refusal(store: Store, card: dict[str, Any]) -> str | None:
+    """a human reason this card's next model call must not start, or None if it may"""
+    refusal = board_spend_refusal(store, card["board_id"])
+    if refusal:
+        return refusal
     raw_cap = store.get_settings().get("card_total_budget_usd")
     if raw_cap is not None:
         cap = float(raw_cap)

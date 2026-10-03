@@ -31,6 +31,7 @@ from typing import Any
 
 from smortboard.actions import with_next
 from smortboard.briefing import repeats_failed_attempt, resume_briefing, resume_point
+from smortboard.budgets import spend_refusal
 from smortboard.exec.backends import (
     CardRuntimeUnavailable,
     card_image,
@@ -742,6 +743,9 @@ def _run_attempt(
         nonlocal last_summary, worker_started
         """one agent run in the card's worktree; returns the blocked/stopped state if it stopped
         short"""
+        refusal = spend_refusal(store, card)
+        if refusal:
+            return _refuse(store, state, refusal)
         if not worker_started:
             run_ref(store, "worker", card, consume=True)
             worker_started = True
@@ -881,6 +885,9 @@ def _run_attempt(
             store.append_event(card_id, "review_reused", {"head": head})
             break
         phase("reviewing")
+        refusal = spend_refusal(store, card)
+        if refusal:
+            return _refuse(store, state, refusal)
         try:
             if not reviewer_started:
                 run_ref(store, "reviewer", card, consume=True)

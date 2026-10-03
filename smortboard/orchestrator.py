@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from smortboard import profiles
+from smortboard.budgets import board_spend_refusal
 from smortboard.exec.backends import (
     CONTAINER_HARDENING_FLAGS,
     card_image,
@@ -218,6 +219,9 @@ def _real_runner(
         screenshot_path: Path | None,
         effort: str | None = None,
     ) -> RunResult:
+        refusal = board_spend_refusal(store, board_id)
+        if refusal:
+            raise RuntimeError(refusal)
         if not docker_available():
             raise RuntimeError("docker is not running, and the orchestrator runs in a container.")
         lab, model_id = parse_ref(model)
