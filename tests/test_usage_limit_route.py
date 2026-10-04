@@ -631,7 +631,7 @@ def test_latest_reset_reads_only_recent_rate_limit_rows(store, board, monkeypatc
 # -- a runtime that is not ready --------------------------------------------------------------------
 
 
-def test_a_runtime_refusal_backs_off_then_gives_up_to_the_inbox(store, board):
+def test_a_runtime_refusal_is_attention_while_the_board_still_retries(store, board):
     board_id, repo_id = board
     card_id = store.create_card(board_id, repo_id, "a")["id"]
     runs = FakeRuns()
@@ -649,9 +649,13 @@ def test_a_runtime_refusal_backs_off_then_gives_up_to_the_inbox(store, board):
         retry_at = scheduler.schedule_view()["card_retry_at"][card_id]
         assert retry_at == pytest.approx(time.time() + minutes * 60, abs=5)
         assert runs.started == []
-        note = handled_by_board(store, store.get_card(card_id), registry)
-        assert note is not None and note.startswith("retry at"), "out of the inbox meanwhile"
-        assert attention_rows(store, registry) == []
+        # the board retries it, but only a person can start docker: attention, never "working"
+        assert handled_by_board(store, store.get_card(card_id), registry) is None
+        (row,) = attention_rows(store, registry)
+        assert row["reason"] == "runtime" and "docker is not running" in row["question"]
+        (shown,) = with_actions(store, [store.get_card(card_id)], registry)
+        assert shown["handled_by_board"] is False
+        assert shown["next_action_short"] == "fix runtime"
         scheduler.process_due(retry_at + 1)
         assert runs.started == [card_id], f"attempt {attempt} ran again on its own"
 
@@ -661,7 +665,7 @@ def test_a_runtime_refusal_backs_off_then_gives_up_to_the_inbox(store, board):
     retries = [e for e in store.list_events(card_id) if e["kind"] == "runtime_retry"]
     assert len(retries) == len(RUNTIME_BACKOFF_MINUTES)
     (row,) = attention_rows(store, registry)
-    assert row["reason"] == "refused"
+    assert row["reason"] == "runtime"
 
 
 def test_the_open_card_and_the_board_agree_on_a_usage_limit(tmp_path):
