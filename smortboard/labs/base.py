@@ -41,6 +41,9 @@ class RunRequest:
     read_only: bool = False
     # low/medium/high from the role's settings; None passes no flag, the cli's own default
     effort: str | None = None
+    # the git metadata dirs a codex worker may write: /workspace/.git in a container, the repo's
+    # real git dir on the host (a worktree keeps its index and lock files there)
+    git_writable: tuple[str, ...] = ("/workspace/.git",)
 
 
 @dataclass(frozen=True)

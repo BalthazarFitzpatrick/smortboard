@@ -120,6 +120,7 @@ def _agent_command(
     store: Store | None,
     note_marker: str | None,
     effort: str | None,
+    git_writable: tuple[str, ...] = ("/workspace/.git",),
 ) -> list[str]:
     """the agent's own argv, the same for a container run and a host run: only `settings_path` (a
     path the agent can see) and `workdir` (where it works) differ between the two"""
@@ -142,6 +143,7 @@ def _agent_command(
             + (SCREENSHOT_RULE if (Path(workdir) / "smortboard" / "ui").is_dir() else "")
             + note_marker_paragraph(note_marker or new_note_marker()),
             stream_input=adapter.capabilities.live_steering,
+            git_writable=git_writable,
             # lifecycle resolves card and fallback effort (routing.run_effort); unset is the role's
             effort=compatible_effort(
                 lab,
@@ -847,6 +849,9 @@ class HostBackend:
     bash hooks, the post-run committed-path check (pure git), a scrubbed environment with no
     credential for GitHub, a push that cannot succeed, and a stop that ends the whole process
     group. The agent commits in the real worktree, so there is no clone and no fetch-back.
+
+    Any lab's agent can be assigned: claude runs with its settings file, codex with its own
+    CODEX_HOME holding the login and the hooks, and its os sandbox as a second layer.
     """
 
     name = "host"
@@ -870,14 +875,13 @@ class HostBackend:
 
         lab, model_id = parse_ref(model)
         adapter = get_adapter(lab)
-        if lab != "anthropic" or not adapter.capabilities.tool_allowlist:
-            raise CardRuntimeUnavailable(
-                f"  open mode runs claude only so far; {lab} on the host is not measured yet "
-                "(docs/spikes/s8-host-run.md). use sealed mode for this card."
-            )
         profile = profiles.active_profile(lab=lab)
         kind = profiles.profile_kind(profile, lab=lab)
-        token = read_card_token(profiles.token_path_for_profile(profile, token_path))
+        token = (
+            read_card_token(profiles.token_path_for_profile(profile, token_path))
+            if lab == "anthropic"
+            else profiles.read_profile_token(lab, profile)
+        )
         worktree = Path(worktree_path).resolve()
         repo_root = repo_root_of_worktree(worktree)
         branch = current_branch(worktree)
@@ -896,28 +900,64 @@ class HostBackend:
             + prompt
         )
         note_marker = new_note_marker()
-        agent_cmd = _agent_command(
-            adapter,
-            lab,
-            model_id,
-            prompt=brief,
-            settings_path=settings_path,
-            workdir=worktree,
-            repo=repo,
-            store=store,
-            note_marker=note_marker,
-            effort=effort,
-        )
-        # the token arrives on stdin exactly as in a container; it is in no environment variable
-        cmd = ["sh", "-c", adapter.auth_shell({"kind": kind}) + shlex.join(agent_cmd)]
-        home = Path(tempfile.mkdtemp(prefix=f"smortboard-host-home-{uuid.uuid4().hex[:8]}-"))
+        scratch = Path(tempfile.mkdtemp(prefix=f"smortboard-host-{uuid.uuid4().hex[:8]}-"))
+        home = scratch / "home"
+        home.mkdir()
         try:
+            env = host_env(home)
+            git_writable = ("/workspace/.git",)
+            if adapter.capabilities.tool_allowlist:
+                auth = adapter.auth_shell({"kind": kind})
+            else:
+                # codex: its own CODEX_HOME holds the login (written from stdin) and the hooks,
+                # and its sandbox may write the repo's git dir, where a worktree keeps its index
+                codex_home = scratch / "codexhome"
+                codex_home.mkdir(mode=0o700)
+                bash_allow = tuple(
+                    tool[5:-1] for tool in allowed_tools_for_repo(repo) if tool.startswith("Bash(")
+                )
+                guards = adapter.guard_files(
+                    leases,
+                    BashPolicy(
+                        out_dir=scratch / "guards",
+                        python=sys.executable,
+                        guard_dir=str(scratch / "guards"),
+                        root=str(worktree),
+                        bash_allow=bash_allow,
+                        remembered_globs=remembered,
+                        lease_policy={
+                            key: value
+                            for key, value in policy.items()
+                            if key in ("mode", "protected_globs", "held_globs")
+                        },
+                    ),
+                )
+                settings_path = guards.settings_path
+                shutil.copy(guards.settings_path, codex_home / "hooks.json")
+                env["CODEX_HOME"] = str(codex_home)
+                git_writable = host_git_dirs(worktree)
+                auth = adapter.auth_shell({"kind": kind}, codex_home=str(codex_home))
+            agent_cmd = _agent_command(
+                adapter,
+                lab,
+                model_id,
+                prompt=brief,
+                settings_path=settings_path,
+                workdir=worktree,
+                repo=repo,
+                store=store,
+                note_marker=note_marker,
+                effort=effort,
+                git_writable=git_writable,
+            )
+            # the token arrives on stdin exactly as in a container; it is in no environment variable
+            cmd = ["sh", "-c", auth + shlex.join(agent_cmd)]
             result = run_process(
                 store,
                 card_id,
                 cmd,
                 cwd=worktree,
-                env=host_env(home),
+                env=env,
                 token_line=token + "\n" if adapter.capabilities.live_steering else None,
                 stream_prompt=brief if adapter.capabilities.live_steering else None,
                 stdin_text=None if adapter.capabilities.live_steering else token + "\n",
@@ -934,12 +974,58 @@ class HostBackend:
                 new_session=True,
             )
         finally:
-            shutil.rmtree(home, ignore_errors=True)
+            shutil.rmtree(scratch, ignore_errors=True)
         if store is not None and repo is not None and start_commit is not None:
             result = _finish_lease_check(
                 store, card_id, repo, repo_root, branch, start_commit, leases, remembered, result
             )
         return result
+
+
+def host_codex_home(adapter: Any, scratch: Path, root: str | Path) -> tuple[Path, Path]:
+    """a read-only role's codex setup on the host: a CODEX_HOME in `scratch` holding the hooks that
+    refuse every write, and the hooks file's path (passed as the settings path so codex trusts it).
+    the login is written into the same directory from stdin by adapter.auth_shell"""
+    codex_home = scratch / "codexhome"
+    codex_home.mkdir(mode=0o700, exist_ok=True)
+    guards = adapter.guard_files(
+        [],
+        BashPolicy(
+            out_dir=scratch / "guards",
+            python=sys.executable,
+            guard_dir=str(scratch / "guards"),
+            root=str(root),
+            bash_allow=(),
+            read_only=True,
+        ),
+    )
+    shutil.copy(guards.settings_path, codex_home / "hooks.json")
+    return codex_home, guards.settings_path
+
+
+def host_auth_shell(adapter: Any, kind: str | None, codex_home: Path | None = None) -> str:
+    """the stdin credential handoff for a host run: claude reads its token from a variable, codex
+    writes its login into the per-card CODEX_HOME"""
+    if codex_home is not None:
+        return adapter.auth_shell({"kind": kind}, codex_home=str(codex_home))
+    return adapter.auth_shell({"kind": kind})
+
+
+def host_git_dirs(worktree: str | Path) -> tuple[str, ...]:
+    """the repo's real git dir, which holds a worktree's own index and lock files. codex's sandbox
+    protects git metadata, so a host worker is told it may write exactly this"""
+    found = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    path = found.stdout.strip()
+    return (path,) if found.returncode == 0 and path else ("/workspace/.git",)
+
+
+# the cli each lab's agent is started with
+HOST_CLI = {"anthropic": "claude", "openai": "codex"}
 
 
 def require_host_runtime(
@@ -951,16 +1037,16 @@ def require_host_runtime(
     from smortboard import profiles
 
     problems = []
-    if lab != "anthropic":
-        problems.append(
-            f"open mode runs claude only so far; {lab} on the host is not measured yet. "
-            "use sealed mode for this board."
-        )
-    elif shutil.which("claude") is None:
-        problems.append("the claude cli is not on PATH. open mode runs it on this machine.")
+    cli = HOST_CLI.get(lab)
+    if cli is None:
+        problems.append(f"open mode does not know how to start an agent for {lab}.")
+    elif shutil.which(cli) is None:
+        problems.append(f"the {cli} cli is not on PATH. open mode runs it on this machine.")
     try:
         if lab == "anthropic":
             read_card_token(profiles.token_path_for_run(token_path, lab=lab))
+        else:
+            profiles.read_profile_token(lab, profiles.active_profile(lab=lab))
     except (CardTokenMissing, profiles.ProfileError) as exc:
         problems.append(str(exc))
     if problems:

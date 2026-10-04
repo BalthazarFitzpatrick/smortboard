@@ -2,6 +2,7 @@
 
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +37,10 @@ class CodexAdapter:
         if req.role == "worker" and not readonly:
             # codex protects git metadata even inside its writable workspace; workers
             # must commit in their disposable clone before the board can fetch it back
-            cmd += ["-c", 'sandbox_workspace_write.writable_roots=["/workspace/.git"]']
+            cmd += [
+                "-c",
+                "sandbox_workspace_write.writable_roots=" + json.dumps(list(req.git_writable)),
+            ]
         if req.system_prompt:
             cmd += ["-c", "developer_instructions=" + json.dumps(req.system_prompt)]
         # probed on 0.154.0: a bogus value came back from the api as an invalid reasoning.effort
@@ -53,13 +57,16 @@ class CodexAdapter:
         cmd.append(req.prompt)
         return cmd
 
-    def auth_shell(self, profile: Any = None) -> str:
+    def auth_shell(self, profile: Any = None, codex_home: str | None = None) -> str:
+        """`codex_home` is the directory codex reads its login from: the container's tmpfs by
+        default, a per-card scratch directory for a host run"""
         kind = (
             profile.get("kind", "auth_json")
             if isinstance(profile, dict)
             else getattr(profile, "kind", "auth_json")
         )
-        prefix = "export CODEX_HOME=/home/agent/.codex; umask 077; IFS= read -r T && "
+        home = shlex.quote(codex_home or "/home/agent/.codex")
+        prefix = f"export CODEX_HOME={home}; umask 077; IFS= read -r T && "
         if kind == "auth_json":
             return prefix + 'printf %s "$T" > "$CODEX_HOME/auth.json" && unset T && '
         flag = {"api_key": "--with-api-key", "access_token": "--with-access-token"}.get(kind)

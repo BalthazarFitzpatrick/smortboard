@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -193,19 +194,49 @@ def test_a_host_commit_outside_the_lease_is_flagged(tmp_path, monkeypatch):
     assert "README.md" in finished["payload"]["outside"]
 
 
-def test_the_host_backend_refuses_a_lab_it_has_not_measured(tmp_path, monkeypatch):
-    store, card, registered, tree, token = _board(tmp_path, monkeypatch, ["a.py"])
-    with store, pytest.raises(CardRuntimeUnavailable, match="claude only"):
-        HostBackend().run_card(
+def _as_openai(monkeypatch):
+    """an openai profile without touching the real profile store"""
+    from smortboard import profiles
+
+    monkeypatch.setattr(profiles, "active_profile", lambda lab="anthropic": "work")
+    monkeypatch.setattr(profiles, "profile_kind", lambda name, lab="anthropic": "auth_json")
+    monkeypatch.setattr(profiles, "read_profile_token", lambda lab, name: '{"tokens": "x"}')
+
+
+def test_a_codex_card_runs_on_the_host_with_its_own_codex_home(tmp_path, monkeypatch):
+    _as_openai(monkeypatch)
+    seen = {}
+
+    def worker(store, card_id, cmd, cwd=None, **kwargs):
+        home = Path(kwargs["env"]["CODEX_HOME"])
+        seen.update(cmd=cmd, cwd=cwd, hooks=(home / "hooks.json").is_file(), **kwargs)
+        return _ok()
+
+    monkeypatch.setattr(backends, "run_process", worker)
+    store, card, registered, tree, token = _board(tmp_path, monkeypatch, ["allowed.py"])
+    with store:
+        result = HostBackend().run_card(
             store,
             card["id"],
             tree.path,
             "prompt",
             tmp_path / "settings.json",
-            model="openai/gpt-5.5",
+            model="openai/gpt-5.6-luna",
             repo=registered,
             token_path=token,
         )
+    assert result.blocked_reason_code is None
+    script = seen["cmd"][2]
+    assert "codex exec" in script
+    assert "export CODEX_HOME=" in script and seen["env"]["CODEX_HOME"] in script
+    assert seen["hooks"] is True, "the lease hooks sit in the codex home before codex starts"
+    # the sandbox may write the repo's real git dir, where a worktree keeps its index
+    assert str(tmp_path / "repo" / ".git") in script and "writable_roots" in script
+    assert "workspace-write" in script
+    assert seen["stdin_text"] == '{"tokens": "x"}\n'
+    assert '{"tokens"' not in script, "the login goes on stdin, never in argv"
+    assert not os.path.exists(seen["env"]["CODEX_HOME"]), "the codex home is removed after the run"
+    assert "GH_TOKEN" not in seen["env"]
 
 
 def test_host_guards_are_real_paths_and_read_only(tmp_path):
@@ -251,8 +282,10 @@ def test_require_host_runtime_says_what_is_missing(tmp_path, monkeypatch):
     token.chmod(0o600)
     with pytest.raises(CardRuntimeUnavailable, match="claude cli is not on PATH"):
         require_host_runtime(token)
-    with pytest.raises(CardRuntimeUnavailable, match="claude only"):
+    with pytest.raises(CardRuntimeUnavailable, match="codex cli is not on PATH"):
         require_host_runtime(token, lab="openai")
+    with pytest.raises(CardRuntimeUnavailable, match="does not know how to start"):
+        require_host_runtime(token, lab="mystery")
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/claude")
     assert require_host_runtime(token).name == "host"
 

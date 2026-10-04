@@ -31,6 +31,8 @@ from smortboard.exec.backends import (
     card_image,
     container_name,
     docker_available,
+    host_auth_shell,
+    host_codex_home,
     host_env,
     read_card_token,
 )
@@ -255,10 +257,18 @@ def _run_on_host(
     can apply through --setting-sources project."""
     scratch = Path(tempfile.mkdtemp(prefix="smortboard-host-turn-"))
     try:
+        env = host_env(scratch / "home")
+        codex_home = None
+        settings_path = None
+        if not adapter.capabilities.tool_allowlist:
+            # codex: read-only hooks and the login live in a CODEX_HOME of their own, and the
+            # working folder is the empty scratch dir, so no repo's own settings can apply
+            codex_home, settings_path = host_codex_home(adapter, scratch, scratch)
+            env["CODEX_HOME"] = str(codex_home)
         agent_cmd = adapter.build_command(
             RunRequest(
                 prompt=to_host_paths(prompt, host_paths),
-                settings_path=None,
+                settings_path=settings_path,
                 model=model_id,
                 allowed_tools=ORCHESTRATOR_ALLOWED_TOOLS,
                 budget_usd=budget_usd,
@@ -270,13 +280,13 @@ def _run_on_host(
                 effort=compatible_effort(lab, model_id, effort),
             )
         )
-        inner = adapter.auth_shell({"kind": kind}) + shlex.join(agent_cmd) + " < /dev/null"
+        inner = host_auth_shell(adapter, kind, codex_home) + shlex.join(agent_cmd) + " < /dev/null"
         return run_process(
             None,
             "orchestrator",
             ["sh", "-c", inner],
             cwd=scratch,
-            env=host_env(scratch / "home"),
+            env=env,
             stdin_text=token + "\n",
             adapter=adapter,
             lab=lab,
@@ -329,10 +339,6 @@ def _real_runner(
             raise RuntimeError("docker is not running, and the orchestrator runs in a container.")
         lab, model_id = parse_ref(model)
         adapter = get_adapter(lab)
-        if mode == "open" and not adapter.capabilities.tool_allowlist:
-            raise RuntimeError(
-                f"open mode runs claude only so far; {lab} on the host is not measured yet."
-            )
         profile = profiles.active_profile(lab=lab)
         kind = profiles.profile_kind(profile, lab=lab)
         token = (
