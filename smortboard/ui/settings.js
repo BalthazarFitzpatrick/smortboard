@@ -354,6 +354,7 @@ async function openFallbackPicker(role, initialEntries, anchor, status, onSaved)
     },
   });
   menu.openAt(anchor);
+  widenModelPicker(menu);
 }
 
 async function loadRoleModels() {
