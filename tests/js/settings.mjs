@@ -193,7 +193,7 @@ assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-s
   ['usage limits', 'reviewer reads', 'models by role'],
   ['spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 13);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 14);
 assert.equal(mod.st.listEl.querySelectorAll('.board-row').length, 0,
   'o holds only what every board shares - no per-board rows');
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
