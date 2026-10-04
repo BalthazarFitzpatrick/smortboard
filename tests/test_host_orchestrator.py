@@ -110,12 +110,38 @@ def test_an_open_turn_runs_on_the_host_with_real_paths(open_board, monkeypatch):
     assert "< /dev/null" in seen["cmd"][2]
 
 
-def test_an_open_turn_refuses_a_lab_it_has_not_measured(open_board, monkeypatch):
+def test_a_codex_turn_runs_on_the_host_with_its_own_codex_home(open_board, monkeypatch):
+    from pathlib import Path
+
+    from smortboard import profiles
+
     store, board_id, token = open_board
     _no_docker(monkeypatch)
+    monkeypatch.setattr(profiles, "active_profile", lambda lab="anthropic": "work")
+    monkeypatch.setattr(profiles, "profile_kind", lambda name, lab="anthropic": "auth_json")
+    monkeypatch.setattr(profiles, "read_profile_token", lambda lab, name: '{"tokens": "x"}')
+    seen = {}
+
+    def fake(store_, card_id, cmd, **kwargs):
+        home = Path(kwargs["env"]["CODEX_HOME"])
+        seen.update(cmd=cmd, hooks=(home / "hooks.json").is_file(), **kwargs)
+        return RunResult(
+            subtype="success",
+            is_error=False,
+            blocked_reason_code=None,
+            session_id="s",
+            total_cost_usd=0.0,
+            num_turns=1,
+            result_text=None,
+            structured_output={"reply": "ok"},
+        )
+
+    monkeypatch.setattr(orchestrator, "run_process", fake)
     run = orchestrator._real_runner(store, board_id, token, "system", [])
-    with pytest.raises(RuntimeError, match="claude only"):
-        run("plan", "openai/gpt-5.5", 1.0)
+    assert json.loads(run("plan", "openai/gpt-5.6-luna", 1.0)) == {"reply": "ok"}
+    script = seen["cmd"][2]
+    assert "codex exec" in script and "--sandbox read-only" in script
+    assert seen["hooks"] is True and seen["new_session"] is True
 
 
 def test_a_sealed_turn_still_needs_docker(open_board, monkeypatch):

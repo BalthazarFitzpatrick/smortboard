@@ -32,6 +32,8 @@ from smortboard.exec.backends import (
     container_name,
     docker_available,
     guard_mount,
+    host_auth_shell,
+    host_codex_home,
     host_env,
     read_card_token,
 )
@@ -333,6 +335,7 @@ def _host_command(
     budget_usd: float | None,
     kind: str | None,
     effort: str | None,
+    codex_home: Path | None = None,
 ) -> list[str]:
     """the reviewer as a host process: the same argv and stdin handoff as in a container, with
     real paths. it runs in the worktree and has read-only tools, so it cannot change the work"""
@@ -342,7 +345,8 @@ def _host_command(
     agent_cmd = _agent_argv(
         adapter, lab, model_id, prompt, settings_path, str(schema_path), budget_usd, effort
     )
-    return ["sh", "-c", adapter.auth_shell({"kind": kind}) + shlex.join(agent_cmd) + " < /dev/null"]
+    auth = host_auth_shell(adapter, kind, codex_home)
+    return ["sh", "-c", auth + shlex.join(agent_cmd) + " < /dev/null"]
 
 
 def _no_verdict(error: str, reason: str = "CRASH") -> ReviewResult:
@@ -475,10 +479,6 @@ def run_review(
 
     lab, model_id = parse_ref(model)
     adapter = get_adapter(lab)
-    if mode == "open" and not adapter.capabilities.tool_allowlist:
-        raise ReviewUnavailable(
-            f"open mode reviews with claude only so far; {lab} on the host is not measured yet."
-        )
     profile = profiles.active_profile(lab=lab)
     kind = profiles.profile_kind(profile, lab=lab)
     token = (
@@ -501,6 +501,12 @@ def run_review(
     if mode == "open":
         scratch = Path(tempfile.mkdtemp(prefix="smortboard-review-"))
         try:
+            env = host_env(scratch / "home")
+            codex_home = None
+            if not adapter.capabilities.tool_allowlist:
+                # codex: read-only hooks and the login live in a CODEX_HOME of their own
+                codex_home, settings_path = host_codex_home(adapter, scratch, work_path)
+                env["CODEX_HOME"] = str(codex_home)
             run_result = run_process(
                 store,
                 card_id,
@@ -512,9 +518,10 @@ def run_review(
                     budget_usd,
                     kind,
                     effort,
+                    codex_home,
                 ),
                 cwd=work_path,
-                env=host_env(scratch / "home"),
+                env=env,
                 stdin_text=token + "\n",
                 on_process=on_process,
                 role="reviewer",

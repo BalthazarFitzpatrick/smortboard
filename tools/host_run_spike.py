@@ -90,7 +90,7 @@ def main() -> None:
         shell = adapter.auth_shell(profile) + shlex.join(cmd)
         stdin = token_line + user_message_line(brief)
     else:
-        model = os.environ.get("SPIKE_CODEX_MODEL", "gpt-5.4-mini")
+        model = os.environ.get("SPIKE_CODEX_MODEL", "gpt-5.6-luna")
         cmd = adapter.build_command(RunRequest(prompt=brief, model=model))
         codex_home = scratch / "codexhome"
         codex_home.mkdir(mode=0o700, exist_ok=True)

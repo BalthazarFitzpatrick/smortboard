@@ -138,6 +138,27 @@ way, the adapter sets `cost_usd` none and relies on catalog prices), whether the
 the cwd), and the time cap behaviour. what did work: cli on host, own `CODEX_HOME`, stdin credential
 handoff, event normalization. note `--ignore-user-config` left the real `~/.codex` untouched.
 
+## codex rerun (2026-10-04)
+
+the first codex attempt failed for a reason that was not auth and not the host: the spike script
+defaulted to model `gpt-5.4-mini`, which the api refuses for a chatgpt account (http 400 "model is not
+supported when using Codex with a ChatGPT account"). the first rerun with a fresh login reproduced the
+`error_during_execution` the result event reported; the raw stream carried the 400. the script now
+defaults to `gpt-5.6-luna`, a catalog model.
+
+rerun on the host with `gpt-5.6-luna`, scratch `CODEX_HOME`, env `PATH,HOME,LANG,TMPDIR,CODEX_HOME`:
+
+- exit 0 in 20 s. usage event present: `input_tokens` 38549, `cached_tokens` 34048,
+  `output_tokens` 729. `cost_usd` is `None`, as in a container (the adapter prices from the catalog).
+  result event: `ok` true, `auth_failed` false.
+- the agent created `hello.txt` but could not `git add` it: the macos `workspace-write` sandbox denied
+  `index.lock`, because a worktree's git dir is `<repo>/.git/worktrees/<id>`, outside the cwd. the
+  container run solved this with `writable_roots=["/workspace/.git"]`.
+
+so the one thing a codex host worker needs is the repo's real git dir in `writable_roots`. the host
+backend passes it (`host_git_dirs`) and gives codex its own `CODEX_HOME` holding the login and the
+lease hooks. verdict for codex: confirmed apart from that, now built.
+
 ## process group kill
 
 replacement for `docker rm -f` (`ProcessHandle.terminate`, `runner.py` ~244). `tools/pgroup_kill_check.py`

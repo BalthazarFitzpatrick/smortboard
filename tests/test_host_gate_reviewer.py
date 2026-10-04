@@ -7,6 +7,7 @@ is replaced by a function that records what it was given.
 
 import subprocess
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,7 +16,7 @@ from smortboard.exec.runner import RunResult
 from smortboard.exec.worktrees import branch_changed_files
 from smortboard.review import base_red, gates, reviewer
 from smortboard.review.gates import run_test_gate
-from smortboard.review.reviewer import ReviewUnavailable, run_review
+from smortboard.review.reviewer import run_review
 from smortboard.store.api import Store
 
 
@@ -200,17 +201,30 @@ def test_reading_the_code_with_no_files_is_clean_without_a_model_call(tmp_path, 
     assert result.approved and not result.findings
 
 
-def test_the_open_reviewer_refuses_a_lab_it_has_not_measured(tmp_path):
-    with pytest.raises(ReviewUnavailable, match="claude only"):
-        run_review(
-            None,
-            "card",
-            "+ x\n",
-            tmp_path,
-            tmp_path / "s.json",
-            model="openai/gpt-5.5",
-            mode="open",
-        )
+def test_a_codex_reviewer_runs_on_the_host_read_only(tmp_path, monkeypatch):
+    from smortboard import profiles
+
+    monkeypatch.setattr(profiles, "active_profile", lambda lab="anthropic": "work")
+    monkeypatch.setattr(profiles, "profile_kind", lambda name, lab="anthropic": "auth_json")
+    monkeypatch.setattr(profiles, "read_profile_token", lambda lab, name: '{"tokens": "x"}')
+    seen = {}
+
+    def _fake(store, card_id, cmd, **kw):
+        home = Path(kw["env"]["CODEX_HOME"])
+        seen.update(cmd=cmd, hooks=(home / "hooks.json").is_file(), **kw)
+        return _verdict()
+
+    monkeypatch.setattr(reviewer, "run_process", _fake)
+    work = tmp_path / "work"
+    work.mkdir()
+    result = run_review(
+        None, "card", "+ x\n", work, tmp_path / "s.json", model="openai/gpt-5.6-luna", mode="open"
+    )
+    assert result.approved
+    script = seen["cmd"][2]
+    assert "codex exec" in script and "--sandbox read-only" in script
+    assert seen["hooks"] is True and seen["new_session"] is True
+    assert '{"tokens"' not in script
 
 
 def test_the_reviewer_is_configured_without_docker_in_open_mode(monkeypatch):
