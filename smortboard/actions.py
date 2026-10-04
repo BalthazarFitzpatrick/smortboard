@@ -63,6 +63,11 @@ _ACTIONS = {
         "the inbox (n) to resume it in its own worktree.",
     ),
     "refused": ("fix, then r", "fix what the note says, then press r to run it again."),
+    "runtime": (
+        "fix runtime",
+        "the card runtime is not ready - the note says what is missing, usually docker not running "
+        "or no credential. the board retries a few times by itself; fix it, or press r to run now.",
+    ),
     "stopped": ("press r", "press r to run it again - its worktree and commits are kept."),
     "review": ("y or x", "review the pull request, then press y to accept or x to reject."),
 }

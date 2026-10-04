@@ -20,7 +20,7 @@ from smortboard.actions import next_action, short_action
 from smortboard.budgets import spend_refusal
 from smortboard.exec.worktrees import default_branch
 from smortboard.labs.routing import role_ref
-from smortboard.lifecycle import BOARD_AUTHOR
+from smortboard.lifecycle import BOARD_AUTHOR, RUNTIME_NOT_READY
 from smortboard.operator import AUTHOR_KEY
 from smortboard.review.rebase_guard import OUTDATED, ResetRefused, reset_to_base
 from smortboard.scheduler import (
@@ -74,8 +74,8 @@ def handled_by_board(store: Store, card: dict[str, Any], schedule: Any = None) -
     one resume) returns None so the card falls back into the inbox instead of hiding forever.
 
     `schedule` is anything shaped like SchedulerRegistry (retry_at, paused_labs). a USAGE_LIMIT
-    card or a runtime refusal counts as handled only while it really holds a timer or a queue
-    place there - measured, two cards relabeled on 09-14 hid from the inbox with nothing queued."""
+    card counts as handled only while it really holds a timer or a queue place there - measured,
+    two cards relabeled on 09-14 hid from the inbox with nothing queued."""
     reason = card.get("blocked_reason_code")
     card_id = card["id"]
     if reason == "API_UNREACHABLE":
@@ -92,10 +92,9 @@ def handled_by_board(store: Store, card: dict[str, Any], schedule: Any = None) -
             e["kind"] == "merge_conflict_auto_resume" for e in store.list_events(card_id)
         )
         return None if attempted else "resuming automatically"
-    if reason is None and card.get("review_flag") and schedule is not None:
-        retry_at = schedule.retry_at(store, card)
-        if retry_at is not None and _flag_reason(store, card_id) == "refused":
-            return _format_retry_at(retry_at)
+    # a runtime refusal (docker down, no credential) is NOT handled: the board does retry it, but
+    # only a person can fix the cause, so it shows as attention and in the inbox instead of
+    # reading as work in progress
     return None
 
 
@@ -149,7 +148,10 @@ def _flag_reason(store: Store, card_id: str) -> str:
         if event["kind"] == "run_stopped":
             return "stopped"
         if event["kind"] == "run_refused":
-            return "refused"
+            # the runtime is a different fix from a missing repo or test command, so it has its own
+            # words: the board retries it, but only a person can start docker or add a credential
+            note = event["payload"].get("note") or ""
+            return "runtime" if note.startswith(RUNTIME_NOT_READY) else "refused"
         if event["kind"] == "lifecycle_started":
             break
     return "review"
@@ -175,9 +177,14 @@ def _question_for(store: Store, card: dict[str, Any]) -> str:
         if results:
             return _trim(results[-1]["payload"].get("result"))
     board_notes = [c for c in card.get("comments") or [] if c.get("author") == BOARD_AUTHOR]
-    if board_notes:
-        return _trim(board_notes[-1]["body"])
-    return ""
+    latest = _trim(board_notes[-1]["body"]) if board_notes else ""
+    # a runtime refusal: the board's latest comment only says it will retry, so lead with the
+    # refusal note, which is what says docker or a credential is missing
+    if not card.get("blocked_reason_code") and _flag_reason(store, card["id"]) == "runtime":
+        refusals = [e for e in store.list_events(card["id"]) if e["kind"] == "run_refused"]
+        missing = _trim(refusals[-1]["payload"].get("note")) if refusals else ""
+        return "\n\n".join(part for part in (missing, latest) if part)
+    return latest
 
 
 def _needs_attention(card: dict[str, Any]) -> bool:
