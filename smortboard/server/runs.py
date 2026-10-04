@@ -11,6 +11,7 @@ cards at once.
 from __future__ import annotations
 
 import contextlib
+import shutil
 import sqlite3
 import threading
 import time
@@ -351,25 +352,43 @@ class Readiness:
         # only checked when docker answers - "the image is missing" is not useful news when the
         # thing that would hold the image is not running
         image = docker and card_image_available()
-        missing = []
+        no_token = (
+            "no card credential. add a credential file in the profiles panel. "
+            "for claude, generate the token with `claude setup-token`."
+        )
+        sealed_missing = []
         if not docker:
-            missing.append("docker is not running. every card runs in its own container.")
+            sealed_missing.append("docker is not running. every card runs in its own container.")
         elif not image:
-            missing.append(
+            sealed_missing.append(
                 f"no card image. build it once: "
                 f"docker build -f docker/card.Dockerfile -t {card_image()} ."
             )
         if not token:
-            missing.append(
-                "no card credential. add a credential file in the profiles panel. "
-                "for claude, generate the token with `claude setup-token`."
+            sealed_missing.append(no_token)
+        # an open board runs the agent on this machine: it needs the cli and a credential, and
+        # no docker at all
+        cli = shutil.which("claude") is not None
+        open_missing = []
+        if not cli:
+            open_missing.append(
+                "the claude cli is not on PATH. an open board runs it on this machine."
             )
+        if not token:
+            open_missing.append(no_token)
         self._answer = {
-            "ready": not missing,
+            # the sealed answer stays the top level, so a caller that does not know about modes
+            # reads exactly what it always did
+            "ready": not sealed_missing,
             "docker": docker,
             "image": image,
             "token": token,
-            "missing": missing,
+            "cli": cli,
+            "missing": sealed_missing,
+            "modes": {
+                "sealed": {"ready": not sealed_missing, "missing": sealed_missing},
+                "open": {"ready": not open_missing, "missing": open_missing},
+            },
         }
         self._measured_at = time.time()
         return self._answer
