@@ -1110,6 +1110,17 @@ async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200,
     onDismiss: () => { if (!picked && onBack) onBack(); },
   });
   menu.openAt(anchor);
+  widenModelPicker(menu);
+}
+
+// the model column is the one that was cut off. the class is added after the menu is placed, so
+// the panel is clamped into the viewport again at its wider size
+function widenModelPicker(menu) {
+  const el = menu.el;
+  if (!el) return;
+  el.classList.add('model-picker');
+  const rect = el.getBoundingClientRect();
+  el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))}px`;
 }
 
 async function cycleCardModel(cardId = actionableCardId()) {
