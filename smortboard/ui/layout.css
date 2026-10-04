@@ -488,6 +488,10 @@ body {
 /* usage is wide rather than tall: the windows on the left, the spend by model on the right */
 .usage-card.usage-wide { width: min(860px, 88vw); }
 .menu-panel:has(.usage-wide) { max-width: none; }
+/* a menu of columns (lab, model, effort) got a third of ui_base's cap per column, so versioned model
+   names and their tier were cut off: double it. .panel-floating outranks the base rule whichever
+   stylesheet loads last */
+.menu-panel.panel-floating:has(.label-columns) { width: min(1100px, 94vw); max-width: min(1100px, 94vw); }
 .usage-columns { display: flex; align-items: stretch; }
 .usage-column { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .usage-column + .usage-column {
