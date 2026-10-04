@@ -655,8 +655,7 @@ def _run_attempt(
     worker_model = command_model(worker_lab, worker_id)
     reviewer_model = command_model(reviewer_lab, reviewer_id)
 
-    # open mode runs the worker on the host; the gate and reviewer still use docker until they get
-    # host variants, so an open board is not yet docker-free
+    # open mode runs the worker, gate, reviewer and mission control on the host: no docker
     open_mode = _run_mode(store, card_id) == "open"
     require_runtime = require_host_runtime if open_mode else require_card_runtime
     try:

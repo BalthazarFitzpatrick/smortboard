@@ -31,9 +31,10 @@ from smortboard.exec.backends import (
     card_image,
     container_name,
     docker_available,
+    host_env,
     read_card_token,
 )
-from smortboard.exec.repo_snapshot import MOUNT_PARENT, build_repo_snapshot
+from smortboard.exec.repo_snapshot import MOUNT_PARENT, build_repo_snapshot, to_host_paths
 from smortboard.exec.runner import RunResult, run_process
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import (
@@ -210,6 +211,85 @@ class OrchestratorRunner(Protocol):
     ) -> str: ...
 
 
+def _finish_turn(
+    store: Store,
+    board_id: str,
+    role: str,
+    result: RunResult,
+    lab: str,
+    model_id: str,
+    profile: str,
+) -> RunResult:
+    """record whatever the turn cost even on failure or a cap - a capped run still spent real money"""
+    store.add_board_spend(
+        board_id,
+        role,
+        result.total_cost_usd,
+        lab=lab,
+        model=model_id,
+        cost_estimated=result.cost_estimated,
+        tokens={key: getattr(result, key) for key in BOARD_SPEND_TOKENS},
+    )
+    return replace(result, lab=lab, model=model_id, profile=profile, role=role)
+
+
+def _run_on_host(
+    adapter: Any,
+    lab: str,
+    model_id: str,
+    kind: str | None,
+    token: str,
+    prompt: str,
+    system_prompt: str,
+    schema: dict[str, Any],
+    schema_dir: Path,
+    host_paths: dict[str, str],
+    budget_usd: float,
+    role: str,
+    effort: str | None,
+    profile: str,
+) -> RunResult:
+    """one mission control or fold turn as a host process: read-only tools, the same schema and
+    stdin token as in a container, a clean env, and the paths the prompt names rewritten to the
+    real ones. the working directory is an empty folder, so no repo's own .claude/settings.json
+    can apply through --setting-sources project."""
+    scratch = Path(tempfile.mkdtemp(prefix="smortboard-host-turn-"))
+    try:
+        agent_cmd = adapter.build_command(
+            RunRequest(
+                prompt=to_host_paths(prompt, host_paths),
+                settings_path=None,
+                model=model_id,
+                allowed_tools=ORCHESTRATOR_ALLOWED_TOOLS,
+                budget_usd=budget_usd,
+                system_prompt=to_host_paths(system_prompt, host_paths),
+                json_schema=schema,
+                schema_path=str(schema_dir / "schema.json"),
+                read_only=True,
+                role=role,
+                effort=compatible_effort(lab, model_id, effort),
+            )
+        )
+        inner = adapter.auth_shell({"kind": kind}) + shlex.join(agent_cmd) + " < /dev/null"
+        return run_process(
+            None,
+            "orchestrator",
+            ["sh", "-c", inner],
+            cwd=scratch,
+            env=host_env(scratch / "home"),
+            stdin_text=token + "\n",
+            adapter=adapter,
+            lab=lab,
+            model=model_id,
+            profile=profile,
+            budget_usd=budget_usd,
+            role=role,
+            new_session=True,
+        )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def _real_runner(
     store: Store,
     board_id: str,
@@ -244,10 +324,15 @@ def _real_runner(
         refusal = board_spend_refusal(store, board_id)
         if refusal:
             raise RuntimeError(refusal)
-        if not docker_available():
+        mode = store.run_mode(board_id)
+        if mode != "open" and not docker_available():
             raise RuntimeError("docker is not running, and the orchestrator runs in a container.")
         lab, model_id = parse_ref(model)
         adapter = get_adapter(lab)
+        if mode == "open" and not adapter.capabilities.tool_allowlist:
+            raise RuntimeError(
+                f"open mode runs claude only so far; {lab} on the host is not measured yet."
+            )
         profile = profiles.active_profile(lab=lab)
         kind = profiles.profile_kind(profile, lab=lab)
         token = (
@@ -261,6 +346,29 @@ def _real_runner(
             for warning in snapshot.warnings:
                 store.add_orchestrator_message(board_id, _BOARD_AUTHOR, warning)
             Path(schema_dir.name, "schema.json").write_text(json.dumps(schema))
+            if mode == "open":
+                result = _run_on_host(
+                    adapter,
+                    lab,
+                    model_id,
+                    kind,
+                    token,
+                    prompt,
+                    system_prompt,
+                    schema,
+                    Path(schema_dir.name),
+                    snapshot.host_paths
+                    | (
+                        {CONTAINER_SHOTS_DIR: str(Path(screenshot_path).parent)}
+                        if screenshot_path
+                        else {}
+                    ),
+                    budget_usd,
+                    role,
+                    effort or role_effort(store.get_settings(), role),
+                    profile,
+                )
+                return _finish_turn(store, board_id, role, result, lab, model_id, profile)
             guard_path = None
             guard_mounts = []
             if not adapter.capabilities.tool_allowlist:
@@ -343,17 +451,7 @@ def _real_runner(
         finally:
             snapshot.cleanup()
             schema_dir.cleanup()
-        # record whatever it cost even on failure or a cap - a capped run still spent real money
-        store.add_board_spend(
-            board_id,
-            role,
-            result.total_cost_usd,
-            lab=lab,
-            model=model_id,
-            cost_estimated=result.cost_estimated,
-            tokens={key: getattr(result, key) for key in BOARD_SPEND_TOKENS},
-        )
-        return replace(result, lab=lab, model=model_id, profile=profile, role=role)
+        return _finish_turn(store, board_id, role, result, lab, model_id, profile)
 
     def run(prompt: str, model: str, budget_usd: float, screenshot_path: Path | None = None) -> str:
         settings = store.get_settings()
