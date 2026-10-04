@@ -37,7 +37,7 @@ def test_an_open_board_needs_no_docker_or_repo_image(tmp_path, monkeypatch):
     assert rows["docker"]["status"] == "ok" and "not needed" in rows["docker"]["detail"]
     assert rows["card-image"]["status"] == "ok" and "not needed" in rows["card-image"]["detail"]
     assert rows["claude-cli"]["status"] == "ok"
-    assert not [key for key in rows if key.endswith("-image")]
+    assert not [key for key in rows if key.startswith("repo-") and key.endswith("-image")]
 
 
 def test_an_open_board_names_a_missing_cli(tmp_path, monkeypatch):
