@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import uuid
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,9 @@ class RepoSnapshot:
     mount_args: list[str]
     warnings: list[str]
     _tmp_dir: Path | None = None
+    # container path -> host path for every mount above, so an open-mode turn can be told the real
+    # paths instead of the container ones
+    host_paths: dict[str, str] = field(default_factory=dict)
 
     def cleanup(self) -> None:
         if self._tmp_dir is not None:
@@ -101,6 +104,7 @@ def build_repo_snapshot(
     mount_args: list[str] = []
     warnings: list[str] = []
     used_targets: set[str] = set()
+    host_paths: dict[str, str] = {}
 
     for repo in repos:
         name = repo["name"]
@@ -119,6 +123,7 @@ def build_repo_snapshot(
             warnings.append(f'the repo "{name}" could not be cloned for reading: {exc}')
             continue
         mount_args += ["-v", f"{dest}:{REPOS_MOUNT}/{name}:ro"]
+        host_paths[f"{REPOS_MOUNT}/{name}"] = str(dest)
 
     for raw in extra_paths:
         path = Path(raw)
@@ -131,8 +136,11 @@ def build_repo_snapshot(
         # second, so one mount never silently overwrites the other
         target = _unique_target(path.name, used_targets)
         mount_args += ["-v", f"{path}:{EXTRA_MOUNT}/{target}:ro"]
+        host_paths[f"{EXTRA_MOUNT}/{target}"] = str(path)
 
-    return RepoSnapshot(mount_args=mount_args, warnings=warnings, _tmp_dir=tmp_dir)
+    return RepoSnapshot(
+        mount_args=mount_args, warnings=warnings, _tmp_dir=tmp_dir, host_paths=host_paths
+    )
 
 
 def _unique_target(base: str, used: set[str]) -> str:
@@ -144,3 +152,11 @@ def _unique_target(base: str, used: set[str]) -> str:
         n += 1
     used.add(candidate)
     return candidate
+
+
+def to_host_paths(text: str, host_paths: dict[str, str]) -> str:
+    """`text` with each container mount path replaced by its real host path, longest first so
+    /extra/shots is not eaten by /extra. an open-mode turn is told where things really are"""
+    for container in sorted(host_paths, key=len, reverse=True):
+        text = text.replace(container, host_paths[container])
+    return text
