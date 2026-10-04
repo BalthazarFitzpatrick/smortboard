@@ -59,7 +59,9 @@ def test_the_open_gate_runs_in_the_worktree_without_host_credentials(tmp_path, m
 
 
 def test_a_timed_out_open_gate_ends_the_whole_suite(tmp_path):
-    store = SimpleNamespace(get_settings=lambda: {"gate_timeout_seconds": 1})
+    store = SimpleNamespace(
+        get_settings=lambda: {"gate_timeout_seconds": 1}, append_event=lambda *a, **k: None
+    )
     started = time.time()
     result = run_test_gate(
         store, "c", tmp_path, {"test_command": "sleep 30 & sleep 30"}, mode="open"
