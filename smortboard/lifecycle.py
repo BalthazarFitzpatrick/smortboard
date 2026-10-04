@@ -46,6 +46,7 @@ from smortboard.exec.runner import TIME_CAP_SUBTYPE, ProcessHandle
 from smortboard.exec.worktrees import (
     WorktreeError,
     add_worktree,
+    branch_changed_files,
     branch_diverged_from_origin,
     branch_exists,
     branch_name,
@@ -81,6 +82,7 @@ from smortboard.review.rebase_guard import (
 )
 from smortboard.review.reviewer import (
     DEFAULT_REVIEW_BUDGET_USD,
+    REVIEW_DIFF_EXCLUDES,
     ReviewResult,
     ReviewUnavailable,
     review_diff,
@@ -308,7 +310,7 @@ def _block_on_failed_gate(
     the base - the card did not cause those, and a worker run cannot fix them."""
     note = _tests_failed_note(gate.command, gate.exit_code, gate.output, after_merging)
     try:
-        red = check_base_red(repo, base, card_id, gate.output)
+        red = check_base_red(repo, base, card_id, gate.output, mode=_run_mode(store, card_id))
     except (GateUnavailable, OSError, subprocess.SubprocessError):
         red = None
     if red is not None:
@@ -404,6 +406,12 @@ def _gate_unavailable_note(exc: GateUnavailable) -> str:
     return f"the test gate could not run: {exc}"
 
 
+def _run_mode(store: Store, card_id: str) -> str:
+    """sealed or open for this card's board - the one question every step asks before it reaches
+    for docker"""
+    return store.run_mode(store.get_card(card_id)["board_id"])
+
+
 def _refuse(store: Store, state: LifecycleResult, note: str) -> LifecycleResult:
     """the board could not run this card at all - a missing repo, image or credential.
 
@@ -475,7 +483,7 @@ def _sync_and_retest(
         )
     if always_test or (merge_result is not None and merge_result.merged):
         try:
-            gate = run_test_gate(store, card_id, tree.path, repo)
+            gate = run_test_gate(store, card_id, tree.path, repo, mode=_run_mode(store, card_id))
         except GateUnavailable as exc:
             return _refuse(
                 store,
@@ -649,7 +657,7 @@ def _run_attempt(
 
     # open mode runs the worker on the host; the gate and reviewer still use docker until they get
     # host variants, so an open board is not yet docker-free
-    open_mode = store.run_mode(card["board_id"]) == "open"
+    open_mode = _run_mode(store, card_id) == "open"
     require_runtime = require_host_runtime if open_mode else require_card_runtime
     try:
         runtime = backend or (
@@ -913,7 +921,7 @@ def _run_attempt(
     while True:
         phase("testing")
         try:
-            gate = run_test_gate(store, card_id, tree.path, repo)
+            gate = run_test_gate(store, card_id, tree.path, repo, mode=_run_mode(store, card_id))
         except GateUnavailable as exc:
             return _refuse(store, state, _gate_unavailable_note(exc))
         if stopped_now():
@@ -944,12 +952,18 @@ def _run_attempt(
                     "effort": reviewer_effort,
                 },
             )
+            reads = store.get_settings().get("reviewer_input") or "diff"
             review = run_review(
                 store,
                 card_id,
                 diff_text,
                 tree.path,
                 settings,
+                mode=_run_mode(store, card_id),
+                reads=reads,
+                files=branch_changed_files(repo["path"], base, tree.branch, REVIEW_DIFF_EXCLUDES)
+                if reads == "code"
+                else (),
                 repo=repo,
                 token_path=token_path,
                 model=reviewer_model,

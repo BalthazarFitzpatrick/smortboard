@@ -799,6 +799,14 @@ def host_env(home: str | Path) -> dict[str, str]:
     uv_cache = Path(os.environ.get("UV_CACHE_DIR") or Path.home() / ".cache" / "uv")
     if uv_cache.is_dir():
         env["UV_CACHE_DIR"] = str(uv_cache)
+    # uv looks for the pythons it installed under HOME, which is a throwaway here: without this a
+    # suite run re-downloads an interpreter on every card
+    uv_pythons = Path(
+        os.environ.get("UV_PYTHON_INSTALL_DIR")
+        or Path.home() / ".local" / "share" / "uv" / "python"
+    )
+    if uv_pythons.is_dir():
+        env["UV_PYTHON_INSTALL_DIR"] = str(uv_pythons)
     env.update(host_git_env())
     return env
 
