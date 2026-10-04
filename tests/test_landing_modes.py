@@ -69,7 +69,7 @@ def test_operator_accept_retests_a_branch_already_synced_by_sweep(setup, monkeyp
     monkeypatch.setattr(
         lifecycle,
         "run_test_gate",
-        lambda *a: SimpleNamespace(
+        lambda *a, **k: SimpleNamespace(
             passed=False,
             command="tests",
             exit_code=1,

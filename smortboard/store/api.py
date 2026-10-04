@@ -92,6 +92,9 @@ _SETTING_KEYS = (
     # allow_open_mode: "on" lets a board pick the open run mode (shift+o). unlike the two gates
     # above, turning it off keeps each board's stored choice - run_mode() just resolves it sealed
     "allow_open_mode",
+    # reviewer_input: what the reviewer reads - unset or "diff" is the diff handed in, "code" is
+    # the changed files as they stand in the checkout
+    "reviewer_input",
     # off_limit_branches: unset keeps each board's off-limit list; "off" lets a board land on any
     # branch, main included
     "off_limit_branches",
@@ -137,6 +140,14 @@ BOARD_SPEND_TOKENS = ("input_tokens", "output_tokens", "cached_tokens", "cache_c
 def _check_findings_route(value: str | None) -> None:
     if value is not None and value not in FINDINGS_ROUTES:
         raise ValueError(f"findings_route must be one of {FINDINGS_ROUTES} or null, not {value!r}")
+
+
+REVIEWER_INPUTS = ("diff", "code")
+
+
+def _check_reviewer_input(value: str | None) -> None:
+    if value is not None and value not in REVIEWER_INPUTS:
+        raise ValueError(f"reviewer_input must be one of {REVIEWER_INPUTS} or null, not {value!r}")
 
 
 def _check_usage_limit_route(value: str | None) -> None:
@@ -1160,6 +1171,8 @@ class Store:
                 _check_findings_route(value)
             if key == "usage_limit_route":
                 _check_usage_limit_route(value)
+            if key == "reviewer_input":
+                _check_reviewer_input(value)
             if key in _BOARD_MODE_GATES or key == "allow_open_mode":
                 _check_gate(key, value)
             if key == "off_limit_branches" and value not in (None, "off"):

@@ -114,7 +114,7 @@ def world(tmp_path, monkeypatch):
 
     w = World(tmp_path, store, card["id"], repo_path, origin, token)
 
-    def _gate(store_, card_id, work_path, repo_):
+    def _gate(store_, card_id, work_path, repo_, mode="sealed"):
         w.seen["gate_saw_claude_dir"] = (Path(work_path) / ".claude").exists()
         w.seen["gate_tree_files"] = sorted(
             str(p.relative_to(work_path))

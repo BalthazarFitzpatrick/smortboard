@@ -365,6 +365,22 @@ def branch_diff(
     return result.stdout if result.returncode == 0 else ""
 
 
+def branch_changed_files(
+    repo_path: str | Path, base: str, branch: str, exclude: tuple[str, ...] = ()
+) -> list[str]:
+    """every path the card changed, minus the `exclude` globs - the file list a reviewer that
+    reads code, not a diff, is pointed at"""
+    start = _diff_start(repo_path, base, branch)
+    pathspecs = ["--", *_glob_pathspecs(exclude, "exclude,glob")] if exclude else []
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "diff", "--name-only", start, branch, *pathspecs],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return [line for line in result.stdout.splitlines() if line] if result.returncode == 0 else []
+
+
 def branch_changed_paths(
     repo_path: str | Path, base: str, branch: str, patterns: tuple[str, ...]
 ) -> list[str]:

@@ -113,6 +113,14 @@ const openMode = choiceToggle({
   save: value => saveSettings({allow_open_mode: value}),
 });
 
+// reviewer_input: what the second agent reads. null is the diff it is handed, "code" is the changed
+// files as they stand in the checkout
+const reviewerInput = choiceToggle({
+  className: 'settings-reviewer-input-choice',
+  choices: [['the diff', null], ['the code', 'code']],
+  save: value => saveSettings({reviewer_input: value}),
+});
+
 // off_limit_branches: unset keeps each board's own list (shift+o); "off" lifts every list
 const offLimits = choiceToggle({
   className: 'settings-off-limit-choice',
@@ -131,6 +139,13 @@ function buildSoftLeasesToggle() {
   softLeases.show(null);
   return toggleWithNote(softLeases, 'enabled: a board may let its cards write unprotected paths no other '
     + 'card holds - pick it per board in shift+o. disabled: every board is strict.');
+}
+
+function buildReviewerInputToggle() {
+  reviewerInput.show(null);
+  return toggleWithNote(reviewerInput, 'the diff: the reviewer is handed what the card changed and '
+    + 'reads around it. the code: it is told which files changed and reads them as they stand in '
+    + 'the checkout, with no diff. the same four questions either way.');
 }
 
 function buildOpenModeToggle() {
@@ -154,6 +169,7 @@ async function loadFeatureToggles() {
     freeMerge.show(settings.allow_free_merge === 'on' ? 'on' : null);
     openMode.show(settings.allow_open_mode === 'on' ? 'on' : null);
     offLimits.show(settings.off_limit_branches === 'off' ? 'off' : null);
+    reviewerInput.show(settings.reviewer_input === 'code' ? 'code' : null);
   } catch {
     // leave both disabled lit - disabled is what the server assumes for an unset key
   }
@@ -235,6 +251,7 @@ const SETTINGS_SECTIONS = [
   {group: 'general', label: 'free merge', node: buildFreeMergeToggle()},
   {group: 'general', label: 'open run mode', node: buildOpenModeToggle()},
   {group: 'general', label: 'off-limit branches', node: buildOffLimitToggle()},
+  {group: 'labs', label: 'reviewer reads', node: buildReviewerInputToggle(), onOpen: loadFeatureToggles},
 ];
 
 const roleModels = {node: document.createElement('div')};

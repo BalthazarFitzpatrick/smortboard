@@ -190,10 +190,10 @@ assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-s
   ['soft file leases', 'free merge', 'open run mode', 'off-limit branches', 'mission control can read',
     'where new repos go', 'how many cards run at once',
     'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup', 'mouse'],
-  ['usage limits', 'models by role'],
+  ['usage limits', 'reviewer reads', 'models by role'],
   ['spend caps'],
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 13);
+assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 14);
 assert.equal(mod.st.listEl.querySelectorAll('.board-row').length, 0,
   'o holds only what every board shares - no per-board rows');
 const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');

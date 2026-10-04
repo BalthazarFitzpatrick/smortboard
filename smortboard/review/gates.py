@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import shutil
+import signal
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +29,7 @@ from smortboard.exec.backends import (
     card_image,
     container_name,
     docker_available,
+    host_env,
 )
 from smortboard.store.errors import NotFoundError
 
@@ -110,11 +114,53 @@ def _current_repo(store: Any, repo: dict[str, Any] | None) -> dict[str, Any] | N
         return repo
 
 
+def _run_on_host(command: str, work_path: Path, timeout: int) -> tuple[int, str]:
+    """the repo's test command as a host process in the work path, in its own process group so a
+    timeout ends the whole suite and not only the shell. the environment is the same allowlist a
+    host card gets: no GitHub token, ssh agent or cloud keys, and a throwaway HOME.
+
+    cache dirs are redirected like the container gate does, so a run leaves no files in a tree
+    that is later reviewed or merged."""
+    home = Path(tempfile.mkdtemp(prefix="smortboard-gate-home-"))
+    cache = home / "cache"
+    env = {
+        **host_env(home),
+        "RUFF_CACHE_DIR": str(cache / "ruff"),
+        "PYTEST_ADDOPTS": "-p no:cacheprovider",
+    }
+    try:
+        process = subprocess.Popen(
+            ["sh", "-c", command],
+            cwd=str(work_path),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            output, _ = process.communicate(timeout=timeout)
+            return process.returncode, output or ""
+        except subprocess.TimeoutExpired as exc:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(process.pid, signal.SIGKILL)
+            partial = _as_text(exc.stdout)
+            process.communicate()
+            return -1, (
+                f"{partial}\n\nthe suite did not finish within {timeout}s - above is as far as "
+                "it got"
+            )
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
 def run_test_gate(
     store: Any,
     card_id: str,
     work_path: str | Path,
     repo: dict[str, Any] | None,
+    mode: str = "sealed",
 ) -> GateResult:
     """runs the repo's test command against the card's work, and records the outcome.
 
@@ -128,12 +174,15 @@ def run_test_gate(
             "this repo declares no test_command, so there is nothing to check the card against. "
             "set one on the repo - it is also what scopes the card's own Bash allowlist."
         )
-    if not docker_available():
+    if mode != "open" and not docker_available():
         raise GateUnavailable("docker is not running, and the gate runs the suite in a container.")
 
     work_path = Path(work_path)
     name = container_name("gate", card_id)
     timeout = _timeout_seconds(store)
+    if mode == "open":
+        exit_code, output = _run_on_host(str(command), work_path, timeout)
+        return _gate_result(store, card_id, str(command), exit_code, output)
     cmd = [
         "docker",
         "run",
@@ -170,10 +219,13 @@ def run_test_gate(
             f"{partial}\n\nthe suite did not finish within {timeout}s - above is as far as it got"
         )
         _remove_container(name)
+    return _gate_result(store, card_id, str(command), exit_code, output)
 
+
+def _gate_result(store: Any, card_id: str, command: str, exit_code: int, output: str) -> GateResult:
     result = GateResult(
         passed=exit_code == 0,
-        command=str(command),
+        command=command,
         exit_code=exit_code,
         output=output[-OUTPUT_TAIL_CHARS:],
     )
@@ -195,7 +247,10 @@ def run_test_gate(
     return result
 
 
-def gate_is_configured(repo: dict[str, Any] | None) -> bool:
+def gate_is_configured(repo: dict[str, Any] | None, mode: str = "sealed") -> bool:
     """whether a card on this repo can be gated at all - the board shows this rather than
-    discovering it when a card finishes and has nothing to be judged against"""
-    return bool((repo or {}).get("test_command")) and shutil.which("docker") is not None
+    discovering it when a card finishes and has nothing to be judged against. an open board runs
+    the suite on the host, so it does not need docker"""
+    if not (repo or {}).get("test_command"):
+        return False
+    return mode == "open" or shutil.which("docker") is not None

@@ -65,7 +65,7 @@ class Worker:
         )
 
 
-def _test_gate(store, card_id, work_path, repo):
+def _test_gate(store, card_id, work_path, repo, mode="sealed"):
     """the repo's own test command, run for real against what the card committed"""
     done = subprocess.run(
         repo["test_command"], shell=True, cwd=work_path, capture_output=True, text=True

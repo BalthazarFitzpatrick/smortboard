@@ -70,7 +70,7 @@ def test_the_base_is_checked_out_run_and_cleaned_up(tmp_path, monkeypatch):
     repo_path = _repo(tmp_path)
     seen = {}
 
-    def _gate(store, card_id, tree, repo):
+    def _gate(store, card_id, tree, repo, mode="sealed"):
         seen["existed"] = (tree / "a.txt").exists()
         seen["tree"] = tree
         return GateResult(passed=False, command="x", exit_code=1, output=TWO_FAILED)

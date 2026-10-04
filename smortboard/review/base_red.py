@@ -79,7 +79,7 @@ def _base_checkout(repo_path: str | Path, sha: str) -> Iterator[Path]:
 
 
 def check_base_red(
-    repo: dict[str, Any], base: str, card_id: str, card_output: str
+    repo: dict[str, Any], base: str, card_id: str, card_output: str, mode: str = "sealed"
 ) -> tuple[str, list[str]] | None:
     """(base sha, failing ids) when the card's whole failure is already on the base, else None.
 
@@ -92,6 +92,6 @@ def check_base_red(
     if sha is None:
         return None
     with _base_checkout(repo["path"], sha) as tree:
-        gate = run_test_gate(None, f"base-{card_id[:8]}", tree, repo)
+        gate = run_test_gate(None, f"base-{card_id[:8]}", tree, repo, mode=mode)
     ids = base_red_ids(card_output, gate.output)
     return (sha, ids) if ids else None
