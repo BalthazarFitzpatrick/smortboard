@@ -37,7 +37,9 @@ from smortboard.exec.backends import (
     card_image,
     image_id,
     require_card_runtime,
+    require_host_runtime,
     write_container_guards,
+    write_host_guards,
 )
 from smortboard.exec.leases import drop_legacy_guards, lease_policy
 from smortboard.exec.runner import TIME_CAP_SUBTYPE, ProcessHandle
@@ -645,11 +647,15 @@ def _run_attempt(
     worker_model = command_model(worker_lab, worker_id)
     reviewer_model = command_model(reviewer_lab, reviewer_id)
 
+    # open mode runs the worker on the host; the gate and reviewer still use docker until they get
+    # host variants, so an open board is not yet docker-free
+    open_mode = store.run_mode(card["board_id"]) == "open"
+    require_runtime = require_host_runtime if open_mode else require_card_runtime
     try:
         runtime = backend or (
-            require_card_runtime(token_path)
+            require_runtime(token_path)
             if worker_lab == "anthropic"
-            else require_card_runtime(lab=worker_lab)
+            else require_runtime(lab=worker_lab)
         )
     except CardRuntimeUnavailable as exc:
         return _refuse(store, state, f"{RUNTIME_NOT_READY}:\n{exc}")
@@ -697,12 +703,21 @@ def _run_attempt(
 
     drop_legacy_guards(tree.path)
     remembered = [row["path_glob"] for row in repo.get("remembered_leases") or []]
-    settings = write_container_guards(
-        guard_path,
-        _lease_globs(card),
-        remembered_globs=remembered,
-        policy=lease_policy(store, card, remembered),
-    )
+    if getattr(runtime, "name", None) == "host":
+        settings = write_host_guards(
+            guard_path,
+            _lease_globs(card),
+            root=tree.path,
+            remembered_globs=remembered,
+            policy=lease_policy(store, card, remembered),
+        )
+    else:
+        settings = write_container_guards(
+            guard_path,
+            _lease_globs(card),
+            remembered_globs=remembered,
+            policy=lease_policy(store, card, remembered),
+        )
     store.update_card(card_id, status="doing", blocked_reason_code=None, review_flag=False)
 
     # a reused branch is rebased onto its moved base in a fresh tree BEFORE the worker and gate:

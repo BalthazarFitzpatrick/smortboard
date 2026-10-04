@@ -2,8 +2,10 @@
 
 import contextlib
 import json
+import os
 import queue
 import secrets
+import signal
 import subprocess
 import threading
 import time
@@ -239,8 +241,24 @@ class ProcessHandle:
 
     process: Any
     container_name: str | None = None
+    # a host run starts the agent in its own session, so a stop signals the whole group: a plain
+    # terminate() left every child the agent spawned (test runs, dev servers) alive (spike s8)
+    group: bool = False
+
+    def _signal_group(self, sig: int) -> None:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(self.process.pid, sig)
 
     def terminate(self, timeout: float = 10.0) -> None:
+        if self.group:
+            self._signal_group(signal.SIGTERM)
+            try:
+                self.process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self._signal_group(signal.SIGKILL)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    self.process.wait(timeout=timeout)
+            return
         # the container first: removing it ends the docker client with it, where a sigterm to the
         # client alone was ignored and a real stop waited out the whole timeout (10.4 s)
         if self.container_name:
@@ -480,6 +498,7 @@ def run_process(
     role: str = "worker",
     stall_seconds: float | None = None,
     time_cap_seconds: float | None = None,
+    new_session: bool = False,
 ) -> RunResult:
     """record raw and neutral events, preserving the identity selected before launch.
 
@@ -504,8 +523,9 @@ def run_process(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        start_new_session=new_session,
     )
-    handle = ProcessHandle(process, container_name=container_name)
+    handle = ProcessHandle(process, container_name=container_name, group=new_session)
     if store is not None:
         recorded = False
         try:

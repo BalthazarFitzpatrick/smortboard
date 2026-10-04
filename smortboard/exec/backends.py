@@ -15,6 +15,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
 from collections.abc import Callable
@@ -105,6 +106,123 @@ def container_name(role: str, card_id: str) -> str:
     always targets exactly one container, never guesses.
     """
     return f"smortboard-{role}-{card_id[:8]}-{uuid.uuid4().hex[:8]}"
+
+
+def _agent_command(
+    adapter: Any,
+    lab: str,
+    model_id: str,
+    *,
+    prompt: str,
+    settings_path: str | Path,
+    workdir: str | Path,
+    repo: dict[str, Any] | None,
+    store: Store | None,
+    note_marker: str | None,
+    effort: str | None,
+) -> list[str]:
+    """the agent's own argv, the same for a container run and a host run: only `settings_path` (a
+    path the agent can see) and `workdir` (where it works) differ between the two"""
+    return adapter.build_command(
+        RunRequest(
+            prompt=prompt,
+            settings_path=settings_path,
+            model=model_id,
+            allowed_tools=allowed_tools_for_repo(repo),
+            budget_usd=(
+                store.spend_cap("worker_budget_usd", DEFAULT_CARD_BUDGET_USD)
+                if store is not None
+                else DEFAULT_CARD_BUDGET_USD
+            ),
+            system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT)
+            + HEADLESS_RULES
+            + READING_RULES
+            + TEST_RULES
+            + f"\n{LOWERCASE_RULE}\n"
+            + (SCREENSHOT_RULE if (Path(workdir) / "smortboard" / "ui").is_dir() else "")
+            + note_marker_paragraph(note_marker or new_note_marker()),
+            stream_input=adapter.capabilities.live_steering,
+            # lifecycle resolves card and fallback effort (routing.run_effort); unset is the role's
+            effort=compatible_effort(
+                lab,
+                model_id,
+                effort
+                or (role_effort(store.get_settings(), "worker") if store is not None else None),
+            ),
+        )
+    )
+
+
+def _begin_lease_check(store: Store, card_id: str, head_path: str | Path) -> str:
+    """records where this run's committed-path check starts and returns that commit.
+
+    a retry must not forgive unchecked or previously rejected changes, so the start moves back to
+    the base of an earlier check that did not pass."""
+    start_commit = subprocess.run(
+        ["git", "-C", str(head_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    previous = next(
+        (
+            event
+            for event in reversed(store.list_events(card_id))
+            if event["kind"] in {"lease_check_started", "lease_check_finished"}
+        ),
+        None,
+    )
+    if previous and not previous["payload"].get("passed"):
+        start_commit = previous["payload"]["base_commit"]
+    store.append_event(card_id, "lease_check_started", {"base_commit": start_commit})
+    return start_commit
+
+
+def _finish_lease_check(
+    store: Store,
+    card_id: str,
+    repo: dict[str, Any],
+    repo_root: Path,
+    branch: str,
+    start_commit: str,
+    leases: list[str],
+    remembered: list[str],
+    result: RunResult,
+) -> RunResult:
+    """the post-run committed-path check, shared by both backends: pure git, no hook, so it holds
+    wherever the agent ran. a commit outside the lease turns the run into a lease conflict."""
+    base_name = default_branch(repo)
+    base_ref = next(
+        (ref for ref in (f"origin/{base_name}", base_name) if rev_parse(repo_root, ref)),
+        None,
+    )
+    beyond = changed_paths_outside_lease(
+        repo_root, start_commit, branch, leases + remembered, base_ref=base_ref
+    )
+    # held globs re-read now: a card that started mid-run must not be written over
+    fresh = lease_policy(store, store.get_card(card_id), remembered)
+    expanded, outside = split_outside_lease(beyond, fresh)
+    store.append_event(
+        card_id,
+        "lease_check_finished",
+        {
+            "base_commit": start_commit,
+            "passed": not outside,
+            "outside": outside,
+            "expanded": expanded,
+        },
+    )
+    if expanded:
+        store.append_event(card_id, "lease_expanded", {"paths": expanded})
+    if outside:
+        result = replace(
+            result,
+            subtype="error_lease_conflict",
+            is_error=True,
+            blocked_reason_code="LEASE_CONFLICT",
+            result_text="committed paths outside the lease:\n" + "\n".join(outside),
+        )
+    return result
 
 
 def write_container_guards(
@@ -368,24 +486,7 @@ class ContainerBackend:
             self._expose_upstream_base(clone_path, default_branch(repo or {}))
             if store is not None and repo is not None:
                 # prior work and base merges are already in the clone
-                start_commit = subprocess.run(
-                    ["git", "-C", str(clone_path), "rev-parse", "HEAD"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                ).stdout.strip()
-                previous = next(
-                    (
-                        event
-                        for event in reversed(store.list_events(card_id))
-                        if event["kind"] in {"lease_check_started", "lease_check_finished"}
-                    ),
-                    None,
-                )
-                # retrying must not forgive unchecked or previously rejected changes
-                if previous and not previous["payload"].get("passed"):
-                    start_commit = previous["payload"]["base_commit"]
-                store.append_event(card_id, "lease_check_started", {"base_commit": start_commit})
+                start_commit = _begin_lease_check(store, card_id, clone_path)
             # the card image now runs as a non-root uid (docker/card.Dockerfile), which rarely
             # matches the host uid that owns this tempdir - open it up so the container can still
             # write its commits into a mount it does not otherwise share ownership with
@@ -463,41 +564,17 @@ class ContainerBackend:
             )
             self._fetch_back(repo_root, clone_path, branch, worktree_path)
             if store is not None and repo is not None:
-                base_name = default_branch(repo)
-                base_ref = next(
-                    (
-                        ref
-                        for ref in (f"origin/{base_name}", base_name)
-                        if rev_parse(repo_root, ref)
-                    ),
-                    None,
-                )
-                beyond = changed_paths_outside_lease(
-                    repo_root, start_commit, branch, leases + remembered, base_ref=base_ref
-                )
-                # held globs re-read now: a card that started mid-run must not be written over
-                fresh = lease_policy(store, store.get_card(card_id), remembered)
-                expanded, outside = split_outside_lease(beyond, fresh)
-                store.append_event(
+                result = _finish_lease_check(
+                    store,
                     card_id,
-                    "lease_check_finished",
-                    {
-                        "base_commit": start_commit,
-                        "passed": not outside,
-                        "outside": outside,
-                        "expanded": expanded,
-                    },
+                    repo,
+                    repo_root,
+                    branch,
+                    start_commit,
+                    leases,
+                    remembered,
+                    result,
                 )
-                if expanded:
-                    store.append_event(card_id, "lease_expanded", {"paths": expanded})
-                if outside:
-                    result = replace(
-                        result,
-                        subtype="error_lease_conflict",
-                        is_error=True,
-                        blocked_reason_code="LEASE_CONFLICT",
-                        result_text="committed paths outside the lease:\n" + "\n".join(outside),
-                    )
             return result
         finally:
             shutil.rmtree(clone_path, ignore_errors=True)
@@ -568,33 +645,17 @@ class ContainerBackend:
         lab, model_id = parse_ref(model)
         adapter = get_adapter(lab)
         mount, inner_settings = guard_mount(settings_path)
-        agent_cmd = adapter.build_command(
-            RunRequest(
-                prompt=prompt,
-                settings_path=inner_settings,
-                model=model_id,
-                allowed_tools=allowed_tools_for_repo(repo),
-                budget_usd=(
-                    store.spend_cap("worker_budget_usd", DEFAULT_CARD_BUDGET_USD)
-                    if store is not None
-                    else DEFAULT_CARD_BUDGET_USD
-                ),
-                system_prompt=active_prompt(store, "worker", SYSTEM_PROMPT)
-                + HEADLESS_RULES
-                + READING_RULES
-                + TEST_RULES
-                + f"\n{LOWERCASE_RULE}\n"
-                + (SCREENSHOT_RULE if (Path(clone_path) / "smortboard" / "ui").is_dir() else "")
-                + note_marker_paragraph(note_marker or new_note_marker()),
-                stream_input=adapter.capabilities.live_steering,
-                # lifecycle resolves card and fallback effort (routing.run_effort); unset is the role's
-                effort=compatible_effort(
-                    lab,
-                    model_id,
-                    effort
-                    or (role_effort(store.get_settings(), "worker") if store is not None else None),
-                ),
-            )
+        agent_cmd = _agent_command(
+            adapter,
+            lab,
+            model_id,
+            prompt=prompt,
+            settings_path=inner_settings,
+            workdir=clone_path,
+            repo=repo,
+            store=store,
+            note_marker=note_marker,
+            effort=effort,
         )
         # THE TOKEN ARRIVES ON STDIN AND TOUCHES NO DISK INSIDE THE CONTAINER. the host's token
         # file, if there is one, is never mounted - read from stdin the token exists only in the
@@ -692,3 +753,208 @@ def require_card_runtime(
     if problems:
         raise CardRuntimeUnavailable("  " + "\n  ".join(problems))
     return ContainerBackend()
+
+
+# ---- the host runtime (open run mode) ---------------------------------------------------------
+# the agent runs as a plain process in the card's own worktree. nothing contains it: the guards
+# below stop accidents, and the weaker guarantee is stated wherever the mode is offered.
+
+HOST_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "TMPDIR")
+# every url a push can take, rewritten to a scheme git cannot speak, so `git push` fails whatever
+# the remote is called; fetch is untouched
+NO_PUSH_URL = "disabled://smortboard-card-cannot-push/"
+_PUSH_PREFIXES = ("https://", "http://", "ssh://", "git://", "git@", "file://", "/")
+
+
+def host_git_env(name: str = CARD_GIT_NAME, email: str = CARD_GIT_EMAIL) -> dict[str, str]:
+    """git settings for a host card, as environment so nothing is written into the shared repo
+    config: the board's identity, no credential helper, no prompt, no system or global config
+    (macos ships a system osxkeychain helper), and every push url made unusable. the board pushes
+    from its own process (merge_request._push), never from the card."""
+    pairs = [("credential.helper", ""), ("core.askPass", ""), ("push.default", "nothing")]
+    pairs += [(f"url.{NO_PUSH_URL}.pushInsteadOf", prefix) for prefix in _PUSH_PREFIXES]
+    env = {
+        "GIT_CONFIG_COUNT": str(len(pairs)),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_AUTHOR_NAME": name,
+        "GIT_AUTHOR_EMAIL": email,
+        "GIT_COMMITTER_NAME": name,
+        "GIT_COMMITTER_EMAIL": email,
+    }
+    for index, (key, value) in enumerate(pairs):
+        env[f"GIT_CONFIG_KEY_{index}"] = key
+        env[f"GIT_CONFIG_VALUE_{index}"] = value
+    return env
+
+
+def host_env(home: str | Path) -> dict[str, str]:
+    """the whole environment of a host card, built from an allowlist and never inherited: no
+    GH_TOKEN, GITHUB_TOKEN, ssh agent socket or cloud keys. HOME is a throwaway directory, so the
+    user's dotfiles and credential stores are not found. the uv cache is passed through (a cold
+    cache re-downloads every dependency); it holds packages, not credentials."""
+    env = {key: os.environ[key] for key in HOST_ENV_KEYS if key in os.environ}
+    env["HOME"] = str(home)
+    uv_cache = Path(os.environ.get("UV_CACHE_DIR") or Path.home() / ".cache" / "uv")
+    if uv_cache.is_dir():
+        env["UV_CACHE_DIR"] = str(uv_cache)
+    env.update(host_git_env())
+    return env
+
+
+def write_host_guards(
+    out_dir: str | Path,
+    path_globs: list[str],
+    *,
+    root: str | Path,
+    remembered_globs: list[str] | None = None,
+    policy: dict[str, Any] | None = None,
+) -> Path:
+    """the card's lease and bash guards for a host run: the same hooks as a container, but the
+    paths are real. `out_dir` is the board's directory for this attempt, outside the worktree, and is
+    made read-only afterwards. that stops an accidental edit, not an agent that runs chmod: on the
+    host nothing is mounted `:ro`, so the guards are accident protection and this is documented."""
+    settings = write_lease_settings(
+        out_dir,
+        path_globs,
+        root=root,
+        remembered_globs=remembered_globs,
+        policy=policy,
+        python=sys.executable,
+        guard_dir=str(out_dir),
+    )
+    for entry in Path(out_dir).iterdir():
+        entry.chmod(0o400)
+    Path(out_dir).chmod(0o500)
+    return settings
+
+
+class HostBackend:
+    """one agent process per card, in the card's own worktree, on the host.
+
+    What this gives up against ContainerBackend: the filesystem boundary. The agent can read and
+    write anything the user can, reach the network, and see gitignored data and the macos
+    toolchain. That is the point of the mode, and why it is opt-in. What it keeps: the lease and
+    bash hooks, the post-run committed-path check (pure git), a scrubbed environment with no
+    credential for GitHub, a push that cannot succeed, and a stop that ends the whole process
+    group. The agent commits in the real worktree, so there is no clone and no fetch-back.
+    """
+
+    name = "host"
+
+    def run_card(
+        self,
+        store: Store,
+        card_id: str,
+        worktree_path: str | Path,
+        prompt: str,
+        settings_path: str | Path,
+        model: str = "sonnet",
+        repo: dict[str, Any] | None = None,
+        token_path: str | Path | None = None,
+        pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
+        on_process: Callable[[ProcessHandle], None] | None = None,
+        effort: str | None = None,
+    ) -> RunResult:
+        repo = _current_repo(store, repo)
+        from smortboard import profiles
+
+        lab, model_id = parse_ref(model)
+        adapter = get_adapter(lab)
+        if lab != "anthropic" or not adapter.capabilities.tool_allowlist:
+            raise CardRuntimeUnavailable(
+                f"  open mode runs claude only so far; {lab} on the host is not measured yet "
+                "(docs/spikes/s8-host-run.md). use sealed mode for this card."
+            )
+        profile = profiles.active_profile(lab=lab)
+        kind = profiles.profile_kind(profile, lab=lab)
+        token = read_card_token(profiles.token_path_for_profile(profile, token_path))
+        worktree = Path(worktree_path).resolve()
+        repo_root = repo_root_of_worktree(worktree)
+        branch = current_branch(worktree)
+        start_commit = None
+        if store is not None and repo is not None:
+            start_commit = _begin_lease_check(store, card_id, worktree)
+        card = store.get_card(card_id) if store else {}
+        leases = [row["path_glob"] for row in card.get("leases") or []]
+        remembered = [row["path_glob"] for row in (repo or {}).get("remembered_leases", [])]
+        policy = lease_policy(store, card, remembered) if store else {"mode": "strict"}
+        brief = (
+            f"Your working directory is {worktree}, the repository root. "
+            f"Give file tools absolute paths under {worktree}.\n\n"
+            + lease_preamble(leases, policy.get("mode", "strict"))
+            + commands_preamble(repo)
+            + prompt
+        )
+        note_marker = new_note_marker()
+        agent_cmd = _agent_command(
+            adapter,
+            lab,
+            model_id,
+            prompt=brief,
+            settings_path=settings_path,
+            workdir=worktree,
+            repo=repo,
+            store=store,
+            note_marker=note_marker,
+            effort=effort,
+        )
+        # the token arrives on stdin exactly as in a container; it is in no environment variable
+        cmd = ["sh", "-c", adapter.auth_shell({"kind": kind}) + shlex.join(agent_cmd)]
+        home = Path(tempfile.mkdtemp(prefix=f"smortboard-host-home-{uuid.uuid4().hex[:8]}-"))
+        try:
+            result = run_process(
+                store,
+                card_id,
+                cmd,
+                cwd=worktree,
+                env=host_env(home),
+                token_line=token + "\n" if adapter.capabilities.live_steering else None,
+                stream_prompt=brief if adapter.capabilities.live_steering else None,
+                stdin_text=None if adapter.capabilities.live_steering else token + "\n",
+                pending_notes=pending_notes,
+                note_marker=note_marker,
+                on_process=on_process,
+                adapter=adapter,
+                lab=lab,
+                model=model_id,
+                profile=profile,
+                budget_usd=store.spend_cap("worker_budget_usd", DEFAULT_CARD_BUDGET_USD)
+                if store
+                else DEFAULT_CARD_BUDGET_USD,
+                new_session=True,
+            )
+        finally:
+            shutil.rmtree(home, ignore_errors=True)
+        if store is not None and repo is not None and start_commit is not None:
+            result = _finish_lease_check(
+                store, card_id, repo, repo_root, branch, start_commit, leases, remembered, result
+            )
+        return result
+
+
+def require_host_runtime(
+    token_path: str | Path | None = None, lab: str = "anthropic"
+) -> HostBackend:
+    """the open-mode counterpart of require_card_runtime: no docker needed, but the agent's cli
+    and a credential are. raises CardRuntimeUnavailable saying what is missing, never falls back to
+    the container."""
+    from smortboard import profiles
+
+    problems = []
+    if lab != "anthropic":
+        problems.append(
+            f"open mode runs claude only so far; {lab} on the host is not measured yet. "
+            "use sealed mode for this board."
+        )
+    elif shutil.which("claude") is None:
+        problems.append("the claude cli is not on PATH. open mode runs it on this machine.")
+    try:
+        if lab == "anthropic":
+            read_card_token(profiles.token_path_for_run(token_path, lab=lab))
+    except (CardTokenMissing, profiles.ProfileError) as exc:
+        problems.append(str(exc))
+    if problems:
+        raise CardRuntimeUnavailable("  " + "\n  ".join(problems))
+    return HostBackend()
