@@ -519,14 +519,24 @@ function reportNotReady(missing) {
   menu.el?.classList.add('menu-centered');
 }
 
+// what a card on this board needs to run: an open board needs the cli and a credential, a sealed
+// one needs docker. /api/runtime answers both, and the board's own mode picks which one applies
+async function runtimeFor(boardId) {
+  const [runtime, settings] = await Promise.all([api('/api/runtime'), api('/api/settings')]);
+  const board = boards.find(b => b.id === boardId);
+  const mode = board && board.run_mode === 'open' && settings.allow_open_mode === 'on'
+    ? 'open' : 'sealed';
+  return (runtime.modes && runtime.modes[mode]) || runtime;
+}
+
 async function runFocusedCard(cardId = focusedCardId()) {
   if (!cardId) return;
   openActionConfirm('run this card?', 'run it', 'cancel', () => doRunFocusedCard(cardId));
 }
 
 async function doRunFocusedCard(cardId) {
-  const runtime = await api('/api/runtime');
-  if (!runtime.ready) { reportNotReady(runtime.missing); return; }
+  const answer = await runtimeFor(currentBoardId);
+  if (!answer.ready) { reportNotReady(answer.missing); return; }
 
   // a manual retry means whatever the CTA named ("fix leases", "answer question") is either
   // done or moot - the run itself is now the story, so the stale reason-code label goes

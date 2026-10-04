@@ -72,7 +72,33 @@ def _owner_repo_from_url(url: str) -> str | None:
 # ---- machine checks ------------------------------------------------------------------------
 
 
-def _docker_check() -> dict[str, Any]:
+def _not_needed(check_id: str, label: str) -> dict[str, Any]:
+    return _check(
+        check_id,
+        "machine",
+        label,
+        "ok",
+        "not needed: every board runs in open mode, on this machine.",
+    )
+
+
+def _cli_check() -> dict[str, Any]:
+    """an open board runs the agent's cli on this machine"""
+    if shutil.which("claude") is None:
+        return _check(
+            "claude-cli",
+            "machine",
+            "claude cli",
+            "fail",
+            "the claude cli is not on PATH. an open board runs it on this machine.",
+            "install claude code, then re-check.",
+        )
+    return _check("claude-cli", "machine", "claude cli", "ok", "the claude cli is on PATH.")
+
+
+def _docker_check(needed: bool = True) -> dict[str, Any]:
+    if not needed:
+        return _not_needed("docker", "docker")
     if shutil.which("docker") is None:
         return _check(
             "docker",
@@ -96,7 +122,9 @@ def _docker_check() -> dict[str, Any]:
     )
 
 
-def _image_check() -> dict[str, Any]:
+def _image_check(needed: bool = True) -> dict[str, Any]:
+    if not needed:
+        return _not_needed("card-image", "card image")
     image = card_image()
     if not docker_available():
         return _check(
@@ -349,7 +377,9 @@ def _git_check() -> dict[str, Any]:
 # ---- per-repo checks ------------------------------------------------------------------------
 
 
-def _repo_checks(repo: dict[str, Any], run: CommandRunner) -> list[dict[str, Any]]:
+def _repo_checks(
+    repo: dict[str, Any], run: CommandRunner, mode: str = "sealed"
+) -> list[dict[str, Any]]:
     name = repo["name"]
     path = Path(repo["path"])
 
@@ -486,6 +516,9 @@ def _repo_checks(repo: dict[str, Any], run: CommandRunner) -> list[dict[str, Any
                 f"{suggestion}. the test gate cannot run a card's work without one.",
             )
         )
+
+    if mode == "open":
+        return checks  # an open board runs the suite on this machine: no repo image to check
 
     image = repo.get("image") or card_image()
     if not docker_available():
@@ -639,9 +672,14 @@ def run_preflight(
 ) -> list[dict[str, Any]]:
     """every check, machine checks first, then each registered repo's, across every board."""
     run = runner or default_runner
+    modes = {board["id"]: store.run_mode(board["id"]) for board in store.list_boards()}
+    # docker and the card image matter only to a sealed board; with no boards yet, the default is sealed
+    any_sealed = not modes or "sealed" in modes.values()
+    any_open = "open" in modes.values()
     checks = [
-        _docker_check(),
-        _image_check(),
+        _docker_check(any_sealed),
+        _image_check(any_sealed),
+        *([_cli_check()] if any_open else []),
         # the credential the next run will use, which follows the active profile
         *(
             [_token_check(profiles.token_path_for_run(token_path))]
@@ -655,5 +693,5 @@ def run_preflight(
     ]
     for board in store.list_boards():
         for repo in store.list_repos(board["id"]):
-            checks.extend(_repo_checks(repo, run))
+            checks.extend(_repo_checks(repo, run, modes[board["id"]]))
     return checks
