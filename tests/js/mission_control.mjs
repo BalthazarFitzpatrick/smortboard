@@ -140,7 +140,7 @@ responses.set('/api/roster', stubJson(200, []));
   assert.equal(model.querySelectorAll('.stat').length, 0, 'no token line under the spend bar');
   assert.equal(model.querySelectorAll('.usage-model-name')[0].textContent, 'opus - $0.19 - 100%');
   assert.equal(card.querySelectorAll('.usage-foot .stat')[0].textContent, '3 runs - $0.19', 'the foot sums runs and cost');
-  assert.match(card.querySelectorAll('.usage-disclaimer')[0].textContent, /not read live from your lab accounts/);
+  assert.match(card.querySelectorAll('.usage-disclaimer')[0].textContent, /read from the account/);
 }
 
 // a window with a reset time but no utilisation shows how far through it we are, as time

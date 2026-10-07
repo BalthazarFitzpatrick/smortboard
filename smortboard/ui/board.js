@@ -975,7 +975,8 @@ function windowStats(w, now = Date.now() / 1000) {
   if (w.resets_at == null) return label || 'no reset reported';
   const when = formatResetTime(w.resets_at, now);
   if (w.resets_at <= now) return `reset ${when} - no run since`;
-  return [label, `resets ${when}`, `in ${formatDuration(w.resets_at - now)}`].filter(Boolean).join(' - ');
+  const read = w.source ? `${w.source.replace('_', ' ')}, ${formatDuration(now - w.fetched_at)} ago` : null;
+  return [label, `resets ${when}`, `in ${formatDuration(w.resets_at - now)}`, read].filter(Boolean).join(' - ');
 }
 
 // ui_base's fill bar: .progress-row > .bar > .bar-fill, the fill's width the fraction
@@ -1093,8 +1094,8 @@ function usageCard(data) {
   foot.className = 'card-foot usage-foot';
   foot.appendChild(textLine(`${data.runs || 0} runs - ${money({cost_usd: data.total_cost_usd, cost_estimated: data.cost_estimated})}`, 'stat'));
   card.appendChild(foot);
-  card.appendChild(textLine('added up from what the board\'s own runs reported, not read live from '
-    + 'your lab accounts - use outside the board does not show here.', 'field-label usage-disclaimer'));
+  card.appendChild(textLine('windows marked with a source are read from the account; the rest, and all '
+    + 'spend, is added up from what the board's own runs reported.', 'field-label usage-disclaimer'));
   return card;
 }
 

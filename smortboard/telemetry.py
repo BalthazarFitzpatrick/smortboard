@@ -192,7 +192,18 @@ def _window_from_rate_limit_event(payload: dict[str, Any]) -> list[dict[str, Any
     ]
 
 
-def usage_projection(store: Store) -> dict[str, Any]:
+def _roll_over(window: dict[str, Any], now: float | None = None) -> dict[str, Any]:
+    """a window whose reset has passed is a closed one: drop its reading, flag it rolled over"""
+    now = now if now is not None else datetime.now(UTC).timestamp()
+    resets_at = window.get("resets_at")
+    if isinstance(resets_at, (int, float)) and resets_at <= now:
+        return {**window, "utilization": None, "rolled_over": True}
+    return window
+
+
+def usage_projection(
+    store: Store, account_windows: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     events = store.list_events_by_kind(None)
     latest_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
     for event in events:
@@ -202,7 +213,10 @@ def usage_projection(store: Store) -> dict[str, Any]:
             # later events overwrite earlier ones per (window type, profile) - list_events_by_kind
             # is oldest first by wall-clock time, so the last write per key is the true latest
             latest_by_key[(window["lab"], window["type"], window["profile"])] = window
-    windows = list(latest_by_key.values())
+    # account-wide readings replace the board's own per-run windows for the same key
+    for window in account_windows or []:
+        latest_by_key[(window["lab"], window["type"], window["profile"])] = window
+    windows = [_roll_over(window) for window in latest_by_key.values()]
 
     result_events = [event for event in events if result_fields(event) is not None]
     models: dict[str, dict[str, Any]] = {}
