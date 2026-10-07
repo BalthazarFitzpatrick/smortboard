@@ -21,7 +21,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from smortboard.exec.leases import (
     changed_paths_outside_lease,
@@ -337,21 +337,56 @@ _DOCKER_PROBE = ["docker", "version", "--format", "{{.Server.Version}}"]
 _DOCKER_PROBE_TIMEOUT = 10
 
 
+class DockerStatus(NamedTuple):
+    """what the docker probe found: a state, plus the probe's raw stderr for display"""
+
+    state: str  # ok / not_installed / permission_denied / daemon_down / other
+    stderr: str = ""
+
+
+def _classify_docker_stderr(stderr: str) -> str:
+    text = stderr.lower()
+    if "permission denied" in text:
+        return "permission_denied"
+    daemon_down_markers = (
+        "cannot connect to the docker daemon",
+        "is the docker daemon running",
+        "error during connect",
+    )
+    if any(marker in text for marker in daemon_down_markers):
+        return "daemon_down"
+    return "other"
+
+
+def docker_status(runner: Callable[..., Any] | None = None) -> DockerStatus:
+    """probe docker and say why it is unusable, not just whether it is.
+
+    `runner(cmd, timeout=...)` is the preflight runner shape, a test seam.
+    """
+    if shutil.which("docker") is None:
+        return DockerStatus("not_installed")
+    try:
+        if runner is not None:
+            result = runner(_DOCKER_PROBE, timeout=_DOCKER_PROBE_TIMEOUT)
+        else:
+            result = subprocess.run(
+                _DOCKER_PROBE,
+                capture_output=True,
+                text=True,
+                timeout=_DOCKER_PROBE_TIMEOUT,
+                check=False,
+            )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return DockerStatus("other", str(exc))
+    stderr = (result.stderr or "").strip()
+    if result.returncode == 0 and (result.stdout or "").strip():
+        return DockerStatus("ok")
+    return DockerStatus(_classify_docker_stderr(stderr), stderr)
+
+
 def docker_available() -> bool:
     """true if `docker` is on PATH and a daemon actually answers - not just installed but unusable"""
-    if shutil.which("docker") is None:
-        return False
-    try:
-        result = subprocess.run(
-            _DOCKER_PROBE,
-            capture_output=True,
-            text=True,
-            timeout=_DOCKER_PROBE_TIMEOUT,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0 and bool(result.stdout.strip())
+    return docker_status().state == "ok"
 
 
 def card_image_available(image: str | None = None) -> bool:

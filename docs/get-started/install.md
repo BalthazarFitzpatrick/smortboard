@@ -20,6 +20,8 @@ credential:
 **one lab runs the board.** a second adds a reviewer from another lab, and a fallback when the first
 hits its rate limit.
 
+**on linux, add your user to the docker group** so the board can reach the socket without root: `sudo usermod -aG docker $USER`, then log out and back in (or `newgrp docker`).
+
 **python and uv open the board.** the rest matters once a card runs. the pre-flight checklist (`h`)
 names each gap and its fix.
 

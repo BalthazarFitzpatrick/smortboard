@@ -36,6 +36,7 @@ curl -s -X PATCH -H "$K" -H 'content-type: application/json' 127.0.0.1:8000/api/
 | the gate fails on `Read-only file system` for a tool other than ruff or pytest | give that tool its own cache flag: `--no-cache`, `-p no:cacheprovider`, or whatever it takes. |
 | a card fails a test its own diff never touches | preflight (`h`) may show its repo image predates `uv.lock`. the next run rebuilds it. |
 | a card waits with `lease conflict with card <id>` | two leases overlap. it starts when the other card finishes. |
+| preflight shows docker `permission denied` on `/var/run/docker.sock` | on linux your user is not in the docker group. run `sudo usermod -aG docker $USER`, then log out and back in (or `newgrp docker`). |
 | no new runs start | check the usage window (`u`), the board's daily budget (`shift`+`o`), and what usage limits does in `o`: the default waits for the reset. |
 | cards were `CRASH`ed on start-up | the board was stopped mid-run. they wait in the inbox to be resumed. |
 
