@@ -492,6 +492,7 @@ def test_registry_leaves_credential_selection_to_the_role_runner(tmp_path, monke
     from smortboard import orchestrator
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     state = tmp_path / "profiles.json"
     monkeypatch.setenv("SMORTBOARD_PROFILES_STATE_PATH", str(state))
     state.write_text(json.dumps({"active": "second", "profiles": ["default", "second"]}))

@@ -6,6 +6,7 @@ docker/token probes as the source of truth rather than recomputing them - it onl
 row with a fix. /api/runtime's response is untouched.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -219,7 +220,7 @@ def _token_check(token_path: str | Path | None) -> dict[str, Any]:
     mode = stat.st_mode & 0o777
     problems: list[str] = []
     fixes: list[str] = []
-    if mode != 0o600:
+    if os.name != "nt" and mode != 0o600:
         problems.append(f"mode is {oct(mode)}, not 600.")
         fixes.append(f"chmod 600 {path}")
     if stat.st_size < _MIN_TOKEN_BYTES:

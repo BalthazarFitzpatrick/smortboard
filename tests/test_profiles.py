@@ -26,6 +26,7 @@ def _isolated_profiles(monkeypatch, tmp_path):
     # XDG_CONFIG_HOME isolates profiles_dir() (named profiles' token files); the other two are
     # the same test seams backends.py already offers for the default profile and its own state
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setenv("SMORTBOARD_PROFILES_STATE_PATH", str(tmp_path / "profiles.json"))
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "card_token"))
 

@@ -27,6 +27,7 @@ def _isolated_profiles(monkeypatch, tmp_path):
     # token_path argument these tests pass to run_preflight - isolate them the same way
     # tests/test_profiles.py does, so this file never touches the real config directory
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setenv("SMORTBOARD_PROFILES_STATE_PATH", str(tmp_path / "profiles.json"))
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "card_token_unused"))
 

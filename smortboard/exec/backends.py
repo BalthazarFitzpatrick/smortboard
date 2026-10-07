@@ -532,7 +532,9 @@ class ContainerBackend:
             # the card image now runs as a non-root uid (docker/card.Dockerfile), which rarely
             # matches the host uid that owns this tempdir - open it up so the container can still
             # write its commits into a mount it does not otherwise share ownership with
-            subprocess.run(["chmod", "-R", "go+rwX", str(clone_path)], check=True)
+            # docker desktop on windows maps ownership itself, so there is nothing to open up
+            if os.name != "nt":
+                subprocess.run(["chmod", "-R", "go+rwX", str(clone_path)], check=True)
             # the card's own lease, prepended to its brief: the backend has the store and the id,
             # so no caller has to remember to pass what is already recorded
             # lease ROWS, not strings: get_card returns dicts, and handing those straight to

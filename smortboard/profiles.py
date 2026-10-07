@@ -123,6 +123,9 @@ def profile_path(name: str, lab: str = DEFAULT_LAB) -> Path:
 
 
 def _mode_ok(path: Path) -> bool:
+    # windows has no posix mode bits; the profile dir is private through its acl
+    if os.name == "nt":
+        return True
     return (path.stat().st_mode & 0o077) == 0
 
 
@@ -203,7 +206,8 @@ def write_token_file(path: str | Path, token: str) -> None:
         raise ProfileError(f"{path} is a symbolic link - refusing to write a token")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(fd, "w") as handle:
-        os.fchmod(handle.fileno(), 0o600)
+        if os.name != "nt":
+            os.fchmod(handle.fileno(), 0o600)
         handle.write(token.strip() + "\n")
     if not _mode_ok(path):
         raise ProfileError(f"{path} is not mode 600 after writing - refusing to use it")
