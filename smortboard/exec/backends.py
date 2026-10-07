@@ -1,14 +1,19 @@
-"""how a card runs: one throwaway container, and nothing else.
+"""how a card runs: sealed in one throwaway container by default, or open on the host.
 
 Per docs/plan.md "The containment decision": a card will eventually read input nobody wrote for it -
 an issue body, a fetched page, a dependency's readme - so only a boundary it cannot argue with is
 worth having.
 
-THERE IS NO SECOND MODE. `require_card_runtime` returns the container runtime or refuses with
-instructions. A subprocess fallback would put an agent that may have read untrusted input on the
-operator's own filesystem, with their own credential and their own GitHub access - which is the
-whole thing the container exists to prevent. A board that quietly degraded would be claiming an
-isolation it no longer had.
+TWO RUN MODES, chosen per board (`Store.run_mode`): sealed is the default and open is an opt-in
+that needs the global `allow_open_mode` switch. `require_card_runtime` is the sealed path: it
+returns the container runtime or refuses with instructions. `require_host_runtime` is the open path
+(HostBackend, below): the agent runs as a plain process on the operator's machine, under the lease
+and bash hooks and a scrubbed environment, with no filesystem boundary.
+
+THERE IS NO SILENT FALLBACK BETWEEN THEM. A sealed board never drops to a subprocess when docker is
+missing, because that would put an agent that may have read untrusted input on the operator's own
+filesystem while the board still claimed isolation. It refuses; open mode is a choice the operator
+makes for a board, stated wherever it is offered.
 """
 
 import os
@@ -725,18 +730,20 @@ class ContainerBackend:
 class CardRuntimeUnavailable(RuntimeError):
     """docker or the card credential is missing, so no card can run.
 
-    THERE IS NO FALLBACK ON PURPOSE. running the card as a plain subprocess would put an agent that
-    may have read untrusted input on the operator's own filesystem, with their own credential and
-    their own GitHub access - the exact thing the container exists to prevent. A board that quietly
-    degraded would be claiming an isolation it no longer had, so it refuses instead and says how to
-    fix it.
+    THERE IS NO FALLBACK ON PURPOSE. a sealed board never degrades to a plain subprocess: that
+    would put an agent that may have read untrusted input on the operator's own filesystem, with
+    their own credential and their own GitHub access - the exact thing the container exists to
+    prevent. A board that quietly degraded would be claiming an isolation it no longer had, so it
+    refuses instead and says how to fix it. running on the host is the separate, explicit open run
+    mode (`require_host_runtime`).
     """
 
 
 def require_card_runtime(
     token_path: str | Path | None = None, lab: str = "anthropic"
 ) -> ContainerBackend:
-    """the one way a card runs. raises CardRuntimeUnavailable with instructions if it cannot."""
+    """the way a card runs on a sealed board. raises CardRuntimeUnavailable with instructions if it
+    cannot. an open board uses require_host_runtime instead."""
     from smortboard import profiles
 
     problems = []

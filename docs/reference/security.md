@@ -20,9 +20,17 @@
 
 ## the agents
 
+- **two run modes.** a board runs sealed by default and open only if you turn it on twice: the
+  global switch in `o`, then the board's run mode in `shift`+`o`. sealed is everything below.
+  open runs the card's agent on your machine with no container: it can read and write whatever you
+  can and reach the network, held back only by the lease and bash hooks (which stop accidents, not
+  an agent that works around them), a scrubbed environment with a throwaway `HOME` and no github
+  credential, a push that cannot succeed (the board pushes, never the card), and a stop that ends
+  the whole process group. turning the global switch off puts every board back to sealed.
 - **sealed containers.** non-root, `--cap-drop=ALL`, `no-new-privileges`, memory and process limits.
   no docker socket, home directory, `~/.ssh`, `~/.claude` or `~/.codex`. the test gate has no network; reviewer
-  and orchestrator mounts are read-only. without docker a card refuses to run.
+  and orchestrator mounts are read-only. without docker a sealed card refuses to run; it never
+  falls back to the host.
 - **independent git objects.** card clones use git's transport instead of local hardlinks or
   borrowed objects. making the container's clone writable cannot change source object permissions.
 - **token on stdin.** never on the `docker` command line, never mounted, never in `docker inspect`.
