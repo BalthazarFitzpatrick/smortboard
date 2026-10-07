@@ -51,7 +51,7 @@ see `docs/plan.md` for the full flowchart.
 
 ## active context
 
-public beta, run daily on real repos by one person on macOS. the board, mission control, the
+public beta, run daily on real repos by one person on macOS; linux and windows (docker desktop) run the suite in ci. the board, mission control, the
 landing lock and the demo board are built, the security audit's remediation landed, and the public
 history was rewritten (a github support request covers the pull-request refs a force-push cannot
 touch).

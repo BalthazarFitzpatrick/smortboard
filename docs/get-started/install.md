@@ -22,6 +22,8 @@ hits its rate limit.
 
 **on linux, add your user to the docker group** so the board can reach the socket without root: `sudo usermod -aG docker $USER`, then log out and back in (or `newgrp docker`).
 
+**on windows, use docker desktop with the wsl2 backend.** `winget install Docker.DockerDesktop`, start it, and wait until it reports running. if it will not start, `wsl --status` shows whether wsl2 is installed. a non-admin user also needs to be in the `docker-users` group. docker running inside a wsl distro is not wired up yet.
+
 **python and uv open the board.** the rest matters once a card runs. the pre-flight checklist (`h`)
 names each gap and its fix.
 

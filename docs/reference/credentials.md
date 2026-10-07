@@ -10,6 +10,8 @@ refuses to read one anyone else can. where each one lands:
 
 `$XDG_CONFIG_HOME` is honoured where set.
 
+windows has no mode bits, so the mode check does not apply there. the files rely on the permissions of your user profile folder, which is the protection claude code and codex give their own credential files.
+
 an openai profile holds the whole `~/.codex/auth.json` or an api key, per the kind chosen when it
 was added. a bare access token pulled out of that json is refused, as measured in
 [the credential spike](../spikes/s7-codex-auth.md).
