@@ -10,8 +10,15 @@ import subprocess
 import pytest
 
 from smortboard import profiles
+from smortboard.exec.backends import DockerStatus, docker_status
 from smortboard.preflight import run_preflight
 from smortboard.store import Store
+
+
+@pytest.fixture(autouse=True)
+def _docker_ok(monkeypatch):
+    # machine checks probe docker through docker_status; default to a healthy daemon
+    monkeypatch.setattr("smortboard.preflight.docker_status", lambda run=None: DockerStatus("ok"))
 
 
 @pytest.fixture(autouse=True)
@@ -64,6 +71,7 @@ def _by_id(checks, check_id):
 
 def test_docker_not_installed_fails_with_an_install_fix(monkeypatch, store):
     monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: None)
+    monkeypatch.setattr("smortboard.preflight.docker_status", docker_status)
     checks = run_preflight(store, runner=_all_ok_runner)
     row = _by_id(checks, "docker")
     assert row["status"] == "fail"
@@ -73,7 +81,9 @@ def test_docker_not_installed_fails_with_an_install_fix(monkeypatch, store):
 
 def test_docker_installed_but_daemon_down(monkeypatch, store):
     monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: "/usr/bin/docker")
-    monkeypatch.setattr("smortboard.preflight.docker_available", lambda: False)
+    monkeypatch.setattr(
+        "smortboard.preflight.docker_status", lambda run=None: DockerStatus("daemon_down")
+    )
     checks = run_preflight(store, runner=_all_ok_runner)
     row = _by_id(checks, "docker")
     assert row["status"] == "fail"
@@ -82,6 +92,58 @@ def test_docker_installed_but_daemon_down(monkeypatch, store):
     image_row = _by_id(checks, "card-image")
     assert image_row["status"] == "fail"
     assert "docker is not reachable" in image_row["detail"]
+
+
+def _docker_probe_runner(stderr):
+    def runner(cmd, timeout=10, cwd=None):
+        if cmd[:2] == ["docker", "version"]:
+            return _fail(stderr, cmd)
+        return _all_ok_runner(cmd, timeout, cwd)
+
+    return runner
+
+
+def test_docker_permission_denied_gives_the_group_fix(monkeypatch, store):
+    monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr("smortboard.preflight.docker_status", docker_status)
+    stderr = (
+        "permission denied while trying to connect to the Docker daemon socket "
+        "at unix:///var/run/docker.sock"
+    )
+    checks = run_preflight(store, runner=_docker_probe_runner(stderr))
+    row = _by_id(checks, "docker")
+    assert row["status"] == "fail"
+    assert "sudo usermod -aG docker $USER" in row["fix"]
+    assert "newgrp docker" in row["fix"]
+    assert "systemctl" not in row["fix"]
+    assert stderr in row["detail"]
+    image_row = _by_id(checks, "card-image")
+    assert "fix docker permissions" in image_row["detail"]
+    assert "not reachable" not in image_row["detail"]
+
+
+def test_docker_cannot_connect_keeps_the_systemctl_fix(monkeypatch, store):
+    monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr("smortboard.preflight.docker_status", docker_status)
+    stderr = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
+    checks = run_preflight(store, runner=_docker_probe_runner(stderr))
+    row = _by_id(checks, "docker")
+    assert "systemctl start docker" in row["fix"]
+    assert stderr in row["detail"]
+    assert "docker is not reachable" in _by_id(checks, "card-image")["detail"]
+
+
+def test_docker_status_classifies_stderr(monkeypatch):
+    monkeypatch.setattr("smortboard.exec.backends.shutil.which", lambda name: "/usr/bin/docker")
+    cases = {
+        "permission denied while trying to connect": "permission_denied",
+        "Cannot connect to the Docker daemon": "daemon_down",
+        "something odd": "other",
+    }
+    for stderr, state in cases.items():
+        status = docker_status(_docker_probe_runner(stderr))
+        assert status.state == state
+        assert status.stderr == stderr
 
 
 def test_card_image_missing_gives_the_exact_build_command(monkeypatch, store):

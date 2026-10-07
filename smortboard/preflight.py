@@ -17,11 +17,13 @@ from typing import Any, Protocol
 from smortboard import profiles
 from smortboard.exec.backends import (
     CardTokenMissing,
+    DockerStatus,
     card_image,
     card_image_available,
     card_token_available,
     card_token_path,
     docker_available,
+    docker_status,
     read_card_token,
 )
 from smortboard.repo_tests import detect_tests
@@ -96,10 +98,21 @@ def _cli_check() -> dict[str, Any]:
     return _check("claude-cli", "machine", "claude cli", "ok", "the claude cli is on PATH.")
 
 
-def _docker_check(needed: bool = True) -> dict[str, Any]:
+_DOCKER_GROUP_FIX = (
+    "run `sudo usermod -aG docker $USER`, then log out and back in (or run `newgrp docker`), "
+    "then re-check."
+)
+
+
+def _docker_check(needed: bool = True, run: CommandRunner | None = None) -> dict[str, Any]:
     if not needed:
         return _not_needed("docker", "docker")
-    if shutil.which("docker") is None:
+    status = docker_status(run)
+    if status.state == "ok":
+        return _check(
+            "docker", "machine", "docker", "ok", "docker is installed and the daemon answers."
+        )
+    if status.state == "not_installed":
         return _check(
             "docker",
             "machine",
@@ -108,25 +121,53 @@ def _docker_check(needed: bool = True) -> dict[str, Any]:
             "docker is not installed.",
             "install docker desktop (or the docker engine), then re-check.",
         )
-    if not docker_available():
+    if status.state == "permission_denied":
         return _check(
             "docker",
             "machine",
             "docker",
             "fail",
-            "docker is installed but the daemon is not answering.",
+            _with_stderr("docker is installed but this user cannot reach its socket.", status),
+            _DOCKER_GROUP_FIX,
+        )
+    if status.state == "daemon_down":
+        return _check(
+            "docker",
+            "machine",
+            "docker",
+            "fail",
+            _with_stderr("docker is installed but the daemon is not answering.", status),
             "start docker desktop (or `sudo systemctl start docker`), then re-check.",
         )
     return _check(
-        "docker", "machine", "docker", "ok", "docker is installed and the daemon answers."
+        "docker",
+        "machine",
+        "docker",
+        "fail",
+        _with_stderr("docker is installed but the probe failed.", status),
+        "run `docker version` in a terminal to see the error, then re-check.",
     )
 
 
-def _image_check(needed: bool = True) -> dict[str, Any]:
+def _with_stderr(detail: str, status: DockerStatus) -> str:
+    return f"{detail} docker said: {status.stderr}" if status.stderr else detail
+
+
+def _image_check(needed: bool = True, run: CommandRunner | None = None) -> dict[str, Any]:
     if not needed:
         return _not_needed("card-image", "card image")
     image = card_image()
-    if not docker_available():
+    status = docker_status(run)
+    if status.state == "permission_denied":
+        return _check(
+            "card-image",
+            "machine",
+            "card image",
+            "fail",
+            f"cannot check for {image}: fix docker permissions.",
+            _DOCKER_GROUP_FIX,
+        )
+    if status.state != "ok":
         return _check(
             "card-image",
             "machine",
@@ -677,8 +718,8 @@ def run_preflight(
     any_sealed = not modes or "sealed" in modes.values()
     any_open = "open" in modes.values()
     checks = [
-        _docker_check(any_sealed),
-        _image_check(any_sealed),
+        _docker_check(any_sealed, run),
+        _image_check(any_sealed, run),
         *([_cli_check()] if any_open else []),
         # the credential the next run will use, which follows the active profile
         *(
