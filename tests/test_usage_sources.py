@@ -132,3 +132,62 @@ def test_account_window_replaces_the_board_window_for_the_same_key(tmp_path):
         [shown] = usage_projection(store, [window])["windows"]
     assert shown["source"] == "oauth"
     assert shown["utilization"] == 0.03
+
+
+# -- codex ----------------------------------------------------------------------------------
+
+APP_SERVER_LIMITS = {
+    "limitId": "codex",
+    "primary": {"usedPercent": 14, "windowDurationMins": 10080, "resetsAt": 1_791_957_313},
+    "secondary": None,
+}
+
+
+def test_app_server_shape_gives_seven_day_14_and_ignores_the_null_secondary():
+    windows = usage_sources.parse_codex_rate_limits(APP_SERVER_LIMITS, "app_server", NOW)
+    assert len(windows) == 1
+    assert windows[0]["type"] == "seven_day"
+    assert windows[0]["lab"] == "openai"
+    assert windows[0]["utilization"] == 0.14
+    assert windows[0]["resets_at"] == 1_791_957_313.0
+    assert windows[0]["source"] == "app_server"
+
+
+def test_a_five_hour_primary_and_seven_day_secondary_are_both_kept():
+    limits = {
+        "primary": {"usedPercent": 6, "windowDurationMins": 300, "resetsAt": 10},
+        "secondary": {"usedPercent": 40, "windowDurationMins": 10080, "resetsAt": 20},
+    }
+    windows = usage_sources.parse_codex_rate_limits(limits, "app_server", NOW)
+    assert {w["type"]: w["utilization"] for w in windows} == {"five_hour": 0.06, "seven_day": 0.4}
+
+
+def test_an_unknown_window_length_is_ignored():
+    limits = {"primary": {"usedPercent": 6, "windowDurationMins": 60, "resetsAt": 10}}
+    assert usage_sources.parse_codex_rate_limits(limits, "app_server", NOW) == []
+
+
+def test_rollout_fallback_reads_the_last_non_null_rate_limits(tmp_path):
+    # the rollout shape follows the plan's description and has not been seen on a real file
+    day = tmp_path / "sessions" / "2026" / "10" / "07"
+    day.mkdir(parents=True)
+    old = {"used_percent": 1.0, "window_minutes": 10080, "resets_at": 1}
+    new = {"used_percent": 13.0, "window_minutes": 10080, "resets_at": 2}
+    lines = [
+        {"payload": {"type": "token_count", "rate_limits": {"primary": old, "secondary": None}}},
+        {"payload": {"type": "token_count", "rate_limits": {"primary": new, "secondary": None}}},
+        {"payload": {"type": "token_count", "rate_limits": None}},
+        "not json",
+    ]
+    text = "\n".join(line if isinstance(line, str) else json.dumps(line) for line in lines)
+    (day / "rollout-a.jsonl").write_text(text)
+    [window] = usage_sources.read_codex_rollout(tmp_path, NOW)
+    assert window["utilization"] == 0.13
+    assert window["source"] == "rollout"
+    assert window["resets_at"] == 2.0
+
+
+def test_no_codex_and_no_rollouts_gives_no_windows(tmp_path, monkeypatch):
+    monkeypatch.setattr(usage_sources.shutil, "which", lambda name: None)
+    usage_sources._cache.clear()
+    assert usage_sources.codex_windows(tmp_path, NOW) == []

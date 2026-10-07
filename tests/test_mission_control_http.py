@@ -315,6 +315,7 @@ def test_roster_is_empty_on_a_fresh_board(running_server):
 
 def test_usage_is_empty_on_a_fresh_board(running_server, monkeypatch):
     monkeypatch.setattr("smortboard.usage_sources.claude_windows", lambda: [])
+    monkeypatch.setattr("smortboard.usage_sources.codex_windows", lambda: [])
     base_url, _server = running_server
     status, body = _request(f"{base_url}/api/usage")
     assert status == 200

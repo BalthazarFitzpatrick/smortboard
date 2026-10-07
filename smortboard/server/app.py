@@ -511,7 +511,12 @@ def _make_handler(
                 active = [{"card_id": s.card_id, "phase": s.phase} for s in runs.active()]
                 self._send_json(200, roster_rows(store, active))
             elif path == "/api/usage":
-                self._send_json(200, usage_projection(store, usage_sources.claude_windows()))
+                self._send_json(
+                    200,
+                    usage_projection(
+                        store, usage_sources.claude_windows() + usage_sources.codex_windows()
+                    ),
+                )
             elif path == "/api/costs":
                 self._send_json(200, boards_overview(store))
             elif path == "/api/costs/optimisation":
