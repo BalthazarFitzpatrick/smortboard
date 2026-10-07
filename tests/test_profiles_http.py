@@ -81,6 +81,7 @@ def test_list_profiles_starts_with_just_default(running_server):
     ]
 
 
+@pytest.mark.posix_only
 def test_add_profile_writes_a_mode_600_file_and_never_echoes_the_token(running_server, tmp_path):
     status, body = _request(
         f"{running_server}/api/profiles", "POST", {"name": "alt", "token": VALID_TOKEN}

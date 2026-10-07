@@ -42,7 +42,7 @@ def test_a_repo_is_cloned_read_only_without_card_branches_or_worktrees(tmp_path)
         # the clone mount is read-only and lands under /repos/<name>
         assert "-v" in snapshot.mount_args
         clone_mount = next(m for m in snapshot.mount_args if f"{REPOS_MOUNT}/src:ro" in m)
-        clone_path = Path(clone_mount.split(":")[0])
+        clone_path = Path(clone_mount.split(f":{REPOS_MOUNT}")[0])
 
         assert (clone_path / "README.md").exists()
         # no worktree dir travelled in the clone
@@ -67,7 +67,7 @@ def test_cleanup_removes_the_clone_dir(tmp_path):
         [{"name": "src", "path": str(repo), "default_branch": "main"}], []
     )
     clone_mount = next(m for m in snapshot.mount_args if f"{REPOS_MOUNT}/src:ro" in m)
-    clone_path = Path(clone_mount.split(":")[0])
+    clone_path = Path(clone_mount.split(f":{REPOS_MOUNT}")[0])
     assert clone_path.exists()
     snapshot.cleanup()
     assert not clone_path.exists()
@@ -166,7 +166,7 @@ def test_mission_control_reads_what_landed_on_origin_not_the_stale_local_branch(
     )
     try:
         clone_mount = next(m for m in snapshot.mount_args if f"{REPOS_MOUNT}/src:ro" in m)
-        assert (Path(clone_mount.split(":")[0]) / "game.js").exists()
+        assert (Path(clone_mount.split(f":{REPOS_MOUNT}")[0]) / "game.js").exists()
     finally:
         snapshot.cleanup()
 
@@ -180,7 +180,7 @@ def test_the_clone_shares_no_objects_with_the_source(tmp_path):
     )
     try:
         clone_mount = next(m for m in snapshot.mount_args if f"{REPOS_MOUNT}/src:ro" in m)
-        clone_git = Path(clone_mount.split(":")[0]) / ".git"
+        clone_git = Path(clone_mount.split(f":{REPOS_MOUNT}")[0]) / ".git"
 
         assert not (clone_git / "objects" / "info" / "alternates").exists()
         # hardlinked objects would share inodes with the source repo

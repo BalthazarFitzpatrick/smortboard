@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from smortboard.fsutil import remove_tree
 from smortboard.repo_setup import Runner, SetupRefused, SetupResult, default_runner, prepare
 from smortboard.store.api import Store
 from smortboard.store.repo_validation import validate_repo
@@ -342,16 +343,16 @@ def _write_scaffold(repo_dir: Path) -> None:
     for rel, text in SCAFFOLD.items():
         path = repo_dir / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
 
 
 def _undo_repo(repo_dir: Path, created_dir: bool) -> None:
     if created_dir:
-        shutil.rmtree(repo_dir, ignore_errors=True)
+        remove_tree(repo_dir)
         return
     for child in repo_dir.iterdir():
         if child.is_dir():
-            shutil.rmtree(child, ignore_errors=True)
+            remove_tree(child)
         else:
             child.unlink(missing_ok=True)
 

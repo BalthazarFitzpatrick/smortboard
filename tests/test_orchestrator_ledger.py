@@ -130,6 +130,7 @@ def test_a_card_without_a_task_is_not_linked(board):
     assert len(store.list_cards(board_id)) == 2
 
 
+@pytest.mark.posix_only
 def test_an_untracked_ledger_symlink_into_a_private_repo_is_read_from_disk(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

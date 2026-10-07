@@ -26,6 +26,7 @@ def _make_board_and_card(store, **card_kwargs):
     return board, card
 
 
+@pytest.mark.posix_only
 def test_a_fresh_db_is_created_0600(tmp_path):
     db_path = tmp_path / "board.sqlite3"
     with Store(db_path):
@@ -33,6 +34,7 @@ def test_a_fresh_db_is_created_0600(tmp_path):
     assert stat.S_IMODE(db_path.stat().st_mode) == 0o600
 
 
+@pytest.mark.posix_only
 def test_an_existing_loose_db_is_tightened_on_open(tmp_path):
     db_path = tmp_path / "board.sqlite3"
     with Store(db_path):

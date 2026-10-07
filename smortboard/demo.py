@@ -884,11 +884,12 @@ def isolate_demo_config(root: Path) -> None:
     tokens.mkdir(parents=True, exist_ok=True)
     for name in DEMO_PROFILES:
         token = tokens / name
-        token.write_text("demo-token-not-a-real-credential\n")
+        token.write_text("demo-token-not-a-real-credential\n", encoding="utf-8")
         token.chmod(0o600)
     state = root / "smortboard" / "profiles.json"
     state.write_text(
-        json.dumps({"active": DEMO_PROFILES[0], "profiles": DEMO_PROFILES, "limits": {}})
+        json.dumps({"active": DEMO_PROFILES[0], "profiles": DEMO_PROFILES, "limits": {}}),
+        encoding="utf-8",
     )
     # XDG_CONFIG_HOME on unix, APPDATA on windows - config_base reads one or the other
     os.environ["XDG_CONFIG_HOME"] = str(root)

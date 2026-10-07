@@ -26,7 +26,7 @@ def github_slug(heading: str) -> str:
 def anchors(page: Path) -> set[str]:
     seen: dict[str, int] = {}
     found = set()
-    for line in FENCE.sub("", page.read_text()).splitlines():
+    for line in FENCE.sub("", page.read_text(encoding="utf-8")).splitlines():
         match = re.match(r"^#{1,6}\s+(.*)$", line)
         if not match:
             continue
@@ -39,7 +39,7 @@ def anchors(page: Path) -> set[str]:
 
 
 def links(page: Path) -> list[str]:
-    text = INLINE_CODE.sub("", FENCE.sub("", page.read_text()))
+    text = INLINE_CODE.sub("", FENCE.sub("", page.read_text(encoding="utf-8")))
     return MD_LINK.findall(text) + HTML_SRC.findall(text)
 
 

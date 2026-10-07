@@ -94,7 +94,9 @@ def lease_permits(rel: str, lease: dict) -> bool:
     own = list(lease.get("path_globs") or []) + list(lease.get("remembered_globs") or [])
     if lease_allows(rel, own):
         return True
-    if lease.get("mode") != "soft" or rel.startswith("/") or rel.split("/")[0] == "..":
+    # an absolute path is outside the repo: a leading slash, or a windows drive letter such as c:
+    absolute = rel.startswith("/") or rel[1:2] == ":"
+    if lease.get("mode") != "soft" or absolute or rel.split("/")[0] == "..":
         return False
     fenced = list(lease.get("protected_globs") or []) + list(lease.get("held_globs") or [])
     return not lease_allows(rel, fenced)
@@ -192,7 +194,7 @@ file_path = payload.get("tool_input", {}).get("file_path")
 if not file_path:
     sys.exit(0)
 
-lease = json.loads(Path(__file__).with_name("lease.json").read_text())
+lease = json.loads(Path(__file__).with_name("lease.json").read_text(encoding="utf-8"))
 # the guards never sit inside the repo, so the root comes from lease.json
 repo_root = Path(lease.get("root") or Path(__file__).resolve().parents[1])
 
@@ -203,10 +205,11 @@ except ValueError:
     rel = Path(file_path).resolve()
 
 # own globs, the repo's remembered ones, and in soft mode any unprotected path nobody else holds
-if lease_permits(str(rel), lease):
+# globs are posix style, so a windows host must not hand them backslashes
+if lease_permits(rel.as_posix(), lease):
     sys.exit(0)
 
-print(f"{prefix} {rel} is outside this card's lease", file=sys.stderr)
+print(f"{prefix} {rel.as_posix()} is outside this card's lease", file=sys.stderr)
 sys.exit(2)
 """.replace("{prefix}", LEASE_CONFLICT_PREFIX)
 )
@@ -250,10 +253,10 @@ def write_lease_settings(
         "remembered_globs": remembered_globs or [],
         "root": str(root),
     }
-    (out_dir / "lease.json").write_text(json.dumps(lease, indent=2))
+    (out_dir / "lease.json").write_text(json.dumps(lease, indent=2), encoding="utf-8")
 
     hook_script = out_dir / "lease_guard.py"
-    hook_script.write_text(_HOOK_SCRIPT)
+    hook_script.write_text(_HOOK_SCRIPT, encoding="utf-8")
     hook_script.chmod(0o755)
 
     seen_script = f"{guard_dir}/lease_guard.py" if guard_dir else hook_script
@@ -265,7 +268,7 @@ def write_lease_settings(
 
     settings = {"hooks": {"PreToolUse": [lease_entry, bash_guard_entry]}}
     settings_file = out_dir / "settings.json"
-    settings_file.write_text(json.dumps(settings, indent=2))
+    settings_file.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     return settings_file
 
 

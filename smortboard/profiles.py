@@ -58,7 +58,7 @@ def _default_state() -> dict[str, Any]:
 def _load_state() -> dict[str, Any]:
     """reading a v1 or missing file never writes or moves anything"""
     try:
-        data = json.loads(state_path().read_text())
+        data = json.loads(state_path().read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return _default_state()
     if not isinstance(data, dict):
@@ -101,7 +101,7 @@ def _save_state(state: dict[str, Any]) -> None:
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-    tmp_path.write_text(json.dumps(state, indent=2))
+    tmp_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
     tmp_path.replace(path)
 
 
@@ -411,7 +411,7 @@ def read_profile_token(lab: str, name: str) -> str:
     try:
         if not _mode_ok(path):
             raise ProfileError(f"{path} is not mode 600 - refusing to read it. chmod 600 {path}")
-        token = path.read_text().strip()
+        token = path.read_text(encoding="utf-8").strip()
     except OSError as exc:
         raise ProfileError(f"cannot read {lab} credential at {path}") from exc
     if profile_kind(name, lab) == "auth_json":

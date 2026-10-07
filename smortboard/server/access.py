@@ -36,7 +36,7 @@ def load_or_create_api_key(path: Path | None = None) -> str:
     """reads the board's api key, minting a new one when there is none or it is not owner-only"""
     path = path or api_key_path()
     if path.exists() and _mode_ok(path):
-        key = path.read_text().strip()
+        key = path.read_text(encoding="utf-8").strip()
         if key:
             return key
     key = secrets.token_urlsafe(32)

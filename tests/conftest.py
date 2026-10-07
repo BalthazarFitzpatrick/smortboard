@@ -9,6 +9,8 @@ so a test that never touches profiles.py directly still cannot see real state th
 scheduler.
 """
 
+import os
+
 import pytest
 
 
@@ -18,3 +20,13 @@ def _isolated_profiles_state(monkeypatch, tmp_path):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setenv("SMORTBOARD_PROFILES_STATE_PATH", str(tmp_path / "profiles.json"))
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "card_token"))
+
+
+def pytest_collection_modifyitems(config, items):
+    # posix_only tests assert file modes, signals or shell paths windows does not have
+    if os.name != "nt":
+        return
+    skip = pytest.mark.skip(reason="posix only")
+    for item in items:
+        if "posix_only" in item.keywords:
+            item.add_marker(skip)

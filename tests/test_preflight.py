@@ -166,6 +166,7 @@ def test_token_file_absent_points_at_setup_token(monkeypatch, store, tmp_path):
     assert str(missing) in row["detail"]
 
 
+@pytest.mark.posix_only
 def test_token_file_wrong_mode_fails_and_never_prints_the_token(monkeypatch, store, tmp_path):
     # read_card_token now refuses a non-600 file outright, so preflight reports it as
     # unusable (fail) rather than a mere warning - the run would refuse it too
@@ -549,6 +550,7 @@ def test_repos_across_every_board_are_included(monkeypatch, store, tmp_path):
     assert {c["group"] for c in checks} >= {"one", "two"}
 
 
+@pytest.mark.posix_only
 def test_never_includes_a_token_value_anywhere(store, tmp_path):
     token_file = tmp_path / "card_token"
     secret = "sk-super-secret-token-value-do-not-leak"

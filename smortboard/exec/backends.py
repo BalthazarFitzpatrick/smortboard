@@ -58,6 +58,7 @@ from smortboard.exec.worktrees import (
     repo_root_of_worktree,
     rev_parse,
 )
+from smortboard.fsutil import remove_tree
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import compatible_effort, parse_ref
 from smortboard.labs.registry import get_adapter
@@ -318,7 +319,7 @@ def read_card_token(token_path: str | Path | None = None) -> str:
             raise CardTokenMissing(
                 f"{resolved} is not mode 600 - refusing to read it. chmod 600 {resolved}"
             )
-        token = resolved.read_text().strip()
+        token = resolved.read_text(encoding="utf-8").strip()
         if token:
             return token
     raise CardTokenMissing(
@@ -621,7 +622,7 @@ class ContainerBackend:
                 )
             return result
         finally:
-            shutil.rmtree(clone_path, ignore_errors=True)
+            remove_tree(clone_path)
 
     def _clone(self, worktree_path: str | Path, clone_path: Path, branch: str) -> None:
         # a clone, not a mount of the worktree itself: the worktree's .git is a pointer file into
@@ -1018,7 +1019,7 @@ class HostBackend:
                 new_session=True,
             )
         finally:
-            shutil.rmtree(scratch, ignore_errors=True)
+            remove_tree(scratch)
         if store is not None and repo is not None and start_commit is not None:
             result = _finish_lease_check(
                 store, card_id, repo, repo_root, branch, start_commit, leases, remembered, result

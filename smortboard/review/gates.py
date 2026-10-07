@@ -31,6 +31,7 @@ from smortboard.exec.backends import (
     docker_available,
     host_env,
 )
+from smortboard.fsutil import remove_tree
 from smortboard.store.errors import NotFoundError
 
 # a test suite that has not finished in ten minutes is not going to; the card is stuck rather than
@@ -152,7 +153,7 @@ def _run_on_host(command: str, work_path: Path, timeout: int) -> tuple[int, str]
                 "it got"
             )
     finally:
-        shutil.rmtree(home, ignore_errors=True)
+        remove_tree(home)
 
 
 def run_test_gate(

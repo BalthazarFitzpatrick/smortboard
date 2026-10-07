@@ -17,6 +17,8 @@ from smortboard.store import Store
 def test_default_db_path_is_under_user_data_dir_not_cwd(tmp_path, monkeypatch):
     # point platformdirs at a scratch home so the test never touches the real user data dir
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     db_path = _default_db_path()
     assert db_path.name == "smortboard.db"

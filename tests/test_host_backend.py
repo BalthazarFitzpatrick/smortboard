@@ -78,6 +78,7 @@ def test_host_env_is_built_from_an_allowlist(tmp_path, monkeypatch):
     assert env["GIT_CONFIG_NOSYSTEM"] == "1"
 
 
+@pytest.mark.posix_only
 def test_a_host_card_cannot_push_to_any_remote(tmp_path):
     origin = tmp_path / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
@@ -203,6 +204,7 @@ def _as_openai(monkeypatch):
     monkeypatch.setattr(profiles, "read_profile_token", lambda lab, name: '{"tokens": "x"}')
 
 
+@pytest.mark.posix_only
 def test_a_codex_card_runs_on_the_host_with_its_own_codex_home(tmp_path, monkeypatch):
     _as_openai(monkeypatch)
     seen = {}
@@ -239,6 +241,7 @@ def test_a_codex_card_runs_on_the_host_with_its_own_codex_home(tmp_path, monkeyp
     assert "GH_TOKEN" not in seen["env"]
 
 
+@pytest.mark.posix_only
 def test_host_guards_are_real_paths_and_read_only(tmp_path):
     worktree = tmp_path / "tree"
     worktree.mkdir()
@@ -253,6 +256,7 @@ def test_host_guards_are_real_paths_and_read_only(tmp_path):
     out.chmod(0o700)  # let pytest clean the directory
 
 
+@pytest.mark.posix_only
 def test_stopping_a_host_run_ends_the_whole_process_group(tmp_path):
     process = subprocess.Popen(
         ["sh", "-c", "sleep 301 & sleep 302 & wait"],

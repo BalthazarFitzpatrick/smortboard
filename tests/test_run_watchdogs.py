@@ -10,6 +10,8 @@ import sys
 import threading
 import time
 
+import pytest
+
 from smortboard import lifecycle
 from smortboard.exec import runner, worktrees
 from smortboard.exec.runner import TIME_CAP_SUBTYPE, RunResult, run_process
@@ -165,6 +167,7 @@ def _lock_is_free(repo):
     return acquired.wait(5)
 
 
+@pytest.mark.posix_only
 def test_a_hung_remote_times_out_instead_of_holding_the_repo_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(worktrees, "GIT_FETCH_TIMEOUT_SECONDS", 1)
     repo = _hung_remote(tmp_path)

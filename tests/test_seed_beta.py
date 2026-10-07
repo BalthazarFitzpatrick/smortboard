@@ -67,6 +67,7 @@ def test_the_repo_is_one_commit_on_main_with_development_cut_from_it(store, tmp_
     assert _git(repo, "show", "main:.gitignore") == "data/\nnode_modules/"
 
 
+@pytest.mark.posix_only
 def test_seeding_creates_a_private_origin_and_pushes_only_development(store, tmp_path, gh):
     repo = tmp_path / "comet"
     result = seed_beta(store, repo, runner=gh)
@@ -198,6 +199,7 @@ def test_a_gh_refusal_leaves_an_empty_folder_it_was_given_empty(store, tmp_path)
     assert store.list_boards() == []
 
 
+@pytest.mark.posix_only
 def test_the_cli_seeds_and_prints_the_one_step_that_is_yours(tmp_path, capsys, gh):
     db_path = tmp_path / "board.sqlite3"
     repo = tmp_path / "comet"

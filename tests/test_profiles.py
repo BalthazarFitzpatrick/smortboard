@@ -95,6 +95,7 @@ def test_reading_profiles_never_writes_a_state_file():
 # -- add / remove / set active ---------------------------------------------------------
 
 
+@pytest.mark.posix_only
 def test_add_profile_registers_a_name_and_writes_a_600_token_file():
     path = profiles.add_profile("work", token="s3cret-token")
     assert path.is_file()
@@ -241,6 +242,7 @@ def test_a_named_active_profile_resolves_to_its_own_file():
 # -- security: mode 600, and no token value ever surfaces -----------------------------
 
 
+@pytest.mark.posix_only
 def test_write_token_file_lands_at_600_even_with_a_permissive_umask(tmp_path):
     import os
 
@@ -252,6 +254,7 @@ def test_write_token_file_lands_at_600_even_with_a_permissive_umask(tmp_path):
     assert path.stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.posix_only
 def test_read_active_token_refuses_an_insecure_named_profile_file():
     path = profiles.add_profile("work", token="s3cret")
     profiles.set_active("work")
@@ -520,6 +523,7 @@ def test_v1_read_does_not_rewrite_state_or_move_token(tmp_path):
     assert profiles.read_profile_token("anthropic", "work") == "legacy-credential"
 
 
+@pytest.mark.posix_only
 def test_openai_profile_has_independent_active_kind_and_private_path(tmp_path):
     path = profiles.add_profile("work", "credential", lab="openai", kind="api_key")
     assert path == tmp_path / "smortboard" / "tokens" / "openai" / "work"

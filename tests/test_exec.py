@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -242,6 +243,7 @@ def test_lease_hook_takes_its_root_from_the_lease_when_mounted_elsewhere(tmp_pat
     assert _guard(settings_path, 0, {"file_path": str(root / "src" / "other.py")}).returncode == 2
 
 
+@pytest.mark.posix_only
 def test_bash_guard_takes_its_root_from_the_lease_too(tmp_path):
     root = (tmp_path / "workspace").resolve()
     settings_path = write_lease_settings(tmp_path / "wt", [], root=str(root))
@@ -466,7 +468,7 @@ def test_a_real_rate_limit_event_wins_over_the_session_limit_text(tmp_path):
             }
         ),
     ]
-    cmd = ["python3", "-c", "import sys; [print(line) for line in sys.argv[1:]]", *events]
+    cmd = [sys.executable, "-c", "import sys; [print(line) for line in sys.argv[1:]]", *events]
     with Store(tmp_path / "board.sqlite3") as store:
         board = store.create_board("b")
         card = store.create_card(board["id"], None, "a card")
@@ -720,6 +722,7 @@ def test_bash_guard_permits_a_command_inside_the_worktree(tmp_path):
     assert result.returncode == 0
 
 
+@pytest.mark.posix_only
 def test_bash_guard_refuses_an_absolute_path_outside_the_worktree(tmp_path):
     worktree = tmp_path / "wt"
     worktree.mkdir()

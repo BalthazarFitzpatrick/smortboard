@@ -220,6 +220,7 @@ def test_container_guards_are_written_as_the_container_sees_them(tmp_path):
     assert str(tmp_path) not in settings_path.read_text()
 
 
+@pytest.mark.posix_only
 def test_container_guards_write_nothing_but_their_own_dir(tmp_path):
     before = set(tmp_path.iterdir())
     write_container_guards(tmp_path / "guards", ["a.py"], remembered_globs=["docs/**"])
@@ -236,6 +237,7 @@ def _container_hook(settings_path, rel):
     )
 
 
+@pytest.mark.posix_only
 def test_a_remembered_glob_lets_the_container_hook_allow_a_write_outside_the_card_lease(tmp_path):
     settings_path = write_container_guards(
         tmp_path / "guards", ["src/**"], remembered_globs=["docs/**"]
@@ -531,6 +533,7 @@ def test_container_backend_real_docker_smoke(tmp_path):
     assert result.returncode == 0
 
 
+@pytest.mark.posix_only
 def test_config_base_honours_xdg_config_home(tmp_path, monkeypatch):
     """profiles.py builds its own paths from this - a token file and a profile file must land
     under the same tree"""
@@ -550,6 +553,7 @@ def test_the_default_token_path_is_honoured(tmp_path, monkeypatch):
     assert read_card_token() == "from-the-file"
 
 
+@pytest.mark.posix_only
 def test_a_group_readable_default_token_is_refused(tmp_path, monkeypatch):
     token = tmp_path / "card_token"
     token.write_text("from-the-file\n")

@@ -11,7 +11,6 @@ carries only the default branch's committed tree - no card/* branches and no wor
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import tempfile
 import uuid
@@ -21,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.exec.worktrees import fast_forward_base, fetch_base, has_remote
+from smortboard.fsutil import remove_tree
 
 # where clones and operator paths land inside the container - the prompt names only these, never a
 # host path
@@ -51,7 +51,7 @@ class RepoSnapshot:
 
     def cleanup(self) -> None:
         if self._tmp_dir is not None:
-            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+            remove_tree(self._tmp_dir)
             self._tmp_dir = None
 
 

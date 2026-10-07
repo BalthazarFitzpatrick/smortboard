@@ -96,7 +96,7 @@ def preview_files(root: Path, runner: Runner = default_runner) -> list[str]:
     throwaway git dir elsewhere, the folder's own .gitignore plus the default one"""
     with tempfile.TemporaryDirectory() as tmp:
         excludes = Path(tmp) / "exclude"
-        excludes.write_text(DEFAULT_GITIGNORE)
+        excludes.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
         git_dir = Path(tmp) / "probe.git"
         runner(["git", "init", "-q", "--bare", str(git_dir)])
         result = runner(
@@ -116,9 +116,9 @@ def preview_files(root: Path, runner: Runner = default_runner) -> list[str]:
 
 def _first_commit(root: Path, git: _Git, steps: list[str], starter: bool) -> None:
     if starter:
-        (root / "README.md").write_text(f"# {root.name}\n")
+        (root / "README.md").write_text(f"# {root.name}\n", encoding="utf-8")
     if not (root / ".gitignore").exists():
-        (root / ".gitignore").write_text(DEFAULT_GITIGNORE)
+        (root / ".gitignore").write_text(DEFAULT_GITIGNORE, encoding="utf-8")
     if not (root / ".git").exists():
         git.must("init", "-q", "-b", "main")
         steps.append("git init")
@@ -129,7 +129,7 @@ def _first_commit(root: Path, git: _Git, steps: list[str], starter: bool) -> Non
     # operator confirmed is exactly what is committed, and a .env never is
     with tempfile.TemporaryDirectory() as tmp:
         excludes = Path(tmp) / "exclude"
-        excludes.write_text(DEFAULT_GITIGNORE)
+        excludes.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
         git.must("-c", f"core.excludesFile={excludes}", "add", "--all")
     git.must("commit", "-q", "-m", "initial project scaffold")
     steps.append("first commit on main")

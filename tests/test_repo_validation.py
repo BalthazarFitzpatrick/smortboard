@@ -81,6 +81,7 @@ def test_missing_branch_is_rejected(tmp_path):
 
 def test_tilde_path_is_expanded(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     repo = tmp_path / "repo"
     _init_repo(repo)
     result = validate_repo("smortboard", "~/repo", "main")
