@@ -8,11 +8,15 @@ usage: rate-limit windows and model spend, summed straight off the event log.
 
 from __future__ import annotations
 
+import json
+import os
 import statistics
 from datetime import UTC, datetime
 from math import ceil
+from pathlib import Path
 from typing import Any
 
+from smortboard.labs.base import estimate_usage
 from smortboard.labs.events import cost_sum, event_cost, model_ref, neutral_events, result_fields
 from smortboard.store.api import Store
 
@@ -791,6 +795,88 @@ def boards_overview(store: Store) -> dict[str, Any]:
         "totals": totals,
         "orchestrator_turns_counted": True,
         "cost_groups": _cost_outcome_groups(store),
+        "out_of_card": out_of_card_spend(),
+    }
+
+
+def _claude_projects_dir() -> Path:
+    """claude code's session store, relocated by CLAUDE_CONFIG_DIR like claude itself"""
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    return (Path(config_dir) if config_dir else Path.home() / ".claude") / "projects"
+
+
+def _read_session_messages(path: Path) -> dict[str, dict[str, Any]]:
+    """assistant usage by message id (streamed lines repeat an id; last wins), bad lines skipped"""
+    messages: dict[str, dict[str, Any]] = {}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return messages
+    for index, line in enumerate(lines):
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        message = entry.get("message") if isinstance(entry, dict) else None
+        usage = message.get("usage") if isinstance(message, dict) else None
+        if entry.get("type") != "assistant" or not isinstance(usage, dict):
+            continue
+        messages[str(message.get("id") or f"line-{index}")] = {
+            "model": message.get("model"),
+            "usage": usage,
+        }
+    return messages
+
+
+def out_of_card_spend(projects_dir: Path | None = None) -> dict[str, Any]:
+    """claude sessions run outside any card, one row per session file - kept apart from card cost
+    and never summed into it. a model without operator-set prices leaves cost_usd null"""
+    root = projects_dir if projects_dir is not None else _claude_projects_dir()
+    sessions = []
+    for path in sorted(root.glob("*/*.jsonl")) if root.is_dir() else []:
+        messages = _read_session_messages(path)
+        if not messages:
+            continue
+        counts = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
+        costs = []
+        for message in messages.values():
+            usage = message["usage"]
+            cached = int(usage.get("cache_read_input_tokens") or 0)
+            fresh = int(usage.get("input_tokens") or 0) + int(
+                usage.get("cache_creation_input_tokens") or 0
+            )
+            output = int(usage.get("output_tokens") or 0)
+            counts["input_tokens"] += fresh + cached
+            counts["cached_tokens"] += cached
+            counts["output_tokens"] += output
+            priced = estimate_usage(
+                {"input_tokens": fresh + cached, "cached_tokens": cached, "output_tokens": output},
+                "anthropic",
+                message["model"],
+            )
+            costs.append(priced["cost_usd"])
+        sessions.append(
+            {
+                "session_id": path.stem,
+                "project": path.parent.name,
+                "messages": len(messages),
+                "models": sorted({str(m["model"]) for m in messages.values() if m["model"]}),
+                **counts,
+                "cost_usd": cost_sum(costs),
+                "cost_estimated": True,
+            }
+        )
+    known = [c for c in (s["cost_usd"] for s in sessions) if c is not None]
+    return {
+        "sessions": sessions,
+        "totals": {
+            "sessions": len(sessions),
+            "input_tokens": sum(s["input_tokens"] for s in sessions),
+            "output_tokens": sum(s["output_tokens"] for s in sessions),
+            "cached_tokens": sum(s["cached_tokens"] for s in sessions),
+            "known_cost_usd": round(sum(known), 6),
+            "unknown_costs": len(sessions) - len(known),
+        },
     }
 
 
