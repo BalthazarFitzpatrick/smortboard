@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote
 
-from smortboard import online_repos, profiles, repo_setup
+from smortboard import online_repos, profiles, repo_setup, usage_sources
 from smortboard.attention import (
     AnswerRefused,
     answer_card,
@@ -511,7 +511,7 @@ def _make_handler(
                 active = [{"card_id": s.card_id, "phase": s.phase} for s in runs.active()]
                 self._send_json(200, roster_rows(store, active))
             elif path == "/api/usage":
-                self._send_json(200, usage_projection(store))
+                self._send_json(200, usage_projection(store, usage_sources.claude_windows()))
             elif path == "/api/costs":
                 self._send_json(200, boards_overview(store))
             elif path == "/api/costs/optimisation":
