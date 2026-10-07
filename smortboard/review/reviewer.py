@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from smortboard.docker_paths import mount_arg
 from smortboard.exec.backends import (
     CONTAINER_GUARD_DIR,
     CONTAINER_HARDENING_FLAGS,
@@ -39,6 +40,7 @@ from smortboard.exec.backends import (
 )
 from smortboard.exec.runner import ProcessHandle, RunResult, run_process
 from smortboard.exec.worktrees import branch_changed_paths, branch_diff
+from smortboard.fsutil import remove_tree
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import compatible_effort, parse_ref
 from smortboard.labs.registry import get_adapter
@@ -292,7 +294,7 @@ def _docker_command(
     mount, inner_settings = guard_mount(settings_path)
     schema_path = Path(settings_path).parent / "review-schema.json"
     schema_path.parent.mkdir(parents=True, exist_ok=True)
-    schema_path.write_text(json.dumps(REVIEW_JSON_SCHEMA))
+    schema_path.write_text(json.dumps(REVIEW_JSON_SCHEMA), encoding="utf-8")
     agent_cmd = _agent_argv(
         adapter,
         lab,
@@ -315,7 +317,7 @@ def _docker_command(
         *CONTAINER_HARDENING_FLAGS,
         *adapter.container_env(),
         "-v",
-        f"{Path(work_path)}:/workspace:ro",  # the reviewer inspects, it never writes
+        mount_arg(Path(work_path), "/workspace", "ro"),  # the reviewer inspects, it never writes
         *mount,
         *adapter.guard_mounts(settings_path),
         "-w",
@@ -341,7 +343,7 @@ def _host_command(
     real paths. it runs in the worktree and has read-only tools, so it cannot change the work"""
     lab, model_id = parse_ref(model)
     adapter = get_adapter(lab)
-    schema_path.write_text(json.dumps(REVIEW_JSON_SCHEMA))
+    schema_path.write_text(json.dumps(REVIEW_JSON_SCHEMA), encoding="utf-8")
     agent_cmd = _agent_argv(
         adapter, lab, model_id, prompt, settings_path, str(schema_path), budget_usd, effort
     )
@@ -533,7 +535,7 @@ def run_review(
                 new_session=True,
             )
         finally:
-            shutil.rmtree(scratch, ignore_errors=True)
+            remove_tree(scratch)
         result = _parse(run_result)
         _record(store, card_id, result, head)
         return result

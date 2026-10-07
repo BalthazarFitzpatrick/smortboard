@@ -40,7 +40,7 @@ class LandingError(Exception):
 def _key_header() -> dict[str, str]:
     # the board's api key, from the owner-only file the board wrote on start
     try:
-        return {access.KEY_HEADER: access.api_key_path().read_text().strip()}
+        return {access.KEY_HEADER: access.api_key_path().read_text(encoding="utf-8").strip()}
     except OSError:
         return {}
 

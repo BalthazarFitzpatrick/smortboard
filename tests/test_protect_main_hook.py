@@ -9,9 +9,12 @@ import pytest
 
 HOOK = Path(__file__).resolve().parent.parent / "tools" / "claude-hooks" / "protect-main.sh"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("jq") is None or shutil.which("bash") is None, reason="needs bash and jq"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        shutil.which("jq") is None or shutil.which("bash") is None, reason="needs bash and jq"
+    ),
+    pytest.mark.posix_only,
+]
 
 
 @pytest.fixture

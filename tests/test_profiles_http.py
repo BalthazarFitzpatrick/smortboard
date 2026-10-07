@@ -21,6 +21,7 @@ VALID_TOKEN = "a" * 108
 @pytest.fixture(autouse=True)
 def _isolated_profiles(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setenv("SMORTBOARD_PROFILES_STATE_PATH", str(tmp_path / "profiles.json"))
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "card_token"))
 
@@ -80,6 +81,7 @@ def test_list_profiles_starts_with_just_default(running_server):
     ]
 
 
+@pytest.mark.posix_only
 def test_add_profile_writes_a_mode_600_file_and_never_echoes_the_token(running_server, tmp_path):
     status, body = _request(
         f"{running_server}/api/profiles", "POST", {"name": "alt", "token": VALID_TOKEN}

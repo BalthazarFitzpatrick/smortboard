@@ -19,7 +19,7 @@ _SCRIPT = (
 
 payload = json.load(sys.stdin)
 base = Path(__file__).parent
-lease = json.loads((base / "lease.json").read_text())
+lease = json.loads((base / "lease.json").read_text(encoding="utf-8"))
 root = Path(lease["root"]).resolve()
 tool = payload.get("tool_name", "")
 args = payload.get("tool_input") or {}
@@ -32,7 +32,7 @@ def check_path(path):
     candidate = Path(path)
     candidate = candidate if candidate.is_absolute() else root / candidate
     try:
-        relative = str(candidate.resolve().relative_to(root))
+        relative = candidate.resolve().relative_to(root).as_posix()
     except ValueError:
         refuse("LEASE_CONFLICT: " + path + " is outside the worktree")
     if not lease_permits(relative, lease):
@@ -96,9 +96,10 @@ def write_guard_files(lease: list[str], bash: BashPolicy) -> GuardFiles:
                 "search": bash.search,
                 "read_only": bash.read_only,
             }
-        )
+        ),
+        encoding="utf-8",
     )
-    (directory / "codex_guard.py").write_text(_SCRIPT)
+    (directory / "codex_guard.py").write_text(_SCRIPT, encoding="utf-8")
     write_bash_guard_hook(directory, python=bash.python, guard_dir=bash.guard_dir)
     script = (
         f"{bash.guard_dir}/codex_guard.py" if bash.guard_dir else str(directory / "codex_guard.py")
@@ -116,5 +117,5 @@ def write_guard_files(lease: list[str], bash: BashPolicy) -> GuardFiles:
         }
     }
     path = directory / "hooks.json"
-    path.write_text(json.dumps(hooks))
+    path.write_text(json.dumps(hooks), encoding="utf-8")
     return GuardFiles(path, tuple(directory.iterdir()))

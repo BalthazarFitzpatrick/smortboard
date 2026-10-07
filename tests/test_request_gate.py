@@ -226,6 +226,7 @@ def test_assets_and_health_need_no_key(board):
     assert _call(f"{base}/health")[0] == 200
 
 
+@pytest.mark.posix_only
 def test_api_key_file_is_owner_only_and_stable(tmp_path):
     path = tmp_path / "cfg" / "api_key"
     first = access.load_or_create_api_key(path)
@@ -233,6 +234,7 @@ def test_api_key_file_is_owner_only_and_stable(tmp_path):
     assert access.load_or_create_api_key(path) == first
 
 
+@pytest.mark.posix_only
 def test_loose_api_key_file_is_replaced(tmp_path):
     path = tmp_path / "api_key"
     path.write_text("leaked\n")

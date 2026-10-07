@@ -94,6 +94,7 @@ def _never_pushed_main(gh):
         assert not any(arg.endswith(("main", ":refs/heads/main")) for arg in call), call
 
 
+@pytest.mark.posix_only
 def test_an_empty_folder_becomes_a_repo_on_github_with_development_pushed(tmp_path, gh):
     folder = tmp_path / "fresh"
     folder.mkdir()
@@ -260,6 +261,7 @@ def test_a_fresh_folder_with_a_bad_name_is_refused_before_anything_is_written(tm
     assert list(folder.iterdir()) == []
 
 
+@pytest.mark.posix_only
 def test_an_empty_clone_gets_its_first_commit_and_owes_the_push_of_main(tmp_path, gh):
     bare = gh.remotes / "empty.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)

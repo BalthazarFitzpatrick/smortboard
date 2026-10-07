@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from smortboard.fsutil import remove_tree
 from smortboard.store import Store
 
 # the diff prefix that triggers a screenshot - this repo's own ui/, not a per-repo setting: only
@@ -250,7 +251,7 @@ class ThrowawayBoard:
         except Exception:
             self._stop()
             Path(self._db_path).unlink(missing_ok=True)
-            shutil.rmtree(self._stage_dir, ignore_errors=True)
+            remove_tree(self._stage_dir)
             raise
         return self
 
@@ -258,7 +259,7 @@ class ThrowawayBoard:
         self._stop()
         Path(self._db_path).unlink(missing_ok=True)
         if self._stage_dir is not None:
-            shutil.rmtree(self._stage_dir, ignore_errors=True)
+            remove_tree(self._stage_dir)
 
     def _stop(self) -> str:
         if self._process is None:

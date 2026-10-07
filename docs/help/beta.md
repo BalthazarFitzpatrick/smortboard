@@ -14,7 +14,8 @@ one machine and one set of habits.
 ## what is rough
 
 - **only macos is really used.** linux should be fine: ci runs the test suite there every push.
-  the windows code paths exist but never ran. assume they are broken and tell us how.
+  windows with docker desktop runs the same suite in ci and has been run by hand on one machine,
+  but running a full card there is still being proven. assume rough edges and tell us how.
 - **setup is the least tested.** it ran a handful of times, always on a machine that already had
   everything. the pre-flight checklist (`h`) is the best defence; reports about it are
   especially useful.

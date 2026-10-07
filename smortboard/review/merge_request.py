@@ -324,7 +324,7 @@ def open_merge_request(
     handle, name = tempfile.mkstemp(prefix=f"smortboard-pr-{card_id[:8]}-", suffix=".md")
     os.close(handle)
     body_path = Path(name)
-    body_path.write_text(_body(card, evidence, branch))
+    body_path.write_text(_body(card, evidence, branch), encoding="utf-8")
     try:
         # --body-file, never --body: a body quoting a git command would otherwise be scanned by the
         # operator's own main-branch guard and the whole call refused

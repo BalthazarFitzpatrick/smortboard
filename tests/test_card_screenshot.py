@@ -449,6 +449,7 @@ def test_throwaway_board_serves_the_worktree_and_tears_down_after():
 
 
 @pytest.mark.parametrize("target", ["file", "folder", "ui", "package"])
+@pytest.mark.posix_only
 def test_ui_overlay_refuses_symlinks_without_reading_their_targets(tmp_path, target):
     worktree = tmp_path / "worktree"
     ui = worktree / "smortboard" / "ui"

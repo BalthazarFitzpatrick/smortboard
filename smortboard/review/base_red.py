@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import contextlib
 import re
-import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterator
@@ -23,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from smortboard.exec.worktrees import repo_lock, rev_parse
+from smortboard.fsutil import remove_tree
 from smortboard.review.gates import run_test_gate
 
 _FAILED = re.compile(r"^FAILED\s+(\S+)", re.MULTILINE)
@@ -75,7 +75,7 @@ def _base_checkout(repo_path: str | Path, sha: str) -> Iterator[Path]:
                 capture_output=True,
                 check=False,
             )
-        shutil.rmtree(root, ignore_errors=True)
+        remove_tree(root)
 
 
 def check_base_red(

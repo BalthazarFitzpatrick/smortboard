@@ -78,7 +78,9 @@ def _validate(catalog: Any) -> None:
 
 def load_catalog(override_path: str | Path | None = None) -> dict[str, Any]:
     """merge overrides by lab/model; missing override files have no side effects"""
-    catalog = json.loads(files("smortboard.labs").joinpath("catalog.json").read_text())
+    catalog = json.loads(
+        files("smortboard.labs").joinpath("catalog.json").read_text(encoding="utf-8")
+    )
     config_root = (
         Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
         if os.name == "nt"

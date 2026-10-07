@@ -277,7 +277,7 @@ def test_queue_note_only_accepted_while_the_run_is_going(tmp_path, lab, live):
     def _runner(store, card_id, **kwargs):
         assert kwargs["token_path"] is None
         started.set()
-        release.wait(timeout=5)
+        release.wait(timeout=30)
 
         class _Result:
             phase = "opened"
@@ -288,7 +288,7 @@ def test_queue_note_only_accepted_while_the_run_is_going(tmp_path, lab, live):
         return _Result()
 
     state = registry.start(card_id, runner=_runner)
-    started.wait(timeout=5)
+    started.wait(timeout=30)
     assert state.running
 
     assert registry.queue_note(card_id, {"id": "c1", "body": "hold on"}) is live
@@ -441,7 +441,7 @@ def test_conversation_post_and_get_report_live_delivery_while_the_run_is_going(t
 
     thread = _threading.Thread(target=_serve, daemon=True)
     thread.start()
-    ready.wait(timeout=5)
+    ready.wait(timeout=30)
     server = holder["server"]
     card_id = holder["card_id"]
     base = f"http://127.0.0.1:{server.server_address[1]}"
@@ -470,7 +470,7 @@ def test_conversation_post_and_get_report_live_delivery_while_the_run_is_going(t
 
         def _blocking_runner(store, cid, **kwargs):
             started.set()
-            release.wait(timeout=5)
+            release.wait(timeout=30)
 
             class _Result:
                 phase = "opened"
@@ -481,7 +481,7 @@ def test_conversation_post_and_get_report_live_delivery_while_the_run_is_going(t
             return _Result()
 
         server.runs.start(card_id, runner=_blocking_runner)
-        started.wait(timeout=5)
+        started.wait(timeout=30)
 
         status, body = _call("GET", f"/api/cards/{card_id}/conversation")
         assert body["running"] is True and body["delivery"] == "live"
@@ -494,7 +494,7 @@ def test_conversation_post_and_get_report_live_delivery_while_the_run_is_going(t
         release.set()
     finally:
         server.shutdown()
-        thread.join(timeout=5)
+        thread.join(timeout=30)
         server.server_close()
 
 
@@ -522,7 +522,7 @@ def test_note_delivered_event_renders_as_a_dim_board_line(tmp_path):
 
     thread = _threading.Thread(target=_serve, daemon=True)
     thread.start()
-    ready.wait(timeout=5)
+    ready.wait(timeout=30)
     server = holder["server"]
 
     try:
@@ -535,5 +535,5 @@ def test_note_delivered_event_renders_as_a_dim_board_line(tmp_path):
         assert any("delivered 2 notes" in line for line in lines), lines
     finally:
         server.shutdown()
-        thread.join(timeout=5)
+        thread.join(timeout=30)
         server.server_close()

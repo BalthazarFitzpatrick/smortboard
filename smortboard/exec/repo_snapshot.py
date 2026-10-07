@@ -11,7 +11,6 @@ carries only the default branch's committed tree - no card/* branches and no wor
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import tempfile
 import uuid
@@ -20,7 +19,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from smortboard.docker_paths import mount_arg
 from smortboard.exec.worktrees import fast_forward_base, fetch_base, has_remote
+from smortboard.fsutil import remove_tree
 
 # where clones and operator paths land inside the container - the prompt names only these, never a
 # host path
@@ -51,7 +52,7 @@ class RepoSnapshot:
 
     def cleanup(self) -> None:
         if self._tmp_dir is not None:
-            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+            remove_tree(self._tmp_dir)
             self._tmp_dir = None
 
 
@@ -64,6 +65,9 @@ def _clone_repo(source: str, branch: str, dest: Path) -> None:
         [
             "git",
             "clone",
+            # a windows host would check files out as crlf, which the container's git sees as edits
+            "-c",
+            "core.autocrlf=false",
             "--depth",
             "1",
             "--no-local",
@@ -122,7 +126,7 @@ def build_repo_snapshot(
         except RepoSnapshotError as exc:
             warnings.append(f'the repo "{name}" could not be cloned for reading: {exc}')
             continue
-        mount_args += ["-v", f"{dest}:{REPOS_MOUNT}/{name}:ro"]
+        mount_args += ["-v", mount_arg(dest, f"{REPOS_MOUNT}/{name}", "ro")]
         host_paths[f"{REPOS_MOUNT}/{name}"] = str(dest)
 
     for raw in extra_paths:
@@ -135,7 +139,7 @@ def build_repo_snapshot(
         # two paths can share a basename (/a/screens, /b/screens) - keep both by disambiguating the
         # second, so one mount never silently overwrites the other
         target = _unique_target(path.name, used_targets)
-        mount_args += ["-v", f"{path}:{EXTRA_MOUNT}/{target}:ro"]
+        mount_args += ["-v", mount_arg(path, f"{EXTRA_MOUNT}/{target}", "ro")]
         host_paths[f"{EXTRA_MOUNT}/{target}"] = str(path)
 
     return RepoSnapshot(

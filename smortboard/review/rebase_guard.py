@@ -26,7 +26,6 @@ other card.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -48,6 +47,7 @@ from smortboard.exec.worktrees import (
     rev_parse,
     worktree_path,
 )
+from smortboard.fsutil import remove_tree
 
 OUTDATED = "OUTDATED"
 
@@ -187,7 +187,7 @@ def _replay(repo_path: str | Path, old_tip: str, base_sha: str) -> _Replay:
         with repo_lock(repo_path):
             if _git(repo_path, "worktree", "remove", "--force", str(tree)).returncode != 0:
                 _git(repo_path, "worktree", "prune")
-        shutil.rmtree(scratch, ignore_errors=True)
+        remove_tree(scratch)
 
 
 def _move_branch(repo_path: str | Path, card_id: str, old: str, new: str) -> bool:

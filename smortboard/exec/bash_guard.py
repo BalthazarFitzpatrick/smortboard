@@ -83,7 +83,7 @@ for segment in re.split(r"[;&|\\n]+", command):
         sys.exit(2)
 
 lease_file = Path(__file__).with_name("lease.json")
-lease = json.loads(lease_file.read_text()) if lease_file.exists() else {}
+lease = json.loads(lease_file.read_text(encoding="utf-8")) if lease_file.exists() else {}
 root = Path(lease.get("root") or Path(__file__).resolve().parent.parent)
 
 # only a path that starts at a word boundary is absolute - a bare /\\S+ also matched the
@@ -118,7 +118,7 @@ def write_bash_guard_hook(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     hook_script = out_dir / "bash_guard.py"
-    hook_script.write_text(_HOOK_SCRIPT)
+    hook_script.write_text(_HOOK_SCRIPT, encoding="utf-8")
     hook_script.chmod(0o755)
 
     seen_script = f"{guard_dir}/bash_guard.py" if guard_dir else hook_script

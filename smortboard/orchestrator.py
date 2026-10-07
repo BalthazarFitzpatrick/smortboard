@@ -15,7 +15,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -26,6 +25,7 @@ from typing import Any, Protocol
 
 from smortboard import profiles
 from smortboard.budgets import board_spend_refusal
+from smortboard.docker_paths import mount_arg
 from smortboard.exec.backends import (
     CONTAINER_HARDENING_FLAGS,
     card_image,
@@ -38,6 +38,7 @@ from smortboard.exec.backends import (
 )
 from smortboard.exec.repo_snapshot import MOUNT_PARENT, build_repo_snapshot, to_host_paths
 from smortboard.exec.runner import RunResult, run_process
+from smortboard.fsutil import remove_tree
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import (
     EFFORT_LEVELS,
@@ -297,7 +298,7 @@ def _run_on_host(
             new_session=True,
         )
     finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+        remove_tree(scratch)
 
 
 def _real_runner(
@@ -351,7 +352,7 @@ def _real_runner(
         try:
             for warning in snapshot.warnings:
                 store.add_orchestrator_message(board_id, _BOARD_AUTHOR, warning)
-            Path(schema_dir.name, "schema.json").write_text(json.dumps(schema))
+            Path(schema_dir.name, "schema.json").write_text(json.dumps(schema), encoding="utf-8")
             if mode == "open":
                 result = _run_on_host(
                     adapter,
@@ -416,7 +417,10 @@ def _real_runner(
             # repo clones and extra paths; the Read tool the turn already has makes it readable
             shot_mount = []
             if screenshot_path is not None:
-                shot_mount = ["-v", f"{Path(screenshot_path).parent}:{CONTAINER_SHOTS_DIR}:ro"]
+                shot_mount = [
+                    "-v",
+                    mount_arg(Path(screenshot_path).parent, CONTAINER_SHOTS_DIR, "ro"),
+                ]
             # -w on the mount parent, never inside a clone: a repo's own .claude/settings.json must
             # not apply through --setting-sources project. named so the turn can be stopped.
             name = container_name(role, board_id)
@@ -431,7 +435,7 @@ def _real_runner(
                 *adapter.container_env(),
                 *guard_mounts,
                 "-v",
-                f"{schema_dir.name}:/smortboard-schema:ro",
+                mount_arg(schema_dir.name, "/smortboard-schema", "ro"),
                 *snapshot.mount_args,
                 *shot_mount,
                 "-w",
@@ -572,7 +576,7 @@ def _read_ledger(repo: dict[str, Any]) -> list[dict[str, Any]]:
         if rows:
             return rows
     try:
-        return _ledger_rows((Path(repo["path"]) / _LEDGER_FILE).read_text())
+        return _ledger_rows((Path(repo["path"]) / _LEDGER_FILE).read_text(encoding="utf-8"))
     except OSError:
         return []
 
@@ -893,7 +897,7 @@ def _apply_screenshot_rerun(
     except Exception as exc:  # noqa: BLE001 - degrade to the original reply, never lose the turn
         return (*fallback, f"the screenshot for this message failed: {exc}")
     finally:
-        shutil.rmtree(shots_dir, ignore_errors=True)
+        remove_tree(shots_dir)
 
     warning = (
         "a second screenshot was requested in the same message and was refused"

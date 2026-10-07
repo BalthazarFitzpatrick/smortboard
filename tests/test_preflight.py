@@ -27,6 +27,7 @@ def _isolated_profiles(monkeypatch, tmp_path):
     # token_path argument these tests pass to run_preflight - isolate them the same way
     # tests/test_profiles.py does, so this file never touches the real config directory
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setenv("SMORTBOARD_PROFILES_STATE_PATH", str(tmp_path / "profiles.json"))
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "card_token_unused"))
 
@@ -104,6 +105,7 @@ def _docker_probe_runner(stderr):
 
 
 def test_docker_permission_denied_gives_the_group_fix(monkeypatch, store):
+    monkeypatch.setattr("smortboard.preflight._on_windows", lambda: False)
     monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr("smortboard.preflight.docker_status", docker_status)
     stderr = (
@@ -123,6 +125,7 @@ def test_docker_permission_denied_gives_the_group_fix(monkeypatch, store):
 
 
 def test_docker_cannot_connect_keeps_the_systemctl_fix(monkeypatch, store):
+    monkeypatch.setattr("smortboard.preflight._on_windows", lambda: False)
     monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr("smortboard.preflight.docker_status", docker_status)
     stderr = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
@@ -131,6 +134,29 @@ def test_docker_cannot_connect_keeps_the_systemctl_fix(monkeypatch, store):
     assert "systemctl start docker" in row["fix"]
     assert stderr in row["detail"]
     assert "docker is not reachable" in _by_id(checks, "card-image")["detail"]
+
+
+def _windows_row(monkeypatch, store, stderr):
+    monkeypatch.setattr("smortboard.preflight._on_windows", lambda: True)
+    monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: "docker")
+    monkeypatch.setattr("smortboard.preflight.docker_status", docker_status)
+    checks = run_preflight(store, runner=_docker_probe_runner(stderr))
+    return _by_id(checks, "docker")
+
+
+def test_windows_daemon_down_points_at_docker_desktop_and_wsl2(monkeypatch, store):
+    row = _windows_row(monkeypatch, store, "error during connect: the system cannot find the file")
+    assert "docker desktop" in row["fix"]
+    assert "wsl --status" in row["fix"]
+    assert "systemctl" not in row["fix"]
+
+
+def test_windows_permission_denied_names_the_docker_users_group(monkeypatch, store):
+    row = _windows_row(
+        monkeypatch, store, "permission denied while trying to connect to the Docker daemon"
+    )
+    assert "docker-users" in row["fix"]
+    assert "usermod" not in row["fix"]
 
 
 def test_docker_status_classifies_stderr(monkeypatch):
@@ -165,6 +191,7 @@ def test_token_file_absent_points_at_setup_token(monkeypatch, store, tmp_path):
     assert str(missing) in row["detail"]
 
 
+@pytest.mark.posix_only
 def test_token_file_wrong_mode_fails_and_never_prints_the_token(monkeypatch, store, tmp_path):
     # read_card_token now refuses a non-600 file outright, so preflight reports it as
     # unusable (fail) rather than a mere warning - the run would refuse it too
@@ -548,6 +575,7 @@ def test_repos_across_every_board_are_included(monkeypatch, store, tmp_path):
     assert {c["group"] for c in checks} >= {"one", "two"}
 
 
+@pytest.mark.posix_only
 def test_never_includes_a_token_value_anywhere(store, tmp_path):
     token_file = tmp_path / "card_token"
     secret = "sk-super-secret-token-value-do-not-leak"

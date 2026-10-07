@@ -75,6 +75,7 @@ class World:
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "config"))
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     git(repo_path, "init", "-q", "-b", "main")

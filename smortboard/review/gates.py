@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from smortboard.docker_paths import mount_arg
 from smortboard.exec.backends import (
     CONTAINER_HARDENING_FLAGS,
     card_image,
@@ -31,6 +32,7 @@ from smortboard.exec.backends import (
     docker_available,
     host_env,
 )
+from smortboard.fsutil import remove_tree
 from smortboard.store.errors import NotFoundError
 
 # a test suite that has not finished in ten minutes is not going to; the card is stuck rather than
@@ -152,7 +154,7 @@ def _run_on_host(command: str, work_path: Path, timeout: int) -> tuple[int, str]
                 "it got"
             )
     finally:
-        shutil.rmtree(home, ignore_errors=True)
+        remove_tree(home)
 
 
 def run_test_gate(
@@ -193,7 +195,7 @@ def run_test_gate(
         "none",
         *CONTAINER_HARDENING_FLAGS,
         "-v",
-        f"{work_path}:/workspace:ro",  # the gate reads the work, it never changes it
+        mount_arg(work_path, "/workspace", "ro"),  # the gate reads the work, it never changes it
         "-w",
         "/workspace",
         _image_for(repo),

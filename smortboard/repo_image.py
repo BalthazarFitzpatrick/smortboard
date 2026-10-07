@@ -132,7 +132,7 @@ def build_repo_image(repo: dict[str, Any], run: Any = subprocess.run) -> BuildRe
     dockerfile_path = repo_path / _DOCKERFILE_PATH
     if not dockerfile_path.exists():
         dockerfile_path.parent.mkdir(parents=True, exist_ok=True)
-        dockerfile_path.write_text(dockerfile_for(stack))
+        dockerfile_path.write_text(dockerfile_for(stack), encoding="utf-8")
 
     if shutil.which("docker") is None:
         return BuildResult(ok=False, tag=None, log="docker is not on PATH.", stack=stack)

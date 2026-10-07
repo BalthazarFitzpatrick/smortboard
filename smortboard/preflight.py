@@ -6,6 +6,7 @@ docker/token probes as the source of truth rather than recomputing them - it onl
 row with a fix. /api/runtime's response is untouched.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -104,6 +105,16 @@ _DOCKER_GROUP_FIX = (
 )
 
 
+def _on_windows() -> bool:
+    return os.name == "nt"
+
+
+_DOCKER_GROUP_FIX_WINDOWS = (
+    "add your user to the docker-users group (computer management, local users and groups), "
+    "sign out and back in, then re-check."
+)
+
+
 def _docker_check(needed: bool = True, run: CommandRunner | None = None) -> dict[str, Any]:
     if not needed:
         return _not_needed("docker", "docker")
@@ -119,7 +130,9 @@ def _docker_check(needed: bool = True, run: CommandRunner | None = None) -> dict
             "docker",
             "fail",
             "docker is not installed.",
-            "install docker desktop (or the docker engine), then re-check.",
+            "install docker desktop (`winget install Docker.DockerDesktop`), then re-check."
+            if _on_windows()
+            else "install docker desktop (or the docker engine), then re-check.",
         )
     if status.state == "permission_denied":
         return _check(
@@ -128,7 +141,7 @@ def _docker_check(needed: bool = True, run: CommandRunner | None = None) -> dict
             "docker",
             "fail",
             _with_stderr("docker is installed but this user cannot reach its socket.", status),
-            _DOCKER_GROUP_FIX,
+            _DOCKER_GROUP_FIX_WINDOWS if _on_windows() else _DOCKER_GROUP_FIX,
         )
     if status.state == "daemon_down":
         return _check(
@@ -137,7 +150,10 @@ def _docker_check(needed: bool = True, run: CommandRunner | None = None) -> dict
             "docker",
             "fail",
             _with_stderr("docker is installed but the daemon is not answering.", status),
-            "start docker desktop (or `sudo systemctl start docker`), then re-check.",
+            "start docker desktop and wait until it reports running. if it will not start, check "
+            "that wsl2 is installed with `wsl --status`, then re-check."
+            if _on_windows()
+            else "start docker desktop (or `sudo systemctl start docker`), then re-check.",
         )
     return _check(
         "docker",
@@ -219,7 +235,7 @@ def _token_check(token_path: str | Path | None) -> dict[str, Any]:
     mode = stat.st_mode & 0o777
     problems: list[str] = []
     fixes: list[str] = []
-    if mode != 0o600:
+    if os.name != "nt" and mode != 0o600:
         problems.append(f"mode is {oct(mode)}, not 600.")
         fixes.append(f"chmod 600 {path}")
     if stat.st_size < _MIN_TOKEN_BYTES:

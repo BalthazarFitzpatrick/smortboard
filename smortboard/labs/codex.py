@@ -6,6 +6,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from smortboard.docker_paths import mount_arg
 from smortboard.labs.base import BashPolicy, Capabilities, GuardFiles, LabEvent, RunRequest
 from smortboard.labs.claude_code import _API_UNREACHABLE_PATTERN
 
@@ -204,7 +205,7 @@ class CodexAdapter:
     def guard_mounts(self, settings_path: str | Path | None) -> list[str]:
         if settings_path is None:
             return []
-        return ["-v", f"{settings_path}:/home/agent/.codex/hooks.json:ro"]
+        return ["-v", mount_arg(settings_path, "/home/agent/.codex/hooks.json", "ro")]
 
     def setup_hint(self) -> str:
         return "codex login; import its auth.json, or use codex login --with-api-key"

@@ -148,6 +148,7 @@ def test_mission_control_read_paths_add_refuse_remove(store, tmp_path):
 
 def test_mission_control_read_paths_expand_and_reject_relative(store, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     (tmp_path / "Documents" / "screenshots").mkdir(parents=True)
 
     settings = store.set_setting("mission_control_read_paths", ["~/Documents/screenshots"])

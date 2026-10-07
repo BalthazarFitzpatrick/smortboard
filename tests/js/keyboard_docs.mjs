@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 
 const root = new URL('../../', import.meta.url);
 const source = readFileSync(new URL('smortboard/ui/shortcuts.js', root), 'utf8');
-const page = readFileSync(new URL('docs/reference/keyboard.md', root), 'utf8');
+// a windows checkout may carry CRLF line endings, which the row match must not see
+const page = readFileSync(new URL('docs/reference/keyboard.md', root), 'utf8').replace(/\r\n/g, '\n');
 
 // the array literal after `const NAME = `, matched by bracket depth with strings and line
 // comments skipped - shortcuts.js is a browser script, so it is read rather than imported

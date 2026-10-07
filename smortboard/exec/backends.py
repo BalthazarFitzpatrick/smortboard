@@ -28,6 +28,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, NamedTuple, Protocol
 
+from smortboard.docker_paths import mount_arg
 from smortboard.exec.leases import (
     changed_paths_outside_lease,
     lease_policy,
@@ -58,6 +59,7 @@ from smortboard.exec.worktrees import (
     repo_root_of_worktree,
     rev_parse,
 )
+from smortboard.fsutil import remove_tree
 from smortboard.labs.base import BashPolicy, RunRequest
 from smortboard.labs.catalog import compatible_effort, parse_ref
 from smortboard.labs.registry import get_adapter
@@ -268,7 +270,7 @@ def guard_mount(settings_path: str | Path) -> tuple[list[str], str]:
     """
     settings_path = Path(settings_path)
     return (
-        ["-v", f"{settings_path.parent}:{CONTAINER_GUARD_DIR}:ro"],
+        ["-v", mount_arg(settings_path.parent, CONTAINER_GUARD_DIR, "ro")],
         f"{CONTAINER_GUARD_DIR}/{settings_path.name}",
     )
 
@@ -318,7 +320,7 @@ def read_card_token(token_path: str | Path | None = None) -> str:
             raise CardTokenMissing(
                 f"{resolved} is not mode 600 - refusing to read it. chmod 600 {resolved}"
             )
-        token = resolved.read_text().strip()
+        token = resolved.read_text(encoding="utf-8").strip()
         if token:
             return token
     raise CardTokenMissing(
@@ -532,7 +534,9 @@ class ContainerBackend:
             # the card image now runs as a non-root uid (docker/card.Dockerfile), which rarely
             # matches the host uid that owns this tempdir - open it up so the container can still
             # write its commits into a mount it does not otherwise share ownership with
-            subprocess.run(["chmod", "-R", "go+rwX", str(clone_path)], check=True)
+            # docker desktop on windows maps ownership itself, so there is nothing to open up
+            if os.name != "nt":
+                subprocess.run(["chmod", "-R", "go+rwX", str(clone_path)], check=True)
             # the card's own lease, prepended to its brief: the backend has the store and the id,
             # so no caller has to remember to pass what is already recorded
             # lease ROWS, not strings: get_card returns dicts, and handing those straight to
@@ -619,14 +623,17 @@ class ContainerBackend:
                 )
             return result
         finally:
-            shutil.rmtree(clone_path, ignore_errors=True)
+            remove_tree(clone_path)
 
     def _clone(self, worktree_path: str | Path, clone_path: Path, branch: str) -> None:
         # a clone, not a mount of the worktree itself: the worktree's .git is a pointer file into
         # the parent repo, so mounting it alone leaves git dead and the card unable to commit
         result = subprocess.run(
-            # local clones share objects by hardlink; container chmod must never touch the source
-            ["git", "clone", "--no-local", "--branch", branch, str(worktree_path), str(clone_path)],
+            # local clones share objects by hardlink; container chmod must never touch the source.
+            # autocrlf off: a windows host would check files out as crlf, and the container's git
+            # would then report every file as modified
+            ["git", "clone", "-c", "core.autocrlf=false", "--no-local", "--branch", branch]
+            + [str(worktree_path), str(clone_path)],
             capture_output=True,
             text=True,
             check=False,
@@ -716,7 +723,7 @@ class ContainerBackend:
             *CONTAINER_HARDENING_FLAGS,
             *adapter.container_env(),
             "-v",
-            f"{clone_path}:{_CONTAINER_WORKDIR}:rw",
+            mount_arg(clone_path, _CONTAINER_WORKDIR, "rw"),
             *mount,
             *adapter.guard_mounts(settings_path),
             "-w",
@@ -1016,7 +1023,7 @@ class HostBackend:
                 new_session=True,
             )
         finally:
-            shutil.rmtree(scratch, ignore_errors=True)
+            remove_tree(scratch)
         if store is not None and repo is not None and start_commit is not None:
             result = _finish_lease_check(
                 store, card_id, repo, repo_root, branch, start_commit, leases, remembered, result

@@ -125,7 +125,7 @@ and 15 written cards; you run one push command ([walkthrough](docs/beta-test-boa
 [troubleshooting](docs/help/troubleshooting.md) -
 [security](docs/reference/security.md)
 
-**public beta.** one user, daily, on macos. found a rough edge?
+**public beta.** one user, daily, on macos. linux and windows (docker desktop) run the test suite in ci. found a rough edge?
 [beta and reporting](docs/help/beta.md).
 
 [mit](LICENSE)
