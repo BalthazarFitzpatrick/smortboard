@@ -105,6 +105,7 @@ def _docker_probe_runner(stderr):
 
 
 def test_docker_permission_denied_gives_the_group_fix(monkeypatch, store):
+    monkeypatch.setattr("smortboard.preflight._on_windows", lambda: False)
     monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr("smortboard.preflight.docker_status", docker_status)
     stderr = (
@@ -124,6 +125,7 @@ def test_docker_permission_denied_gives_the_group_fix(monkeypatch, store):
 
 
 def test_docker_cannot_connect_keeps_the_systemctl_fix(monkeypatch, store):
+    monkeypatch.setattr("smortboard.preflight._on_windows", lambda: False)
     monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr("smortboard.preflight.docker_status", docker_status)
     stderr = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
@@ -132,6 +134,29 @@ def test_docker_cannot_connect_keeps_the_systemctl_fix(monkeypatch, store):
     assert "systemctl start docker" in row["fix"]
     assert stderr in row["detail"]
     assert "docker is not reachable" in _by_id(checks, "card-image")["detail"]
+
+
+def _windows_row(monkeypatch, store, stderr):
+    monkeypatch.setattr("smortboard.preflight._on_windows", lambda: True)
+    monkeypatch.setattr("smortboard.preflight.shutil.which", lambda name: "docker")
+    monkeypatch.setattr("smortboard.preflight.docker_status", docker_status)
+    checks = run_preflight(store, runner=_docker_probe_runner(stderr))
+    return _by_id(checks, "docker")
+
+
+def test_windows_daemon_down_points_at_docker_desktop_and_wsl2(monkeypatch, store):
+    row = _windows_row(monkeypatch, store, "error during connect: the system cannot find the file")
+    assert "docker desktop" in row["fix"]
+    assert "wsl --status" in row["fix"]
+    assert "systemctl" not in row["fix"]
+
+
+def test_windows_permission_denied_names_the_docker_users_group(monkeypatch, store):
+    row = _windows_row(
+        monkeypatch, store, "permission denied while trying to connect to the Docker daemon"
+    )
+    assert "docker-users" in row["fix"]
+    assert "usermod" not in row["fix"]
 
 
 def test_docker_status_classifies_stderr(monkeypatch):
