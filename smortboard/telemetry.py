@@ -216,7 +216,10 @@ def usage_projection(
     # account-wide readings replace the board's own per-run windows for the same key
     for window in account_windows or []:
         latest_by_key[(window["lab"], window["type"], window["profile"])] = window
-    windows = [_roll_over(window) for window in latest_by_key.values()]
+    # only account readings are rolled over; the board's own windows keep their recorded shape
+    windows = [
+        _roll_over(window) if window.get("source") else window for window in latest_by_key.values()
+    ]
 
     result_events = [event for event in events if result_fields(event) is not None]
     models: dict[str, dict[str, Any]] = {}

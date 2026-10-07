@@ -1095,7 +1095,7 @@ function usageCard(data) {
   foot.appendChild(textLine(`${data.runs || 0} runs - ${money({cost_usd: data.total_cost_usd, cost_estimated: data.cost_estimated})}`, 'stat'));
   card.appendChild(foot);
   card.appendChild(textLine('windows marked with a source are read from the account; the rest, and all '
-    + 'spend, is added up from what the board's own runs reported.', 'field-label usage-disclaimer'));
+    + 'spend, is added up from what the runs on this board reported.', 'field-label usage-disclaimer'));
   return card;
 }
 
