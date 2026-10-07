@@ -13,6 +13,16 @@ execution: all units run through sol 6.1 (the codex plugin, `codex:codex-rescue`
 - usage: windows come from per-run `rate_limit_event`s (`labs/claude_code.py` ~375-394, `telemetry.py` `usage_projection` ~190, `/api/usage` in `server/app.py` ~514). stale when idle, blind to non-smortboard use, last-writer-wins. codex parses no rate limits at all (`labs/codex.py`).
 - nimbalyst not installed locally, so its method is unknown. verified local sources: claude binary has `/api/oauth/usage` + `oauth-2025-04-20`; `~/.claude/usage-watcher/state/last.json` has account-wide `five_hour` / `seven_day`; codex rollouts in `~/.codex/sessions/**/rollout-*.jsonl` carry `token_count.rate_limits` (`window_minutes` 10080 on this account); codex binary has `account/rateLimits/read` via `codex app-server`. response shapes of oauth endpoint and app-server call are unverified.
 
+## reported case (colleague, screenshot summarised)
+
+report: docker runs (`systemctl status docker` active), image built, no container running, preflight does not see docker. user is not in the docker group on purpose (docker runs as root there, group = sudoless root). asks if that is the cause.
+
+screenshot (smortboard ui at 127.0.0.1:8000 beside a terminal): preflight "2 of 6 ready". green: gh cli, git. red: docker ("installed but the daemon is not answering", fix shown `sudo systemctl start docker`), card image ("cannot check for smortboard-card:latest: docker is not reachable"), card token (no file at `~/.config/smortboard/card_token`), anthropic profile "default (active)" (same missing token file). terminal: dockerd active (running) since 10:41:08 via docker.socket, `healthcheck failed` error lines, earlier `sudo systemctl start docker` attempts with failed prompts. no `docker version` or permission denied output shown.
+
+to check: run `docker version --format '{{.Server.Version}}'` as the user. permission denied on `/var/run/docker.sock` = group cause (answer: yes, likely). "cannot connect" = daemon or DOCKER_HOST cause. confirm `ls -l /var/run/docker.sock`, `id`, `echo $DOCKER_HOST`.
+
+to fix: u3 (distinct permission_denied state, correct fix text, raw stderr shown). also open: card token and anthropic profile rows are red for a separate reason (missing token file); check that their fix text says how to create it, add a unit if not.
+
 ## units
 
 unit: u0 prove usage sources small
