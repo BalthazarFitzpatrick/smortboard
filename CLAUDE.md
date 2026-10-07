@@ -5,7 +5,7 @@
 ## project mission
 
 a convenience wrapper around coding agents. cards are defined in detail up front, handed to headless
-agent sessions - claude code or codex - running in isolated git worktrees and throwaway containers,
+agent sessions - claude code or codex - running in isolated git worktrees and, by default, throwaway containers (a board can opt into an open run mode on the host),
 and surfaced back only when they need a decision. single user, local-first, browser-based,
 distributed via docker.
 
@@ -44,6 +44,8 @@ landing on an unprotected base. free-merge boards land after the gates pass. nei
 board's off-limit branches: main, master and trunk by default, editable per board in `shift`+`o`, all
 lifted by one switch in `o`. every landing merges the card's own pr, pinned to the reviewed commit;
 nothing is ever force-pushed. review mode can stack one unmerged parent, at most three cards deep.
+
+run modes: a board is **sealed** by default (every agent in a container, docker required, no silent fallback) or **open** (agents as plain host processes under leases and hooks, no docker). open needs the global `allow_open_mode` switch (`o`) and the board's `run_mode` (`shift`+`o`); `Store.run_mode` resolves it, `exec/backends.py` holds `ContainerBackend` and `HostBackend`, `docs/spikes/s8-host-run.md` the measurements.
 
 see `docs/plan.md` for the full flowchart.
 

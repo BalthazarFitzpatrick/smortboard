@@ -5,7 +5,7 @@
 | tool | why | get it |
 |---|---|---|
 | python 3.11+ and **uv** | runs the board | [uv install](https://docs.astral.sh/uv/getting-started/installation/) |
-| **docker** (desktop or engine), running | every card runs in its own container | [docker desktop](https://www.docker.com/products/docker-desktop/) |
+| **docker** (desktop or engine), running | every card on a sealed board (the default) runs in its own container. open boards run on the host and need no docker | [docker desktop](https://www.docker.com/products/docker-desktop/) |
 | **github cli**, logged in | the board opens pull requests with it | [cli.github.com](https://cli.github.com/), then `gh auth login` |
 | git | worktrees, branches, pushes | usually already there |
 
@@ -61,7 +61,7 @@ and refuses one others could read.
 | **openai** | **chatgpt login json**: all of the `~/.codex/auth.json` that `codex login` wrote. a bare access token from inside it is refused. or an **api key**. |
 
 at run time the credential reaches the container over stdin, into a memory-backed home that dies
-with the container. your own `~/.claude` and `~/.codex` are never mounted.
+with the container (sealed boards). your own `~/.claude` and `~/.codex` are never mounted.
 
 **several profiles per lab.** in `o`, labs and models, set **usage limits** to **switch by itself**:
 a limit moves the card to your next credential profile, then to the fallback model. the default,

@@ -54,7 +54,7 @@ against.
 
 - Runs in a browser.
 - ~~Distributed via Docker.~~ **REVISED 2026-09-09:** installed with `uv tool install smortboard`
-  and run natively; Docker is a hard dependency and isolates each card instead - there is no fallback mode, because a board that silently ran cards unisolated would be claiming a boundary it no longer had. A containerised board that starts card
+  and run natively; Docker isolates each card in the default sealed run mode, and a sealed board never silently falls back to running cards unisolated, because it would be claiming a boundary it no longer had. A later, explicit per-board open run mode runs cards on the host instead (see `plan.md`). A containerised board that starts card
   containers needs the Docker socket, which is root on the host — the container was always there to
   contain the cards, not the board. See "The containment decision" in `plan.md`.
 - Uses the visual design language of my **ui base repo**. Any element this project needs that

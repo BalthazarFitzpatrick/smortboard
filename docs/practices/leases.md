@@ -69,4 +69,6 @@ if the declared command runs a formatter in check-only form (`ruff format --chec
 also gets its write form, so it fixes what it finds rather than only reporting it. an out-of-lease
 path it reformats is still refused by the post-run check.
 
-the real boundary is the container (see [security](../reference/security.md)).
+the real boundary on a sealed board is the container; on an open board there is none, and the
+leases are what stand between the agent and the rest of your machine (see
+[security](../reference/security.md)).

@@ -63,7 +63,7 @@ below.
 | Prompts | Layered by **role** only: orchestrator, worker, reviewer. |
 | UI | ui_base first, domain-free vocabulary. Git pin, sha while co-developing. PyPI whenever it chafes. |
 | Packaging | `uv tool install smortboard`, a native local app. Docker isolates cards, it is not how the board ships. |
-| Isolation | One throwaway container per card, with a clone bind-mounted and a card-scoped token. No GitHub credential inside. **Docker is a hard dependency — there is no fallback.** |
+| Isolation | One throwaway container per card, with a clone bind-mounted and a card-scoped token. No GitHub credential inside. **Docker is a hard dependency of the default sealed run mode — a sealed board never falls back to running unisolated. A board can opt into the open run mode instead (see "two run modes" below).** |
 | Out of scope | Ollama, workstream column mode, scheduling/digest, Omarchy, fish_gate. |
 
 ### resolved from the brief's open flags
@@ -522,11 +522,12 @@ answer to "one card wedged the container two others are using". **And it costs n
 on one repo are on different branches, so they need separate checkouts either way — sharing a clone
 would put them back on a shared `.git`, where one card can rewrite another's refs.
 
-### one card runtime, and docker is a hard dependency
+### two run modes, and docker is a hard dependency of the sealed one
 
-**There is no second mode.** A card runs in a container or it does not run. If Docker is missing, or
-the card credential is not configured, the board refuses and says how to fix it rather than starting
-the card some other way.
+A board runs its cards in one of two modes, stored per board as `run_mode`: **sealed** (the default,
+and what a null value means) or **open**. A sealed card runs in a container or it does not run. If
+Docker is missing, or the card credential is not configured, the board refuses and says how to fix
+it rather than starting the card some other way.
 
 That is deliberate and it is the whole point of the decision above. A subprocess fallback would put
 an agent that may have read untrusted input onto the operator's own filesystem, with the operator's
@@ -535,7 +536,18 @@ prevent. A board that quietly degraded would be claiming an isolation it no long
 person relying on it would have no way to know.
 
 So Docker joins `uv` as something you install once, and `require_card_runtime()` is the only way to
-get a runtime.
+get a sealed runtime.
+
+**Open mode is a separate, explicit choice, never a fallback.** It exists only when the global
+`allow_open_mode` switch is on (settings, `o`) and the board stores `run_mode = open` (`shift`+`o`);
+turn the switch off and every board resolves sealed again, its stored choice kept. An open board runs
+its cards as plain processes on the operator's machine (`HostBackend`, `require_host_runtime()`): no
+docker, but the agent's cli on `PATH` and a credential. What it keeps is the lease and bash hooks, the
+post-run committed-path check, a scrubbed environment built from an allowlist with a throwaway
+`HOME` and no github credential, a push url made unusable, and a stop that ends the process group.
+What it gives up is the filesystem boundary: the agent can read and write whatever the operator can
+and reach the network. The board's own process pushes, never the card. See
+`docs/spikes/s8-host-run.md` for what was measured.
 
 ### what a container still does not solve
 

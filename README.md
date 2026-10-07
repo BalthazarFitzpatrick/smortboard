@@ -1,8 +1,8 @@
 # smortboard
 
 **kanban board that agents work, not you.** tell mission control what to build; it writes the
-cards. each card's agent works in its own container, on its own branch, and writes the tests for
-what it builds. the board runs them, a second agent reviews the diff. then your choice: the pull
+cards. each card's agent works in its own container (or, on a board set to open mode, on your
+machine), on its own branch, and writes the tests for what it builds. the board runs them, a second agent reviews the diff. then your choice: the pull
 request waits for you, or lands on `development` by itself once both pass. `main` is off limits to
 every agent.
 
