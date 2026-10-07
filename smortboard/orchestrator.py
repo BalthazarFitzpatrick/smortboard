@@ -25,6 +25,7 @@ from typing import Any, Protocol
 
 from smortboard import profiles
 from smortboard.budgets import board_spend_refusal
+from smortboard.docker_paths import mount_arg
 from smortboard.exec.backends import (
     CONTAINER_HARDENING_FLAGS,
     card_image,
@@ -416,7 +417,10 @@ def _real_runner(
             # repo clones and extra paths; the Read tool the turn already has makes it readable
             shot_mount = []
             if screenshot_path is not None:
-                shot_mount = ["-v", f"{Path(screenshot_path).parent}:{CONTAINER_SHOTS_DIR}:ro"]
+                shot_mount = [
+                    "-v",
+                    mount_arg(Path(screenshot_path).parent, CONTAINER_SHOTS_DIR, "ro"),
+                ]
             # -w on the mount parent, never inside a clone: a repo's own .claude/settings.json must
             # not apply through --setting-sources project. named so the turn can be stopped.
             name = container_name(role, board_id)
@@ -431,7 +435,7 @@ def _real_runner(
                 *adapter.container_env(),
                 *guard_mounts,
                 "-v",
-                f"{schema_dir.name}:/smortboard-schema:ro",
+                mount_arg(schema_dir.name, "/smortboard-schema", "ro"),
                 *snapshot.mount_args,
                 *shot_mount,
                 "-w",

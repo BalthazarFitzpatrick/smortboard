@@ -28,6 +28,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, NamedTuple, Protocol
 
+from smortboard.docker_paths import mount_arg
 from smortboard.exec.leases import (
     changed_paths_outside_lease,
     lease_policy,
@@ -269,7 +270,7 @@ def guard_mount(settings_path: str | Path) -> tuple[list[str], str]:
     """
     settings_path = Path(settings_path)
     return (
-        ["-v", f"{settings_path.parent}:{CONTAINER_GUARD_DIR}:ro"],
+        ["-v", mount_arg(settings_path.parent, CONTAINER_GUARD_DIR, "ro")],
         f"{CONTAINER_GUARD_DIR}/{settings_path.name}",
     )
 
@@ -719,7 +720,7 @@ class ContainerBackend:
             *CONTAINER_HARDENING_FLAGS,
             *adapter.container_env(),
             "-v",
-            f"{clone_path}:{_CONTAINER_WORKDIR}:rw",
+            mount_arg(clone_path, _CONTAINER_WORKDIR, "rw"),
             *mount,
             *adapter.guard_mounts(settings_path),
             "-w",

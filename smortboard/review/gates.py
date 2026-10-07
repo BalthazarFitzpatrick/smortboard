@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from smortboard.docker_paths import mount_arg
 from smortboard.exec.backends import (
     CONTAINER_HARDENING_FLAGS,
     card_image,
@@ -194,7 +195,7 @@ def run_test_gate(
         "none",
         *CONTAINER_HARDENING_FLAGS,
         "-v",
-        f"{work_path}:/workspace:ro",  # the gate reads the work, it never changes it
+        mount_arg(work_path, "/workspace", "ro"),  # the gate reads the work, it never changes it
         "-w",
         "/workspace",
         _image_for(repo),

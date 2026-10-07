@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from smortboard.docker_paths import mount_arg
 from smortboard.exec.worktrees import fast_forward_base, fetch_base, has_remote
 from smortboard.fsutil import remove_tree
 
@@ -122,7 +123,7 @@ def build_repo_snapshot(
         except RepoSnapshotError as exc:
             warnings.append(f'the repo "{name}" could not be cloned for reading: {exc}')
             continue
-        mount_args += ["-v", f"{dest}:{REPOS_MOUNT}/{name}:ro"]
+        mount_args += ["-v", mount_arg(dest, f"{REPOS_MOUNT}/{name}", "ro")]
         host_paths[f"{REPOS_MOUNT}/{name}"] = str(dest)
 
     for raw in extra_paths:
@@ -135,7 +136,7 @@ def build_repo_snapshot(
         # two paths can share a basename (/a/screens, /b/screens) - keep both by disambiguating the
         # second, so one mount never silently overwrites the other
         target = _unique_target(path.name, used_targets)
-        mount_args += ["-v", f"{path}:{EXTRA_MOUNT}/{target}:ro"]
+        mount_args += ["-v", mount_arg(path, f"{EXTRA_MOUNT}/{target}", "ro")]
         host_paths[f"{EXTRA_MOUNT}/{target}"] = str(path)
 
     return RepoSnapshot(

@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from smortboard.docker_paths import mount_arg
 from smortboard.exec.backends import (
     CONTAINER_GUARD_DIR,
     CONTAINER_HARDENING_FLAGS,
@@ -316,7 +317,7 @@ def _docker_command(
         *CONTAINER_HARDENING_FLAGS,
         *adapter.container_env(),
         "-v",
-        f"{Path(work_path)}:/workspace:ro",  # the reviewer inspects, it never writes
+        mount_arg(Path(work_path), "/workspace", "ro"),  # the reviewer inspects, it never writes
         *mount,
         *adapter.guard_mounts(settings_path),
         "-w",
