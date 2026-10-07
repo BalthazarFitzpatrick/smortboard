@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import json
 import os
+import queue
+import shutil
+import subprocess
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -123,4 +127,129 @@ def claude_windows(config_dir: Path | None = None, now: float | None = None) -> 
         return cached[1]
     windows = fetch_claude_oauth(config_dir, now) or read_claude_last_json(config_dir, now)
     _cache["claude"] = (now, windows)
+    return windows
+
+
+# -- codex: the app-server answers account/rateLimits/read; a rollout file is the fallback ------
+
+_CODEX_WINDOW_NAMES = {300: "five_hour", 10080: "seven_day"}
+_CODEX_RPC_TIMEOUT_SECONDS = 15
+
+
+def _codex_dir() -> Path:
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+
+
+def _codex_window(block: Any, source: str, fetched_at: float) -> dict[str, Any] | None:
+    """one codex limit block, either the app-server shape or the rollout shape"""
+    if not isinstance(block, dict):
+        return None
+    minutes = block.get("windowDurationMins", block.get("window_minutes"))
+    percent = block.get("usedPercent", block.get("used_percent"))
+    name = _CODEX_WINDOW_NAMES.get(minutes)
+    if name is None or not isinstance(percent, (int, float)):
+        return None
+    window = _window(
+        name, percent, block.get("resetsAt", block.get("resets_at")), source, fetched_at
+    )
+    return {**window, "lab": "openai"}
+
+
+def parse_codex_rate_limits(limits: Any, source: str, fetched_at: float) -> list[dict[str, Any]]:
+    """primary and secondary blocks to neutral windows; a null block is ignored"""
+    if not isinstance(limits, dict):
+        return []
+    blocks = (
+        _codex_window(limits.get(key), source, fetched_at) for key in ("primary", "secondary")
+    )
+    return [window for window in blocks if window]
+
+
+def _read_codex_app_server(exe: str, now: float) -> list[dict[str, Any]]:
+    """the server exits when stdin closes, so stdin stays open until the reply or the timeout"""
+    requests = [
+        {
+            "id": 1,
+            "method": "initialize",
+            "params": {"clientInfo": {"name": "smortboard", "version": "0"}},
+        },
+        {"method": "initialized"},
+        {"id": 2, "method": "account/rateLimits/read"},
+    ]
+    try:
+        process = subprocess.Popen(  # exe is the codex binary found on PATH
+            [exe, "app-server"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return []
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def pump() -> None:
+        for line in process.stdout:
+            lines.put(line)
+        lines.put(None)
+
+    threading.Thread(target=pump, daemon=True).start()
+    deadline = time.monotonic() + _CODEX_RPC_TIMEOUT_SECONDS
+    try:
+        for request_body in requests:
+            process.stdin.write(json.dumps(request_body) + "\n")
+        process.stdin.flush()
+        while (left := deadline - time.monotonic()) > 0:
+            line = lines.get(timeout=left)
+            if line is None:
+                break
+            try:
+                reply = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(reply, dict) and reply.get("id") == 2:
+                limits = (reply.get("result") or {}).get("rateLimits")
+                return parse_codex_rate_limits(limits, "app_server", now)
+    except (OSError, queue.Empty):
+        pass
+    finally:
+        process.kill()
+    return []
+
+
+def read_codex_rollout(codex_dir: Path | None = None, now: float | None = None) -> list[dict]:
+    """last non-null token_count.rate_limits in the newest rollout file"""
+    now = now if now is not None else time.time()
+    rollouts = list(((codex_dir or _codex_dir()) / "sessions").glob("**/rollout-*.jsonl"))
+    if not rollouts:
+        return []
+    newest = max(rollouts, key=lambda path: path.stat().st_mtime)
+    found: dict[str, Any] | None = None
+    try:
+        lines = newest.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        payload = entry.get("payload") if isinstance(entry, dict) else None
+        is_count = isinstance(payload, dict) and payload.get("type") == "token_count"
+        if is_count and isinstance(payload.get("rate_limits"), dict):
+            found = payload["rate_limits"]
+    return parse_codex_rate_limits(found, "rollout", now)
+
+
+def codex_windows(codex_dir: Path | None = None, now: float | None = None) -> list[dict]:
+    """app-server first, else the newest rollout; cached like the claude reading"""
+    now = now if now is not None else time.time()
+    cached = _cache.get("codex")
+    if cached and now - cached[0] < _CACHE_SECONDS:
+        return cached[1]
+    exe = shutil.which("codex")
+    windows = (_read_codex_app_server(exe, now) if exe else []) or read_codex_rollout(
+        codex_dir, now
+    )
+    _cache["codex"] = (now, windows)
     return windows
