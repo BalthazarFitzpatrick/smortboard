@@ -384,7 +384,8 @@ def test_resumed_run_excludes_base_merge_but_keeps_rejected_changes(tmp_path, mo
 
     def worker(store, card_id, cmd, cwd=None, **kwargs):
         if edit:
-            (cwd / edit["path"]).write_text(edit["text"])
+            # bytes, not write_text: the real worker is a linux container and writes lf
+            (cwd / edit["path"]).write_bytes(edit["text"].encode())
             git(cwd, "add", edit["path"])
             git(cwd, "commit", "-m", "worker change")
         return _fake_result()

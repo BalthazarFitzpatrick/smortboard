@@ -65,6 +65,9 @@ def _clone_repo(source: str, branch: str, dest: Path) -> None:
         [
             "git",
             "clone",
+            # a windows host would check files out as crlf, which the container's git sees as edits
+            "-c",
+            "core.autocrlf=false",
             "--depth",
             "1",
             "--no-local",
