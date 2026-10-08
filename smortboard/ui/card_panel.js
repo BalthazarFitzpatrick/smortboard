@@ -1001,13 +1001,15 @@ function resolvePickerRole(catalog, settings = {}, role = 'worker') {
   return {lab, model: row?.id};
 }
 
-// the third column of every lab | model picker. `selected` null is the default row
+// the third column of every lab | model picker. `selected` null is the default row, which names the
+// model's own catalog default (still saved as null, so it keeps inheriting)
 function effortColumn(selected, onPick, label = 'effort', model = null) {
+  const defaultLabel = model?.default_effort ? `default (${model.default_effort})` : 'default';
   return {
     label,
     multi: false,
     items: ['default', ...modelEffortLevels(model)].map(level => ({
-      id: level, label: level, on: level === (selected || 'default'),
+      id: level, label: level === 'default' ? defaultLabel : level, on: level === (selected || 'default'),
     })),
     onPick: item => onPick(item.id === 'default' ? null : item.id),
   };

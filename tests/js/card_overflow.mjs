@@ -178,7 +178,7 @@ setResponse('GET', '/api/cards/c1', 200, {id: 'c1', model: null});
 setResponse('GET', '/api/settings', 200, {});
 setResponse('GET', '/api/catalog', 200, {
   anthropic: {available: false, unavailable_reason: 'no usable profile', models: [{id: 'haiku', label: 'Haiku', tier: 'light'}]},
-  openai: {available: true, models: [{id: 'x', label: 'X', tier: 'standard'}]},
+  openai: {available: true, models: [{id: 'x', label: 'X', tier: 'standard', default_effort: 'medium'}]},
 });
 setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', lab: 'openai', model: 'x'});
 menus = [];
@@ -199,6 +199,8 @@ modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns'
 assert.equal(modelColumns[2].label, 'effort', 'effort is the third column beside lab and model');
 assert.deepEqual(modelColumns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high']);
 assert.equal(modelColumns[2].items.find(item => item.on).id, 'default', 'unset reads as default');
+assert.equal(modelColumns[2].items.find(item => item.id === 'default').label, 'default (medium)',
+  "the default row names the picked model's own default effort");
 modelColumns[2].onPick({id: 'high'});
 assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0,
   'selecting a model waits for the save action');
