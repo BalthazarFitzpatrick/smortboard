@@ -117,8 +117,8 @@ PHASES = (
 MAX_FIX_ROUNDS = 2
 
 # the models when neither the card nor the board's settings name one
-DEFAULT_WORKER_MODEL = "sonnet"
-DEFAULT_REVIEWER_MODEL = "sonnet"
+DEFAULT_WORKER_MODEL = "claude-sonnet-5-5"
+DEFAULT_REVIEWER_MODEL = "claude-sonnet-5-5"
 
 # who a board-written comment is from. cards already carry comments, so the pull request link lands
 # where a human is already looking rather than needing a column of its own

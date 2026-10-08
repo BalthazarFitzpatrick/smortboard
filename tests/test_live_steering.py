@@ -265,7 +265,7 @@ def test_queue_note_only_accepted_while_the_run_is_going(tmp_path, lab, live):
             None,
             "card",
             lab=lab,
-            model="sonnet" if lab == "anthropic" else "gpt-5.6-sol",
+            model="claude-sonnet-5-5" if lab == "anthropic" else "gpt-5.6-sol",
         )
     card_id = card["id"]
     registry = RunRegistry(tmp_path / "b.db")

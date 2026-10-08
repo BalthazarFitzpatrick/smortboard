@@ -406,7 +406,7 @@ def seed_beta(
             tasks=spec["tasks"],
             criteria=spec["criteria"],
             leases=spec["leases"],
-            model="sonnet",
+            model="claude-sonnet-5-5",
             lab="anthropic",
             depends_on=[ids[key] for key in spec["depends_on"]],
             complexity=spec["complexity"],

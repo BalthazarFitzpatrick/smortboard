@@ -624,24 +624,26 @@ def test_list_doing_cards_blocked_ignores_status_and_reason(store):
 
 def test_setting_orchestrator_model_round_trips(store):
     assert store.get_settings()["orchestrator_model"] is None
-    updated = store.set_setting("orchestrator_model", "sonnet")
-    assert updated["orchestrator_model"] == "sonnet"
+    updated = store.set_setting("orchestrator_model", "claude-sonnet-5-5")
+    assert updated["orchestrator_model"] == "claude-sonnet-5-5"
 
 
 def test_a_card_carries_a_model_that_can_be_changed_or_cleared(store):
     board = store.create_board("b")
-    card = store.create_card(board["id"], None, "c", model="opus")
-    assert card["model"] == "opus"
-    assert store.update_card(card["id"], model="haiku")["model"] == "haiku"
+    card = store.create_card(board["id"], None, "c", model="claude-opus-5-5")
+    assert card["model"] == "claude-opus-5-5"
+    assert store.update_card(card["id"], model="claude-haiku-4-5")["model"] == "claude-haiku-4-5"
     assert store.update_card(card["id"], model=None)["model"] is None
 
 
 def test_worker_and_reviewer_models_are_board_settings(store):
     settings = store.get_settings()
     assert settings["worker_model"] is None and settings["reviewer_model"] is None
-    store.set_setting("worker_model", "haiku")
-    assert store.set_setting("reviewer_model", "opus")["worker_model"] == "haiku"
-    assert store.get_settings()["reviewer_model"] == "opus"
+    store.set_setting("worker_model", "claude-haiku-4-5")
+    assert (
+        store.set_setting("reviewer_model", "claude-opus-5-5")["worker_model"] == "claude-haiku-4-5"
+    )
+    assert store.get_settings()["reviewer_model"] == "claude-opus-5-5"
 
 
 def test_a_card_lists_its_attachments(store):

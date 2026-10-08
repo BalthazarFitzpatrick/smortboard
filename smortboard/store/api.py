@@ -16,6 +16,7 @@ from smortboard.labs.catalog import (
     load_catalog,
     parse_ref,
     resolve_ref,
+    supported_efforts,
     validate_effort,
 )
 from smortboard.labs.routing import role_ref
@@ -255,8 +256,30 @@ def _model_pair(lab: Any, model: Any) -> tuple[str | None, str | None]:
     return lab, model
 
 
+def _read_model_efforts(raw: Any) -> dict[str, str]:
+    """a card's remembered effort per "lab/model", tolerant of an empty or damaged column"""
+    try:
+        value = json.loads(raw) if isinstance(raw, str) and raw else {}
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _sticky_effort(efforts: dict[str, str], lab: str, model: str) -> str | None:
+    """the effort a card starts a model on: what it chose for that model before, else medium.
+    a model with no effort levels takes none"""
+    levels = supported_efforts(lab, model)
+    if not levels:
+        return None
+    remembered = efforts.get(f"{lab}/{model}")
+    if remembered in levels:
+        return remembered
+    return "medium" if "medium" in levels else levels[0]
+
+
 def _card_dict(row: sqlite3.Row) -> dict[str, Any]:
     card = dict(row)
+    card["model_efforts"] = _read_model_efforts(card.get("model_efforts"))
     if card["model"] is not None and card["lab"] is None:
         card["lab"] = "anthropic"
     return card
@@ -1059,17 +1082,26 @@ class Store:
         if "effort" in fields:
             _check_effort("effort", fields["effort"])
         elif {"lab", "model"} & fields.keys():
-            # a stored effort the new model cannot take is dropped, not a reason to refuse
             selection = {**dict(current), **fields}
-            if selection.get("effort") is not None:
-                fields["effort"] = compatible_effort(
-                    *role_ref(self.get_settings(), "worker", selection), selection["effort"]
+            settings = self.get_settings()
+            ref = role_ref(settings, "worker", selection)
+            if ref == role_ref(settings, "worker", dict(current)):
+                # the same model again: a stored effort it cannot take is dropped, not refused
+                if selection.get("effort") is not None:
+                    fields["effort"] = compatible_effort(*ref, selection["effort"])
+            else:
+                # another model starts on what this card chose for it, never on the old model's
+                fields["effort"] = _sticky_effort(
+                    _read_model_efforts(current["model_efforts"]), *ref
                 )
         if {"lab", "model", "effort"} & fields.keys():
             selection = {**dict(current), **fields}
-            validate_effort(
-                *role_ref(self.get_settings(), "worker", selection), selection.get("effort")
-            )
+            ref = role_ref(self.get_settings(), "worker", selection)
+            validate_effort(*ref, selection.get("effort"))
+            if selection.get("effort") is not None:
+                efforts = _read_model_efforts(current["model_efforts"])
+                efforts[f"{ref[0]}/{ref[1]}"] = selection["effort"]
+                fields["model_efforts"] = json.dumps(efforts)
 
         merged = {**fields, "status": next_status, "blocked_reason_code": next_reason}
         assignments = ", ".join(f"{key} = ?" for key in merged)
@@ -1356,6 +1388,7 @@ class Store:
             "lab",
             "complexity",
             "effort",
+            "model_efforts",
             "ledger_task",
             "findings_route",
             "created_at",
@@ -1388,8 +1421,8 @@ class Store:
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
                 blocked_reason_code, description, position, review_flag, model, findings_route,
-                created_at, updated_at, lab, complexity, ledger_task, effort)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, lab, complexity, ledger_task, effort, model_efforts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card["id"],
@@ -1410,6 +1443,7 @@ class Store:
                 card.get("complexity"),
                 card.get("ledger_task"),
                 card.get("effort"),
+                json.dumps(card["model_efforts"]) if card.get("model_efforts") else None,
             ),
         )
         for task in payload["tasks"]:

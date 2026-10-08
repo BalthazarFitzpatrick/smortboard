@@ -87,7 +87,7 @@ def available_tools(allowed_tools: tuple[str, ...]) -> str:
 def build_command(
     prompt: str,
     settings_path: str | Path | None,
-    model: str = "sonnet",
+    model: str = "claude-sonnet-5-5",
     allowed_tools: tuple[str, ...] = DEFAULT_ALLOWED_TOOLS,
     budget_usd: float | None = DEFAULT_CARD_BUDGET_USD,
     system_prompt: str = "",

@@ -163,7 +163,7 @@ ORCHESTRATOR_JSON_SCHEMA = {
 
 # a turn is a conversation, not a build - it should cost far less than a card run
 DEFAULT_TURN_BUDGET_USD = 1.00
-DEFAULT_ORCHESTRATOR_MODEL = "opus"
+DEFAULT_ORCHESTRATOR_MODEL = "claude-opus-5-5"
 
 # mission control reads to plan, and only reads: three read-only tools, and everything that could
 # write, run a shell or reach the network explicitly refused. read-only by mount AND by allowlist.

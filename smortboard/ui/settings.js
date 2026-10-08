@@ -284,12 +284,13 @@ async function openFallbackPicker(role, initialEntries, anchor, status, onSaved)
   };
   const focusedEntry = () => selected.find(entry => entry.ref === focusedRef) || null;
 
-  // an effort saved before the model's levels changed is dropped, so a re-save never sends it
+  // an effort saved before the model's levels changed, or never saved, restarts at the model's start
+  // effort so a re-save never sends a stale one and no entry is left without one
   const clearStaleEfforts = () => {
     for (const entry of selected) {
       const [lab, model] = entry.ref.split('/');
       const row = catalog[lab]?.models.find(row => row.id === model);
-      if (entry.effort && row && !modelEffortLevels(row).includes(entry.effort)) entry.effort = null;
+      if (row && !modelEffortLevels(row).includes(entry.effort)) entry.effort = startEffort(row);
     }
   };
   clearStaleEfforts();
@@ -298,7 +299,7 @@ async function openFallbackPicker(role, initialEntries, anchor, status, onSaved)
     const entry = focusedEntry();
     const [lab, model] = entry?.ref.split('/') || [];
     const row = catalog[lab]?.models.find(row => row.id === model);
-    const effort = effortColumn(entry?.effort || null, level => {
+    const effort = effortColumn(entry?.effort, level => {
       entry.effort = level;
       showSummary();
       menu.refresh(buildSections());
@@ -330,7 +331,9 @@ async function openFallbackPicker(role, initialEntries, anchor, status, onSaved)
           empty: selectedLab ? 'no models' : 'choose a lab',
           onPick: (item, on) => {
             if (on && !selected.some(entry => entry.ref === item.id)) {
-              selected.push({ref: item.id, effort: null});
+              const [pickLab, pickModel] = item.id.split('/');
+              const pickRow = catalog[pickLab]?.models.find(row => row.id === pickModel);
+              selected.push({ref: item.id, effort: startEffort(pickRow)});
             }
             if (!on) selected = selected.filter(entry => entry.ref !== item.id);
             focusedRef = item.id;

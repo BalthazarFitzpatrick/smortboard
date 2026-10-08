@@ -31,9 +31,44 @@ def test_v19_card_model_is_unchanged_and_reads_as_anthropic(tmp_path):
     with Store(path) as migrated:
         assert current_version(migrated._conn) == len(_MIGRATIONS)
         card = migrated.get_card("c")
-        assert (card["lab"], card["model"]) == ("anthropic", "sonnet")
+        # migration 32 rewrote the old family alias to the dated model it followed
+        assert (card["lab"], card["model"]) == ("anthropic", "claude-sonnet-5-5")
         assert migrated.list_cards("b")[0] == card
         assert migrated._conn.execute("SELECT lab FROM cards").fetchone()[0] is None
+
+
+def test_migration_32_rewrites_saved_family_aliases_and_leaves_other_values(tmp_path):
+    path = tmp_path / "v31.db"
+    conn = sqlite3.connect(path)
+    for script in _MIGRATIONS[:31]:
+        conn.executescript(script)
+    conn.execute("PRAGMA user_version = 31")
+    conn.executemany(
+        "INSERT INTO settings (key, value) VALUES (?, ?)",
+        [
+            ("worker_model", "sonnet"),
+            ("orchestrator_model", "anthropic/opus"),
+            ("reviewer_model", "claude-haiku-4-5"),
+            ("fold_cross_lab_fallback", json.dumps([{"ref": "anthropic/haiku", "effort": None}])),
+            ("max_parallel", "sonnet"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    with Store(path) as migrated:
+        settings = migrated.get_settings()
+        assert settings["worker_model"] == "claude-sonnet-5-5"
+        assert settings["orchestrator_model"] == "anthropic/claude-opus-5-5"
+        assert settings["reviewer_model"] == "claude-haiku-4-5"
+        assert settings["fold_cross_lab_fallback"] == [
+            {"ref": "anthropic/claude-haiku-5-5", "effort": None}
+        ]
+        assert (
+            migrated._conn.execute(
+                "SELECT value FROM settings WHERE key = 'max_parallel'"
+            ).fetchone()[0]
+            == "sonnet"
+        ), "only model settings are rewritten"
 
 
 def test_card_model_pairs_patch_and_clear(store):
@@ -61,14 +96,28 @@ def test_card_effort_is_its_own_and_only_a_named_level(store):
         store.update_card(card["id"], effort="unknown")
     with pytest.raises(ValueError, match="effort"):
         store.create_card(board["id"], None, "d", effort="unknown")
-    # a model change leaves the effort alone; clearing it hands the worker back the role's
-    assert store.update_card(card["id"], model="openai/gpt-6-astra")["effort"] == "high"
+    # effort is remembered per model: another model starts on medium, never on high from the last
+    changed = store.update_card(card["id"], model="openai/gpt-6-astra")
+    assert changed["effort"] == "medium"
+    assert changed["model_efforts"] == {
+        "anthropic/claude-sonnet-5-5": "high",
+        "openai/gpt-6-astra": "medium",
+    }
+    assert store.update_card(card["id"], effort="max")["effort"] == "max"
+    # going back finds what was chosen there, and the other model keeps its own choice
+    back = store.update_card(card["id"], lab="anthropic", model="claude-sonnet-5-5")
+    assert back["effort"] == "high"
+    assert back["model_efforts"] == {
+        "anthropic/claude-sonnet-5-5": "high",
+        "openai/gpt-6-astra": "max",
+    }
+    assert store.update_card(card["id"], lab="openai", model="gpt-6-astra")["effort"] == "max"
     assert store.update_card(card["id"], effort=None)["effort"] is None
 
 
 def test_paired_settings_validate_atomically_and_fallback_is_opt_in(store):
     assert store.get_settings()["worker_cross_lab_fallback"] == []
-    store.set_setting("worker_model", "sonnet")
+    store.set_setting("worker_model", "claude-sonnet-5-5")
     settings = store.set_settings({"worker_lab": "openai", "worker_model": "gpt-5.6-sol"})
     assert settings["worker_lab"] == "openai"
     assert settings["worker_model"] == "gpt-5.6-sol"
@@ -77,9 +126,11 @@ def test_paired_settings_validate_atomically_and_fallback_is_opt_in(store):
     assert store.get_settings() == settings
     settings = store.set_setting("fold_model", "openai/gpt-6-astra")
     assert (settings["fold_lab"], settings["fold_model"]) == ("openai", "gpt-6-astra")
-    settings = store.set_setting("worker_cross_lab_fallback", ["sonnet", "openai/gpt-6-astra"])
+    settings = store.set_setting(
+        "worker_cross_lab_fallback", ["claude-sonnet-5-5", "openai/gpt-6-astra"]
+    )
     assert settings["worker_cross_lab_fallback"] == [
-        {"ref": "anthropic/sonnet", "effort": None},
+        {"ref": "anthropic/claude-sonnet-5-5", "effort": None},
         {"ref": "openai/gpt-6-astra", "effort": None},
     ]
     with pytest.raises(ValueError, match="unknown fallback"):
@@ -100,11 +151,14 @@ def test_fallback_entries_carry_their_own_effort(store):
     ]
     settings = store.set_setting(
         "reviewer_cross_lab_fallback",
-        [{"ref": "openai/gpt-6-astra", "effort": "high"}, {"ref": "sonnet", "effort": None}],
+        [
+            {"ref": "openai/gpt-6-astra", "effort": "high"},
+            {"ref": "claude-sonnet-5-5", "effort": None},
+        ],
     )
     assert settings["reviewer_cross_lab_fallback"] == [
         {"ref": "openai/gpt-6-astra", "effort": "high"},
-        {"ref": "anthropic/sonnet", "effort": None},
+        {"ref": "anthropic/claude-sonnet-5-5", "effort": None},
     ]
     with pytest.raises(ValueError, match="effort"):
         store.set_setting(
@@ -168,7 +222,7 @@ def test_fallback_effort_uses_the_fallback_model_support(store):
 
 def test_export_import_and_backup_preserve_mixed_labs(store, tmp_path):
     board = store.create_board("mixed")
-    store.create_card(board["id"], None, "legacy", model="sonnet")
+    store.create_card(board["id"], None, "legacy", model="claude-sonnet-5-5")
     card = store.create_card(
         board["id"], None, "new", lab="openai", model="gpt-6-astra", complexity=3, effort="high"
     )

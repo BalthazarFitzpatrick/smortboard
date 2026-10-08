@@ -210,7 +210,7 @@ TEST_RULES = (
 def build_command(
     prompt: str,
     settings_path: str | Path | None,
-    model: str = "sonnet",
+    model: str = "claude-sonnet-5-5",
     allowed_tools: tuple[str, ...] = DEFAULT_ALLOWED_TOOLS,
     budget_usd: float | None = DEFAULT_CARD_BUDGET_USD,
     system_prompt: str = SYSTEM_PROMPT,
@@ -806,7 +806,7 @@ def run_card(
     worktree_path: str | Path,
     prompt: str,
     settings_path: str | Path,
-    model: str = "sonnet",
+    model: str = "claude-sonnet-5-5",
     repo: dict[str, Any] | None = None,
     pending_notes: Callable[[], list[dict[str, Any]]] | None = None,
     on_process: Callable[[ProcessHandle], None] | None = None,

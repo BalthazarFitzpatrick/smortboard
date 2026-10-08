@@ -139,14 +139,14 @@ def test_a_card_carries_the_model_proposed_and_a_non_name_is_refused(store, boar
         "reply": "ok",
         "plan": "p",
         "cards": [
-            {**base, "title": "fast", "model": "Haiku"},
+            {**base, "title": "fast", "model": "Claude-Haiku-4-5"},
             {**base, "title": "odd", "model": "opus; rm -rf /"},
             {**base, "title": "plain", "model": None},
         ],
     }
     run_orchestrator_turn(store, board["id"], "go", runner=_runner(payload))
     by_title = {c["title"]: c for c in store.list_cards(board["id"])}
-    assert by_title["fast"]["model"] == "haiku"
+    assert by_title["fast"]["model"] == "claude-haiku-4-5"
     assert by_title["odd"]["model"] is None
     assert by_title["plain"]["model"] is None
     notes = [
@@ -254,7 +254,7 @@ def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_the
         "repo": "repo",
         "leases": ["y.py"],
         "depends_on": ["bare"],
-        "model": "haiku",
+        "model": "claude-haiku-4-5",
         "task_id": "t1",
         "complexity": "high",
     }
@@ -282,7 +282,7 @@ def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_the
     assert made_bare["complexity"] == 1
     assert made_full["repo_id"] is not None
     assert (made_full["model"], made_full["ledger_task"], made_full["complexity"]) == (
-        "haiku",
+        "claude-haiku-4-5",
         "t1",
         3,
     )

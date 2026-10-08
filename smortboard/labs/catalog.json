@@ -2,16 +2,17 @@
   "anthropic": {
     "adapter": "claude-code",
     "models": [
-      {"id": "fable", "label": "fable (alias)", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": null},
-      {"id": "opus", "label": "opus (alias)", "tier": "deep", "prefer_for": ["orchestrator", "fold"], "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": null},
-      {"id": "sonnet", "label": "sonnet (alias)", "tier": "standard", "prefer_for": ["worker", "reviewer"], "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": null},
-      {"id": "haiku", "label": "haiku (alias)", "tier": "light", "effort_levels": [], "default_effort": null},
-      {"id": "claude-fable-5", "label": "fable 5", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high"},
       {"id": "claude-fable-5-1", "label": "fable 5.1", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high"},
+      {"id": "claude-fable-5", "label": "fable 5", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high"},
+      {"id": "claude-opus-5-5", "label": "opus 5.5", "tier": "deep", "prefer_for": ["orchestrator", "fold"], "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium"},
       {"id": "claude-opus-5", "label": "opus 5", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high"},
-      {"id": "claude-opus-5-5", "label": "opus 5.5", "tier": "deep", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium"},
+      {"id": "claude-opus-4-8", "label": "opus 4.8", "tier": "deep", "effort_levels": ["low", "medium", "high"], "default_effort": null},
+      {"id": "claude-opus-4-7", "label": "opus 4.7", "tier": "deep", "effort_levels": ["low", "medium", "high"], "default_effort": null},
+      {"id": "claude-opus-4-6", "label": "opus 4.6", "tier": "deep", "effort_levels": ["low", "medium", "high"], "default_effort": null},
+      {"id": "claude-sonnet-5-5", "label": "sonnet 5.5", "tier": "standard", "prefer_for": ["worker", "reviewer"], "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium"},
       {"id": "claude-sonnet-5", "label": "sonnet 5", "tier": "standard", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high"},
-      {"id": "claude-sonnet-5-5", "label": "sonnet 5.5", "tier": "standard", "effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium"},
+      {"id": "claude-sonnet-4-6", "label": "sonnet 4.6", "tier": "standard", "effort_levels": ["low", "medium", "high"], "default_effort": null},
+      {"id": "claude-haiku-5-5", "label": "haiku 5.5", "tier": "light", "effort_levels": [], "default_effort": null},
       {"id": "claude-haiku-4-5", "label": "haiku 4.5", "tier": "light", "effort_levels": [], "default_effort": null}
     ]
   },

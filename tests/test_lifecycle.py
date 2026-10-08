@@ -831,13 +831,13 @@ def test_the_card_model_wins_and_the_reviewer_keeps_its_own(board, monkeypatch):
     store, card_id = board
     _stub_gates(monkeypatch)
     reviewed = _capture_reviewer_model(monkeypatch)
-    store.set_setting("worker_model", "haiku")
-    store.set_setting("reviewer_model", "opus")
-    store.update_card(card_id, model="sonnet")
+    store.set_setting("worker_model", "claude-haiku-4-5")
+    store.set_setting("reviewer_model", "claude-opus-5-5")
+    store.update_card(card_id, model="claude-sonnet-5-5")
     backend = _ModelBackend()
     lifecycle.run_card_lifecycle(store, card_id, backend=backend)
-    assert backend.models == ["sonnet"]
-    assert reviewed == ["opus"]
+    assert backend.models == ["claude-sonnet-5-5"]
+    assert reviewed == ["claude-opus-5-5"]
 
 
 # -- stopping a run (see smortboard/server/runs.py RunRegistry.stop) ----------

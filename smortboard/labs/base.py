@@ -29,7 +29,7 @@ class ToolPolicy:
 class RunRequest:
     prompt: str
     settings_path: str | Path | None = None
-    model: str = "sonnet"
+    model: str = "claude-sonnet-5-5"
     allowed_tools: tuple[str, ...] | None = None
     budget_usd: float | None = 5.0
     system_prompt: str = ""

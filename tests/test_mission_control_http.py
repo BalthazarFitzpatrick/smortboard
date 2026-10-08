@@ -254,7 +254,7 @@ def test_orchestrator_get_on_a_fresh_board_is_empty(running_server):
         "plan": None,
         "thinking": False,
         "error": None,
-        "model": "opus",
+        "model": "claude-opus-5-5",
     }
 
 
