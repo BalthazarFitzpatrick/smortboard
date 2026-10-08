@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 from collections import Counter
+from pathlib import Path
 
 import pytest
 
@@ -14,9 +16,17 @@ from smortboard.store.api import Store
 from smortboard.store.schema import BLOCKED_REASON_CODES, STATUSES
 
 
+@pytest.fixture(scope="module")
+def _demo_template(tmp_path_factory):
+    # built once per module - the build takes seconds on windows, and a copy is instant
+    return demo.build_demo_db(tmp_path_factory.mktemp("demo_template") / "demo.db")
+
+
 @pytest.fixture
-def demo_db(tmp_path):
-    return demo.build_demo_db(tmp_path / "demo.db")
+def demo_db(_demo_template, tmp_path):
+    # a copy per test, so one that mutates the db (a board open recovers orphaned runs) cannot
+    # leak into the next
+    return Path(shutil.copy(_demo_template, tmp_path / "demo.db"))
 
 
 def _cards(store, board):
