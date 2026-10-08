@@ -62,9 +62,9 @@ class SpyMenu {
   close() {}
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('segments.js'), uiBase('disclosure.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
-  smort('board.js'), smort('settings.js'), smort('board_settings.js')].join('\n;\n');
+  smort('board.js'), smort('settings_presets.js'), smort('settings.js'), smort('board_settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {bs, st, BINDINGS, openBoardSettingsPanel,
   setBoards: list => { boards = list; }, setCurrent: id => { currentBoardId = id; }};`)(SpyMenu, SpyDrawer);
