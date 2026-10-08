@@ -136,7 +136,11 @@ function SpyDrawer() {
 }
 const modelMenus = [];
 class SpyMenu {
-  constructor(opts) { this.opts = opts; this.closed = false; modelMenus.push(this); }
+  constructor(opts) {
+    this.opts = opts; this.closed = false; modelMenus.push(this);
+    const classes = new Set();
+    this.el = {classList: {add: name => classes.add(name), contains: name => classes.has(name)}};
+  }
   openAt(anchor) { this.anchor = anchor; return this; }
   refresh(sections) { this.opts.sections = sections; }
   close() { this.closed = true; }
@@ -238,6 +242,7 @@ const primaryMenu = modelMenus.at(-1);
 assert.equal(primaryMenu.anchor, reviewerPicker,
   'the model menu opens at the role picker that launched it');
 assert.equal(primaryMenu.opts.title, 'choose model');
+assert.ok(!primaryMenu.el.classList.contains('menu-centered'), 'a picker given an anchor stays beside it');
 assert.equal(primaryMenu.opts.persistent, true, 'one menu stays open while choosing a lab and model');
 let primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
 assert.equal(primaryColumns[0].multi, false);
@@ -329,6 +334,7 @@ assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1)
 
 await mod.openModelPicker(() => {}, undefined, null, {default_settings: settingsState});
 const defaultCardMenu = modelMenus.at(-1);
+assert.ok(defaultCardMenu.el.classList.contains('menu-centered'), 'a picker with no anchor is centred');
 const defaultCardColumns = defaultCardMenu.opts.sections.find(section => section.kind === 'columns').columns;
 assert.deepEqual(defaultCardColumns[2].items.map(item => item.id), ['low', 'medium', 'high', 'xhigh'],
   'card default resolves the worker model from its configured lab');

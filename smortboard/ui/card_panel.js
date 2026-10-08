@@ -252,7 +252,7 @@ function renderCardStrip(card) {
   // out of the tab order: the board is walked card by card, and m opens the same menu
   overflow.tabIndex = -1;
   overflow.className = 'toggle card-overflow';
-  overflow.title = 'edit, delete, change model, move status';
+  overflow.title = 'change model, move status, delete';
   overflow.textContent = '⋯';
   // stop here - strip.addEventListener('click', open) (ui_base's expander) would otherwise also
   // open the card behind the menu, since a plain click bubbles up from this child
@@ -674,10 +674,6 @@ function metaModelText(model, lab, effort = null) {
   return `${version.length ? `${name} ${version.join('.')}` : name}${at}`;
 }
 
-function metaComplexityText(card) {
-  return `complexity: ${complexityLabel(card)}`;
-}
-
 // what the card has cost across every attempt - empty for a card never run. runs and turns live
 // in the cost view (i); the head line keeps only the number people act on
 function spendLabel(outcome) {
@@ -899,69 +895,6 @@ function cardPanelHtml(card, outcome) {
   `;
 }
 
-// ---- complexity - low/medium/high, rated or estimated ------------------------------------------
-
-const COMPLEXITY_LEVELS = [1, 2, 3];
-const COMPLEXITY_LABELS = {1: 'low', 2: 'medium', 3: 'high'};
-
-// mirrors telemetry.estimate_complexity - a display-only guess for an unrated card, never sent
-// back to the server. see that function's docstring for the scoring rule
-function estimateComplexity(card) {
-  const globs = (card.leases || []).map(l => l.path_glob || '');
-  let score = (card.criteria || []).length + (card.tasks || []).length;
-  if (globs.some(g => g.includes('**'))) score += 2;
-  else if (globs.length) score += 1;
-  if ((modelCatalog[card.lab || 'anthropic']?.models || []).some(m => m.id === card.model && m.tier === 'deep')) score += 2;
-  if (score <= 3) return 1;
-  if (score <= 6) return 2;
-  return 3;
-}
-
-function complexityLabel(card) {
-  const level = typeof card === 'object' ? card.complexity : card;
-  if (COMPLEXITY_LEVELS.includes(level)) return COMPLEXITY_LABELS[level];
-  if (typeof card === 'object') return `${COMPLEXITY_LABELS[estimateComplexity(card)]} (estimated)`;
-  return 'unrated';
-}
-
-// a list of the three levels, the current one lit: one pick sets it, escape goes back
-async function openComplexityMenu(cardId = actionableCardId(), onBack = null) {
-  if (!cardId) return;
-  let card;
-  try {
-    card = await api(`/api/cards/${cardId}`);
-  } catch (err) {
-    showRun(cardId, "can't change complexity", null, err.message);
-    return;
-  }
-  let picked = false;
-  const menu = new Menu({
-    title: 'complexity',
-    sections: [{
-      kind: 'list',
-      items: COMPLEXITY_LEVELS.map(level => ({
-        id: String(level), label: COMPLEXITY_LABELS[level], on: level === card.complexity,
-      })),
-      onPick: item => { picked = true; menu.close(); setCardComplexity(cardId, Number(item.id)); },
-    }],
-    onDismiss: () => { if (!picked && onBack) onBack(); },
-  });
-  menu.openAt({x: window.innerWidth / 2 - 200, y: 80});
-  menu.el?.classList.add('menu-centered');
-  return menu;
-}
-
-async function setCardComplexity(cardId, level) {
-  try {
-    const updated = await api(`/api/cards/${cardId}`, {
-      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({complexity: level}),
-    });
-    showRun(cardId, metaComplexityText(updated));
-  } catch (err) {
-    showRun(cardId, "can't change complexity", null, err.message);
-  }
-}
-
 // ---- model (m) - which model the focused card's worker runs on --------------------------------
 
 let modelCatalog = {};
@@ -1020,8 +953,9 @@ function effortColumn(selected, onPick, label = 'effort', model = null) {
   };
 }
 
-// `current` preselects what is set now: {lab, model, effort}
-async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200, y: 80}, onBack = null,
+// `current` preselects what is set now: {lab, model, effort}. no anchor centres the picker, like every
+// other dialog; the settings role pickers pass their button and stay beside it
+async function openModelPicker(onPick, anchor = null, onBack = null,
   current = {}) {
   const catalog = await loadModelCatalog();
   const labs = Object.keys(catalog);
@@ -1128,16 +1062,20 @@ async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200,
     sections: buildSections(),
     onDismiss: () => { if (!picked && onBack) onBack(); },
   });
-  menu.openAt(anchor);
-  widenModelPicker(menu);
+  menu.openAt(anchor || {x: window.innerWidth / 2 - 200, y: 80});
+  widenModelPicker(menu, !anchor);
 }
 
 // the model column is the one that was cut off. the class is added after the menu is placed, so
-// the panel is clamped into the viewport again at its wider size
-function widenModelPicker(menu) {
+// an anchored panel is clamped into the viewport again at its wider size
+function widenModelPicker(menu, centred) {
   const el = menu.el;
   if (!el) return;
   el.classList.add('model-picker');
+  if (centred) {
+    el.classList.add('menu-centered');
+    return;
+  }
   const rect = el.getBoundingClientRect();
   el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))}px`;
 }
@@ -1169,17 +1107,12 @@ async function doCycleCardModel(cardId, next, lab = null, effort = null) {
   }
 }
 
-// ---- the card's own menu (m, and the ⋯ trigger) - edit, model, complexity, move to, delete ------
-// THE ONLY ROUTE TO FOUR OF THESE. e, j, del and m-cycles-the-model were each their own binding;
-// they are rows here now, so the menu has to be fully operable from the keyboard: m opens it,
-// arrows move, enter picks, escape closes it and hands the card back.
-// change model reuses cycleCardModel below as-is; edit reuses the same open-to-edit the strip's
-// own Enter/Space already does - the panel is where every field on a card lives.
-
-function editCard(cardId = actionableCardId()) {
-  if (!cardId || (openCard && openCard.cardId === cardId)) return;
-  document.querySelector(`.card-strip[data-card-id="${cardId}"]`)?._expander?.open();
-}
+// ---- the card's own menu (m, and the ⋯ trigger) - model, move to, delete -----------------------
+// THE ONLY ROUTE TO THESE. j, del and m-cycles-the-model were each their own binding; they are
+// rows here now, so the menu has to be fully operable from the keyboard: m opens it, arrows move,
+// enter picks, escape closes it and hands the card back.
+// change model reuses cycleCardModel below as-is. there is no edit row: the panel Enter and Space
+// open is where every field on a card lives, and it has no separate edit mode.
 
 const STATUS_LABELS = {todo: 'to do', doing: 'doing', checking: 'checking', accepted: 'accepted', rejected: 'rejected'};
 
@@ -1273,17 +1206,13 @@ function openCardOverflowMenu(cardId, anchor) {
     sections: [{
       kind: 'list',
       items: [
-        {id: 'edit', label: 'edit'},
         {id: 'model', label: 'change model'},
-        {id: 'complexity', label: 'change complexity'},
         {id: 'status', label: 'move status'},
         {id: 'delete', label: 'delete'},
       ],
       onPick: item => {
         menu.close();
-        if (item.id === 'edit') editCard(cardId);
-        else if (item.id === 'model') cycleCardModel(cardId);
-        else if (item.id === 'complexity') openComplexityMenu(cardId, () => openCardActionsMenu(cardId));
+        if (item.id === 'model') cycleCardModel(cardId);
         else if (item.id === 'status') openMoveStatusMenu(cardId, () => openCardActionsMenu(cardId));
         else if (item.id === 'delete') deleteCard(cardId);
       },
