@@ -258,28 +258,28 @@ function usageLimitWord(settings) {
   return pair ? pair[0] : 'wait';
 }
 
-// {id: {title, count, summary}} for the six groups, in the order the panel shows them
+// {id, title, summary} for the six groups, in the order the panel shows them
 function generalGroups(settings) {
   const eff = effectiveGeneral(settings);
   const rolesSet = ROLE_NAMES.filter(r => settings[`${r}_model`] || settings[`${r}_lab`]).length;
   const paths = (settings.mission_control_read_paths || []).length;
   const timeout = numberOrNull(settings.gate_timeout_seconds) ?? SETTINGS_DEFAULTS.gate_timeout_seconds;
   return [
-    {id: 'safety', title: 'safety gates', count: 4,
+    {id: 'safety', title: 'safety gates',
       summary: `soft leases ${onOff(settings, 'allow_soft_leases')} / free merge ${onOff(settings, 'allow_free_merge')}`
         + ` / open run ${onOff(settings, 'allow_open_mode')} / off-limits ${onOff(settings, 'off_limit_branches')}`},
-    {id: 'capacity', title: 'capacity', count: 3,
+    {id: 'capacity', title: 'capacity',
       summary: `${eff.max_parallel} cards at once / mall cam ${numberOrNull(settings.mall_cam_interval_seconds)
         ?? SETTINGS_DEFAULTS.mall_cam_interval_seconds} s / mouse ${onOff(settings, 'enable_mouse')}`},
-    {id: 'cost', title: 'cost', count: 5,
+    {id: 'cost', title: 'cost',
       summary: SPEND_CAP_KEYS.map(([key, name]) => `${name} ${moneyText(eff[key])}`).join(' / ')
         + ` / card total ${eff.card_total_budget_usd === null ? 'none' : moneyText(eff.card_total_budget_usd)}`},
-    {id: 'models', title: 'models and limits', count: 6,
+    {id: 'models', title: 'models and limits',
       summary: `on limit: ${usageLimitWord(settings)} / reviewer reads ${settings.reviewer_input === 'code' ? 'code' : 'diff'}`
         + ` / ${rolesSet} of 4 roles set`},
-    {id: 'paths', title: 'paths and data', count: 3,
+    {id: 'paths', title: 'paths and data',
       summary: `new repos in ${settings.repos_home || 'your home folder'} / ${paths} readable ${paths === 1 ? 'path' : 'paths'}`},
-    {id: 'advanced', title: 'advanced', count: 3,
+    {id: 'advanced', title: 'advanced',
       summary: `findings ${settings.findings_route || 'per card'} / briefing ${onOff(settings, 'resume_briefing')}`
         + ` / gate timeout ${timeout} s`},
   ];
@@ -291,11 +291,11 @@ function boardGroups(board, settings) {
   const inForce = boardInForce(board, settings);
   const branches = board.off_limit_branches || [];
   return [
-    {id: 'landing', title: 'landing', count: 2,
+    {id: 'landing', title: 'landing',
       summary: `merge ${inForce.merge_mode} / off-limits ${branches.length ? branches.join(', ') : 'none'}`},
-    {id: 'running', title: 'running', count: 3,
+    {id: 'running', title: 'running',
       summary: `file lease ${inForce.lease_mode} / run ${inForce.run_mode} / cards ${board.max_parallel || 'no limit'}`},
-    {id: 'budget', title: 'budget', count: 1,
+    {id: 'budget', title: 'budget',
       summary: `daily ${board.daily_budget_usd ? moneyText(board.daily_budget_usd) : 'none'}`},
   ].map(group => ({...group, stored}));
 }

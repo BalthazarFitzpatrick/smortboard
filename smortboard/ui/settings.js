@@ -800,7 +800,7 @@ function buildSettingsBody() {
   gateNotes.clear();
   const items = generalGroups(snap.settings).map(group => {
     const disclosure = makeDisclosure({
-      title: group.title, summary: group.summary, count: group.count,
+      title: group.title, summary: group.summary,
       open: openGroupIds.includes(group.id),
       body: GROUP_BUILDERS[group.id](),
       onToggle: () => { openGroupIds = groupSet.openIds(); },

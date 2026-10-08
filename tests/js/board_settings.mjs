@@ -122,7 +122,7 @@ assert.equal(opened.filter(c => c.path === '/api/boards').length, 1, 'and one of
 assert.deepEqual(panel().querySelectorAll('.settings-section').map(s => s.children[0].textContent),
   ['board preset', 'merge mode', 'off-limit branches', 'file lease', 'run mode', 'cards at once', 'daily budget, usd']);
 
-// ---- three accordions, closed on first open, each with its summary and a count --------------------
+// ---- three accordions, closed on first open, each with its summary --------------------
 assert.deepEqual(groupEls().map(g => g.querySelector('.disclosure-name').textContent), ['landing', 'running', 'budget']);
 assert.ok(groupEls().every(g => !g.classList.contains('open')), 'all closed on first open');
 assert.ok(panel().querySelectorAll('.disclosure-body').every(b => b.hidden === true), 'closed bodies are hidden');
@@ -131,7 +131,7 @@ assert.deepEqual(groupEls().map(g => g.querySelector('.disclosure-summary').text
   'file lease strict / run sealed / cards no limit',
   'daily none',
 ]);
-assert.deepEqual(groupEls().map(g => g.querySelector('.count-badge').textContent), ['2', '3', '1']);
+assert.ok(groupEls().every(g => !g.querySelector('.count-badge')), 'no count badges on the headers');
 
 // ---- the preset row: review only is lit, the others wait for their switches, custom is the app's ---
 assert.deepEqual(lit('board preset'), ['review only']);

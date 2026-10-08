@@ -287,7 +287,7 @@ function renderBoardSettings(board, settings) {
     body.className = 'settings-stack board-settings-group-body';
     body.append(...bodies[group.id]);
     const disclosure = makeDisclosure({
-      title: group.title, summary: group.summary, count: group.count, body,
+      title: group.title, summary: group.summary, body,
       open: boardGroupsOpen.has(group.id),
       onToggle: open => { if (open) boardGroupsOpen.add(group.id); else boardGroupsOpen.delete(group.id); },
     });

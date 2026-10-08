@@ -222,7 +222,7 @@ assert.deepEqual(disclosures().map(d => d.querySelector('.disclosure-name').text
   ['safety gates', 'capacity', 'cost', 'models and limits', 'paths and data', 'advanced']);
 assert.ok(disclosures().every(d => !d.classList.contains('open')), 'every group starts closed');
 assert.deepEqual(bodiesHidden(), [true, true, true, true, true, true], 'closed bodies are hidden');
-assert.deepEqual(disclosures().map(d => d.querySelector('.count-badge').textContent), ['4', '3', '5', '6', '3', '3']);
+assert.ok(disclosures().every(d => !d.querySelector('.count-badge')), 'no count badges on the headers');
 assert.deepEqual(disclosures().map(d => d.querySelector('.disclosure-summary').textContent), [
   'soft leases off / free merge off / open run off / off-limits on',
   '2 cards at once / mall cam 10 s / mouse off',
@@ -243,7 +243,7 @@ await click(heads()[0]);
 assert.deepEqual(bodiesHidden(), [false, true, true, true, true, true]);
 await click(heads()[3]);
 assert.deepEqual(mod.openIds(), ['safety', 'models'], 'opening one never closes another');
-assert.equal(disclosures()[0].querySelector('.disclosure-summary').hidden, true, 'the summary shows only while closed');
+assert.equal(disclosures()[0].querySelector('.disclosure-summary').hidden, false, 'the summary stays while open: the header keeps its height');
 await click(heads()[3]);
 assert.deepEqual(mod.openIds(), ['safety']);
 mod.closeSettingsPanel();

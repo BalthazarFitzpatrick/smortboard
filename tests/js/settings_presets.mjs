@@ -100,7 +100,6 @@ assert.equal(mod.gateUsage(boards, {}).allow_soft_leases.used, 0, 'a gate that i
 const groups = mod.generalGroups({free_merge: undefined, allow_free_merge: 'on', mission_control_read_paths: ['c:/a'],
   repos_home: 'c:/dev', usage_limit_route: 'switch', worker_model: 'm'});
 assert.deepEqual(groups.map(g => g.id), ['safety', 'capacity', 'cost', 'models', 'paths', 'advanced']);
-assert.deepEqual(groups.map(g => g.count), [4, 3, 5, 6, 3, 3]);
 assert.equal(groups[0].summary, 'soft leases off / free merge on / open run off / off-limits on');
 assert.equal(groups[1].summary, '2 cards at once / mall cam 10 s / mouse off');
 assert.equal(groups[2].summary, 'worker 5.00 / reviewer 1.50 / orchestrator 1.00 / fold 2.00 / card total none');
