@@ -20,9 +20,9 @@ const BINDINGS = [
   {code: 'KeyK', label: 'k', action: 'stop the focused card if it is running', group: 'cards'},
   {code: 'KeyY', label: 'y', action: 'accept the focused card, with confirmation', group: 'cards'},
   {code: 'KeyX', label: 'x', action: 'reject the focused card, with confirmation', group: 'cards'},
-  // ONE MENU INSTEAD OF FOUR KEYS: edit (e), move status (j), delete (del) and cycling the model
-  // were each their own binding - they are the rows of this menu now, reachable in two presses
-  {code: 'KeyM', label: 'm', action: "menu for the focused card: edit, model, complexity, move to, delete", group: 'cards'},
+  // ONE MENU INSTEAD OF SEVERAL KEYS: move status (j), delete (del) and cycling the model were
+  // each their own binding - they are the rows of this menu now, reachable in two presses
+  {code: 'KeyM', label: 'm', action: "menu for the focused card: model, move to, delete", group: 'cards'},
   {code: 'KeyT', label: 't', action: "run replay: scrub the focused card's run step by step", group: 'cards'},
   {code: 'Slash', label: '/', action: "type: the open card's comment, or the open chat", group: 'cards'},
   {code: 'KeyW', label: 'w', action: 'run the board: start (with confirmation) / stop the queue', group: 'cards'},
