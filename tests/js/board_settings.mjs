@@ -17,6 +17,7 @@ const boardsState = [
     off_limit_branches: ['main', 'master', 'trunk']},
 ];
 const calls = [];
+let fetchFail = false;
 function stubJson(status, body) {
   return {ok: status >= 200 && status < 300, status, json: async () => body};
 }
@@ -31,6 +32,7 @@ function fetchStub(path, opts) {
   if (boardMatch && method === 'PATCH') {
     const board = boardsState.find(b => b.id === boardMatch[1]);
     const body = JSON.parse(opts.body);
+    if (fetchFail) return Promise.resolve(stubJson(400, {error: "not a branch name: 'bad..name'"}));
     // the server's own gate: soft and free need the global switch
     if (body.merge_mode === 'free' && settingsState.allow_free_merge !== 'on') {
       return Promise.resolve(stubJson(400, {error: 'free merge is off - turn it on in settings (o) first'}));
@@ -178,22 +180,39 @@ await flush();
 assert.deepEqual(lastBoardPatch(), {path: '/api/boards/b1', body: {daily_budget_usd: 5.5}});
 assert.equal(boardsState[0].daily_budget_usd, 5.5);
 
-// ---- off-limit branches: one row each, remove and add save the whole list to this board ---------
-const offLimitNames = () => section('off-limit branches').querySelectorAll('.off-limit-row')
-  .map(row => row.children[0].textContent);
-assert.deepEqual(offLimitNames(), ['main', 'master', 'trunk'], 'the default list is shown as it is');
-const removeMain = section('off-limit branches').querySelectorAll('.off-limit-row')[0]
-  .querySelector('.board-delete');
-await removeMain.onclick();
+// ---- off-limit branches: one field holds the names, blur and enter save the whole list ---------
+const offSection = () => section('off-limit branches');
+const offField = () => offSection().querySelector('.off-limit-input');
+const blurField = field => field._listeners.blur.forEach(fn => fn());
+assert.equal(offSection().querySelectorAll('input').length, 1, 'one field, no per-branch rows');
+assert.equal(offSection().querySelectorAll('button').length, 0, 'no add or remove buttons');
+assert.equal(offField().value, 'main, master, trunk', 'the default list is shown joined');
+offField().value = 'release, main';
+blurField(offField());
 await flush();
-assert.deepEqual(lastBoardPatch(), {path: '/api/boards/b1', body: {off_limit_branches: ['master', 'trunk']}});
-assert.deepEqual(offLimitNames(), ['master', 'trunk'], 'the list redraws after the save');
-section('off-limit branches').querySelector('.off-limit-input').value = 'release';
-await section('off-limit branches').querySelector('.off-limit-add').onclick();
+assert.deepEqual(lastBoardPatch(), {path: '/api/boards/b1', body: {off_limit_branches: ['release', 'main']}});
+assert.equal(offField().value, 'release, main');
+offField().value = 'a  b,,c';
+offField()._listeners.keydown.forEach(fn => fn({code: 'Enter', target: offField(), preventDefault() {}}));
 await flush();
-assert.deepEqual(lastBoardPatch(),
-  {path: '/api/boards/b1', body: {off_limit_branches: ['master', 'trunk', 'release']}});
+assert.deepEqual(lastBoardPatch().body, {off_limit_branches: ['a', 'b', 'c']}, 'enter saves, spaces split too');
+offField().value = ' ';
+blurField(offField());
+await flush();
+assert.deepEqual(lastBoardPatch().body, {off_limit_branches: []}, 'empty sends none');
+assert.ok(text(offSection()).includes('none - this board may land on any branch'));
 assert.deepEqual(boardsState[1].off_limit_branches, ['main', 'master', 'trunk'], 'beta is untouched');
+// an api error shows in the status span and the typed text stays
+fetchFail = true;
+offField().value = 'bad..name';
+blurField(offField());
+await flush();
+fetchFail = false;
+assert.ok(offSection().querySelector('.boards-error').textContent.includes('not a branch name'));
+assert.equal(offField().value, 'bad..name', 'the typed text is kept');
+offField().value = 'main, master, trunk';
+blurField(offField());
+await flush();
 
 press('KeyO', true);
 assert.ok(!mod.bs.backdrop.parentNode, 'a second shift+o closes it');
@@ -202,7 +221,7 @@ assert.ok(!mod.bs.backdrop.parentNode, 'a second shift+o closes it');
 settingsState.off_limit_branches = 'off';
 press('KeyO', true);
 await flush();
-assert.equal(section('off-limit branches').querySelector('.off-limit-add').disabled, true);
+assert.equal(section('off-limit branches').querySelector('.off-limit-input').disabled, true);
 assert.ok(text(section('off-limit branches')).includes('turn them on in settings (o)'));
 settingsState.off_limit_branches = null;
 press('KeyO', true);
