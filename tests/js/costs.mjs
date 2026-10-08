@@ -204,7 +204,7 @@ responses.set('/api/costs/optimisation', stubJson(200, {
   cap_fit: {
     worker_cap_usd: 5,
     rows: [
-      {complexity: 1, source: 'rated', runs: 3, within_cap: 2, hit_cap: 1, median_cost_usd: 0.4, max_cost_usd: 5.2},
+      {complexity: 1, source: 'estimated', runs: 3, within_cap: 2, hit_cap: 1, median_cost_usd: 0.4, max_cost_usd: 5.2},
     ],
   },
   suggested_caps: {
