@@ -481,12 +481,57 @@ class Store:
         self._conn.commit()
         return self.get_board(board_id)
 
-    def set_board_merge_mode(self, board_id: str, value: str | None) -> dict[str, Any]:
-        self.get_board(board_id)
+    def _check_merge_mode(self, value: str | None) -> None:
         if value not in (None, "review", "free"):
             raise ValueError("merge_mode must be review, free, or null")
         if value == "free":
             self._require_gate("allow_free_merge")
+
+    def _check_lease_mode(self, value: str | None) -> None:
+        if value not in (None, "strict", "soft"):
+            raise ValueError("lease_mode must be strict, soft, or null")
+        if value == "soft":
+            self._require_gate("allow_soft_leases")
+
+    def _check_run_mode(self, value: str | None) -> None:
+        if value not in (None, *RUN_MODES):
+            raise ValueError("run_mode must be sealed, open, or null")
+        if value == "open" and self.get_settings()["allow_open_mode"] != "on":
+            raise ValueError("open mode is off - turn it on in settings (o) first")
+
+    def update_board(self, board_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        """applies a board's settings together: every field is checked first (gates included), then
+        written, so a refused field leaves the board exactly as it was"""
+        self.get_board(board_id)
+        if "merge_mode" in fields:
+            self._check_merge_mode(fields["merge_mode"])
+        if "lease_mode" in fields:
+            self._check_lease_mode(fields["lease_mode"])
+        if "run_mode" in fields:
+            self._check_run_mode(fields["run_mode"])
+        if "max_parallel" in fields:
+            _check_positive_int("max_parallel", fields["max_parallel"])
+        if "daily_budget_usd" in fields:
+            _check_positive_number("daily_budget_usd", fields["daily_budget_usd"])
+        if "off_limit_branches" in fields:
+            _check_branch_list(fields["off_limit_branches"])
+        if "merge_mode" in fields:
+            self.set_board_merge_mode(board_id, fields["merge_mode"])
+        if "lease_mode" in fields:
+            self.set_board_lease_mode(board_id, fields["lease_mode"])
+        if "run_mode" in fields:
+            self.set_board_run_mode(board_id, fields["run_mode"])
+        if "max_parallel" in fields:
+            self.set_board_max_parallel(board_id, fields["max_parallel"])
+        if "daily_budget_usd" in fields:
+            self.set_board_daily_budget(board_id, fields["daily_budget_usd"])
+        if "off_limit_branches" in fields:
+            self.set_board_off_limit_branches(board_id, fields["off_limit_branches"])
+        return self.get_board(board_id)
+
+    def set_board_merge_mode(self, board_id: str, value: str | None) -> dict[str, Any]:
+        self.get_board(board_id)
+        self._check_merge_mode(value)
         self._conn.execute("UPDATE boards SET merge_mode = ? WHERE id = ?", (value, board_id))
         self._conn.commit()
         return self.get_board(board_id)
@@ -495,10 +540,7 @@ class Store:
         """strict (or null) keeps a card inside its lease; soft lets it write any unprotected path
         no other active card on the repo holds - see exec/leases.lease_policy"""
         self.get_board(board_id)
-        if value not in (None, "strict", "soft"):
-            raise ValueError("lease_mode must be strict, soft, or null")
-        if value == "soft":
-            self._require_gate("allow_soft_leases")
+        self._check_lease_mode(value)
         self._conn.execute("UPDATE boards SET lease_mode = ? WHERE id = ?", (value, board_id))
         self._conn.commit()
         return self.get_board(board_id)
@@ -507,10 +549,7 @@ class Store:
         """sealed (or null) runs cards in a container; open runs them on the host under leases and
         hooks. open needs the global allow_open_mode switch. nothing executes from this yet"""
         self.get_board(board_id)
-        if value not in (None, *RUN_MODES):
-            raise ValueError("run_mode must be sealed, open, or null")
-        if value == "open" and self.get_settings()["allow_open_mode"] != "on":
-            raise ValueError("open mode is off - turn it on in settings (o) first")
+        self._check_run_mode(value)
         self._conn.execute("UPDATE boards SET run_mode = ? WHERE id = ?", (value, board_id))
         self._conn.commit()
         return self.get_board(board_id)
@@ -527,6 +566,10 @@ class Store:
             raise ValueError(_BOARD_MODE_GATES[key][2])
 
     def board_merges_freely(self, board_id: str) -> bool:
+        """free only while the global gate is on and the board stores free - a stored free survives
+        the gate going off and comes back with it, like run_mode"""
+        if self.get_settings()["allow_free_merge"] != "on":
+            return False
         return self.get_board(board_id)["merge_mode"] == "free"
 
     def set_board_daily_budget(self, board_id: str, value: float | None) -> dict[str, Any]:
@@ -1193,7 +1236,11 @@ class Store:
                 _check_gate(key, value)
             if key == "off_limit_branches" and value not in (None, "off"):
                 raise ValueError(f"off_limit_branches must be off or null, not {value!r}")
-            if key in {"max_parallel", "mall_cam_interval_seconds"}:
+            if key == "resume_briefing" and value not in (None, "off"):
+                raise ValueError(f"resume_briefing must be off or null, not {value!r}")
+            if key == "enable_mouse":
+                _check_gate(key, value)
+            if key in {"max_parallel", "mall_cam_interval_seconds", "gate_timeout_seconds"}:
                 _check_positive_int(key, value)
             if key in SPEND_CAP_KEYS:
                 _check_positive_number(key, value)
@@ -1234,10 +1281,6 @@ class Store:
                     self._conn.execute(
                         "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, stored)
                     )
-                # a gate turned off takes every board back to the default mode with it
-                if key in _BOARD_MODE_GATES and stored is None:
-                    column = _BOARD_MODE_GATES[key][0]
-                    self._conn.execute(f"UPDATE boards SET {column} = NULL")
         return self.get_settings()
 
     def mission_control_read_paths(self) -> list[str]:

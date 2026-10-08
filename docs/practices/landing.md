@@ -26,7 +26,8 @@ every base that is not off limits follows the board's mode:
 | **free merge** | lands and is accepted once tests and review pass |
 
 **free merge** in `o` is one switch for every board: enabled or disabled, disabled by default. while
-it is disabled no board can pick free; disabling it puts every board back on review. while it is
+it is disabled no board can pick free and every board lands on review; a board's own choice is kept and
+applies again when it is enabled. while it is
 enabled, each board picks review or free in `shift`+`o` under *merge mode*, and `shift`+`a` flips the
 focused board after a confirmation. a free-merge board shows a burnt-orange pulsing frame and a text
 label; reduced motion keeps the frame static.
