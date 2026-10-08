@@ -3,3 +3,5 @@
 2026-10-08 pr 306 merged into development (2159ec9). next: check windows ci result, u6 cleanup (copy ledger out of this worktree first), u9 usage cells queued (inside-bar design, mean over tokens). u7 parked
 2026-10-08 night. stopped durations run, nothing running, no containers. tomorrow order: read windows ci run 37696422456, u10 suite speed (durations first), u6 cleanup (copy ledger out of this worktree first), u9 queued
 2026-10-08 u10 shipped: windows ci runs -m windows subset, 82 min to 17. prs 307-309 merged. u6 cleanup done, old worktrees gone. next: u9 usage cells (queued)
+2026-10-08 u9 built: smortui pr 79 fill-cell, pin bump, usage_cells.js with js test. screenshot ok on real data. open: 47px cells vs 45px bar, decide grow bar or shrink cell
+2026-10-08 u9 fit decided: grow bar, tabs and corner controls match cells at 46.5px. pr 311 updated
