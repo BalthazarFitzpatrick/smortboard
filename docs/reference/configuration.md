@@ -51,7 +51,7 @@ each is a stored setting:
 | spend cap per run | `worker_budget_usd`, `reviewer_budget_usd`, `orchestrator_budget_usd`, `fold_budget_usd` |
 | spend cap per card, across every run | `card_total_budget_usd` |
 | absolute paths mission control may also read | `mission_control_read_paths` |
-| per-board mode gates: `on` or unset. unset refuses the mode; turning one off resets every board to strict or review | `allow_soft_leases`, `allow_free_merge` |
+| per-board mode gates: `on` or unset. unset refuses the mode and every board runs strict or review; a board's own choice is kept and applies again when the gate is back on | `allow_soft_leases`, `allow_free_merge` |
 | off-limit branches: unset keeps each board's own list, `off` lets every board land on any branch | `off_limit_branches` |
 | where new board and from online repo open their folder picker (unset: home) | `repos_home` |
 | cards run at once across the install (unset: 2) | `max_parallel` |

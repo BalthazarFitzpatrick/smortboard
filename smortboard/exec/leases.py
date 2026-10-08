@@ -111,6 +111,9 @@ def lease_policy(
     """
     board = store.get_board(card["board_id"]) if store is not None else {}
     mode = board.get("lease_mode") or "strict"
+    # a stored soft only counts while the global gate is on, like run_mode
+    if mode == "soft" and store.get_settings().get("allow_soft_leases") != "on":
+        mode = "strict"
     policy: dict[str, Any] = {
         "path_globs": [row["path_glob"] for row in card.get("leases") or []],
         "remembered_globs": list(remembered_globs or []),

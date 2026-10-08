@@ -71,19 +71,23 @@ def test_free_is_refused_while_the_gate_is_off(tmp_path):
             store.set_setting("allow_free_merge", "yes")
 
 
-def test_turning_free_merge_off_resets_every_board(tmp_path):
+def test_turning_free_merge_off_keeps_the_choice_but_reviews(tmp_path):
     with Store(tmp_path / "board.db") as store:
         free, review = store.create_board("free")["id"], store.create_board("review")["id"]
         store.set_setting("allow_free_merge", "on")
         store.set_board_merge_mode(free, "free")
         store.set_board_merge_mode(review, "review")
+        assert store.board_merges_freely(free) is True
 
         assert store.set_setting("allow_free_merge", None)["allow_free_merge"] is None
 
-        assert [b["merge_mode"] for b in store.list_boards()] == [None, None]
+        # stored on disk, resolved to review while the gate is off, never rewritten
+        assert [b["merge_mode"] for b in store.list_boards()] == ["free", "review"]
         assert store.board_merges_freely(free) is False
         with pytest.raises(ValueError):
             store.set_board_merge_mode(free, "free")
+        store.set_setting("allow_free_merge", "on")
+        assert store.board_merges_freely(free) is True
 
 
 def _db_at(path, version):

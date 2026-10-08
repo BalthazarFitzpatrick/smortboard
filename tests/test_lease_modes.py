@@ -229,7 +229,7 @@ def test_soft_is_refused_while_the_gate_is_off(tmp_path):
     store.close()
 
 
-def test_turning_the_gate_off_resets_every_board(tmp_path):
+def test_turning_the_gate_off_keeps_the_choice_but_runs_strict(tmp_path):
     store = Store(tmp_path / "db")
     soft, strict = store.create_board("soft")["id"], store.create_board("strict")["id"]
     store.set_setting("allow_soft_leases", "on")
@@ -237,14 +237,19 @@ def test_turning_the_gate_off_resets_every_board(tmp_path):
     store.set_board_lease_mode(strict, "strict")
     store.set_setting("allow_free_merge", "on")
     store.set_board_merge_mode(soft, "free")
+    card = store.create_card(soft, None, "c")
+    assert lease_policy(store, card)["mode"] == "soft"
 
     store.set_setting("allow_soft_leases", None)
 
-    assert [b["lease_mode"] for b in store.list_boards()] == [None, None]
+    # the stored choices stay on disk, and the board runs strict while the gate is off
+    assert [b["lease_mode"] for b in store.list_boards()] == ["soft", "strict"]
+    assert lease_policy(store, card)["mode"] == "strict"
     # the other gate's mode is left alone
     assert store.get_board(soft)["merge_mode"] == "free"
-    policy = lease_policy(store, store.create_card(soft, None, "c"))
-    assert policy["mode"] == "strict"
+    # turning the gate back on restores the choice, nothing was rewritten
+    store.set_setting("allow_soft_leases", "on")
+    assert lease_policy(store, card)["mode"] == "soft"
     store.close()
 
 
