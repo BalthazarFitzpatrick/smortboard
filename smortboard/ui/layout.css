@@ -753,3 +753,7 @@ body {
   height: auto; min-height: 0; padding: 0 4px; border: none; background: none;
   color: var(--kingfisher); text-decoration: underline;
 }
+
+/* ---- settings help box ---- */
+/* the box hangs beside a modal panel, so it must sit above the modal backdrop's dim, not under it */
+.aside { z-index: 61; }
