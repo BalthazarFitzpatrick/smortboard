@@ -741,3 +741,15 @@ body {
 .settings-save-status:empty { display: none; }
 .settings-confirm-line { white-space: normal; }
 .settings-row .boards-create-row { flex: 0 1 220px; min-width: 0; }
+
+/* ---- settings accordion (board) ---- */
+/* the preset row's diff line: the part that says how far the board is from the preset stands out */
+.board-preset-diff b { color: var(--cream); font-weight: normal; }
+/* a gated row says its global switch in the toggle wording, with a link while it is off */
+.board-gate-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.board-gate-on { color: var(--text-dim); }
+.board-gate-off { color: var(--fill-warn); }
+.board-gate-link {
+  height: auto; min-height: 0; padding: 0 4px; border: none; background: none;
+  color: var(--kingfisher); text-decoration: underline;
+}

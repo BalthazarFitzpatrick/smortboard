@@ -59,7 +59,11 @@ each is a stored setting:
 | pointer affordances: hover focus, right-click menu (unset: keyboard only) | `enable_mouse` |
 | the rest | `findings_route`, `resume_briefing`, `gate_timeout_seconds` |
 
-per board, in `shift`+`o`: merge mode (review or free), off-limit branches (one comma-separated field: `main`, `master` and
-`trunk` until you edit the list; an empty field means none), file lease (strict or soft), cards at once
-and a daily budget in usd. free and soft are only on offer while their switch in `o` is enabled.
+per board, in `shift`+`o`: a preset row (review only, free merge, open) that writes a board's three modes in
+one request, then three groups, each closed until you open it and showing its current values while closed.
+landing: merge mode (review or free) and off-limit branches (one comma-separated field: `main`, `master` and
+`trunk` until you edit the list; an empty field means none). running: file lease (strict or soft), run mode
+(sealed or open) and cards at once, which can only lower the global limit. budget: a daily budget in usd.
+free, soft and open are only on offer while their switch in `o` is on: the row shows that switch's state and a
+link to it. a board keeps what it saved while a switch is off and runs review, strict or sealed meanwhile.
 `shift`+`a` also flips the merge mode, after a confirmation.
