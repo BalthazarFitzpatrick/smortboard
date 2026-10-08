@@ -5,6 +5,10 @@
    ui_base's now, on its own :root - pile.js reads them from there and base.css draws with them.
    retune a column's spacing by restating one here, not by reintroducing the set */
 
+/* one height for everything in the top bar: board tabs, corner controls and the usage cells.
+   the cell is ui_base's 1.5 rows, so the rest of the bar takes its height, not the other way */
+:root { --bar-item-height: calc(var(--row-height) * 1.5); }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -28,9 +32,9 @@ body {
    background and no border and it is declared after .toggle, so restating them here is what makes
    a tab adopt the button shape - shell.js still owns the behaviour through the .nav-tab class */
 .board-bar .nav-tab {
-  /* one row height, like every other control */
+  /* one bar height, shared with the corner controls and the usage cells */
   padding: 0 18px;
-  height: var(--row-height);
+  height: var(--bar-item-height);
   background: var(--panel-row);
   border: 2px solid var(--grey-border);
   border-bottom: 2px solid var(--grey-border);
@@ -578,16 +582,18 @@ body {
   z-index: 5;
   top: 6px;
   right: var(--inset-x, 15px);
-  height: var(--row-height);
+  height: var(--bar-item-height);
   display: flex;
   align-items: center;
   gap: 12px;
 }
+/* every control in the corner is as tall as the cells; ui_base's .toggle and text-field are one row */
+.bar-corner > :not(.usage-cells) { height: var(--bar-item-height); box-sizing: border-box; }
 
 /* the usage cells (usage_cells.js): codex 7d, then claude 5h and 7d, leftmost in the corner. the
-   cells are taller than the corner's row, so the group hangs from its top edge instead of centring.
-   stretch, not flex-start: a ui_base divider has no height of its own and takes the row's */
-.usage-cells { order: -1; display: flex; align-items: stretch; align-self: flex-start; gap: 10px; }
+   corner is as tall as a cell, so the group fills it. stretch: a ui_base divider has no height of
+   its own and takes the row's */
+.usage-cells { order: -1; display: flex; align-items: stretch; gap: 10px; }
 .usage-group { display: flex; align-items: stretch; gap: 6px; }
 
 /* the beta's bug form (board.js buildIssueButton): FIRST in the corner, left of the board's own
@@ -596,7 +602,6 @@ body {
    different kind of thing at a different height */
 .issue-button {
   order: 0;
-  height: var(--row-height);
   padding: 0 12px;
   display: flex;
   align-items: center;
