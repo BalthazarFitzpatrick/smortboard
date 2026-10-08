@@ -170,4 +170,4 @@ jobs:
           uv run --no-sync pytest -q
           -k 'not test_capture_takes_a_real_screenshot_of_a_faked_server'
           --deselect tests/test_backends.py::test_container_backend_real_docker_smoke
-          --durations=40
+          -m windows --durations=40

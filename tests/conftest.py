@@ -22,7 +22,31 @@ def _isolated_profiles_state(monkeypatch, tmp_path):
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "card_token"))
 
 
+# the test files that touch code with an os branch: docker mount paths, preflight text, host
+# backend, profile file modes, repo setup commands. the windows ci job runs only these (-m windows)
+# because the rest is os-independent and linux already runs it
+WINDOWS_SENSITIVE_FILES = {
+    "test_backends.py",
+    "test_docker_paths.py",
+    "test_exec.py",
+    "test_host_backend.py",
+    "test_host_gate_reviewer.py",
+    "test_orchestrator_ledger.py",
+    "test_preflight.py",
+    "test_profiles.py",
+    "test_profiles_http.py",
+    "test_repo_setup.py",
+    "test_request_gate.py",
+    "test_run_watchdogs.py",
+    "test_seed_beta.py",
+    "test_store.py",
+}
+
+
 def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if item.path.name in WINDOWS_SENSITIVE_FILES:
+            item.add_marker(pytest.mark.windows)
     # posix_only tests assert file modes, signals or shell paths windows does not have
     if os.name != "nt":
         return
