@@ -643,14 +643,6 @@ body {
   flex-direction: column;
   gap: var(--gap, 8px);
 }
-.settings-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.settings-group + .settings-group { margin-top: var(--gap, 8px); }
-.settings-group-title { color: var(--cream); }
-
 .settings-section {
   padding: 6px 0;
   display: flex;
@@ -729,3 +721,23 @@ body {
 .settings-grid .settings-grid-note { grid-column: 1 / -1; }
 /* an empty status still takes a flex gap, pushing its row's right edge in from the grid's */
 .settings-panel .boards-status:empty { display: none; }
+
+/* ---- settings accordion (general) ---- */
+.settings-accordion { gap: var(--gap, 8px); }
+/* a label on the left, its control on the right; the control may wrap under on a narrow panel */
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px var(--gap, 8px);
+  min-height: var(--row-height);
+}
+.settings-row-name { min-width: 0; }
+.settings-gate { gap: 2px; }
+.settings-gate-note { color: var(--text-dim); }
+.settings-preset { gap: 4px; }
+.settings-preset-strong { color: var(--cream); font-weight: bold; }
+.settings-save-status:empty { display: none; }
+.settings-confirm-line { white-space: normal; }
+.settings-row .boards-create-row { flex: 0 1 220px; min-width: 0; }

@@ -124,6 +124,8 @@ assert.equal(mod.openCardRef(), null, 'space and enter must not open the card be
 assert.equal(liveBackdrops().length, 1, 'only the panel is open');
 
 // ---- settings has many fields: the cursor picks one, / never guesses ----------------------------
+// the groups start closed and their fields hidden, so open them to give the cursor fields to walk
+mod.st.listEl.querySelectorAll('.disclosure-head').forEach(head => head._listeners.click.forEach(fn => fn()));
 const settingsFields = mod.surfaceFields(mod.st.panel);
 assert.ok(settingsFields.length > 1, 'settings is the many-fields case the model describes');
 press('Slash', '/');
