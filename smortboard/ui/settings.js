@@ -3,259 +3,177 @@
 // built from the same modal-backdrop / panel-floating pair as preflight.js and inbox.js - nothing
 // here needs arrow/enter/escape hijacked from the document, so it stays out of Menu.
 //
-// scope toggles, snapshot options and the rest arrive as later cards, each pushing a
-// {label, node, onOpen} entry here - onOpen (optional) runs every time the panel opens, so a
-// section backed by its own fetch can refresh instead of showing stale data from the last open.
+// layout: a preset row, then six independent accordion groups (settings_presets.js generalGroups).
+// one GET /api/settings and one GET /api/boards per open feed every control; a save updates that
+// snapshot, and the headers, the preset row and the gate notes are redrawn from it.
 //
-// relies on globals board.js already defines: api, apiOrError, reenterIfFocusLost, loadBoards. no
-// new visual primitive here - rows and text fields reuse boards.js's own classes (board-row,
-// boards-create-row, text-field, toggle), already loaded via boards.css, and ui_base's run-controls.
+// relies on globals board.js already defines: api, apiOrError, reenterIfFocusLost, loadBoards, and
+// on ui_base's segments and disclosure. no new visual primitive here.
 
 const st = {backdrop: null, panel: null, listEl: null};
 
-// two buttons for one setting, the mouse toggle's look: the lit one only moves once the save
-// lands, so a failed save leaves it where it was. real buttons, so tab, enter and space just work
-function choiceToggle({className, choices, save}) {
-  const row = document.createElement('div');
-  row.className = 'run-controls';
-  const state = {value: undefined, saving: false};
-  const buttons = choices.map(([text, value]) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `toggle ${className}`;
-    btn.dataset.choice = text;
-    btn.textContent = text;
-    btn.onclick = async () => {
-      if (state.saving || state.value === value) return;
-      state.saving = true;
-      const ok = await save(value);
-      state.saving = false;
-      if (ok) show(value);
-    };
-    return btn;
-  });
-  function show(value) {
-    state.value = value;
-    buttons.forEach((btn, i) => {
-      const on = choices[i][1] === value;
-      btn.classList.toggle('on', on);
-      btn.setAttribute('aria-pressed', String(on));
-    });
-  }
-  row.append(...buttons);
-  return {row, buttons, show};
+// the one snapshot every control reads: the settings and the boards, loaded once per open
+const snap = {settings: {}, boards: null};
+// which groups are open, kept for the session so a reopened panel looks as it was left
+let openGroupIds = [];
+// per-render registries: disclosures by group id, and one re-read function per control
+let groupDisclosures = new Map();
+let syncers = [];
+const presetUi = {seg: null, lineEl: null, leadEl: null, strongEl: null, statusEl: null};
+const gateNotes = new Map();
+const offLimitConfirm = {armed: false, lineEl: null, offButton: null};
+let renderToken = 0;
+
+function makeNode(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
 }
 
-async function saveSettings(fields) {
-  const {ok} = await apiOrError('/api/settings', {
+function clearChildren(el) {
+  [...el.children].forEach(child => child.remove());
+}
+
+function disarmOffLimit() {
+  offLimitConfirm.armed = false;
+  if (offLimitConfirm.lineEl) offLimitConfirm.lineEl.hidden = true;
+}
+
+// one PATCH /api/settings. a landed save joins the snapshot (the server answers with every setting)
+// and redraws the headers; a refused one changes nothing and says why
+async function patchSettings(fields) {
+  disarmOffLimit();
+  const {ok, body} = await apiOrError('/api/settings', {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(fields),
   });
+  if (presetUi.statusEl) {
+    presetUi.statusEl.textContent = ok ? '' : (body && body.error) || 'could not save';
+  }
+  if (ok) {
+    Object.assign(snap.settings, fields);
+    if (body && typeof body === 'object') Object.assign(snap.settings, body);
+    refreshHeaders();
+  }
+  return {ok, body};
+}
+
+async function saveSettings(fields) {
+  return (await patchSettings(fields)).ok;
+}
+
+// ---- controls ---------------------------------------------------------------------------------
+
+// every on/off setting: a two-way on|off segment. polarity lives in settings_presets.js
+function buildBooleanToggle(key) {
+  const seg = makeSegments({
+    options: WORDING.boolean.map(word => ({label: word, value: word === 'on'})),
+    value: booleanIsOn(snap.settings, key),
+    label: BOOLEAN_SETTINGS[key].label,
+    onPick: on => pickBoolean(key, on),
+  });
+  seg.el.dataset.setting = key;
+  syncers.push(() => seg.setLit(booleanIsOn(snap.settings, key)));
+  if (key === 'off_limit_branches') offLimitConfirm.offButton = seg.buttons[1];
+  return seg;
+}
+
+async function pickBoolean(key, on) {
+  // lifting every board's lock takes a second click on off
+  if (key === 'off_limit_branches' && !on && !offLimitConfirm.armed) {
+    offLimitConfirm.armed = true;
+    offLimitConfirm.lineEl.hidden = false;
+    return false;
+  }
+  const ok = await saveSettings({[key]: booleanStored(key, on)});
+  if (ok && key === 'enable_mouse') setMouseEnabled(on); // live: no reload to start or stop hovering
   return ok;
 }
 
-function toggleWithNote(toggle, noteText) {
-  const note = document.createElement('div');
-  note.className = 'field-label';
-  note.textContent = noteText;
-  const wrap = document.createElement('div');
-  wrap.className = 'settings-stack';
-  wrap.append(toggle.row, note);
-  return wrap;
-}
-
-// usage_limit_route: one ladder for a usage limit. unset (the default) parks the board until the
-// window resets; "attention" asks in the inbox (n) before a fallback model; "switch" moves to the
-// next credential profile, then the fallback model, without asking
-const usageRoute = choiceToggle({
-  className: 'settings-usage-limit-choice',
-  choices: [['wait for the reset', null], ['ask me', 'attention'], ['switch by itself', 'switch']],
-  save: value => saveSettings({usage_limit_route: value}),
-});
-
-function buildUsageLimitToggle() {
-  usageRoute.show(null);
-  return toggleWithNote(usageRoute, 'wait: the board parks until the limit resets. ask me: the card '
-    + 'asks in the inbox (n) before moving to a fallback model. switch: your next credential '
-    + 'profile, then the fallback model.');
-}
-
-async function loadUsageLimitToggle() {
-  try {
-    const settings = await api('/api/settings');
-    const route = settings.usage_limit_route;
-    usageRoute.show(route === 'attention' || route === 'switch' ? route : null);
-  } catch {
-    // leave "wait for the reset" lit - it spends nothing, the safe default to fail to
-  }
-}
-
-// allow_soft_leases and allow_free_merge switch a feature on for the whole install; each board
-// then opts in on its own panel (shift+o). off puts every board back on strict or review
-const softLeases = choiceToggle({
-  className: 'settings-soft-leases-choice',
-  choices: [['enabled', 'on'], ['disabled', null]],
-  save: value => saveSettings({allow_soft_leases: value}),
-});
-
-const freeMerge = choiceToggle({
-  className: 'settings-free-merge-choice',
-  choices: [['enabled', 'on'], ['disabled', null]],
-  save: value => saveSettings({allow_free_merge: value}),
-});
-
-// allow_open_mode: lets a board pick the open run mode in shift+o. turning it off keeps each
-// board's choice stored but every board runs sealed again
-const openMode = choiceToggle({
-  className: 'settings-open-mode-choice',
-  choices: [['enabled', 'on'], ['disabled', null]],
-  save: value => saveSettings({allow_open_mode: value}),
-});
-
-// reviewer_input: what the second agent reads. null is the diff it is handed, "code" is the changed
-// files as they stand in the checkout
-const reviewerInput = choiceToggle({
-  className: 'settings-reviewer-input-choice',
-  choices: [['the diff', null], ['the code', 'code']],
-  save: value => saveSettings({reviewer_input: value}),
-});
-
-// off_limit_branches: unset keeps each board's own list (shift+o); "off" lifts every list
-const offLimits = choiceToggle({
-  className: 'settings-off-limit-choice',
-  choices: [['enabled', null], ['disabled', 'off']],
-  save: value => saveSettings({off_limit_branches: value}),
-});
-
-function buildOffLimitToggle() {
-  offLimits.show(null);
-  return toggleWithNote(offLimits, 'enabled: a board never lands on its off-limit branches - main, '
-    + 'master and trunk unless its own list in shift+o says otherwise. disabled: a board may land on '
-    + 'any branch, main included. no branch is ever force-pushed either way.');
-}
-
-function buildSoftLeasesToggle() {
-  softLeases.show(null);
-  return toggleWithNote(softLeases, 'enabled: a board may let its cards write unprotected paths no other '
-    + 'card holds - pick it per board in shift+o. disabled: every board is strict.');
-}
-
-function buildReviewerInputToggle() {
-  reviewerInput.show(null);
-  return toggleWithNote(reviewerInput, 'the diff: the reviewer is handed what the card changed and '
-    + 'reads around it. the code: it is told which files changed and reads them as they stand in '
-    + 'the checkout, with no diff. the same four questions either way.');
-}
-
-function buildOpenModeToggle() {
-  openMode.show(null);
-  return toggleWithNote(openMode, 'enabled: a board may run its cards in open mode - pick it per board '
-    + 'in shift+o. open mode is weaker than sealed: cards run on your machine, not in a container, '
-    + 'protected only by file leases and hooks. disabled: every board runs sealed, in a container.');
-}
-
-function buildFreeMergeToggle() {
-  freeMerge.show(null);
-  return toggleWithNote(freeMerge, 'enabled: a board may merge passing cards into its base without '
-    + 'asking - pick it per board in shift+o. disabled: every board waits for your review. a board\'s '
-    + 'off-limit branches are never merged either way.');
-}
-
-async function loadFeatureToggles() {
-  try {
-    const settings = await api('/api/settings');
-    softLeases.show(settings.allow_soft_leases === 'on' ? 'on' : null);
-    freeMerge.show(settings.allow_free_merge === 'on' ? 'on' : null);
-    openMode.show(settings.allow_open_mode === 'on' ? 'on' : null);
-    offLimits.show(settings.off_limit_branches === 'off' ? 'off' : null);
-    reviewerInput.show(settings.reviewer_input === 'code' ? 'code' : null);
-  } catch {
-    // leave both disabled lit - disabled is what the server assumes for an unset key
-  }
-}
-
-// enable_mouse: the board is driven from the keyboard, and this turns on the pointer half of it -
-// hovering focuses what the arrow keys would (fanning a piled column with it), and right-click
-// opens the card menu m opens. off by default; the clicks that always worked are never gated by it
-const mouseSetting = {enabled: null, disabled: null, saving: false};
-
-function showMouseChoice(on) {
-  mouseSetting.enabled.classList.toggle('on', on);
-  mouseSetting.disabled.classList.toggle('on', !on);
-  mouseSetting.enabled.setAttribute('aria-pressed', String(on));
-  mouseSetting.disabled.setAttribute('aria-pressed', String(!on));
-}
-
-// the lit button only moves once the save lands, so a failed save leaves it where it was
-async function pickMouse(on) {
-  if (mouseSetting.saving) return;
-  mouseSetting.saving = true;
-  const {ok} = await apiOrError('/api/settings', {
-    method: 'PATCH',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({enable_mouse: on ? 'on' : null}),
+// a choice stored as null / a string: segments cannot hold null as a value, so they carry the word
+function buildChoice(key, pairs, label) {
+  const wordFor = () => (pairs.find(([, stored]) => stored === (snap.settings[key] ?? null)) || pairs[0])[0];
+  const seg = makeSegments({
+    options: pairs.map(([word]) => ({label: word, value: word})),
+    value: wordFor(),
+    label,
+    onPick: word => saveSettings({[key]: pairs.find(([w]) => w === word)[1]}),
   });
-  mouseSetting.saving = false;
-  if (!ok) return;
-  showMouseChoice(on);
-  setMouseEnabled(on); // live: no reload to start or stop hovering
+  seg.el.dataset.setting = key;
+  syncers.push(() => seg.setLit(wordFor()));
+  return seg;
 }
 
-// real buttons, so tab reaches them and enter or space picks without a key handler of our own
-function mouseChoiceButton(text, on) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'toggle settings-mouse-choice';
-  btn.dataset.choice = text;
-  btn.textContent = text;
-  btn.onclick = () => pickMouse(on);
-  return btn;
+function settingRow(label, control) {
+  const row = makeNode('div', 'settings-row');
+  row.append(makeNode('span', 'field-label settings-row-name', label), control);
+  return row;
 }
 
-// the section heading is the "mouse" label; the two buttons sit in ui_base's row of controls
-function buildMouseToggle() {
-  const row = document.createElement('div');
-  row.className = 'run-controls';
-  const enabled = mouseChoiceButton('enabled', true);
-  const disabled = mouseChoiceButton('disabled', false);
-  row.append(enabled, disabled);
-
-  const note = document.createElement('div');
-  note.className = 'field-label';
-  note.textContent = 'the keyboard is how the board is driven. with this on, hovering focuses '
-    + 'what the arrows would and right-click opens the card menu.';
-
-  const wrap = document.createElement('div');
-  wrap.className = 'settings-stack';
-  wrap.append(row, note);
-  Object.assign(mouseSetting, {enabled, disabled});
-  showMouseChoice(false);
-  return wrap;
+function bindFieldKeys(input, save) {
+  input.addEventListener('keydown', evt => {
+    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
+    if (evt.code !== 'Enter') return;
+    evt.preventDefault();
+    save();
+  });
+  input.addEventListener('blur', save);
 }
 
-async function loadMouseToggle() {
-  try {
-    const settings = await api('/api/settings');
-    const on = settings.enable_mouse === 'on';
-    showMouseChoice(on);
-    setMouseEnabled(on);
-  } catch {
-    // leave disabled lit - keyboard only is the safe default to fail to
+function parallelParseInput(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null; // empty means "no limit" / "use the global default"
+  const value = Number(trimmed);
+  return Number.isInteger(value) && value > 0 ? value : undefined; // undefined marks it invalid
+}
+
+// daily_budget_usd and the spend caps: blank means no cap, same empty-is-unset convention
+function budgetParseInput(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value > 0 ? value : undefined; // undefined marks it invalid
+}
+
+const mallCamParseInput = parallelParseInput;
+
+// a whole-number field that saves on enter or blur; empty sends null (the default in force)
+function buildNumberField({key, parse, placeholder, className}) {
+  const input = makeNode('input', `board-name-input text-field ${className}`);
+  input.type = 'text';
+  input.inputMode = 'numeric';
+  input.placeholder = placeholder;
+  const status = makeNode('span', 'boards-status');
+  const show = () => {
+    const value = snap.settings[key];
+    input.value = value == null ? '' : String(value);
+  };
+  show();
+  syncers.push(show);
+
+  async function save() {
+    const value = parse(input.value);
+    if (value === undefined) {
+      status.textContent = 'must be a positive whole number';
+      status.className = 'boards-status boards-error';
+      return;
+    }
+    if (value === (snap.settings[key] ?? null)) return; // blur fires on every tab past the field
+    const {ok, body} = await patchSettings({[key]: value});
+    status.textContent = ok ? 'saved' : (body && body.error) || 'could not save';
+    status.className = ok ? 'boards-status' : 'boards-status boards-error';
   }
+  bindFieldKeys(input, save);
+
+  const row = makeNode('div', 'boards-create-row');
+  row.append(input, status);
+  return {row, input, status};
 }
 
-const SETTINGS_SECTIONS = [
-  {group: 'labs', label: 'usage limits', node: buildUsageLimitToggle(), onOpen: loadUsageLimitToggle},
-  {group: 'general', label: 'soft file leases', node: buildSoftLeasesToggle(), onOpen: loadFeatureToggles},
-  {group: 'general', label: 'free merge', node: buildFreeMergeToggle()},
-  {group: 'general', label: 'open run mode', node: buildOpenModeToggle()},
-  {group: 'general', label: 'off-limit branches', node: buildOffLimitToggle()},
-  {group: 'labs', label: 'reviewer reads', node: buildReviewerInputToggle(), onOpen: loadFeatureToggles},
-];
 
-const roleModels = {node: document.createElement('div')};
-roleModels.node.className = 'settings-stack';
+// ---- fallback picker ------------------------------------------------------------------------
 
 // one fallback as people say it: "openai/gpt-x @ high"
 function fallbackText(entry) {
@@ -350,9 +268,7 @@ async function openFallbackPicker(role, initialEntries, anchor, status, onSaved)
     }, {
       kind: 'buttons',
       buttons: [{id: 'save-fallbacks', label: 'save fallbacks', onClick: async openMenu => {
-        const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({[`${role}_cross_lab_fallback`]: selected})});
+        const {ok, body} = await patchSettings({[`${role}_cross_lab_fallback`]: selected});
         status.textContent = ok ? 'saved' : body?.error || 'could not save fallbacks';
         if (ok) {
           saved = true;
@@ -377,146 +293,97 @@ async function openFallbackPicker(role, initialEntries, anchor, status, onSaved)
   widenModelPicker(menu);
 }
 
-async function loadRoleModels() {
-  try {
-    const settings = await api('/api/settings');
-    clearChildren(roleModels.node);
-    const roles = ['worker', 'reviewer', 'orchestrator', 'fold'];
-    roles.forEach((role, index) => {
-      const block = document.createElement('div');
-      block.className = 'settings-role-block';
-      const heading = document.createElement('div');
-      heading.className = 'settings-role-heading';
-      const label = document.createElement('span');
-      label.className = 'field-label settings-role-name';
-      label.textContent = role;
-      const status = document.createElement('span');
-      status.className = 'boards-status settings-role-status';
-      heading.append(label, status);
+// ---- models by role: the four primary pickers and fallback pickers, launched from buttons -------
 
-      const primaryRow = document.createElement('div');
-      primaryRow.className = 'settings-role-control';
-      const primaryLabel = document.createElement('span');
-      primaryLabel.className = 'field-label';
-      primaryLabel.textContent = 'primary model';
-      const picker = document.createElement('button');
-      picker.className = 'toggle role-model';
-      picker.dataset.role = role;
-      const roleEffort = settings[`${role}_effort`];
-      picker.textContent = modelLabel(settings[`${role}_model`], settings[`${role}_lab`])
-        + (roleEffort ? ` @ ${roleEffort}` : '');
-      picker.onclick = async () => {
-        try {
-          await openModelPicker(async (lab, model, effort) => {
-            const {ok, body} = await apiOrError('/api/settings', {method: 'PATCH',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({[`${role}_lab`]: lab, [`${role}_model`]: model,
-                [`${role}_effort`]: effort})});
-            if (ok) loadRoleModels();
-            else status.textContent = body?.error || 'could not save model';
-          }, picker, null, {lab: settings[`${role}_lab`], model: settings[`${role}_model`],
-            effort: roleEffort, default_settings: settings, default_role: role});
-        } catch (err) { status.textContent = err.message; }
-      };
-      primaryRow.append(primaryLabel, picker);
+const roleModels = {node: null};
 
-      const fallbackRow = document.createElement('div');
-      fallbackRow.className = 'settings-role-control';
-      const fallbackLabel = document.createElement('span');
-      fallbackLabel.className = 'field-label';
-      fallbackLabel.textContent = 'fallback order';
-      const fallback = document.createElement('button');
-      fallback.className = 'toggle role-fallback settings-role-fallback-trigger';
-      fallback.dataset.role = role;
-      let fallbackRefs = settings[`${role}_cross_lab_fallback`] || [];
-      fallback.textContent = fallbackSummary(fallbackRefs);
-      fallback.title = fallbackRefs.map(fallbackText).join('\n');
-      fallback.setAttribute('aria-label', `${role} fallback models in order`);
-      fallback.onclick = async () => {
-        try {
-          await openFallbackPicker(role, fallbackRefs, fallback, status, refs => { fallbackRefs = refs; });
-        } catch (err) {
-          status.textContent = err.message;
-        }
-      };
-      fallbackRow.append(fallbackLabel, fallback);
-      block.append(heading, primaryRow, fallbackRow);
-      roleModels.node.appendChild(block);
-      if (index < roles.length - 1) {
-        const divider = document.createElement('div');
-        divider.className = 'h-divider';
-        roleModels.node.appendChild(divider);
-      }
-    });
-  } catch (err) {
-    roleModels.node.textContent = `could not load models: ${err.message}`;
-  }
+function buildRoleModels() {
+  const node = makeNode('div', 'settings-stack');
+  roleModels.node = node;
+  fillRoleModels();
+  return node;
 }
-SETTINGS_SECTIONS.push({group: 'labs', label: 'models by role', node: roleModels.node, onOpen: loadRoleModels});
+
+function fillRoleModels() {
+  const settings = snap.settings;
+  clearChildren(roleModels.node);
+  const roles = ['worker', 'reviewer', 'orchestrator', 'fold'];
+  roles.forEach((role, index) => {
+    const block = makeNode('div', 'settings-role-block');
+    const heading = makeNode('div', 'settings-role-heading');
+    const status = makeNode('span', 'boards-status settings-role-status');
+    heading.append(makeNode('span', 'field-label settings-role-name', role), status);
+
+    const primaryRow = makeNode('div', 'settings-role-control');
+    const picker = makeNode('button', 'toggle role-model');
+    picker.type = 'button';
+    picker.dataset.role = role;
+    const roleEffort = settings[`${role}_effort`];
+    picker.textContent = modelLabel(settings[`${role}_model`], settings[`${role}_lab`])
+      + (roleEffort ? ` @ ${roleEffort}` : '');
+    picker.onclick = async () => {
+      try {
+        await openModelPicker(async (lab, model, effort) => {
+          const {ok, body} = await patchSettings({[`${role}_lab`]: lab, [`${role}_model`]: model,
+            [`${role}_effort`]: effort});
+          if (ok) fillRoleModels();
+          else status.textContent = body?.error || 'could not save model';
+        }, picker, null, {lab: settings[`${role}_lab`], model: settings[`${role}_model`],
+          effort: roleEffort, default_settings: settings, default_role: role});
+      } catch (err) { status.textContent = err.message; }
+    };
+    primaryRow.append(makeNode('span', 'field-label', 'primary model'), picker);
+
+    const fallbackRow = makeNode('div', 'settings-role-control');
+    const fallback = makeNode('button', 'toggle role-fallback settings-role-fallback-trigger');
+    fallback.type = 'button';
+    fallback.dataset.role = role;
+    let fallbackRefs = settings[`${role}_cross_lab_fallback`] || [];
+    fallback.textContent = fallbackSummary(fallbackRefs);
+    fallback.title = fallbackRefs.map(fallbackText).join('\n');
+    fallback.setAttribute('aria-label', `${role} fallback models in order`);
+    fallback.onclick = async () => {
+      try {
+        await openFallbackPicker(role, fallbackRefs, fallback, status, refs => { fallbackRefs = refs; });
+      } catch (err) {
+        status.textContent = err.message;
+      }
+    };
+    fallbackRow.append(makeNode('span', 'field-label', 'fallback order'), fallback);
+    block.append(heading, primaryRow, fallbackRow);
+    roleModels.node.appendChild(block);
+    if (index < roles.length - 1) roleModels.node.appendChild(makeNode('div', 'h-divider'));
+  });
+}
 
 function settingsHazardPlaceholder(text) {
-  const box = document.createElement('div');
-  box.className = 'hazard-stripes hazard-placeholder';
-  const label = document.createElement('span');
-  label.className = 'hazard-label';
-  label.textContent = text;
-  box.appendChild(label);
+  const box = makeNode('div', 'hazard-stripes hazard-placeholder');
+  box.appendChild(makeNode('span', 'hazard-label', text));
   return box;
 }
 
-// a grid's column captions, as a row whose cells sit in the grid itself
-function settingsGridHeader(captions) {
-  const row = document.createElement('div');
-  row.className = 'settings-grid-row settings-grid-head';
-  captions.forEach(text => {
-    const cell = document.createElement('span');
-    cell.className = 'field-label';
-    cell.textContent = text;
-    row.appendChild(cell);
-  });
-  return row;
-}
-
-function clearChildren(el) {
-  [...el.children].forEach(child => child.remove());
-}
-
 // ---- mission control can read: folders mission control's agent may read from, board-wide -------
-// mounting them is a separate card (out of scope here) - this only maintains the path list, via
-// the same whole-list-replace PATCH /api/settings the other board-wide values already use.
+// mounting them is a separate card - this only maintains the path list, via the same
+// whole-list-replace PATCH /api/settings the other board-wide values already use.
 
 const readPaths = {input: null, listEl: null, statusEl: null};
 
 function renderReadPathRow(path) {
-  const row = document.createElement('div');
-  row.className = 'board-row';
-  const label = document.createElement('span');
-  label.className = 'board-name field-label';
-  label.textContent = path;
-  const remove = document.createElement('button');
+  const row = makeNode('div', 'board-row');
+  const remove = makeNode('button', 'toggle board-delete', 'remove');
   remove.type = 'button';
-  remove.className = 'toggle board-delete';
-  remove.textContent = 'remove';
   remove.onclick = () => removeReadPath(path);
-  row.append(label, remove);
+  row.append(makeNode('span', 'board-name field-label', path), remove);
   return row;
 }
 
-async function currentReadPaths() {
-  const settings = await api('/api/settings');
-  return settings.mission_control_read_paths || [];
+function currentReadPaths() {
+  return snap.settings.mission_control_read_paths || [];
 }
 
-async function loadReadPaths() {
-  let paths;
-  try {
-    paths = await currentReadPaths();
-  } catch (err) {
-    clearChildren(readPaths.listEl);
-    readPaths.listEl.appendChild(settingsHazardPlaceholder(`could not load: ${err.message}`));
-    return;
-  }
+function renderReadPaths() {
   clearChildren(readPaths.listEl);
+  const paths = currentReadPaths();
   if (!paths.length) {
     readPaths.listEl.appendChild(settingsHazardPlaceholder('no folders yet'));
     return;
@@ -524,12 +391,9 @@ async function loadReadPaths() {
   paths.forEach(path => readPaths.listEl.appendChild(renderReadPathRow(path)));
 }
 
-async function patchReadPaths(paths) {
-  return apiOrError('/api/settings', {
-    method: 'PATCH',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({mission_control_read_paths: paths}),
-  });
+function showReadPathError(text) {
+  readPaths.statusEl.textContent = text;
+  readPaths.statusEl.className = 'boards-status boards-error';
 }
 
 async function addReadPath() {
@@ -537,52 +401,33 @@ async function addReadPath() {
   if (!raw) return;
   readPaths.statusEl.textContent = 'adding...';
   readPaths.statusEl.className = 'boards-status';
-  const existing = await currentReadPaths();
-  const {ok, body} = await patchReadPaths([...existing, raw]);
-  if (!ok) {
-    readPaths.statusEl.textContent = (body && body.error) || `could not add ${raw}`;
-    readPaths.statusEl.className = 'boards-status boards-error';
-    return;
-  }
+  const {ok, body} = await patchSettings({mission_control_read_paths: [...currentReadPaths(), raw]});
+  if (!ok) { showReadPathError((body && body.error) || `could not add ${raw}`); return; }
   readPaths.input.value = '';
   readPaths.statusEl.textContent = '';
-  await loadReadPaths();
+  renderReadPaths();
 }
 
 async function removeReadPath(path) {
-  const existing = await currentReadPaths();
-  const {ok, body} = await patchReadPaths(existing.filter(p => p !== path));
-  if (!ok) {
-    readPaths.statusEl.textContent = (body && body.error) || `could not remove ${path}`;
-    readPaths.statusEl.className = 'boards-status boards-error';
-    return;
-  }
-  await loadReadPaths();
+  const {ok, body} = await patchSettings({
+    mission_control_read_paths: currentReadPaths().filter(p => p !== path)});
+  if (!ok) { showReadPathError((body && body.error) || `could not remove ${path}`); return; }
+  renderReadPaths();
 }
 
 function buildReadPathsSection() {
-  const box = document.createElement('div');
-  box.className = 'settings-stack';
-
-  const list = document.createElement('div');
-  list.className = 'boards-list';
-
-  const addRow = document.createElement('div');
-  addRow.className = 'boards-create-row';
-  const input = document.createElement('input');
+  const box = makeNode('div', 'settings-stack');
+  const list = makeNode('div', 'boards-list');
+  const addRow = makeNode('div', 'boards-create-row');
+  const input = makeNode('input', 'board-name-input text-field');
   input.type = 'text';
-  input.className = 'board-name-input text-field';
   input.placeholder = '~/Documents/screenshots';
-  const add = document.createElement('button');
+  const add = makeNode('button', 'toggle', 'add');
   add.type = 'button';
-  add.className = 'toggle';
-  add.textContent = 'add';
   add.onclick = () => addReadPath();
   // the same folder picker boards use, so a path is chosen rather than typed
-  const browse = document.createElement('button');
+  const browse = makeNode('button', 'toggle', 'browse');
   browse.type = 'button';
-  browse.className = 'toggle';
-  browse.textContent = 'browse';
   browse.onclick = () => openFolderPicker(browse, {
     title: 'a folder mission control can read',
     action: {
@@ -594,13 +439,9 @@ function buildReadPathsSection() {
         await addReadPath();
       },
     },
-    onError: text => {
-      readPaths.statusEl.textContent = text;
-      readPaths.statusEl.className = 'boards-status boards-error';
-    },
+    onError: showReadPathError,
   });
-  const status = document.createElement('span');
-  status.className = 'boards-status';
+  const status = makeNode('span', 'boards-status');
   input.addEventListener('keydown', evt => {
     if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
     if (evt.code !== 'Enter') return;
@@ -608,18 +449,11 @@ function buildReadPathsSection() {
     addReadPath();
   });
   addRow.append(input, browse, add, status);
-
   box.append(list, addRow);
   Object.assign(readPaths, {input, listEl: list, statusEl: status});
+  renderReadPaths();
   return box;
 }
-
-SETTINGS_SECTIONS.push({
-  group: 'general',
-  label: 'mission control can read',
-  node: buildReadPathsSection(),
-  onOpen: loadReadPaths,
-});
 
 // ---- where new repos go: the folder new board and from online repo open in ----------------------
 // blank means the home folder. the server checks it exists and stores it absolute (~ expanded)
@@ -630,11 +464,7 @@ async function saveReposHome() {
   const raw = reposHome.input.value.trim();
   // blur fires on every tab past the field - only a changed value is worth a save
   if (raw === reposHome.saved) return;
-  const {ok, body} = await apiOrError('/api/settings', {
-    method: 'PATCH',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({repos_home: raw || null}),
-  });
+  const {ok, body} = await patchSettings({repos_home: raw || null});
   reposHome.status.textContent = ok ? 'saved' : (body && body.error) || 'could not save';
   reposHome.status.className = ok ? 'boards-status' : 'boards-status boards-error';
   if (!ok) return;
@@ -643,16 +473,15 @@ async function saveReposHome() {
 }
 
 function buildReposHomeSection() {
-  const row = document.createElement('div');
-  row.className = 'boards-create-row';
-  const input = document.createElement('input');
+  const row = makeNode('div', 'boards-create-row');
+  const input = makeNode('input', 'board-name-input text-field settings-repos-home-input');
   input.type = 'text';
-  input.className = 'board-name-input text-field settings-repos-home-input';
   input.placeholder = 'home folder';
-  const browse = document.createElement('button');
+  const browse = makeNode('button', 'toggle', 'browse');
   browse.type = 'button';
-  browse.className = 'toggle';
-  browse.textContent = 'browse';
+  const status = makeNode('span', 'boards-status');
+  Object.assign(reposHome, {input, status, saved: snap.settings.repos_home || ''});
+  input.value = reposHome.saved;
   browse.onclick = () => openFolderPicker(browse, {
     title: 'where new repos go',
     start: 'repos',
@@ -670,136 +499,14 @@ function buildReposHomeSection() {
       reposHome.status.className = 'boards-status boards-error';
     },
   });
-  const status = document.createElement('span');
-  status.className = 'boards-status';
-  input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
-    if (evt.code !== 'Enter') return;
-    evt.preventDefault();
-    saveReposHome();
-  });
-  input.addEventListener('blur', saveReposHome);
+  bindFieldKeys(input, saveReposHome);
   row.append(input, browse, status);
-  Object.assign(reposHome, {input, status});
-
-  const note = document.createElement('div');
-  note.className = 'field-label';
-  note.textContent = 'new board and from online repo start here. any folder is still one step away.';
-  const box = document.createElement('div');
-  box.className = 'settings-stack';
+  const note = makeNode('div', 'field-label',
+    'new board and from online repo start here. any folder is still one step away.');
+  const box = makeNode('div', 'settings-stack');
   box.append(row, note);
   return box;
 }
-
-async function loadReposHome() {
-  try {
-    const settings = await api('/api/settings');
-    reposHome.saved = settings.repos_home || '';
-    reposHome.input.value = reposHome.saved;
-    reposHome.status.textContent = '';
-  } catch (err) {
-    reposHome.status.textContent = `could not load: ${err.message}`;
-    reposHome.status.className = 'boards-status boards-error';
-  }
-}
-
-SETTINGS_SECTIONS.push({
-  group: 'general',
-  label: 'where new repos go',
-  node: buildReposHomeSection(),
-  onOpen: loadReposHome,
-});
-
-// ---- how many cards run at once: one global cap, plus an optional cap per board ----------------
-// the global number is the one seat count shared across every board (scheduler.py's runs.active());
-// a board's own number only ever holds it back further, never past the global cap - an unset board
-// row behaves exactly like today, no board-specific limit at all.
-
-const parallelCaps = {globalInput: null, globalStatus: null};
-
-function parallelParseInput(raw) {
-  const trimmed = raw.trim();
-  if (!trimmed) return null; // empty means "no limit" / "use the global default"
-  const value = Number(trimmed);
-  return Number.isInteger(value) && value > 0 ? value : undefined; // undefined marks it invalid
-}
-
-function buildGlobalParallelRow() {
-  const row = document.createElement('div');
-  row.className = 'boards-create-row';
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.inputMode = 'numeric';
-  input.className = 'board-name-input text-field settings-parallel-input';
-  input.placeholder = String(2); // scheduler.DEFAULT_MAX_PARALLEL, kept in sync by eye
-  const status = document.createElement('span');
-  status.className = 'boards-status';
-
-  async function save() {
-    const value = parallelParseInput(input.value);
-    if (value === undefined) {
-      status.textContent = 'must be a positive whole number';
-      status.className = 'boards-status boards-error';
-      return;
-    }
-    const {ok, body} = await apiOrError('/api/settings', {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({max_parallel: value}),
-    });
-    status.textContent = ok ? 'saved' : (body && body.error) || 'could not save';
-    status.className = ok ? 'boards-status' : 'boards-status boards-error';
-  }
-
-  input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
-    if (evt.code !== 'Enter') return;
-    evt.preventDefault();
-    save();
-  });
-  input.addEventListener('blur', save);
-
-  row.append(input, status);
-  Object.assign(parallelCaps, {globalInput: input, globalStatus: status});
-  return row;
-}
-
-// daily_budget_usd: a board's own spend cap, in usd, checked against today's (UTC) run cost -
-// blank means no cap, same empty-is-unset convention as the parallel cap beside it
-function budgetParseInput(raw) {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const value = Number(trimmed);
-  return Number.isFinite(value) && value > 0 ? value : undefined; // undefined marks it invalid
-}
-
-async function loadParallelSection() {
-  try {
-    const settings = await api('/api/settings');
-    parallelCaps.globalInput.value = settings.max_parallel == null ? '' : String(settings.max_parallel);
-    parallelCaps.globalStatus.textContent = '';
-  } catch (err) {
-    parallelCaps.globalStatus.textContent = `could not load: ${err.message}`;
-    parallelCaps.globalStatus.className = 'boards-status boards-error';
-  }
-}
-
-function buildParallelSection() {
-  const box = document.createElement('div');
-  box.className = 'settings-stack';
-  const note = document.createElement('div');
-  note.className = 'field-label';
-  note.textContent = 'across every board. a board can hold itself lower in shift+o.';
-  box.append(buildGlobalParallelRow(), note);
-  return box;
-}
-
-SETTINGS_SECTIONS.push({
-  group: 'general',
-  label: 'how many cards run at once',
-  node: buildParallelSection(),
-  onOpen: loadParallelSection,
-});
 
 // ---- spend caps: the most one run of each role may spend, in usd --------------------------------
 // blank means the role's own default (the placeholder); a run reads its cap when it starts
@@ -814,16 +521,17 @@ const SPEND_CAPS = [
 const spendCaps = {inputs: new Map(), statusEl: null};
 
 function renderSpendCapRow(cap) {
-  const row = document.createElement('div');
-  row.className = 'settings-grid-row';
-  const label = document.createElement('span');
-  label.className = 'field-label';
-  label.textContent = cap.label;
-  const input = document.createElement('input');
+  const row = makeNode('div', 'settings-grid-row');
+  const input = makeNode('input', 'text-field settings-spend-input');
   input.type = 'text';
   input.inputMode = 'decimal';
-  input.className = 'text-field settings-spend-input';
   input.placeholder = cap.fallback;
+  const show = () => {
+    const value = snap.settings[cap.key];
+    input.value = value == null ? '' : String(value);
+  };
+  show();
+  syncers.push(show);
 
   async function save() {
     const value = budgetParseInput(input.value);
@@ -832,157 +540,29 @@ function renderSpendCapRow(cap) {
       spendCaps.statusEl.className = 'boards-status boards-error settings-grid-note';
       return;
     }
-    const {ok, body} = await apiOrError('/api/settings', {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({[cap.key]: value}),
-    });
+    if (value === (snap.settings[cap.key] ?? null)) return;
+    const {ok, body} = await patchSettings({[cap.key]: value});
     spendCaps.statusEl.textContent = ok ? '' : (body && body.error) || 'could not save';
     spendCaps.statusEl.className = ok ? 'boards-status settings-grid-note' : 'boards-status boards-error settings-grid-note';
   }
-
-  input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
-    if (evt.code !== 'Enter') return;
-    evt.preventDefault();
-    save();
-  });
-  input.addEventListener('blur', save);
+  bindFieldKeys(input, save);
   spendCaps.inputs.set(cap.key, input);
-  row.append(label, input);
+  row.append(makeNode('span', 'field-label', cap.label), input);
   return row;
 }
 
 function buildSpendCapsSection() {
-  const grid = document.createElement('div');
-  grid.className = 'settings-grid settings-grid-two';
+  spendCaps.inputs = new Map();
+  const grid = makeNode('div', 'settings-grid settings-grid-two settings-cost-grid');
   SPEND_CAPS.forEach(cap => grid.appendChild(renderSpendCapRow(cap)));
-  const status = document.createElement('span');
-  status.className = 'boards-status settings-grid-note';
+  const status = makeNode('span', 'boards-status settings-grid-note');
   grid.appendChild(status);
   spendCaps.statusEl = status;
-  return grid;
+  const note = makeNode('div', 'field-label', 'a board\'s own daily budget is on its panel, shift+o.');
+  const box = makeNode('div', 'settings-stack');
+  box.append(grid, note);
+  return box;
 }
-
-async function loadSpendCaps() {
-  try {
-    const settings = await api('/api/settings');
-    SPEND_CAPS.forEach(cap => {
-      const value = settings[cap.key];
-      spendCaps.inputs.get(cap.key).value = value == null ? '' : String(value);
-    });
-    spendCaps.statusEl.textContent = '';
-  } catch (err) {
-    spendCaps.statusEl.textContent = `could not load: ${err.message}`;
-    spendCaps.statusEl.className = 'boards-status boards-error settings-grid-note';
-  }
-}
-
-function buildCostControlsSection() {
-  const spendNode = buildSpendCapsSection();
-  spendNode.classList.add('settings-cost-grid');
-
-  const spendTrigger = document.createElement('button');
-  spendTrigger.className = 'toggle settings-cost-trigger settings-spend-caps-trigger';
-  spendTrigger.textContent = 'spend caps per run';
-  spendTrigger.onclick = () => {
-    const menu = new Menu({
-      title: 'spend caps per run',
-      persistent: true,
-      sections: [{kind: 'node', node: spendNode}],
-    });
-    menu.openAt(spendTrigger);
-    loadSpendCaps();
-  };
-
-  const note = document.createElement('div');
-  note.className = 'field-label';
-  note.textContent = 'a board\'s own daily budget is on its panel, shift+o.';
-  const triggers = document.createElement('div');
-  triggers.className = 'settings-cost-triggers';
-  triggers.append(spendTrigger);
-  const wrap = document.createElement('div');
-  wrap.className = 'settings-stack';
-  wrap.append(triggers, note);
-  return wrap;
-}
-
-SETTINGS_SECTIONS.push({
-  group: 'cost',
-  label: 'spend caps',
-  node: buildCostControlsSection(),
-});
-
-// ---- mall cam interval (cf90bacc): how long the workforce drawer holds each active card before -
-// advancing to the next one, when it is cycling rather than pinned to one card. empty means chat.js's
-// own default (10s) - same empty-is-default convention buildGlobalParallelRow already uses
-
-const mallCam = {input: null, status: null};
-
-function mallCamParseInput(raw) {
-  const trimmed = raw.trim();
-  if (!trimmed) return null; // empty means "use the default"
-  const value = Number(trimmed);
-  return Number.isInteger(value) && value > 0 ? value : undefined; // undefined marks it invalid
-}
-
-function buildMallCamSection() {
-  const row = document.createElement('div');
-  row.className = 'boards-create-row';
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.inputMode = 'numeric';
-  input.className = 'board-name-input text-field settings-parallel-input';
-  input.placeholder = String(DEFAULT_MALL_CAM_SECONDS);
-  const status = document.createElement('span');
-  status.className = 'boards-status';
-
-  async function save() {
-    const value = mallCamParseInput(input.value);
-    if (value === undefined) {
-      status.textContent = 'must be a positive whole number';
-      status.className = 'boards-status boards-error';
-      return;
-    }
-    const {ok, body} = await apiOrError('/api/settings', {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mall_cam_interval_seconds: value}),
-    });
-    status.textContent = ok ? 'saved' : (body && body.error) || 'could not save';
-    status.className = ok ? 'boards-status' : 'boards-status boards-error';
-  }
-
-  input.addEventListener('keydown', evt => {
-    if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
-    if (evt.code !== 'Enter') return;
-    evt.preventDefault();
-    save();
-  });
-  input.addEventListener('blur', save);
-
-  row.append(input, status);
-  Object.assign(mallCam, {input, status});
-  return row;
-}
-
-async function loadMallCamSection() {
-  try {
-    const settings = await api('/api/settings');
-    mallCam.input.value = settings.mall_cam_interval_seconds == null ? '' : String(settings.mall_cam_interval_seconds);
-    mallCam.status.textContent = '';
-  } catch (err) {
-    mallCam.status.textContent = `could not load: ${err.message}`;
-    mallCam.status.className = 'boards-status boards-error';
-  }
-}
-
-SETTINGS_SECTIONS.push({
-  group: 'general',
-  label: 'mall cam: seconds per card while auto-cycling the workforce drawer',
-  node: buildMallCamSection(),
-  onOpen: loadMallCamSection,
-});
 
 // ---- backup: every board as one file, and a file brought back in beside them -------------------
 // import only ever adds: the file's boards land next to the ones here under fresh ids, so nothing
@@ -1033,105 +613,236 @@ async function importBackup(file) {
 }
 
 function backupButton(text, className, run) {
-  const btn = document.createElement('button');
+  const btn = makeNode('button', `toggle ${className}`, text);
   btn.type = 'button';
-  btn.className = `toggle ${className}`;
-  btn.textContent = text;
   btn.onclick = run;
   return btn;
 }
 
 function buildBackupSection() {
-  const row = document.createElement('div');
-  row.className = 'run-controls';
-  const status = document.createElement('span');
-  status.className = 'boards-status';
+  const row = makeNode('div', 'run-controls');
+  const status = makeNode('span', 'boards-status');
   row.append(
     backupButton('export', 'settings-backup-export', exportBackup),
     backupButton('import as new board(s)', 'settings-backup-import', pickBackupFile),
     status,
   );
-
-  const note = document.createElement('div');
-  note.className = 'field-label';
-  note.textContent = 'import adds the boards in a file beside yours, under new ids - it never '
-    + 'replaces one. a full restore is smortboard import, into an empty database.';
-
-  const wrap = document.createElement('div');
-  wrap.className = 'settings-stack';
+  const note = makeNode('div', 'field-label', 'import adds the boards in a file beside yours, under new '
+    + 'ids - it never replaces one. a full restore is smortboard import, into an empty database.');
+  const wrap = makeNode('div', 'settings-stack');
   wrap.append(row, note);
   backup.status = status;
   return wrap;
 }
 
-SETTINGS_SECTIONS.push({
-  group: 'general',
-  label: 'backup',
-  node: buildBackupSection(),
-  onOpen: () => showBackupStatus(''),
-});
+// ---- the groups ---------------------------------------------------------------------------------
 
-// last in general: the board is driven from the keyboard, so the mouse is the least of these
-SETTINGS_SECTIONS.push({group: 'general', label: 'mouse', node: buildMouseToggle(), onOpen: loadMouseToggle});
+const parallelCaps = {globalInput: null, globalStatus: null};
+const mallCam = {input: null, status: null};
+const gateTimeout = {input: null, status: null};
 
-function buildSettingsSection(section) {
-  const box = document.createElement('div');
-  box.className = 'settings-section';
-  const label = document.createElement('div');
-  label.className = 'field-label';
-  label.textContent = section.label;
-  box.append(label, section.node);
+// "used by 2 of 3 boards" under a gate; nothing while the boards could not be read
+function gateNoteText(key) {
+  const usage = snap.boards ? gateUsage(snap.boards, snap.settings)[key] : null;
+  return usage ? `used by ${usage.used} of ${usage.total} ${usage.total === 1 ? 'board' : 'boards'}` : '';
+}
+
+const GATE_KEYS = ['allow_soft_leases', 'allow_free_merge', 'allow_open_mode'];
+
+function buildGateRow(key) {
+  const seg = buildBooleanToggle(key);
+  const box = makeNode('div', 'settings-stack settings-gate');
+  box.append(settingRow(BOOLEAN_SETTINGS[key].label, seg.el));
+  if (GATE_KEYS.includes(key)) {
+    const note = makeNode('div', 'field-label settings-gate-note', gateNoteText(key));
+    gateNotes.set(key, note);
+    box.appendChild(note);
+  }
+  if (key === 'allow_open_mode') {
+    box.appendChild(makeNode('div', 'field-label',
+      'open mode is weaker than sealed: cards run on your machine, not in a container.'));
+  }
+  if (key === 'off_limit_branches') {
+    const line = makeNode('div', 'boards-status boards-error settings-confirm-line',
+      'this lifts the lock on every board - click off again to confirm');
+    line.hidden = true;
+    offLimitConfirm.lineEl = line;
+    box.appendChild(line);
+  }
   return box;
 }
 
-const SETTINGS_GROUPS = [
-  {id: 'general', label: 'general'},
-  {id: 'labs', label: 'labs and models'},
-  {id: 'cost', label: 'cost control'},
-];
+function buildSafetyBody() {
+  const body = makeNode('div', 'settings-stack');
+  ['allow_soft_leases', 'allow_free_merge', 'allow_open_mode', 'off_limit_branches']
+    .forEach(key => body.appendChild(buildGateRow(key)));
+  return body;
+}
 
-function buildSettingsGroup(group, sections) {
-  const box = document.createElement('div');
-  box.className = 'settings-group';
-  box.dataset.group = group.id;
-  const label = document.createElement('div');
-  label.className = 'field-label settings-group-title';
-  label.textContent = group.label;
-  const rule = document.createElement('div');
-  rule.className = 'h-divider';
-  box.append(label, rule);
-  sections.forEach(section => box.appendChild(buildSettingsSection(section)));
+function buildCapacityBody() {
+  const body = makeNode('div', 'settings-stack');
+  const parallel = buildNumberField({key: 'max_parallel', parse: parallelParseInput,
+    placeholder: String(SETTINGS_DEFAULTS.max_parallel), className: 'settings-parallel-input'});
+  Object.assign(parallelCaps, {globalInput: parallel.input, globalStatus: parallel.status});
+  const cam = buildNumberField({key: 'mall_cam_interval_seconds', parse: mallCamParseInput,
+    placeholder: String(DEFAULT_MALL_CAM_SECONDS), className: 'settings-parallel-input'});
+  Object.assign(mallCam, {input: cam.input, status: cam.status});
+  body.append(
+    settingRow('cards at once', parallel.row),
+    makeNode('div', 'field-label', 'across every board. a board can hold itself lower in shift+o.'),
+    settingRow('mall cam interval (seconds per card)', cam.row),
+    settingRow('mouse', buildBooleanToggle('enable_mouse').el),
+    makeNode('div', 'field-label', 'on: hovering focuses what the arrows would and right-click opens the card menu.'),
+  );
+  return body;
+}
+
+function buildModelsBody() {
+  const body = makeNode('div', 'settings-stack');
+  // usage_limit_route: wait parks the board until the window resets; ask me asks in the inbox (n)
+  // before a fallback model; switch moves to the next credential profile, then the fallback model
+  const usage = buildChoice('usage_limit_route', WORDING.usageLimit, 'usage limits');
+  usage.buttons.forEach(btn => btn.classList.add('settings-usage-limit-choice'));
+  // reviewer_input: null hands the reviewer the diff, "code" the changed files as they stand
+  const reviewer = buildChoice('reviewer_input', WORDING.reviewerReads, 'reviewer reads');
+  reviewer.buttons.forEach(btn => btn.classList.add('settings-reviewer-input-choice'));
+  body.append(
+    settingRow('usage limits', usage.el),
+    makeNode('div', 'field-label', 'wait: the board parks until the limit resets. ask me: the card asks '
+      + 'in the inbox (n) before a fallback model. switch: your next credential profile, then the fallback.'),
+    settingRow('reviewer reads', reviewer.el),
+    makeNode('div', 'h-divider'),
+    buildRoleModels(),
+  );
+  return body;
+}
+
+function buildPathsBody() {
+  const body = makeNode('div', 'settings-stack');
+  body.append(
+    makeNode('div', 'field-label', 'where new repos go'), buildReposHomeSection(),
+    makeNode('div', 'field-label', 'mission control can read'), buildReadPathsSection(),
+    makeNode('div', 'field-label', 'backup'), buildBackupSection(),
+  );
+  showBackupStatus('');
+  return body;
+}
+
+function buildAdvancedBody() {
+  const body = makeNode('div', 'settings-stack');
+  const route = buildChoice('findings_route', WORDING.findingsRoute, 'findings route');
+  const timeout = buildNumberField({key: 'gate_timeout_seconds', parse: parallelParseInput,
+    placeholder: String(SETTINGS_DEFAULTS.gate_timeout_seconds), className: 'settings-gate-timeout-input'});
+  Object.assign(gateTimeout, {input: timeout.input, status: timeout.status});
+  body.append(
+    settingRow('findings route', route.el),
+    settingRow('resume briefing', buildBooleanToggle('resume_briefing').el),
+    settingRow('gate timeout (seconds)', timeout.row),
+  );
+  return body;
+}
+
+const GROUP_BUILDERS = {
+  safety: buildSafetyBody,
+  capacity: buildCapacityBody,
+  cost: buildSpendCapsSection,
+  models: buildModelsBody,
+  paths: buildPathsBody,
+  advanced: buildAdvancedBody,
+};
+
+// ---- the preset row -----------------------------------------------------------------------------
+
+function buildPresetRow() {
+  const match = matchGeneralPreset(snap.settings);
+  const options = GENERAL_PRESETS.map(p => ({label: p.label, value: p.id}));
+  options.push({label: 'custom', value: 'custom', auto: true});
+  const seg = makeSegments({options, value: match.id, label: 'mode preset', onPick: pickPreset});
+  seg.el.classList.add('settings-preset-segments');
+  const lead = makeNode('span', 'settings-preset-lead', match.line.lead);
+  const strong = makeNode('strong', 'settings-preset-strong', match.line.strong);
+  const line = makeNode('div', 'field-label settings-preset-line');
+  line.append(lead, strong);
+  const status = makeNode('span', 'boards-status boards-error settings-save-status');
+  Object.assign(presetUi, {seg, lineEl: line, leadEl: lead, strongEl: strong, statusEl: status});
+  const box = makeNode('div', 'settings-stack settings-preset');
+  box.append(settingRow('mode preset', seg.el), line, status);
   return box;
 }
 
-function renderSettings() {
+// one atomic PATCH, then every control re-reads the snapshot and the row relights
+async function pickPreset(id) {
+  const ok = await saveSettings(generalPresetPatch(id));
+  if (ok) syncers.forEach(sync => sync());
+  return ok;
+}
+
+// summaries, counts, the preset row and the gate notes, all from the current snapshot
+function refreshHeaders() {
+  generalGroups(snap.settings).forEach(group => {
+    const disclosure = groupDisclosures.get(group.id);
+    if (!disclosure) return;
+    disclosure.setSummary(group.summary);
+    disclosure.setCount(group.count);
+  });
+  if (presetUi.seg) {
+    const match = matchGeneralPreset(snap.settings);
+    presetUi.seg.setLit(match.id);
+    presetUi.leadEl.textContent = match.line.lead;
+    presetUi.strongEl.textContent = match.line.strong;
+  }
+  gateNotes.forEach((note, key) => { note.textContent = gateNoteText(key); });
+}
+
+function buildSettingsBody() {
+  groupDisclosures = new Map();
+  syncers = [];
+  gateNotes.clear();
+  const items = generalGroups(snap.settings).map(group => {
+    const disclosure = makeDisclosure({
+      title: group.title, summary: group.summary,
+      open: openGroupIds.includes(group.id),
+      body: GROUP_BUILDERS[group.id](),
+      onToggle: () => { openGroupIds = groupSet.openIds(); },
+    });
+    groupDisclosures.set(group.id, disclosure);
+    return {id: group.id, disclosure};
+  });
+  const groupSet = makeDisclosureGroup(items);
+  const wrap = makeNode('div', 'settings-stack settings-accordion');
+  wrap.append(buildPresetRow(), groupSet.el);
+  return wrap;
+}
+
+async function renderSettings() {
+  const token = ++renderToken;
   clearChildren(st.listEl);
-  if (!SETTINGS_SECTIONS.length) {
-    st.listEl.appendChild(settingsHazardPlaceholder('no preferences yet'));
+  try {
+    const [settings, boardList] = await Promise.all([
+      api('/api/settings'),
+      api('/api/boards').catch(() => null), // the gate notes just stay blank without boards
+    ]);
+    if (token !== renderToken) return;
+    snap.settings = settings;
+    snap.boards = Array.isArray(boardList) ? boardList : null;
+  } catch (err) {
+    if (token === renderToken) st.listEl.appendChild(settingsHazardPlaceholder(`could not load: ${err.message}`));
     return;
   }
-  SETTINGS_GROUPS.forEach(group => {
-    const sections = SETTINGS_SECTIONS.filter(section => section.group === group.id);
-    if (!sections.length) return;
-    st.listEl.appendChild(buildSettingsGroup(group, sections));
-    sections.forEach(section => { if (section.onOpen) section.onOpen(); });
-  });
+  setMouseEnabled(booleanIsOn(snap.settings, 'enable_mouse'));
+  st.listEl.appendChild(buildSettingsBody());
 }
 
 function buildSettingsDom() {
-  const backdrop = document.createElement('div');
-  backdrop.className = 'modal-backdrop settings-backdrop';
-  const panel = document.createElement('div');
-  panel.className = 'panel-floating settings-panel';
-
-  const title = document.createElement('div');
-  title.className = 'popup-title';
-  title.textContent = 'settings';
-  const rule = document.createElement('div');
-  rule.className = 'h-divider';
-
-  const list = document.createElement('div');
-  list.className = 'settings-list';
+  const backdrop = makeNode('div', 'modal-backdrop settings-backdrop');
+  const panel = makeNode('div', 'panel-floating settings-panel');
+  const title = makeNode('div', 'popup-title', 'settings');
+  const rule = makeNode('div', 'h-divider');
+  const list = makeNode('div', 'settings-list');
+  // any click but the second one on off cancels a pending off-limit confirm
+  list.addEventListener('click', evt => {
+    if (evt.target !== offLimitConfirm.offButton) disarmOffLimit();
+  });
 
   panel.append(title, rule, list);
   backdrop.appendChild(panel);
@@ -1149,6 +860,7 @@ function openSettingsPanel() {
   if (!st.backdrop) buildSettingsDom();
   document.body.appendChild(st.backdrop);
   document.addEventListener('keydown', onSettingsKey);
+  disarmOffLimit();
   renderSettings();
   // the panel takes the keyboard; up/down then walk its fields and / types into one
   focusPanel(st.panel);
@@ -1172,10 +884,8 @@ function toggleSettingsPanel() {
 // lives in board.js's bar corner, between the queue status and the attention count
 
 function buildSettingsButton() {
-  const btn = document.createElement('button');
+  const btn = makeNode('button', 'toggle settings-button', 'settings');
   btn.type = 'button';
-  btn.className = 'toggle settings-button';
-  btn.textContent = 'settings';
   btn.title = 'settings (o)';
   btn.onclick = () => toggleSettingsPanel();
   barCorner().appendChild(btn);

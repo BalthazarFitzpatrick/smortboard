@@ -1,6 +1,5 @@
 // settings panel (o): the top-right button and the o key open it, esc and an outside click close
-// it, and it renders an extensible section list - "mission control can read" is the first real
-// section, added, refused and removed through the whole-list-replace PATCH /api/settings.
+// it. a preset row and six accordion groups, fed by one GET /api/settings and one GET /api/boards.
 // run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/settings.mjs
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
@@ -25,8 +24,8 @@ const settingsState = {
   worker_cross_lab_fallback: [{ref: 'openai/gpt-5.6-sol', effort: 'max'}],
 };
 const boardsState = [
-  {id: 'b1', name: 'alpha', max_parallel: null, daily_budget_usd: null},
-  {id: 'b2', name: 'beta', max_parallel: 1, daily_budget_usd: null},
+  {id: 'b1', name: 'alpha', max_parallel: null, daily_budget_usd: null, merge_mode: 'free', lease_mode: 'soft'},
+  {id: 'b2', name: 'beta', max_parallel: 1, daily_budget_usd: null, run_mode: 'open'},
 ];
 const calls = [];
 // knobs a test flips to make the next call fail, the way the real server would
@@ -111,6 +110,9 @@ function fetchStub(path, opts) {
       if (body.repos_home === '~/nope') return Promise.resolve(stubJson(400, {error: '~/nope does not exist or is not a folder'}));
       settingsState.repos_home = body.repos_home === '~/dev' ? '/home/op/dev' : body.repos_home;
     }
+    // every other key is stored as sent, so a save reads back like the real store
+    const special = ['mission_control_read_paths', 'max_parallel', 'repos_home'];
+    for (const [key, value] of Object.entries(body)) if (!special.includes(key)) settingsState[key] = value;
     return Promise.resolve(stubJson(200, {...settingsState}));
   }
   return Promise.resolve(stubJson(404, {error: 'no stub for ' + path}));
@@ -148,20 +150,18 @@ class SpyMenu {
 }
 SpyMenu.closedOpen = 0;
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('segments.js'), uiBase('disclosure.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
-  smort('board.js'), smort('settings.js')].join('\n;\n');
+  smort('board.js'), smort('settings_presets.js'), smort('settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
-;return {toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, BINDINGS, mc, mallCam, spendCaps,
+;return {generalPresetPatch, panelStops, openIds: () => openGroupIds, toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, BINDINGS, mc, mallCam, spendCaps,
   openModelPicker, resolvePickerRole,
   mouseAffordances,
   buttonRef: () => document.querySelector('.settings-button'),
   addButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'add'),
   browseButtonRef: () => document.querySelectorAll('.boards-create-row .toggle').find(t => t.textContent === 'browse')};`)(SpyMenu, SpyDrawer);
 
-// settings.js once wrote its mall cam field into chat.js's `mc`, replacing mission control's own input
-assert.notEqual(mod.mc.input, mod.mallCam.input, "the mall cam field must not become mission control's input");
-assert.ok(mod.mallCam.input, 'the mall cam field is kept in its own state');
+assert.equal(mod.st.listEl, null, 'nothing is built before the panel first opens');
 
 async function flush() {
   await new Promise(r => setTimeout(r, 0));
@@ -172,6 +172,27 @@ function press(code, target) {
   document._dispatch('keydown', {code, key: code, target: target || document.body, preventDefault() {}});
 }
 
+const list = () => mod.st.listEl;
+const seg = key => list().querySelector(`[data-setting="${key}"]`);
+const segButtons = key => seg(key).querySelectorAll('.segment');
+const segLabels = key => segButtons(key).map(btn => btn.textContent);
+const segLit = key => segButtons(key).filter(btn => btn.classList.contains('on')).map(btn => btn.textContent);
+async function click(btn) {
+  await Promise.all(btn._listeners.click.map(fn => fn({target: btn})));
+  await flush();
+}
+const pickSeg = (key, text) => click(segButtons(key).find(btn => btn.textContent === text));
+const presetButtons = () => list().querySelector('.settings-preset-segments').querySelectorAll('.segment');
+const presetLit = () => presetButtons().filter(btn => btn.classList.contains('on')).map(btn => btn.textContent);
+const pickPreset = text => click(presetButtons().find(btn => btn.textContent === text));
+const disclosures = () => list().querySelectorAll('.disclosure');
+const heads = () => list().querySelectorAll('.disclosure-head');
+const bodiesHidden = () => list().querySelectorAll('.disclosure-body').map(body => Boolean(body.hidden));
+const patches = () => calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH');
+const lastSettingsPatch = () => JSON.parse(patches().at(-1).opts.body);
+const allText = el => [el.textContent, ...(el.children || []).map(allText)].join(' ');
+const gateNotes = () => list().querySelectorAll('.settings-gate-note').map(note => note.textContent);
+
 // o is in the contract, grouped with the other panels, and the overlay is built from this table
 assert.ok(mod.BINDINGS.some(b => b.code === 'KeyO' && b.group === 'panels'), 'KeyO must be a panels binding');
 
@@ -180,38 +201,166 @@ const button = mod.buttonRef();
 assert.ok(button, 'the settings button exists once settings.js loads');
 assert.ok(!boardBar.children.includes(button), 'the button must not live inside #board-bar');
 
-// ---- the button opens the panel -------------------------------------------------------------
+// ---- the button opens the panel, which reads settings and boards once each ----------------------
+const before = calls.length;
 button.onclick();
 assert.ok(mod.st.backdrop.parentNode, 'clicking the button should open the panel');
+await flush();
+const opened = calls.slice(before);
+assert.equal(opened.filter(c => c.path === '/api/settings').length, 1, 'one GET /api/settings per open');
+assert.equal(opened.filter(c => c.path === '/api/boards').length, 1, 'one GET /api/boards per open');
+assert.ok(opened.every(c => !c.opts?.method || c.opts.method === 'GET'), 'opening only reads');
 
-// ---- the panel groups related settings while keeping each setting as its own section ------------
-await flush();
-const settingsGroups = mod.st.listEl.querySelectorAll('.settings-group');
-assert.deepEqual(settingsGroups.map(group => group.querySelector('.settings-group-title').textContent),
-  ['general', 'labs and models', 'cost control']);
-assert.deepEqual(settingsGroups.map(group => group.querySelectorAll('.settings-section')
-  .map(section => section.children[0].textContent)), [
-  ['soft file leases', 'free merge', 'open run mode', 'off-limit branches', 'mission control can read',
-    'where new repos go', 'how many cards run at once',
-    'mall cam: seconds per card while auto-cycling the workforce drawer', 'backup', 'mouse'],
-  ['usage limits', 'reviewer reads', 'models by role'],
-  ['spend caps'],
+// settings.js once wrote its mall cam field into chat.js's `mc`, replacing mission control's own input
+assert.notEqual(mod.mc.input, mod.mallCam.input, "the mall cam field must not become mission control's input");
+assert.ok(mod.mallCam.input, 'the mall cam field is kept in its own state');
+
+// ---- the preset row, then six accordion groups in order, all closed ----------------------------
+assert.equal(list().querySelector('.settings-preset .settings-row-name').textContent, 'mode preset');
+assert.deepEqual(presetButtons().map(btn => btn.textContent), ['careful', 'balanced', 'fast', 'custom']);
+assert.deepEqual(disclosures().map(d => d.querySelector('.disclosure-name').textContent),
+  ['safety gates', 'capacity', 'cost', 'models and limits', 'paths and data', 'advanced']);
+assert.ok(disclosures().every(d => !d.classList.contains('open')), 'every group starts closed');
+assert.deepEqual(bodiesHidden(), [true, true, true, true, true, true], 'closed bodies are hidden');
+assert.ok(disclosures().every(d => !d.querySelector('.count-badge')), 'no count badges on the headers');
+assert.deepEqual(disclosures().map(d => d.querySelector('.disclosure-summary').textContent), [
+  'soft leases off / free merge off / open run off / off-limits on',
+  '2 cards at once / mall cam 10 s / mouse off',
+  'worker 5.00 / reviewer 1.50 / orchestrator 1.00 / fold 2.00 / card total none',
+  'on limit: wait / reviewer reads diff / 1 of 4 roles set',
+  'new repos in your home folder / 0 readable paths',
+  'findings per card / briefing on / gate timeout 600 s',
 ]);
-assert.equal(mod.st.listEl.querySelectorAll('.settings-section').length, 14);
-assert.equal(mod.st.listEl.querySelectorAll('.board-row').length, 0,
-  'o holds only what every board shares - no per-board rows');
-const costTriggers = mod.st.listEl.querySelectorAll('.settings-cost-trigger');
-assert.deepEqual(costTriggers.map(trigger => trigger.textContent), ['spend caps per run'],
-  'daily budgets moved to each board\'s own panel (shift+o)');
-const spendTrigger = costTriggers[0];
-spendTrigger.onclick();
-const spendMenu = modelMenus.at(-1);
-assert.equal(spendMenu.opts.title, 'spend caps per run');
-assert.equal(spendMenu.opts.persistent, true);
-assert.equal(spendMenu.anchor, spendTrigger, 'spend caps open below their own trigger');
-assert.equal(spendMenu.opts.sections.filter(section => section.kind === 'node').length, 1,
-  'the spend cap menu contains only the per-run cap grid');
+// closed bodies are hidden, so the keyboard walker only meets the preset row and the headers
+const firstStops = mod.panelStops(mod.st.panel);
+assert.ok(firstStops.every(stop => stop.tag === 'button'), 'no field is a stop while every group is closed');
+assert.ok(heads().every(head => firstStops.includes(head)), 'every header is a stop');
+assert.ok(!firstStops.some(stop => (stop.className || '').includes('role-model')));
+assert.equal(list().querySelectorAll('.board-row').length, 0, 'o holds only what every board shares - no per-board rows');
+
+// ---- groups are independent, and the open set is kept for the session -------------------------
+await click(heads()[0]);
+assert.deepEqual(bodiesHidden(), [false, true, true, true, true, true]);
+await click(heads()[3]);
+assert.deepEqual(mod.openIds(), ['safety', 'models'], 'opening one never closes another');
+assert.equal(disclosures()[0].querySelector('.disclosure-summary').hidden, false, 'the summary stays while open: the header keeps its height');
+await click(heads()[3]);
+assert.deepEqual(mod.openIds(), ['safety']);
+mod.closeSettingsPanel();
+const beforeReopen = calls.length;
+mod.openSettingsPanel();
 await flush();
+assert.deepEqual(bodiesHidden(), [false, true, true, true, true, true], 'a reopened panel keeps its open groups');
+assert.equal(calls.slice(beforeReopen).filter(c => c.path === '/api/settings').length, 1);
+assert.equal(calls.slice(beforeReopen).filter(c => c.path === '/api/boards').length, 1);
+for (const head of heads().slice(1)) await click(head);
+assert.deepEqual(bodiesHidden(), [false, false, false, false, false, false]);
+
+// ---- every boolean is a two-way on|off toggle ---------------------------------------------------
+for (const key of ['allow_soft_leases', 'allow_free_merge', 'allow_open_mode', 'off_limit_branches',
+  'enable_mouse', 'resume_briefing']) {
+  assert.deepEqual(segLabels(key), ['on', 'off'], `${key} reads on|off`);
+  assert.ok(segButtons(key).every(btn => btn.tag === 'button'), 'real buttons');
+}
+assert.deepEqual(segLit('allow_free_merge'), ['off']);
+assert.deepEqual(segLit('off_limit_branches'), ['on'], 'unset keeps every board list, which reads on');
+assert.deepEqual(segLit('resume_briefing'), ['on'], 'unset resumes with a briefing');
+
+// ---- the preset row lights what matches, and custom when nothing does ---------------------------
+assert.deepEqual(presetLit(), ['balanced']);
+assert.equal(list().querySelector('.settings-preset-strong').textContent, '0 values differ.');
+assert.ok(list().querySelector('.settings-preset-lead').textContent.startsWith('balanced sets '));
+const customButton = presetButtons().find(btn => btn.textContent === 'custom');
+assert.equal(customButton['aria-disabled'], 'true', 'custom is lit by the app, never clicked');
+assert.deepEqual(gateNotes(), ['used by 0 of 2 boards', 'used by 0 of 2 boards', 'used by 0 of 2 boards'],
+  'a stored mode behind an off gate does not count as used');
+
+await pickSeg('allow_free_merge', 'on');
+assert.deepEqual(lastSettingsPatch(), {allow_free_merge: 'on'});
+assert.deepEqual(segLit('allow_free_merge'), ['on']);
+assert.deepEqual(presetLit(), ['custom'], 'a value no preset has relights as custom');
+assert.ok(list().querySelector('.settings-preset-lead').textContent.startsWith('no preset matches. closest is balanced'));
+assert.ok(list().querySelector('.settings-preset-strong').textContent.includes('free merge is on'));
+assert.ok(disclosures()[0].querySelector('.disclosure-summary').textContent.includes('free merge on'),
+  'the header summary follows a save');
+assert.deepEqual(gateNotes(), ['used by 0 of 2 boards', 'used by 1 of 2 boards', 'used by 0 of 2 boards'],
+  'the gate note follows the gate');
+
+// a refused save leaves the lit segment where it was
+stubControl.refuseNextSettingsPatch = true;
+await pickSeg('allow_free_merge', 'off');
+assert.deepEqual(segLit('allow_free_merge'), ['on'], 'a refused save does not move the lit segment');
+assert.equal(list().querySelector('.settings-save-status').textContent, 'store error: disk full');
+await pickSeg('allow_free_merge', 'off');
+assert.deepEqual(lastSettingsPatch(), {allow_free_merge: null});
+assert.deepEqual(presetLit(), ['balanced']);
+assert.equal(list().querySelector('.settings-save-status').textContent, '', 'a landed save clears the message');
+
+// a preset is one PATCH and nothing else
+{
+  const mark = calls.length;
+  await pickPreset('fast');
+  const sent = calls.slice(mark);
+  assert.equal(sent.length, 1, 'a preset sends exactly one request');
+  assert.equal(sent[0].path, '/api/settings');
+  assert.equal(sent[0].opts.method, 'PATCH');
+  assert.deepEqual(JSON.parse(sent[0].opts.body), mod.generalPresetPatch('fast'));
+  assert.deepEqual(presetLit(), ['fast']);
+  assert.ok(list().querySelector('.settings-preset-lead').textContent.startsWith('fast sets '));
+  assert.deepEqual(segLit('allow_free_merge'), ['on'], 'the controls re-read the new values');
+  assert.deepEqual(segLit('allow_soft_leases'), ['on']);
+  assert.equal(mod.parallelCaps.globalInput.value, '4');
+  assert.equal(mod.spendCaps.inputs.get('worker_budget_usd').value, '', 'a default value is stored unset');
+  stubControl.refuseNextSettingsPatch = true;
+  await pickPreset('careful');
+  assert.deepEqual(presetLit(), ['fast'], 'a refused preset does not move the lit segment');
+  await pickPreset('careful');
+  assert.equal(mod.parallelCaps.globalInput.value, '1');
+  assert.equal(mod.spendCaps.inputs.get('card_total_budget_usd').value, '10');
+  assert.deepEqual(segLit('allow_free_merge'), ['off']);
+  await pickPreset('balanced');
+  assert.deepEqual(presetLit(), ['balanced']);
+  assert.equal(mod.parallelCaps.globalInput.value, '');
+  assert.equal(mod.spendCaps.inputs.get('card_total_budget_usd').value, '');
+}
+
+// ---- off-limit branches: off is stored 'off', on is null, and off asks for a second click -------
+{
+  const line = list().querySelector('.settings-confirm-line');
+  assert.equal(line.hidden, true);
+  assert.equal(line.textContent, 'this lifts the lock on every board - click off again to confirm');
+  const sent = patches().length;
+  await pickSeg('off_limit_branches', 'off');
+  assert.equal(patches().length, sent, 'the first click only asks');
+  assert.equal(line.hidden, false, 'the confirm line shows');
+  assert.deepEqual(segLit('off_limit_branches'), ['on']);
+  await pickSeg('allow_soft_leases', 'on'); // any other action cancels
+  assert.equal(line.hidden, true, 'another click cancels the confirm');
+  await pickSeg('allow_soft_leases', 'off');
+  await pickSeg('off_limit_branches', 'off');
+  assert.equal(patches().length, sent + 2, 'after a cancel the next click asks again');
+  await pickSeg('off_limit_branches', 'off');
+  assert.deepEqual(lastSettingsPatch(), {off_limit_branches: 'off'}, 'the second click saves off as the string off');
+  assert.deepEqual(segLit('off_limit_branches'), ['off']);
+  assert.equal(line.hidden, true);
+  await pickSeg('off_limit_branches', 'on');
+  assert.deepEqual(lastSettingsPatch(), {off_limit_branches: null}, 'on needs no confirm and stores null');
+  assert.deepEqual(segLit('off_limit_branches'), ['on']);
+}
+
+// ---- open run mode: the note says it is weaker --------------------------------------------------
+assert.ok(allText(list()).includes('weaker than sealed'));
+await pickSeg('allow_open_mode', 'on');
+assert.deepEqual(lastSettingsPatch(), {allow_open_mode: 'on'});
+await pickSeg('allow_open_mode', 'off');
+assert.deepEqual(lastSettingsPatch(), {allow_open_mode: null});
+await pickSeg('allow_soft_leases', 'on');
+assert.deepEqual(lastSettingsPatch(), {allow_soft_leases: 'on'});
+assert.equal(gateNotes()[0], 'used by 1 of 2 boards', 'b1 holds a soft lease once the gate opens');
+await pickSeg('allow_soft_leases', 'off');
+
+// ---- the cost group holds the five spend cap rows inline, no popup ------------------------------
+assert.equal(list().querySelectorAll('.settings-cost-trigger').length, 0);
 
 const rolePickers = mod.st.listEl.querySelectorAll('.role-model');
 assert.equal(rolePickers.length, 4);
@@ -360,120 +509,118 @@ inheritedFoldMenu.opts.sections.find(section => section.kind === 'buttons').butt
   .find(button => button.id === 'model-default').onClick(inheritedFoldMenu);
 assert.deepEqual(savedFold, [null, null, null], 'board default restores inheritance');
 
-// ---- the mouse is opt-in: two toggles, disabled lit when unset, and enabled PATCHes "on" ---------
+// ---- the mouse is opt-in: off lit when unset, and on PATCHes "on" -------------------------------
 {
-  const mouseSection = mod.st.listEl.querySelectorAll('.settings-section')
-    .find(section => section.children[0].textContent === 'mouse');
-  const choices = mouseSection.querySelectorAll('.run-controls .toggle');
-  assert.deepEqual(choices.map(btn => btn.textContent), ['enabled', 'disabled'],
-    'the mouse section is two toggles side by side in one row');
-  assert.ok(choices.every(btn => btn.tag === 'button' && btn.type === 'button'),
-    'real buttons: tab reaches them and enter or space picks');
-  const [enabled, disabled] = choices;
-  const lit = () => choices.filter(btn => btn.classList.contains('on')).map(btn => btn.textContent);
-  assert.deepEqual(lit(), ['disabled'], 'the mouse is off by default');
-  assert.equal(disabled['aria-pressed'], 'true');
-
-  enabled.onclick();
-  await flush();
-  const patch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
-  assert.deepEqual(JSON.parse(patch.opts.body), {enable_mouse: 'on'});
-  assert.deepEqual(lit(), ['enabled'], 'picking enabled lights it and only it');
-  assert.equal(enabled['aria-pressed'], 'true');
+  assert.deepEqual(segLit('enable_mouse'), ['off'], 'the mouse is off by default');
+  await pickSeg('enable_mouse', 'on');
+  assert.deepEqual(lastSettingsPatch(), {enable_mouse: 'on'});
+  assert.deepEqual(segLit('enable_mouse'), ['on'], 'picking on lights it and only it');
   assert.equal(mod.mouseAffordances(), true, 'the pointer affordances switch on with no reload');
-
-  disabled.onclick();
-  await flush();
-  const off = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
-  assert.deepEqual(JSON.parse(off.opts.body), {enable_mouse: null}, 'disabled clears it');
-  assert.deepEqual(lit(), ['disabled']);
+  await pickSeg('enable_mouse', 'off');
+  assert.deepEqual(lastSettingsPatch(), {enable_mouse: null}, 'off clears it');
+  assert.deepEqual(segLit('enable_mouse'), ['off']);
   assert.equal(mod.mouseAffordances(), false);
-
-  // a refused save leaves the lit button, and the mouse, where they were
+  // a refused save leaves the lit segment, and the mouse, where they were
   stubControl.refuseNextSettingsPatch = true;
-  enabled.onclick();
-  await flush();
-  assert.deepEqual(lit(), ['disabled'], 'a failed save does not move the lit button');
+  await pickSeg('enable_mouse', 'on');
+  assert.deepEqual(segLit('enable_mouse'), ['off'], 'a failed save does not move the lit segment');
   assert.equal(mod.mouseAffordances(), false);
 }
 
 // ---- spend caps: blank is the default, a value is PATCHed under its own key ----------------------
 {
-  const spendNode = spendMenu.opts.sections.find(section => section.kind === 'node').node;
-  const inputs = spendNode.querySelectorAll('.settings-spend-input');
+  const inputs = list().querySelectorAll('.settings-spend-input');
   assert.equal(inputs.length, 5, 'worker, review, mission control, fold and the card total each have a cap');
   assert.equal(inputs[2].placeholder, '1.00', 'the mission control default shows as the placeholder');
   assert.equal(inputs[4].placeholder, 'no limit', 'the card total cap has no default - unset means unlimited');
   inputs[2].value = '2.5';
   inputs[2]._listeners.blur.forEach(fn => fn());
   await flush();
-  const capPatch = calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1);
-  assert.deepEqual(JSON.parse(capPatch.opts.body), {orchestrator_budget_usd: 2.5});
+  assert.deepEqual(lastSettingsPatch(), {orchestrator_budget_usd: 2.5});
+  assert.ok(disclosures()[2].querySelector('.disclosure-summary').textContent.includes('orchestrator 2.50'));
+  const sent = patches().length;
   inputs[0].value = 'lots';
   inputs[0]._listeners.blur.forEach(fn => fn());
   await flush();
+  assert.equal(patches().length, sent, 'a bad amount never reaches the server');
   assert.ok(mod.spendCaps.statusEl.textContent.includes('positive amount'), 'a bad amount is refused in place');
+  inputs[0].value = '';
+  inputs[2].value = '';
+  inputs[2]._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.deepEqual(lastSettingsPatch(), {orchestrator_budget_usd: null});
 }
 assert.ok(mod.readPaths.listEl.querySelector('.hazard-placeholder'), 'no folders yet shows a placeholder, not nothing');
 
-// ---- the usage limit is one three-way choice, and the lit button follows only a landed save -----
-function lit(className) {
-  return mod.st.listEl.querySelectorAll(`.${className}`).filter(btn => btn.classList.contains('on'))
-    .map(btn => btn.textContent);
-}
-function choice(className, text) {
-  return mod.st.listEl.querySelectorAll(`.${className}`).find(btn => btn.textContent === text);
-}
-function lastSettingsPatch() {
-  return JSON.parse(calls.filter(c => c.path === '/api/settings' && c.opts?.method === 'PATCH').at(-1).opts.body);
-}
-assert.deepEqual(mod.st.listEl.querySelectorAll('.settings-usage-limit-choice').map(btn => btn.textContent),
-  ['wait for the reset', 'ask me', 'switch by itself']);
-assert.ok(mod.st.listEl.querySelectorAll('.settings-usage-limit-choice').every(btn => btn.tag === 'button'),
-  'real buttons, like the mouse toggle');
-assert.deepEqual(lit('settings-usage-limit-choice'), ['wait for the reset'], 'unset waits - it spends nothing');
-await choice('settings-usage-limit-choice', 'switch by itself').onclick();
+// ---- the usage limit is one three-way choice, and the lit segment follows only a landed save ----
+assert.deepEqual(segLabels('usage_limit_route'), ['wait', 'ask me', 'switch']);
+assert.deepEqual(segLit('usage_limit_route'), ['wait'], 'unset waits - it spends nothing');
+await pickSeg('usage_limit_route', 'switch');
 assert.deepEqual(lastSettingsPatch(), {usage_limit_route: 'switch'});
-assert.deepEqual(lit('settings-usage-limit-choice'), ['switch by itself']);
-assert.equal(choice('settings-usage-limit-choice', 'switch by itself')['aria-pressed'], 'true');
-await choice('settings-usage-limit-choice', 'ask me').onclick();
+assert.deepEqual(segLit('usage_limit_route'), ['switch']);
+assert.ok(disclosures()[3].querySelector('.disclosure-summary').textContent.includes('on limit: switch'));
+await pickSeg('usage_limit_route', 'ask me');
 assert.deepEqual(lastSettingsPatch(), {usage_limit_route: 'attention'});
 stubControl.refuseNextSettingsPatch = true;
-await choice('settings-usage-limit-choice', 'wait for the reset').onclick();
-assert.deepEqual(lit('settings-usage-limit-choice'), ['ask me'], 'a refused save leaves the lit button where it was');
-await choice('settings-usage-limit-choice', 'wait for the reset').onclick();
+await pickSeg('usage_limit_route', 'wait');
+assert.deepEqual(segLit('usage_limit_route'), ['ask me'], 'a refused save leaves the lit segment where it was');
+await pickSeg('usage_limit_route', 'wait');
 assert.deepEqual(lastSettingsPatch(), {usage_limit_route: null});
-assert.equal(mod.st.listEl.querySelectorAll('.settings-auto-switch-checkbox').length, 0,
-  'profile rotation is part of switch, not a second setting');
 
-// ---- soft leases and free merge: one global switch each, off by default --------------------------
-assert.deepEqual(lit('settings-soft-leases-choice'), ['disabled']);
-assert.deepEqual(lit('settings-free-merge-choice'), ['disabled']);
-assert.deepEqual(mod.st.listEl.querySelectorAll('.settings-free-merge-choice').map(b => b.textContent),
-  ['enabled', 'disabled'], 'the same words and order as the mouse toggle');
-await choice('settings-soft-leases-choice', 'enabled').onclick();
-assert.deepEqual(lastSettingsPatch(), {allow_soft_leases: 'on'});
-await choice('settings-free-merge-choice', 'enabled').onclick();
-assert.deepEqual(lastSettingsPatch(), {allow_free_merge: 'on'});
-await choice('settings-free-merge-choice', 'disabled').onclick();
-assert.deepEqual(lastSettingsPatch(), {allow_free_merge: null});
-assert.deepEqual(lit('settings-free-merge-choice'), ['disabled']);
+// ---- reviewer reads: the diff or the code --------------------------------------------------------
+assert.deepEqual(segLabels('reviewer_input'), ['diff', 'code']);
+assert.deepEqual(segLit('reviewer_input'), ['diff']);
+await pickSeg('reviewer_input', 'code');
+assert.deepEqual(lastSettingsPatch(), {reviewer_input: 'code'});
+assert.deepEqual(segLit('reviewer_input'), ['code']);
+await pickSeg('reviewer_input', 'diff');
+assert.deepEqual(lastSettingsPatch(), {reviewer_input: null});
 
-// ---- open run mode: one global switch, off by default, and the note says it is weaker ----------
-assert.deepEqual(lit('settings-open-mode-choice'), ['disabled']);
-const allText = el => [el.textContent, ...(el.children || []).map(allText)].join(' ');
-assert.ok(allText(mod.st.listEl).includes('weaker than sealed'));
-await choice('settings-open-mode-choice', 'enabled').onclick();
-assert.deepEqual(lastSettingsPatch(), {allow_open_mode: 'on'});
-await choice('settings-open-mode-choice', 'disabled').onclick();
-assert.deepEqual(lastSettingsPatch(), {allow_open_mode: null});
+// ---- advanced: findings route, resume briefing, gate timeout -----------------------------------
+assert.deepEqual(segLabels('findings_route'), ['per card', 'fix', 'attention']);
+assert.deepEqual(segLit('findings_route'), ['per card']);
+await pickSeg('findings_route', 'fix');
+assert.deepEqual(lastSettingsPatch(), {findings_route: 'fix'});
+await pickSeg('findings_route', 'attention');
+assert.deepEqual(lastSettingsPatch(), {findings_route: 'attention'});
+await pickSeg('findings_route', 'per card');
+assert.deepEqual(lastSettingsPatch(), {findings_route: null});
+await pickSeg('resume_briefing', 'off');
+assert.deepEqual(lastSettingsPatch(), {resume_briefing: 'off'}, 'off is the stored value for the briefing');
+assert.deepEqual(segLit('resume_briefing'), ['off']);
+await pickSeg('resume_briefing', 'on');
+assert.deepEqual(lastSettingsPatch(), {resume_briefing: null}, 'null is on');
+{
+  const field = list().querySelector('.settings-gate-timeout-input');
+  assert.equal(field.placeholder, '600');
+  field.value = '120';
+  field._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.deepEqual(lastSettingsPatch(), {gate_timeout_seconds: 120});
+  assert.ok(disclosures()[5].querySelector('.disclosure-summary').textContent.includes('gate timeout 120 s'));
+  const sent = patches().length;
+  field.value = 'soon';
+  field._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.equal(patches().length, sent, 'a bad timeout never reaches the server');
+  field.value = '';
+  field._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.deepEqual(lastSettingsPatch(), {gate_timeout_seconds: null}, 'empty sends null - the default');
+}
 
-// ---- off-limit branches: on unless switched off, and off is the stored value -----------------------
-assert.deepEqual(lit('settings-off-limit-choice'), ['enabled'], 'unset keeps every board list');
-await choice('settings-off-limit-choice', 'disabled').onclick();
-assert.deepEqual(lastSettingsPatch(), {off_limit_branches: 'off'});
-await choice('settings-off-limit-choice', 'enabled').onclick();
-assert.deepEqual(lastSettingsPatch(), {off_limit_branches: null});
+// ---- mall cam: empty is the default, a whole number is saved ------------------------------------
+{
+  assert.equal(mod.mallCam.input.placeholder, '10');
+  mod.mallCam.input.value = '15';
+  mod.mallCam.input._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.deepEqual(lastSettingsPatch(), {mall_cam_interval_seconds: 15});
+  mod.mallCam.input.value = '';
+  mod.mallCam.input._listeners.blur.forEach(fn => fn());
+  await flush();
+  assert.deepEqual(lastSettingsPatch(), {mall_cam_interval_seconds: null});
+}
 
 // ---- where new repos go: saved on enter or blur, expanded by the server, refused when missing -----
 {
@@ -491,8 +638,7 @@ assert.deepEqual(lastSettingsPatch(), {off_limit_branches: null});
   field.value = '~/nope';
   field._listeners.blur.forEach(fn => fn());
   await flush();
-  const section = mod.st.listEl.querySelectorAll('.settings-section').find(s => s.children[0].textContent === 'where new repos go');
-  assert.ok(section.querySelectorAll('.boards-error')[0].textContent.includes('does not exist'));
+  assert.ok(field.parentNode.querySelectorAll('.boards-error')[0].textContent.includes('does not exist'));
   assert.equal(settingsState.repos_home, '/home/op/dev', 'a refused folder changes nothing');
 }
 
@@ -580,14 +726,12 @@ assert.ok(!mod.st.backdrop.parentNode, 'a second o should close the panel');
   };
   mod.openSettingsPanel();
   await flush();
-  const section = mod.st.listEl.querySelectorAll('.settings-section')
-    .find(s => s.children[0].textContent === 'backup');
-  const buttons = section.querySelectorAll('.run-controls .toggle');
+  const buttons = mod.st.listEl.querySelectorAll('.run-controls .toggle');
   assert.deepEqual(buttons.map(btn => btn.textContent), ['export', 'import as new board(s)'],
     'no replace: import only ever adds boards');
   assert.ok(buttons.every(btn => btn.tag === 'button' && btn.type === 'button'),
     'real buttons: tab reaches them and enter or space picks');
-  const status = section.querySelector('.boards-status');
+  const status = buttons[0].parentNode.querySelector('.boards-status');
   const [exportButton, importButton] = buttons;
 
   made.length = 0; // opening the panel built its own rows; only what the buttons make counts

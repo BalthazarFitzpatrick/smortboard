@@ -1,11 +1,20 @@
-// board settings (shift+o): what one board decides for itself - merge mode, file lease, how many
-// cards it runs at once, its daily budget. o holds the settings every board shares.
+// board settings (shift+o): what one board decides for itself - merge mode, file lease, run mode,
+// the branches it never lands on, how many cards it runs at once, its daily budget. o holds the
+// settings every board shares.
+//
+// a preset row (review only, free merge, open) writes a board's three modes together in one request;
+// the groups below it are independent accordions, closed on first open and remembered for the
+// session. every two-way choice is a ui_base segments control. a mode behind a global switch in o
+// shows that switch's state on its row and the segment is unavailable until o turns it on
 //
 // the same modal-backdrop / panel-floating pair as settings.js, whose helpers it reuses:
-// choiceToggle, parallelParseInput, budgetParseInput, settingsHazardPlaceholder. soft leases and
-// free merge only unlock once o turns the feature on; until then the choice is shown, not offered
+// parallelParseInput, budgetParseInput, settingsHazardPlaceholder, clearChildren. the matching and
+// wording logic is in settings_presets.js
 
 const bs = {backdrop: null, panel: null, titleEl: null, listEl: null};
+
+// the groups left open, kept while the page lives so reopening the panel finds them as they were
+const boardGroupsOpen = new Set();
 
 function boardSettingsNote(text) {
   const note = document.createElement('div');
@@ -47,30 +56,105 @@ async function patchBoard(board, fields, status) {
   return true;
 }
 
-// a two-way board choice whose second option waits on a global feature switch in o
-function gatedBoardToggle({board, className, field, choices, lit, allowed, offNote, onNote}) {
+// the preset row: a segments control with the matching preset lit, `custom` lit by the app when no
+// preset matches, and a diff line saying what the lit preset sets or how far the board is from it
+function boardPresetRow(board, settings, onSaved) {
   const status = boardSettingsStatus();
-  const toggle = choiceToggle({
-    className,
-    choices,
-    save: value => patchBoard(board, {[field]: value}, status),
+  const diff = document.createElement('div');
+  diff.className = 'field-label board-preset-diff';
+  const lead = document.createElement('span');
+  const strong = document.createElement('b');
+  diff.append(lead, strong);
+
+  const options = BOARD_PRESETS.map(preset => {
+    const {ok, missing} = boardPresetAvailability(preset, settings);
+    return {label: preset.label, value: preset.id, disabled: !ok,
+      hint: ok ? '' : missing.map(key => gateLine(settings, key)).join(', ')};
   });
-  toggle.show(lit);
-  toggle.buttons[1].disabled = !allowed;
-  const note = boardSettingsNote(allowed ? onNote : offNote);
-  const wrap = document.createElement('div');
-  wrap.className = 'settings-stack';
-  wrap.append(toggle.row, note, status);
-  return wrap;
+  options.push({label: 'custom', value: 'custom', auto: true});
+
+  const segments = makeSegments({
+    options, value: matchBoardPreset(board).id, label: 'board preset',
+    onPick: async id => {
+      const saved = await patchBoard(board, boardPresetPatch(id), status);
+      if (saved) onSaved();
+      return saved;
+    },
+  });
+  function refresh() {
+    const match = matchBoardPreset(board);
+    segments.setLit(match.id);
+    lead.textContent = match.line.lead;
+    strong.textContent = match.line.strong;
+  }
+  refresh();
+  return {node: boardSettingsSection('board preset', segments.el, diff, status), refresh};
+}
+
+// one two-way choice saved to this board. `gate` names the global switch behind the second option:
+// its state shows under the row, the option is unavailable while it is off, and a stored choice
+// that the switch is holding back says so
+function boardChoiceRow({board, settings, label, field, options, gate, note, onSaved}) {
+  const status = boardSettingsStatus();
+  const inForce = boardInForce(board, settings)[field];
+  const gateOn = !gate || booleanIsOn(settings, gate);
+  const gateValue = options[1].value;
+  const segments = makeSegments({
+    label,
+    value: inForce,
+    options: options.map(opt => ({...opt, disabled: !gateOn && opt.value === gateValue,
+      hint: !gateOn && opt.value === gateValue ? gateLine(settings, gate) : ''})),
+    onPick: async value => {
+      const saved = await patchBoard(board, {[field]: value}, status);
+      if (saved) onSaved();
+      return saved;
+    },
+  });
+  const nodes = [segments.el];
+  if (gate) {
+    const line = document.createElement('div');
+    line.className = 'board-gate-line';
+    const state = document.createElement('span');
+    state.className = gateOn ? 'board-gate-on' : 'board-gate-off';
+    state.textContent = gateLine(settings, gate);
+    line.appendChild(state);
+    if (!gateOn) {
+      const link = document.createElement('button');
+      link.type = 'button';
+      link.className = 'toggle board-gate-link';
+      link.textContent = 'turn on in general';
+      link.onclick = () => {
+        closeBoardSettingsPanel();
+        if (typeof openSettingsPanel === 'function') openSettingsPanel();
+      };
+      line.appendChild(link);
+    }
+    nodes.push(line);
+  }
+  // a stored choice the global switch is holding back is kept, and says so
+  const held = boardSettingsNote('');
+  nodes.push(held, boardSettingsNote(note), status);
+  const section = boardSettingsSection(label, ...nodes);
+  // relights the row after a preset or another save wrote this board's modes
+  section.refreshRow = () => {
+    const current = boardInForce(board, settings)[field];
+    const stored = board[field] || options[0].value;
+    segments.setLit(current);
+    held.hidden = stored === current;
+    held.textContent = stored === current ? ''
+      : `saved for this board: ${stored}. it applies again when ${BOOLEAN_SETTINGS[gate].label} is on in general.`;
+  };
+  section.refreshRow();
+  return section;
 }
 
 // the branches this board never lands on: one comma-separated field. an empty list is allowed and
 // means every branch; while the global switch in o is off, none of it applies
-function offLimitEditor(board, settings) {
+function offLimitEditor(board, settings, onSaved) {
   const box = document.createElement('div');
   box.className = 'settings-stack';
   const status = boardSettingsStatus();
-  const lifted = settings.off_limit_branches === 'off';
+  const lifted = !booleanIsOn(settings, 'off_limit_branches');
   const none = boardSettingsNote('none - this board may land on any branch.');
   const joined = () => (board.off_limit_branches || []).join(', ');
 
@@ -90,6 +174,7 @@ function offLimitEditor(board, settings) {
     if (!(await patchBoard(board, {off_limit_branches: names}, status))) return;
     input.value = joined();
     showNone();
+    onSaved();
   };
   input.addEventListener('keydown', evt => {
     if (evt.code === 'Escape') { evt.stopPropagation(); stepOutOfField(evt.target); return; }
@@ -102,10 +187,10 @@ function offLimitEditor(board, settings) {
   box.append(input, none, status, boardSettingsNote(lifted
     ? 'off-limit branches are off for every board - turn them on in settings (o) to use this list.'
     : 'the board never lands a card on these. main, master and trunk unless you change it.'));
-  return box;
+  return boardSettingsSection('off-limit branches', box);
 }
 
-function boardNumberField({board, field, placeholder, className, inputMode, parse, invalid}) {
+function boardNumberField({board, field, placeholder, className, inputMode, parse, invalid, onSaved}) {
   const row = document.createElement('div');
   row.className = 'boards-create-row';
   const input = document.createElement('input');
@@ -124,7 +209,7 @@ function boardNumberField({board, field, placeholder, className, inputMode, pars
       return;
     }
     if (value === board[field]) return;
-    await patchBoard(board, {[field]: value}, status);
+    if (await patchBoard(board, {[field]: value}, status)) onSaved();
   }
 
   input.addEventListener('keydown', evt => {
@@ -139,75 +224,84 @@ function boardNumberField({board, field, placeholder, className, inputMode, pars
 }
 
 function renderBoardSettings(board, settings) {
-  const merge = gatedBoardToggle({
-    board,
-    className: 'board-settings-merge-choice',
-    field: 'merge_mode',
-    choices: [['review', 'review'], ['free', 'free']],
-    lit: board.merge_mode === 'free' ? 'free' : 'review',
-    allowed: settings.allow_free_merge === 'on',
-    onNote: 'review: a passing card opens a pull request and waits for you. free: it merges into '
-      + 'the base by itself. off-limit branches are never merged either way.',
-    offNote: 'free merge is off for every board - turn it on in settings (o) first.',
+  const groups = {};
+  const choiceRows = [];
+  let preset = null;
+  // after any save: relight the preset row and the choice rows, refresh every header's summary
+  function onSaved() {
+    if (preset) preset.refresh();
+    choiceRows.forEach(row => row.refreshRow());
+    boardGroups(board, settings).forEach(g => groups[g.id]?.setSummary(g.summary));
+  }
+  const choiceRow = config => {
+    const row = boardChoiceRow({...config, board, settings, onSaved});
+    choiceRows.push(row);
+    return row;
+  };
+
+  preset = boardPresetRow(board, settings, onSaved);
+  const globalCap = numberOrNull(settings.max_parallel) ?? SETTINGS_DEFAULTS.max_parallel;
+  const bodies = {
+    landing: [
+      choiceRow({
+        label: 'merge mode', field: 'merge_mode', gate: 'allow_free_merge',
+        options: [{label: 'review', value: 'review'}, {label: 'free', value: 'free'}],
+        note: 'review: a passing card opens a pull request and waits for you. free: it merges into '
+          + 'the base by itself. off-limit branches are never merged either way.',
+      }),
+      offLimitEditor(board, settings, onSaved),
+    ],
+    running: [
+      choiceRow({
+        label: 'file lease', field: 'lease_mode', gate: 'allow_soft_leases',
+        options: [{label: 'strict', value: 'strict'}, {label: 'soft', value: 'soft'}],
+        note: 'strict: a card writes only inside its lease. soft: it may also write unprotected '
+          + 'paths no other card holds, and each one is shown on the card.',
+      }),
+      choiceRow({
+        label: 'run mode', field: 'run_mode', gate: 'allow_open_mode',
+        options: [{label: 'sealed', value: 'sealed'}, {label: 'open', value: 'open'}],
+        note: 'sealed: cards run in a container. open: cards run on your machine, protected only by '
+          + 'file leases and hooks, which is weaker than a container.',
+      }),
+      boardSettingsSection('cards at once',
+        boardNumberField({
+          board, onSaved, field: 'max_parallel', placeholder: 'no limit', className: 'settings-parallel-input',
+          inputMode: 'numeric', parse: parallelParseInput,
+          invalid: 'must be a positive whole number, or empty for no limit',
+        }),
+        boardSettingsNote(`blank: only the global limit in o (${globalCap}) applies. a number here can only lower it for this board.`)),
+    ],
+    budget: [
+      boardSettingsSection('daily budget, usd',
+        boardNumberField({
+          board, onSaved, field: 'daily_budget_usd', placeholder: 'no budget', className: 'settings-budget-input',
+          inputMode: 'decimal', parse: budgetParseInput, invalid: 'must be a positive amount, or empty for no cap',
+        }),
+        boardSettingsNote('new cards stop starting once today\'s (utc) spend reaches it.')),
+    ],
+  };
+
+  const groupEls = boardGroups(board, settings).map(group => {
+    const body = document.createElement('div');
+    body.className = 'settings-stack board-settings-group-body';
+    body.append(...bodies[group.id]);
+    const disclosure = makeDisclosure({
+      title: group.title, summary: group.summary, body,
+      open: boardGroupsOpen.has(group.id),
+      onToggle: open => { if (open) boardGroupsOpen.add(group.id); else boardGroupsOpen.delete(group.id); },
+    });
+    groups[group.id] = disclosure;
+    return disclosure.el;
   });
-  const lease = gatedBoardToggle({
-    board,
-    className: 'board-settings-lease-choice',
-    field: 'lease_mode',
-    choices: [['strict', 'strict'], ['soft', 'soft']],
-    lit: board.lease_mode === 'soft' ? 'soft' : 'strict',
-    allowed: settings.allow_soft_leases === 'on',
-    onNote: 'strict: a card writes only inside its lease. soft: it may also write unprotected '
-      + 'paths no other card holds, and each one is shown on the card.',
-    offNote: 'soft leases are off for every board - turn them on in settings (o) first.',
-  });
-  const run = gatedBoardToggle({
-    board,
-    className: 'board-settings-run-mode-choice',
-    field: 'run_mode',
-    choices: [['sealed', 'sealed'], ['open', 'open']],
-    lit: board.run_mode === 'open' && settings.allow_open_mode === 'on' ? 'open' : 'sealed',
-    allowed: settings.allow_open_mode === 'on',
-    onNote: 'sealed: cards run in a container. open: cards run on your machine, protected only by '
-      + 'file leases and hooks, which is weaker than a container.',
-    offNote: 'open mode is off for every board - turn it on in settings (o) first. every board runs '
-      + 'sealed, in a container.',
-  });
-  const globalCap = settings.max_parallel == null ? 2 : settings.max_parallel;
-  const parallel = boardNumberField({
-    board,
-    field: 'max_parallel',
-    placeholder: 'no limit',
-    className: 'settings-parallel-input',
-    inputMode: 'numeric',
-    parse: parallelParseInput,
-    invalid: 'must be a positive whole number, or empty for no limit',
-  });
-  const budget = boardNumberField({
-    board,
-    field: 'daily_budget_usd',
-    placeholder: 'no budget',
-    className: 'settings-budget-input',
-    inputMode: 'decimal',
-    parse: budgetParseInput,
-    invalid: 'must be a positive amount, or empty for no cap',
-  });
-  bs.listEl.append(
-    boardSettingsSection('merge mode', merge),
-    boardSettingsSection('off-limit branches', offLimitEditor(board, settings)),
-    boardSettingsSection('file lease', lease),
-    boardSettingsSection('run mode', run),
-    boardSettingsSection('cards at once', parallel,
-      boardSettingsNote(`blank: only the global cap in o (${globalCap}) applies.`)),
-    boardSettingsSection('daily budget, usd', budget,
-      boardSettingsNote('new cards stop starting once today\'s (utc) spend reaches it.')),
-  );
+  bs.listEl.append(preset.node, ...groupEls);
 }
 
 async function loadBoardSettings() {
   clearChildren(bs.listEl);
   bs.titleEl.textContent = 'board settings';
   try {
+    // one read of each per open, shared by every row
     const [allBoards, settings] = await Promise.all([api('/api/boards'), api('/api/settings')]);
     const board = allBoards.find(b => b.id === currentBoardId);
     if (!board) {

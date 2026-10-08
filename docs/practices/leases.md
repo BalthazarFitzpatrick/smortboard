@@ -19,9 +19,9 @@ trailing `**` is everything below.
 
 ### strict and soft
 
-**soft file leases** in `o` is one switch for every board: enabled or disabled, disabled by default.
-while it is disabled every board is strict. while it is enabled, each board picks strict or soft in
-`shift`+`o` under *file lease*. disabling it runs every board strict until it is enabled again; each board's own choice is kept.
+**soft file leases** in `o` is one switch for every board: on or off, off by default.
+while it is off every board is strict. while it is on, each board picks strict or soft in
+`shift`+`o` under *file lease*. turning it off runs every board strict until it is on again; each board's own choice is kept.
 
 | mode | a card may write | use it when |
 |---|---|---|

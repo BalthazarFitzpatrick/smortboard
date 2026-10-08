@@ -11,7 +11,7 @@ never on the board's **off-limit branches**.
 > **refused in code, not by habit.**
 > every board has a list of off-limit branches, `main`, `master` and `trunk` unless you change it in
 > `shift`+`o`. the board refuses them as a landing target in code. the **off-limit branches** switch
-> in `o` lifts every list at once; disabled, a board may land on any branch, `main` included.
+> in `o` lifts every list at once; off, a board may land on any branch, `main` included.
 > nothing is ever force-pushed either way.
 
 ## how it works
@@ -25,10 +25,10 @@ every base that is not off limits follows the board's mode:
 | **review required** (default) | stops at an open pull request. `y` accepts and lands it in the background; if you already merged it on github, accept records that without merging again |
 | **free merge** | lands and is accepted once tests and review pass |
 
-**free merge** in `o` is one switch for every board: enabled or disabled, disabled by default. while
-it is disabled no board can pick free and every board lands on review; a board's own choice is kept and
-applies again when it is enabled. while it is
-enabled, each board picks review or free in `shift`+`o` under *merge mode*, and `shift`+`a` flips the
+**free merge** in `o` is one switch for every board: on or off, off by default. while
+it is off no board can pick free and every board lands on review; a board's own choice is kept and
+applies again when it is on. while it is
+on, each board picks review or free in `shift`+`o` under *merge mode*, and `shift`+`a` flips the
 focused board after a confirmation. a free-merge board shows a burnt-orange pulsing frame and a text
 label; reduced motion keeps the frame static.
 
