@@ -52,7 +52,10 @@ function buildUsageCell(spec) {
   label.textContent = spec.label;
   const value = document.createElement('span');
   value.className = 'fill-cell-value';
-  el.append(bar, label, value);
+  const sep = document.createElement('span');
+  sep.className = 'fill-cell-sep';
+  sep.textContent = '|';
+  el.append(bar, label, sep, value);
   renderUsageCell(el, null);
   return el;
 }

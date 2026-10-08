@@ -595,6 +595,9 @@ body {
    its own and takes the row's */
 .usage-cells { order: -1; display: flex; align-items: stretch; gap: 10px; }
 .usage-group { display: flex; align-items: stretch; gap: 6px; }
+/* a cell reads on one line, "claude 7d | 35%", so it is as wide as its text, not ui_base's 2:1 */
+.usage-cell { flex-direction: row; align-items: center; aspect-ratio: auto; padding: 0 12px 2px; gap: 8px; }
+.usage-cell .fill-cell-sep { color: var(--grey-border); }
 
 /* the beta's bug form (board.js buildIssueButton): FIRST in the corner, left of the board's own
    numbers. it is an <a> so the keyboard can reach it, which is the only reason it needs rules of
