@@ -47,7 +47,7 @@ function SpyDrawer() { return {el: element('div'), body: element('div'), open() 
 const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'), uiBase('entrytext.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'), smort('board.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {cardPanelHtml, doAcceptOrRejectCard, showRun, runBadge, splitCommentHeadline,
-  summarizeDescription, renderCardStrip, appendLine, parseWorkerBlock, complexityLabel};`)(SpyMenu, SpyDrawer);
+  summarizeDescription, renderCardStrip, appendLine, parseWorkerBlock};`)(SpyMenu, SpyDrawer);
 
 // one section's own markup out of the panel string: from its data-section to the next one. the stub
 // does not parse html into a tree, so "under the needs section" means inside this slice
@@ -131,7 +131,7 @@ const haikuHead = sectionOf(mod.cardPanelHtml({...card, model: 'anthropic/claude
 assert.ok(haikuHead.includes('<span class="card-model">haiku 4.5</span>'), 'a version keeps its dot, a date suffix goes');
 const effortHead = sectionOf(mod.cardPanelHtml({...card, model: 'anthropic/claude-opus-5', effort: 'high'}, outcome), 'title');
 assert.ok(effortHead.includes('<span class="card-model">opus 5 @ high</span>'), "the card's own effort follows its model");
-assert.ok(!headHtml.includes('complexity'), 'complexity stays in the card menu, not the head line');
+assert.ok(!headHtml.includes('complexity'), 'the head line carries no complexity');
 assert.ok(headHtml.includes('<div class="section-value">the title</div>'), 'the title sits under the meta line');
 assert.ok(!sectionOf(mod.cardPanelHtml(card, outcome), 'title').includes('runs'), 'no spend part for a card with no runs');
 
@@ -359,13 +359,5 @@ const shortAbout = sectionOf(mod.cardPanelHtml({...detailCard, description: 'one
 assert.ok(!shortAbout.includes('full brief'), 'a brief the lead already shows whole is not folded again');
 assert.ok(sectionOf(mod.cardPanelHtml({...detailCard, description: ''}, {}), 'about').includes('no brief'));
 assert.ok(sectionOf(mod.cardPanelHtml({...detailCard, status: 'todo'}, {}), 'needs').includes('nothing yet, r runs it'));
-
-// ---- complexity is read in the card menu (c after m): rated shows the level, unrated the estimate
-// with an "(estimated)" note ------------------------------------------------------------------
-
-assert.equal(mod.complexityLabel({...card, complexity: 2}), 'medium', 'a rated card shows its level');
-assert.equal(mod.complexityLabel({...card, complexity: null, criteria: [], tasks: [], leases: []}), 'low (estimated)',
-  'an unrated card with nothing else shows a low estimate');
-
 
 console.log('ok');

@@ -1,4 +1,4 @@
-// proves the card overflow menu (...) wires edit/delete/change-model/move-status without forking
+// proves the card overflow menu (...) wires delete/change-model/move-status without forking
 // any of their logic, that delete always confirms first, and that each action also has its own
 // keyboard shortcut scoped to whichever card is focused - or, for a menu pick, the card whose menu
 // was actually opened, even if focus sits elsewhere. run: UI_BASE_ASSETS_DIR=<ui_base assets dir> node tests/js/card_overflow.mjs
@@ -49,7 +49,7 @@ document.body.appendChild(bucketRow);
 // records every menu built, in order, and lets a test drive its onPick the way a click would
 let menus = [];
 class SpyMenu {
-  constructor(opts) { this.opts = opts; menus.push(this); }
+  constructor(opts) { this.opts = opts; this.el = element('div'); menus.push(this); }
   openAt() { return this; }
   refresh(sections) { this.opts.sections = sections; }
   close() {}
@@ -88,14 +88,8 @@ overflow.onclick({stopPropagation: () => { stopped = true; }});
 assert.equal(menus.length, 1, 'clicking ... should open exactly one menu');
 assert.ok(stopped, 'the click must not bubble to the strip and also open the card behind the menu');
 const overflowItems = menus[0].opts.sections[0].items.map(i => i.id);
-assert.deepEqual(overflowItems, ['edit', 'model', 'complexity', 'status', 'delete'],
-  'the menu should offer edit, change model, change complexity, move status and delete');
-
-// ---- edit reuses the strip's own open-to-edit, nothing forked for it
-menus[0].pick('edit');
-assert.equal(backdrops().length, 1, 'edit should open the card, same as enter/space would');
-document._dispatch('keydown', {key: 'Escape', code: 'Escape', target: document.body, preventDefault() {}});
-assert.equal(backdrops().length, 0, 'closed back down before the next assertion');
+assert.deepEqual(overflowItems, ['model', 'status', 'delete'],
+  'the menu offers change model, move status and delete - no edit (the panel has no edit mode) and no complexity');
 
 // ---- picking delete opens a confirm; nothing is deleted before that confirm is answered
 menus = [];
@@ -103,7 +97,7 @@ overflow.onclick({stopPropagation(){}});
 menus[0].pick('delete');
 assert.equal(menus.length, 2, 'delete should open a second, confirming menu');
 assert.equal(menus[1].opts.title, 'delete this card?');
-// opening the card for edit above already fetched it; what must not have happened is a write
+// what must not have happened yet is a write
 const writes = () => calls.filter(c => c.opts?.method && c.opts.method !== 'GET');
 assert.equal(writes().length, 0, 'no request should fire before the confirm is answered');
 
@@ -139,35 +133,6 @@ const moved = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'P
 assert.ok(moved, 'move status should PATCH the card');
 assert.equal(JSON.parse(moved.opts.body).status, 'checking');
 
-// ---- change complexity is a pick from the three levels: one menu, no confirm, escape goes back
-calls.length = 0;
-setResponse('GET', '/api/cards/c1', 200, {id: 'c1', complexity: 2});
-setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', complexity: 3});
-menus = [];
-overflow.onclick({stopPropagation(){}});
-menus[0].pick('complexity');
-await flush();
-assert.equal(menus.length, 2, 'change complexity opens one list');
-const levels = menus[1].opts.sections[0].items;
-assert.deepEqual(levels.map(item => item.label), ['low', 'medium', 'high']);
-assert.deepEqual(levels.filter(item => item.on).map(item => item.label), ['medium'],
-  'the current level is lit');
-menus[1].pick('3');
-await flush();
-assert.equal(menus.length, 2, 'a pick sets it - no confirm');
-const complexityPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
-assert.equal(JSON.parse(complexityPatch.opts.body).complexity, 3, 'high is picked directly');
-
-// escape out of the list without a pick reopens the card menu and writes nothing
-calls.length = 0;
-menus = [];
-overflow.onclick({stopPropagation(){}});
-menus[0].pick('complexity');
-await flush();
-menus[1].opts.onDismiss();
-assert.equal(menus.length, 3, 'backing out reopens the card menu');
-assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0);
-
 // ---- change model reuses cycleCardModel exactly, and acts on the card whose ... was clicked -
 // even while a different card holds keyboard focus
 const strip2 = mod.renderCardStrip({id: 'c2', title: 'card two', status: 'todo', workstream: 'w'});
@@ -190,6 +155,7 @@ await flush();
 assert.equal(menus.length, 2, 'change model opens one model picker');
 assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0, 'no write before a model is selected');
 assert.equal(menus[1].opts.title, 'choose model');
+assert.ok(menus[1].el.classList.contains('menu-centered'), 'the card route centres the picker like every dialog');
 let modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns').columns;
 assert.equal(modelColumns[0].items.find(item => item.id === 'anthropic').disabled, true,
   'a lab without a usable profile cannot be selected');

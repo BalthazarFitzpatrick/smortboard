@@ -209,7 +209,8 @@ press('KeyM');
 await flush();
 assert.equal(menuTitle(), 'card actions', "m opens the focused card's menu");
 const items = menuPanel().querySelectorAll('.menu-item').map(el => el.dataset.id);
-assert.equal(items[0], 'edit', 'edit reads first');
+assert.equal(items[0], 'model', 'change model reads first');
+assert.ok(!items.includes('edit') && !items.includes('complexity'), 'no edit and no complexity row');
 assert.ok(items.includes('status'), 'and move to is one of its rows');
 assert.ok(items.includes('delete'), 'delete is reachable only here now');
 

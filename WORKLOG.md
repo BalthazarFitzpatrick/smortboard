@@ -6,3 +6,4 @@
 2026-10-08 u9 built: smortui pr 79 fill-cell, pin bump, usage_cells.js with js test. screenshot ok on real data. open: 47px cells vs 45px bar, decide grow bar or shrink cell
 2026-10-08 u9 fit decided: grow bar, tabs and corner controls match cells at 46.5px. pr 311 updated
 2026-10-08 u11 sticky effort per card>lab>model, no default row, aliases gone from catalog (12 real rows). migration 32. pr 312 amended. open: new model ids unverified vs cli
+2026-10-08 u12: pr 313 off-limits one field (agent), card menu edit+complexity ui removed, picker centred, settings artifact v2 published. next: u12c complexity data removal after this merges

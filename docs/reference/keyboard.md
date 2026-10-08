@@ -51,7 +51,7 @@ here.
 | `k` | stop the focused card if it is running |
 | `y` | accept the focused card, with confirmation |
 | `x` | reject the focused card, with confirmation |
-| `m` | menu for the focused card: edit, model, complexity, move to, delete |
+| `m` | menu for the focused card: model, move to, delete |
 | `t` | run replay: scrub the focused card's run step by step |
 | `/` | type: the open card's comment, or the open chat |
 | `w` | run the board: start (with confirmation) / stop the queue |
