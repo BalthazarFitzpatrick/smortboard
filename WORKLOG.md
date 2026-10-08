@@ -8,3 +8,4 @@
 2026-10-08 u11 sticky effort per card>lab>model, no default row, aliases gone from catalog (12 real rows). migration 32. pr 312 amended. open: new model ids unverified vs cli
 2026-10-08 u12: pr 313 off-limits one field (agent), card menu edit+complexity ui removed, picker centred, settings artifact v2 published. next: u12c complexity data removal after this merges
 2026-10-08 prs 313, 314 merged. u12c complexity removed (migration 33, estimate-only telemetry). u13 queued: windows -n auto flake in test_backup_http. operator chose settings design: general = presets + risk accordion, board = presets + accordion, on/off toggle wording everywhere; artifact A4c45X1WFfBqUrRbQkQE8i awaits decisions
+2026-10-08 unattended run. u13 only open entry. no repro: 6x targeted -n auto green, full suite 1722 pass 460s. no code edit, root cause unknown. u13 blocked NEEDS_HUMAN, needs failing traceback
