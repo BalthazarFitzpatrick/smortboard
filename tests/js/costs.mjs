@@ -229,7 +229,7 @@ await new Promise(r => setTimeout(r, 0));
 assert.equal(findHeaderLabel().textContent, 'cost optimisation', 'ArrowRight switches views');
 const optText = flatText({children: [menu2.sections[0].node]}).join(' | ');
 assert.match(optText, /cap fit - worker cap \$5\.00/);
-assert.match(optText, /low \| rated \| 3 \| 2 \| 1 \| \$0\.40 \| \$5\.20/);
+assert.match(optText, /low \| estimated \| 3 \| 2 \| 1 \| \$0\.40 \| \$5\.20/);
 assert.match(optText, /suggested caps/);
 assert.match(optText, /worker \| \$5\.00 \| \$1\.80 \| \$2\.00 \| 1 \| \$0\.30/);
 assert.match(optText, /reviewer \| \$1\.50 \| not enough runs/);
