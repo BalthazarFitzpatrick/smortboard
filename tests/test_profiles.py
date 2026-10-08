@@ -719,7 +719,7 @@ def test_cross_lab_worker_fallback_is_opt_in_and_does_not_rewrite_the_card(store
     assert fallback["effort"] == "high", "the fallback's own effort rides with its switch"
     assert any(f"openai/{model}" in comment["body"] for comment in current["comments"])
     assert run_ref(store, "worker", current, consume=True) == ("openai", model)
-    assert run_ref(store, "worker", current) == ("anthropic", "sonnet")
+    assert run_ref(store, "worker", current) == ("anthropic", "claude-sonnet-5-5")
 
 
 def test_reviewer_fallback_changes_only_the_failed_role(store, board_and_repo):

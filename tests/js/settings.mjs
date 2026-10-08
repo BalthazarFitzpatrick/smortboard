@@ -226,11 +226,13 @@ await workerPicker.onclick();
 const workerMenu = modelMenus.at(-1);
 let workerColumns = workerMenu.opts.sections.find(section => section.kind === 'columns').columns;
 assert.equal(workerColumns[0].items.find(item => item.on).id, 'openai', 'unset model keeps the configured role lab');
-assert.deepEqual(workerColumns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high', 'xhigh']);
+assert.deepEqual(workerColumns[2].items.map(item => item.id), ['low', 'medium', 'high', 'xhigh'],
+  'no default row');
+assert.equal(workerColumns[2].items.find(item => item.on).id, 'medium', 'a role never set starts at medium');
 await workerMenu.opts.sections.find(section => section.kind === 'buttons').buttons
   .find(button => button.id === 'save-model').onClick(workerMenu);
 assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-  {worker_lab: 'openai', worker_model: null, worker_effort: null});
+  {worker_lab: 'openai', worker_model: null, worker_effort: 'medium'});
 await reviewerPicker.onclick();
 const primaryMenu = modelMenus.at(-1);
 assert.equal(primaryMenu.anchor, reviewerPicker,
@@ -247,12 +249,12 @@ assert.equal(primaryMenu.closed, false, 'selecting a primary model keeps the men
 primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
 assert.equal(primaryColumns[2].label, 'effort', 'the role picker carries the effort column too');
 assert.deepEqual(primaryColumns[2].items.map(item => item.id),
-  ['default', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+  ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 primaryColumns[2].onPick({id: 'ultra'});
 primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
 primaryColumns[1].onPick({id: 'gpt-5.6-sol'});
 primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.equal(primaryColumns[2].items.find(item => item.on).id, 'default', 'incompatible effort clears when the model changes');
+assert.equal(primaryColumns[2].items.find(item => item.on).id, 'medium', 'an effort the model lacks restarts at medium when the model changes');
 assert.ok(!primaryColumns[2].items.some(item => item.id === 'ultra'));
 primaryColumns[1].onPick({id: 'gpt-6-astra'});
 primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
@@ -289,7 +291,7 @@ columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns')
 columns[1].onPick({id: 'anthropic/fable'}, true);
 columns[1].onPick({id: 'anthropic/opus'}, false);
 assert.equal(fallbackTrigger.textContent,
-  '3 selected: openai/gpt-6-astra @ high → openai/gpt-5.6-sol → anthropic/fable',
+  '3 selected: openai/gpt-6-astra @ high → openai/gpt-5.6-sol @ medium → anthropic/fable @ low',
   'new picks append while deselection removes without reordering the rest');
 // the effort column describes the focused model row, and only a ticked one
 columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
@@ -298,19 +300,19 @@ assert.equal(columns[2].empty, 'tick a model');
 columns[1].onFocus({id: 'openai/gpt-5.6-sol'});
 columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
 assert.equal(columns[2].label, 'effort: openai/gpt-5.6-sol');
-assert.deepEqual(columns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high', 'xhigh'],
+assert.deepEqual(columns[2].items.map(item => item.id), ['low', 'medium', 'high', 'xhigh'],
   'focused fallback uses its own model even while another lab is visible');
-assert.equal(columns[2].items.find(item => item.on).id, 'default');
-columns[2].onPick({id: 'medium'});
+assert.equal(columns[2].items.find(item => item.on).id, 'medium', 'a ticked model starts at medium');
+columns[2].onPick({id: 'high'});
 assert.equal(fallbackTrigger.textContent,
-  '3 selected: openai/gpt-6-astra @ high → openai/gpt-5.6-sol @ medium → anthropic/fable');
+  '3 selected: openai/gpt-6-astra @ high → openai/gpt-5.6-sol @ high → anthropic/fable @ low');
 const saveFallbacks = fallbackMenu.opts.sections.find(section => section.kind === 'buttons').buttons[0];
 await saveFallbacks.onClick(fallbackMenu);
 assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
   {fold_cross_lab_fallback: [
     {ref: 'openai/gpt-6-astra', effort: 'high'},
-    {ref: 'openai/gpt-5.6-sol', effort: 'medium'},
-    {ref: 'anthropic/fable', effort: null},
+    {ref: 'openai/gpt-5.6-sol', effort: 'high'},
+    {ref: 'anthropic/fable', effort: 'low'},
   ]});
 assert.equal(fallbackMenu.closed, true, 'a successful save closes the picker');
 
@@ -320,17 +322,17 @@ const staleTrigger = mod.st.listEl.querySelectorAll('.role-fallback')
 await staleTrigger.onclick();
 const staleMenu = modelMenus.at(-1);
 const staleColumns = staleMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.equal(staleColumns[2].items.find(item => item.on).id, 'default', 'unsupported effort shows as default');
+assert.equal(staleColumns[2].items.find(item => item.on).id, 'medium', 'an unsupported effort restarts at medium');
 await staleMenu.opts.sections.find(section => section.kind === 'buttons').buttons[0].onClick(staleMenu);
 assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-  {worker_cross_lab_fallback: [{ref: 'openai/gpt-5.6-sol', effort: null}]});
+  {worker_cross_lab_fallback: [{ref: 'openai/gpt-5.6-sol', effort: 'medium'}]});
 
 await mod.openModelPicker(() => {}, undefined, null, {default_settings: settingsState});
 const defaultCardMenu = modelMenus.at(-1);
 const defaultCardColumns = defaultCardMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.deepEqual(defaultCardColumns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high', 'xhigh'],
+assert.deepEqual(defaultCardColumns[2].items.map(item => item.id), ['low', 'medium', 'high', 'xhigh'],
   'card default resolves the worker model from its configured lab');
-assert.equal(defaultCardColumns[2].items.find(item => item.on).id, 'default', 'catalog default effort remains inherited');
+assert.equal(defaultCardColumns[2].items.find(item => item.on).id, 'medium', 'a model never chosen for starts at medium');
 assert.deepEqual(mod.resolvePickerRole({openai: {models: [{id: 'worker', tier: 'standard'},
   {id: 'planner', tier: 'deep'}]}}, {orchestrator_lab: 'openai', orchestrator_model: 'planner'}, 'fold'),
   {lab: 'openai', model: 'planner'}, 'unset fold inherits the orchestrator lab and model');
@@ -343,7 +345,7 @@ await mod.openModelPicker((...selection) => { savedFold = selection; }, undefine
   {default_role: 'fold', default_settings: {orchestrator_lab: 'openai', orchestrator_model: 'gpt-5.6-sol'}});
 const inheritedFoldMenu = modelMenus.at(-1);
 let inheritedFoldColumns = inheritedFoldMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.deepEqual(inheritedFoldColumns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high', 'xhigh']);
+assert.deepEqual(inheritedFoldColumns[2].items.map(item => item.id), ['low', 'medium', 'high', 'xhigh']);
 inheritedFoldColumns[2].onPick({id: 'xhigh'});
 inheritedFoldMenu.opts.sections.find(section => section.kind === 'buttons').buttons
   .find(button => button.id === 'save-model').onClick(inheritedFoldMenu);

@@ -83,19 +83,23 @@ add or override entries in `~/.config/smortboard/catalog.json` (under `XDG_CONFI
 }
 ```
 
-each `id` is passed unchanged to the lab cli. versioned entries let you choose opus 5 or 5.5,
-sonnet 5 or 5.5, and gpt-6 sol or gpt-6.1 sol separately. entries marked `(alias)` follow the
-cli's family alias. existing role defaults stay unchanged; choose a version to pin your work.
+each `id` is passed unchanged to the lab cli. the packaged anthropic list is the models the cli's
+own `/model` picker offers, one row per version; there are no family-alias rows (sonnet, opus,
+haiku, fable). the default models are sonnet 5.5 for worker and reviewer and opus 5.5 for
+orchestrator and fold, set by `prefer_for` on those rows.
 
-the card, role and fallback pickers show that model's `effort_levels`. changing model clears an
-effort the new model cannot use. direct api writes with an unsupported pair are refused. mission
+the card, role and fallback pickers show that model's `effort_levels`, with no default row: a model
+nobody has chosen an effort for starts at medium (its first level when it has no medium), and a
+model with no levels takes none. a card remembers its effort per lab and model in `model_efforts`
+(`"lab/model" -> effort`), so going back to a model finds what was chosen for it, and picking
+another model never carries the last one's effort over. role and fallback pickers are not per card,
+so they only start at medium. direct api writes with an unsupported pair are refused. mission
 control can also assign a card's model and effort together.
 
-`default` stores null: card effort inherits the worker role, and a role without an effort sends
-no cli flag. `default_effort` records the model/runtime default; it does not override inheritance.
-if an inherited effort is unsupported by the selected model, the run sends no effort flag.
-an empty `effort_levels` means no explicit effort support. older custom entries without metadata
-retain low, medium and high. a `none` effort, where supported, is an explicit value, not null.
+`default_effort` records the model/runtime default; it is data for readers of the catalog and
+does not pick the picker's start. an empty `effort_levels` means no explicit effort support. older
+custom entries without metadata retain low, medium and high. a `none` effort, where supported, is
+an explicit value, not null.
 
 to maintain the list, edit the packaged catalog for a release or the local override for one
 installation. overrides merge by lab and model id and reload on reads; reopen the picker after

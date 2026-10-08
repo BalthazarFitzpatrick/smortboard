@@ -98,7 +98,7 @@ def _limit_run(store, card_id, runs, resets_at=None):
         {
             "lab": "anthropic",
             "profile": "default",
-            "model": "opus",
+            "model": "claude-opus-5-5",
             "role": "worker",
             "rate_limit_info": {
                 "status": "rejected",
@@ -245,7 +245,9 @@ def test_attention_mode_blocks_and_asks_in_the_inbox(store, board, fallback_mode
     assert row["card_id"] == card["id"]
     assert row["reason"] == "USAGE_LIMIT"
     assert row["fallback"] == f"openai/{fallback_model}"
-    assert row["action"].startswith(f"opus limit - retry on openai/{fallback_model}? or waits to")
+    assert row["action"].startswith(
+        f"claude-opus-5-5 limit - retry on openai/{fallback_model}? or waits to"
+    )
     assert row["action"].endswith("UTC")
     # the board draws it in attention too, still saying when the reset retry runs
     (shown,) = with_actions(store, [store.get_card(card["id"])], registry)
@@ -452,7 +454,7 @@ def test_fallback_run_starts_one_run_on_the_next_ref_and_consumes_it(tmp_path, m
         with Store(tmp_path / "board.db") as reader:
             card = reader.get_card(card_id)
             assert card["blocked_reason_code"] is None
-            assert run_ref(reader, "worker", card) == ("anthropic", "sonnet"), "consumed"
+            assert run_ref(reader, "worker", card) == ("anthropic", "claude-sonnet-5-5"), "consumed"
             kinds = [e["kind"] for e in reader.list_events(card_id)]
             assert kinds.count("lab_fallback") == 1 and "fallback_consumed" in kinds
         # not usage limited any more - a second press is refused, nothing starts

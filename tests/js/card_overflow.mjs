@@ -174,11 +174,13 @@ const strip2 = mod.renderCardStrip({id: 'c2', title: 'card two', status: 'todo',
 todoRows.appendChild(strip2);
 strip2.focus();
 calls.length = 0;
-setResponse('GET', '/api/cards/c1', 200, {id: 'c1', model: null});
+setResponse('GET', '/api/cards/c1', 200, {id: 'c1', model: null, model_efforts: {'openai/x': 'low'}});
 setResponse('GET', '/api/settings', 200, {});
 setResponse('GET', '/api/catalog', 200, {
   anthropic: {available: false, unavailable_reason: 'no usable profile', models: [{id: 'haiku', label: 'Haiku', tier: 'light'}]},
-  openai: {available: true, models: [{id: 'x', label: 'X', tier: 'standard', default_effort: 'medium'}]},
+  openai: {available: true, models: [{id: 'x', label: 'X', tier: 'standard'},
+    {id: 'y', label: 'Y', tier: 'standard', effort_levels: ['low', 'high']},
+    {id: 'z', label: 'Z', tier: 'light', effort_levels: []}]},
 });
 setResponse('PATCH', '/api/cards/c1', 200, {id: 'c1', lab: 'openai', model: 'x'});
 menus = [];
@@ -194,13 +196,24 @@ assert.equal(modelColumns[0].items.find(item => item.id === 'anthropic').disable
 modelColumns[0].onPick({id: 'openai'});
 assert.equal(menus.length, 2, 'picking a lab updates the same menu');
 modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns').columns;
+const effortOf = () => {
+  modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns').columns;
+  return {levels: modelColumns[2].items.map(item => item.id), on: modelColumns[2].items.find(item => item.on)?.id};
+};
 modelColumns[1].onPick({id: 'x'});
-modelColumns = menus[1].opts.sections.find(section => section.kind === 'columns').columns;
+assert.deepEqual(effortOf(), {levels: ['low', 'medium', 'high'], on: 'low'},
+  'there is no default row, and a model this card chose an effort for opens on that choice');
 assert.equal(modelColumns[2].label, 'effort', 'effort is the third column beside lab and model');
-assert.deepEqual(modelColumns[2].items.map(item => item.id), ['default', 'low', 'medium', 'high']);
-assert.equal(modelColumns[2].items.find(item => item.on).id, 'default', 'unset reads as default');
-assert.equal(modelColumns[2].items.find(item => item.id === 'default').label, 'default (medium)',
-  "the default row names the picked model's own default effort");
+modelColumns[1].onPick({id: 'y'});
+assert.deepEqual(effortOf(), {levels: ['low', 'high'], on: 'low'},
+  "a model never chosen for starts at its first level when it has no medium, not on x's choice");
+modelColumns[2].onPick({id: 'high'});
+modelColumns[1].onPick({id: 'z'});
+assert.deepEqual(effortOf(), {levels: [], on: undefined}, 'a model with no levels has no effort to set');
+modelColumns[1].onPick({id: 'y'});
+assert.equal(effortOf().on, 'high', 'an effort picked for y is still there after visiting another model');
+modelColumns[1].onPick({id: 'x'});
+assert.equal(effortOf().on, 'low', 'going back to x finds the effort the card chose for x');
 modelColumns[2].onPick({id: 'high'});
 assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0,
   'selecting a model waits for the save action');

@@ -1001,17 +1001,22 @@ function resolvePickerRole(catalog, settings = {}, role = 'worker') {
   return {lab, model: row?.id};
 }
 
-// the third column of every lab | model picker. `selected` null is the default row, which names the
-// model's own catalog default (still saved as null, so it keeps inheriting)
+// the effort a model starts on when nothing was chosen for it: medium, else its first level, and
+// null for a model with no levels (it takes no effort flag)
+function startEffort(model) {
+  const levels = modelEffortLevels(model);
+  if (!levels.length) return null;
+  return levels.includes('medium') ? 'medium' : levels[0];
+}
+
+// the third column of every lab | model picker: the model's own levels, always one of them chosen
 function effortColumn(selected, onPick, label = 'effort', model = null) {
-  const defaultLabel = model?.default_effort ? `default (${model.default_effort})` : 'default';
   return {
     label,
     multi: false,
-    items: ['default', ...modelEffortLevels(model)].map(level => ({
-      id: level, label: level === 'default' ? defaultLabel : level, on: level === (selected || 'default'),
-    })),
-    onPick: item => onPick(item.id === 'default' ? null : item.id),
+    empty: 'no effort levels',
+    items: modelEffortLevels(model).map(level => ({id: level, label: level, on: level === selected})),
+    onPick: item => onPick(item.id),
   };
 }
 
@@ -1026,20 +1031,31 @@ async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200,
   let selectedLab = catalog[currentLab] ? currentLab
     : labs.find(lab => catalog[lab].available !== false) || labs[0];
   let selectedModel = catalog[currentLab] && current.model ? current.model.split('/').pop() : null;
-  let selectedEffort = current.effort || null;
+  let selectedEffort = null;
   let selectedRoleLab = current.lab || null;
   let selectedRoleDefault = resolvePickerRole(catalog, {...current.default_settings,
     [`${current.default_role}_model`]: null}, current.default_role);
   let picked = false;
   let menu = null;
 
+  const selectedRef = () => selectedModel ? {lab: selectedLab, model: selectedModel}
+    : (current.default_role ? selectedRoleDefault : defaults);
+  const refKey = ref => `${ref.lab}/${ref.model}`;
   const selectedRow = () => {
-    const roleDefaults = current.default_role ? selectedRoleDefault : defaults;
-    const ref = selectedModel ? {lab: selectedLab, model: selectedModel} : roleDefaults;
+    const ref = selectedRef();
     return catalog[ref.lab]?.models.find(row => row.id === ref.model);
   };
+  const openingKey = refKey(selectedRef());
+  // effort is sticky per card, lab and model: what was picked for the model on show in this menu,
+  // else what the card saved for it, else the card's own effort when it is the model it opened on,
+  // else the start effort. never the effort of the model clicked away from
+  const pickedEfforts = {};
   const resetEffort = () => {
-    if (selectedEffort && !modelEffortLevels(selectedRow()).includes(selectedEffort)) selectedEffort = null;
+    const key = refKey(selectedRef());
+    const stored = pickedEfforts[key] || current.model_efforts?.[key]
+      || (key === openingKey ? current.effort : null);
+    selectedEffort = stored && modelEffortLevels(selectedRow()).includes(stored)
+      ? stored : startEffort(selectedRow());
   };
   resetEffort();
 
@@ -1082,6 +1098,7 @@ async function openModelPicker(onPick, anchor = {x: window.innerWidth / 2 - 200,
       },
       effortColumn(selectedEffort, effort => {
         selectedEffort = effort;
+        pickedEfforts[refKey(selectedRef())] = effort;
         menu.refresh(buildSections());
       }, 'effort', selectedRow()),
     ],

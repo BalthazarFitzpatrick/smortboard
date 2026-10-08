@@ -454,7 +454,7 @@ def run_review(
     work_path: str | Path,
     settings_path: str | Path,
     repo: dict[str, Any] | None = None,
-    model: str = "sonnet",
+    model: str = "claude-sonnet-5-5",
     budget_usd: float | None = DEFAULT_REVIEW_BUDGET_USD,
     token_path: str | Path | None = None,
     on_process: Callable[[ProcessHandle], None] | None = None,

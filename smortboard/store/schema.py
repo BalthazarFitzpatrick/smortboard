@@ -617,6 +617,43 @@ _MIGRATIONS: list[str] = [
     """,
     # 31: a board's run mode, sealed or open. null is sealed, see store.api.run_mode
     """ALTER TABLE boards ADD COLUMN run_mode TEXT;""",
+    # 32: a card remembers its effort per lab/model, a json map "lab/model" -> effort, so going back
+    # to a model finds what was chosen for it. the catalog also lost its family-alias rows (sonnet,
+    # opus, haiku, fable), so saved values naming one are rewritten to the dated model they followed
+    """
+    ALTER TABLE cards ADD COLUMN model_efforts TEXT;
+
+    UPDATE cards SET model = CASE
+            WHEN model = 'sonnet' THEN 'claude-sonnet-5-5'
+            WHEN model = 'anthropic/sonnet' THEN 'anthropic/claude-sonnet-5-5'
+            WHEN model = 'opus' THEN 'claude-opus-5-5'
+            WHEN model = 'anthropic/opus' THEN 'anthropic/claude-opus-5-5'
+            WHEN model = 'haiku' THEN 'claude-haiku-5-5'
+            WHEN model = 'anthropic/haiku' THEN 'anthropic/claude-haiku-5-5'
+            WHEN model = 'fable' THEN 'claude-fable-5-1'
+            WHEN model = 'anthropic/fable' THEN 'anthropic/claude-fable-5-1'
+            ELSE model END
+    WHERE model IS NOT NULL;
+
+    UPDATE settings SET value = CASE
+            WHEN value = 'sonnet' THEN 'claude-sonnet-5-5'
+            WHEN value = 'anthropic/sonnet' THEN 'anthropic/claude-sonnet-5-5'
+            WHEN value = 'opus' THEN 'claude-opus-5-5'
+            WHEN value = 'anthropic/opus' THEN 'anthropic/claude-opus-5-5'
+            WHEN value = 'haiku' THEN 'claude-haiku-5-5'
+            WHEN value = 'anthropic/haiku' THEN 'anthropic/claude-haiku-5-5'
+            WHEN value = 'fable' THEN 'claude-fable-5-1'
+            WHEN value = 'anthropic/fable' THEN 'anthropic/claude-fable-5-1'
+            ELSE value END
+    WHERE key LIKE '%!_model' ESCAPE '!';
+
+    UPDATE settings SET value = REPLACE(REPLACE(REPLACE(REPLACE(value,
+        '/sonnet"', '/claude-sonnet-5-5"'),
+        '/opus"', '/claude-opus-5-5"'),
+        '/haiku"', '/claude-haiku-5-5"'),
+        '/fable"', '/claude-fable-5-1"')
+    WHERE key LIKE '%!_cross!_lab!_fallback' ESCAPE '!' AND value IS NOT NULL;
+    """,
 ]
 
 

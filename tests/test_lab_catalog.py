@@ -25,20 +25,34 @@ def test_routing_imports_without_store_initialization():
 
 def test_legacy_refs_and_unknown_refs(tmp_path):
     catalog = load_catalog(tmp_path / "missing.json")
-    assert {"fable", "opus", "sonnet", "haiku"} <= {
-        row["id"] for row in catalog["anthropic"]["models"]
-    }
+    anthropic_ids = {row["id"] for row in catalog["anthropic"]["models"]}
+    assert anthropic_ids == {
+        "claude-fable-5-1",
+        "claude-fable-5",
+        "claude-opus-5-5",
+        "claude-opus-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-sonnet-5-5",
+        "claude-sonnet-5",
+        "claude-sonnet-4-6",
+        "claude-haiku-5-5",
+        "claude-haiku-4-5",
+    }, "only models the cli lists, no family-alias rows"
+    assert not any("alias" in row["label"] for row in catalog["anthropic"]["models"])
     assert {"gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} <= {
         row["id"] for row in catalog["openai"]["models"]
     }
     assert parse_ref("sonnet") == ("anthropic", "sonnet")
     assert parse_ref("openai/x") == ("openai", "x")
-    assert resolve_ref("sonnet", catalog) == ("anthropic", "sonnet")
+    assert resolve_ref("sonnet", catalog) is None, "a bare family alias is not a catalog model"
+    assert resolve_ref("claude-sonnet-5-5", catalog) == ("anthropic", "claude-sonnet-5-5")
     assert resolve_ref("openai/unknown", catalog) is None
-    assert resolve_ref("unknown/sonnet", catalog) is None
+    assert resolve_ref("unknown/claude-sonnet-5-5", catalog) is None
     assert resolve_ref(None, catalog) is None
     assert resolve_ref("--unsafe", catalog) is None
-    assert tier_of("anthropic/opus", catalog) == "deep"
+    assert tier_of("anthropic/claude-opus-5-5", catalog) == "deep"
     assert tier_of("openai/unknown", catalog) is None
     assert not (tmp_path / "missing.json").exists()
     assert all("price_per_mtok" not in row for row in catalog["openai"]["models"])
@@ -49,7 +63,7 @@ def test_override_merges_by_lab_and_model_and_is_reloaded(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "anthropic": {"models": [{"id": "opus", "label": "Planning"}]},
+                "anthropic": {"models": [{"id": "claude-opus-5-5", "label": "Planning"}]},
                 "openai": {
                     "models": [
                         {
@@ -67,9 +81,9 @@ def test_override_merges_by_lab_and_model_and_is_reloaded(tmp_path):
     catalog = load_catalog(path)
     assert resolve_ref("openai/x", catalog) == ("openai", "x")
     assert catalog["openai"]["adapter"] == "codex"
-    opus = next(row for row in catalog["anthropic"]["models"] if row["id"] == "opus")
+    opus = next(row for row in catalog["anthropic"]["models"] if row["id"] == "claude-opus-5-5")
     assert opus["label"] == "Planning" and opus["tier"] == "deep"
-    assert resolve_ref("sonnet", catalog)
+    assert resolve_ref("claude-sonnet-5-5", catalog)
     assert path.read_bytes() == before
     path.write_text("{}")
     assert resolve_ref("openai/x", load_catalog(path)) is None
@@ -108,6 +122,9 @@ def test_exact_versions_and_effort_metadata_are_available(tmp_path):
         "claude-sonnet-5",
         "claude-sonnet-5-5",
         "claude-haiku-4-5",
+        "claude-haiku-5-5",
+        "claude-opus-4-8",
+        "claude-sonnet-4-6",
     ):
         assert resolve_ref(f"anthropic/{model}", catalog) == ("anthropic", model)
     for model in ("gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"):
