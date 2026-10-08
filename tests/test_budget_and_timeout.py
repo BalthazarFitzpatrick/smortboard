@@ -114,6 +114,10 @@ def test_the_gate_timeout_comes_from_the_board_setting(tmp_path, monkeypatch):
         store.set_setting("gate_timeout_seconds", "1800")
         _gate_with_fake_run(tmp_path, monkeypatch, fake_run, store, card_id)
         assert seen["timeout"] == 1800
-        store.set_setting("gate_timeout_seconds", "nonsense")
+        # a value saved before the write was validated: the reader still falls back to the default
+        store._conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('gate_timeout_seconds', 'nonsense')"
+        )
+        store._conn.commit()
         _gate_with_fake_run(tmp_path, monkeypatch, fake_run, store, card_id)
         assert seen["timeout"] == gates.GATE_TIMEOUT_SECONDS
