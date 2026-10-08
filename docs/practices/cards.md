@@ -44,8 +44,7 @@ the needs popout keeps its note field: `/` types, `enter` sends. `space` or `esc
 popout; `space` on the title closes the card.
 
 a card holds a title, a description, **acceptance criteria**, a task list, **leases** (the paths its
-agent may write), dependencies on other cards, optionally a **model**, and a **complexity** of low,
-medium or high for [cost analysis](cost.md).
+agent may write), dependencies on other cards, and optionally a **model**.
 
 ### card text is short
 

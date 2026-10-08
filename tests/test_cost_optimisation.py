@@ -63,7 +63,7 @@ def _crashed_run(store, card_id, cost=0.05):
 
 def test_shape_has_the_four_sections(store):
     board = store.create_board("b")
-    card = store.create_card(board["id"], None, "c", complexity=1)
+    card = store.create_card(board["id"], None, "c")
     _accepted_run(store, card["id"])
     optimisation = cost_optimisation(store)
     assert set(optimisation) == {"board_id", "cap_fit", "suggested_caps", "waste", "model_fit"}
@@ -73,13 +73,13 @@ def test_shape_has_the_four_sections(store):
 def test_cap_fit_splits_within_and_over_cap(store):
     board = store.create_board("b")
     store.set_setting("worker_budget_usd", 1.0)
-    low = store.create_card(board["id"], None, "low", complexity=1)
+    low = store.create_card(board["id"], None, "low")
     _accepted_run(store, low["id"], cost=0.10)
-    over = store.create_card(board["id"], None, "over cap", complexity=1)
+    over = store.create_card(board["id"], None, "over cap")
     _capped_run(store, over["id"], cost=1.5)
 
     rows = cost_optimisation(store)["cap_fit"]["rows"]
-    row = next(r for r in rows if r["complexity"] == 1 and r["source"] == "rated")
+    row = next(r for r in rows if r["complexity"] == 1 and r["source"] == "estimated")
     assert row["runs"] == 2
     assert row["within_cap"] == 1
     assert row["hit_cap"] == 1
@@ -137,7 +137,10 @@ def test_waste_groups_by_reason(store):
 
 def test_model_fit_per_model_and_complexity(store):
     board = store.create_board("b")
-    card = store.create_card(board["id"], None, "c", model="opus", complexity=3)
+    # ten tasks score high (3) on the estimate, which is the only complexity there is
+    card = store.create_card(
+        board["id"], None, "c", model="opus", tasks=[f"t{i}" for i in range(10)]
+    )
     _accepted_run(store, card["id"], cost=0.5, model="opus")
     store.update_card(card["id"], status="accepted")
 

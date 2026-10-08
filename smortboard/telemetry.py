@@ -61,8 +61,8 @@ def estimate_complexity(
     has_broad_lease: bool,
     model: str | None,
 ) -> int:
-    """a guess at an unrated card's complexity (1/2/3), used only by cost analysis - never written
-    back to the card, since a real rating always wins once set.
+    """a guess at a card's complexity (1/2/3), used only by cost analysis and never stored on the
+    card.
 
     score = criteria_count + task_count, plus 2 for a broad lease or 1 for any lease at all
     model is retained for callers but never affects the estimate: model choice is the outcome
@@ -92,14 +92,6 @@ def _estimate_card_complexity(card: dict[str, Any]) -> int:
         has_broad_lease=any("**" in glob for glob in globs),
         model=model_ref(card),
     )
-
-
-def _card_complexity(card: dict[str, Any]) -> tuple[int, bool]:
-    """(level, rated) - the card's own rating if set, else an estimate"""
-    rated = card.get("complexity")
-    if rated in (1, 2, 3):
-        return rated, True
-    return _estimate_card_complexity(card), False
 
 
 def _basename(file_path: str) -> str:
@@ -905,26 +897,26 @@ def _attempt_capped(segment: list[dict[str, Any]]) -> bool:
 
 
 def _cap_fit_rows(store: Store, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """per complexity level, split rated vs estimated, worker run cost against the current
-    worker cap - how often a level's runs actually fit inside it"""
+    """per estimated complexity level, worker run cost against the current worker cap - how often a
+    level's runs actually fit inside it"""
     from smortboard.exec.runner import DEFAULT_CARD_BUDGET_USD
 
     cap = store.spend_cap("worker_budget_usd", DEFAULT_CARD_BUDGET_USD)
-    buckets: dict[tuple[int, bool], list[float]] = {}
+    buckets: dict[int, list[float]] = {}
     for card in cards:
-        level, rated = _card_complexity(card)
+        level = _estimate_card_complexity(card)
         for segment in _attempts(store.list_events(card["id"])):
             summary = _summarize_attempt(segment)
             if (summary["worker_cost_usd"] or 0) <= 0:
                 continue
-            buckets.setdefault((level, rated), []).append(summary["worker_cost_usd"])
+            buckets.setdefault(level, []).append(summary["worker_cost_usd"])
     rows = []
-    for (level, rated), costs in sorted(buckets.items(), key=lambda kv: (kv[0][0], not kv[0][1])):
+    for level, costs in sorted(buckets.items()):
         hit_cap = sum(1 for c in costs if c >= cap)
         rows.append(
             {
                 "complexity": level,
-                "source": "rated" if rated else "estimated",
+                "source": "estimated",
                 "runs": len(costs),
                 "within_cap": len(costs) - hit_cap,
                 "hit_cap": hit_cap,
@@ -1108,7 +1100,7 @@ def cost_optimisation(store: Store, board_id: str | None = None) -> dict[str, An
 def _finished_attempt_evidence(store: Store, card: dict[str, Any]) -> list[dict[str, Any]]:
     """completed attempts keep their own model and effort; old failures survive later retries"""
     attempts = _attempts(store.list_events(card["id"]))
-    level, rated = _card_complexity(card)
+    level = _estimate_card_complexity(card)
     rows = []
     for index, segment in enumerate(attempts):
         summary = _summarize_attempt(segment)
@@ -1133,7 +1125,7 @@ def _finished_attempt_evidence(store: Store, card: dict[str, Any]) -> list[dict[
                 "complexity": summary["complexity_snapshot"] or level,
                 "complexity_source": "run_rating"
                 if summary["complexity_snapshot"]
-                else ("current_rating" if rated else "current_estimate"),
+                else "current_estimate",
                 "cost_usd": summary["cost_usd"],
                 "turns": summary["turns"],
                 "fix_rounds": summary["fix_rounds"],

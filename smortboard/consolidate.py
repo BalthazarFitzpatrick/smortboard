@@ -181,8 +181,6 @@ def _fold(
             "lab": model_source.get("lab"),
             "effort": model_source.get("effort"),
             "ledger_task": ledger[0] if ledger else None,
-            # a fold cannot lower its most complex member's scope
-            "complexity": max((c["complexity"] for c in fresh if c["complexity"]), default=None),
         },
     )
 

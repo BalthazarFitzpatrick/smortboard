@@ -1,7 +1,7 @@
 # mission control and workforce
 
 **plan in mission control, steer in workforce.** one conversation gives you cards, each with a
-lease, a model and a complexity. then leave the agents alone unless something is off.
+lease and a model. then leave the agents alone unless something is off.
 
 ## how it works
 
@@ -12,7 +12,7 @@ lease, a model and a complexity. then leave the agents alone unless something is
 
 ### mission control
 
-**it replies in conversation and proposes cards**, each with leases, a complexity and a suggested
+**it replies in conversation and proposes cards**, each with leases and a suggested
 model. it reads fresh read-only clones of the board's repos with `Read`, `Grep` and `Glob` only: no `Edit`,
 `Write` or `Bash`. it sees what each model has cost and passed on this board, and is told to prefer the
 cheapest model that reaches clean pull requests on similar cards.

@@ -38,9 +38,9 @@ different things:
 | reviewer | gives a verdict on a diff | **another lab than the worker**, once you have two. an independent reader is the point of the gate; one family shares blind spots |
 | fold | consolidates the backlog | mission control's class: the same judgement, smaller surface |
 
-`i` groups finished cards by model and complexity with their cost. that is where the right worker
-model shows. let a card's complexity move the worker, not the board default: up for design work,
-low for mechanical edits.
+`i` groups finished cards by model and estimated scope with their cost. that is where the right
+worker model shows. set a card's own model for design work or mechanical edits instead of moving
+the board default.
 
 ### fallbacks
 

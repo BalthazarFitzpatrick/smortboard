@@ -45,7 +45,6 @@ CARD_WRITABLE_FIELDS = {
     "findings_route",
     "model",
     "lab",
-    "complexity",
     "effort",
 }
 
@@ -53,9 +52,6 @@ CARD_WRITABLE_FIELDS = {
 class ProposedCycleError(ValueError):
     """the proposed cards depend on each other in a loop"""
 
-
-# 1/2/3 = low/medium/high - see schema.py migration 19
-COMPLEXITY_LEVELS = (1, 2, 3)
 
 # board-wide values, one settings row per key. unset means no row.
 # the three models are stored only when the operator set them - callers apply the defaults (opus for the
@@ -283,11 +279,6 @@ def _card_dict(row: sqlite3.Row) -> dict[str, Any]:
     if card["model"] is not None and card["lab"] is None:
         card["lab"] = "anthropic"
     return card
-
-
-def _check_complexity(value: Any) -> None:
-    if value is not None and value not in COMPLEXITY_LEVELS:
-        raise ValueError(f"complexity must be one of {COMPLEXITY_LEVELS} or null, not {value!r}")
 
 
 def _check_positive_int(name: str, value: Any) -> None:
@@ -730,7 +721,6 @@ class Store:
         model: str | None = None,
         ledger_task: str | None = None,
         depends_on: list[str] | None = None,
-        complexity: int | None = None,
         lab: str | None = None,
         effort: str | None = None,
     ) -> dict[str, Any]:
@@ -751,7 +741,6 @@ class Store:
                 model,
                 ledger_task,
                 depends_on,
-                complexity,
                 lab,
                 effort,
             )
@@ -773,7 +762,6 @@ class Store:
         model: str | None = None,
         ledger_task: str | None = None,
         depends_on: list[str] | None = None,
-        complexity: int | None = None,
         lab: str | None = None,
         effort: str | None = None,
         *,
@@ -781,7 +769,6 @@ class Store:
     ) -> dict[str, Any]:
         self._check_blocked_invariant(status, blocked_reason_code)
         lab, model = _model_pair(lab, model)
-        _check_complexity(complexity)
         _check_effort("effort", effort)
         validate_effort(
             *role_ref(self.get_settings(), "worker", {"lab": lab, "model": model}), effort
@@ -797,8 +784,8 @@ class Store:
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
                 blocked_reason_code, description, position, review_flag, model, ledger_task,
-                complexity, created_at, updated_at, lab, effort)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, lab, effort)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -813,7 +800,6 @@ class Store:
                 int(review_flag),
                 model,
                 ledger_task,
-                complexity,
                 now,
                 now,
                 lab,
@@ -1077,8 +1063,6 @@ class Store:
                 fields.get("lab", current["lab"]), fields.get("model", current["model"])
             )
             fields.update(lab=lab, model=model)
-        if "complexity" in fields:
-            _check_complexity(fields["complexity"])
         if "effort" in fields:
             _check_effort("effort", fields["effort"])
         elif {"lab", "model"} & fields.keys():
@@ -1386,7 +1370,6 @@ class Store:
             "review_flag",
             "model",
             "lab",
-            "complexity",
             "effort",
             "model_efforts",
             "ledger_task",
@@ -1421,8 +1404,8 @@ class Store:
             """
             INSERT INTO cards (id, board_id, repo_id, title, workstream, status,
                 blocked_reason_code, description, position, review_flag, model, findings_route,
-                created_at, updated_at, lab, complexity, ledger_task, effort, model_efforts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, lab, ledger_task, effort, model_efforts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card["id"],
@@ -1440,7 +1423,6 @@ class Store:
                 card["created_at"],
                 card["updated_at"],
                 card.get("lab"),
-                card.get("complexity"),
                 card.get("ledger_task"),
                 card.get("effort"),
                 json.dumps(card["model_efforts"]) if card.get("model_efforts") else None,

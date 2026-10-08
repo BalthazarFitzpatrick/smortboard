@@ -204,7 +204,7 @@ responses.set('/api/costs/optimisation', stubJson(200, {
   cap_fit: {
     worker_cap_usd: 5,
     rows: [
-      {complexity: 1, source: 'rated', runs: 3, within_cap: 2, hit_cap: 1, median_cost_usd: 0.4, max_cost_usd: 5.2},
+      {complexity: 1, source: 'estimated', runs: 3, within_cap: 2, hit_cap: 1, median_cost_usd: 0.4, max_cost_usd: 5.2},
     ],
   },
   suggested_caps: {
@@ -229,7 +229,7 @@ await new Promise(r => setTimeout(r, 0));
 assert.equal(findHeaderLabel().textContent, 'cost optimisation', 'ArrowRight switches views');
 const optText = flatText({children: [menu2.sections[0].node]}).join(' | ');
 assert.match(optText, /cap fit - worker cap \$5\.00/);
-assert.match(optText, /low \| rated \| 3 \| 2 \| 1 \| \$0\.40 \| \$5\.20/);
+assert.match(optText, /low \| estimated \| 3 \| 2 \| 1 \| \$0\.40 \| \$5\.20/);
 assert.match(optText, /suggested caps/);
 assert.match(optText, /worker \| \$5\.00 \| \$1\.80 \| \$2\.00 \| 1 \| \$0\.30/);
 assert.match(optText, /reviewer \| \$1\.50 \| not enough runs/);

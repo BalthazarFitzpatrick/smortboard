@@ -25,7 +25,7 @@ def store(tmp_path):
 
 
 def _run(store, board, lab, cost, *, model="same-name"):
-    card = store.create_card(board["id"], None, lab, complexity=2)
+    card = store.create_card(board["id"], None, lab)
     store.append_event(card["id"], "lifecycle_started", {})
     identity = {"lab": lab, "model": model, "profile": "work"}
     store.append_event(

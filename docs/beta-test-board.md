@@ -140,7 +140,7 @@ CARD SHAPE - I want these properties across the set, to test the board itself
   something real to check.
 - a last card: README with how to run and play.
 
-For each card: complexity low or medium, sonnet as the model, a narrow lease over the real paths above,
+For each card: sonnet as the model, a narrow lease over the real paths above,
 and acceptance criteria a node:test can check where the card has logic.
 ```
 
@@ -148,7 +148,7 @@ and acceptance criteria a node:test can check where the card has logic.
 
 | step | do | it exercises |
 |---|---|---|
-| mission control | read the plan, then let it create the cards | planning, card text limits (8-word titles), leases over real paths, complexity, dependencies |
+| mission control | read the plan, then let it create the cards | planning, card text limits (8-word titles), leases over real paths, dependencies |
 | `w` | run the whole board | parallel runs on disjoint leases, queued cards pulsing slowly in their own column, lease-overlap serialisation |
 | the three-deep chain | watch a child start on an unmerged parent | review-mode stacks (up to three deep), a pull request re-targeted when its parent lands |
 | the api validation card | read the reviewer's verdict | the reviewer's four questions, severity grading, findings routed to you |

@@ -247,7 +247,6 @@ def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_the
         "lab": None,
         "effort": None,
         "task_id": None,
-        "complexity": "low",
     }
     full = bare | {
         "title": "full",
@@ -256,7 +255,6 @@ def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_the
         "depends_on": ["bare"],
         "model": "claude-haiku-4-5",
         "task_id": "t1",
-        "complexity": "high",
     }
     payload = {
         "reply": "ok",
@@ -279,13 +277,9 @@ def test_a_strict_reply_with_its_optional_values_null_reads_like_one_without_the
     by_title = {c["title"]: c for c in store.list_cards(board["id"])}
     made_bare, made_full = by_title["bare"], by_title["full"]
     assert [made_bare[key] for key in ("repo_id", "model", "lab", "ledger_task")] == [None] * 4
-    assert made_bare["complexity"] == 1
+    assert "complexity" not in made_bare
     assert made_full["repo_id"] is not None
-    assert (made_full["model"], made_full["ledger_task"], made_full["complexity"]) == (
-        "claude-haiku-4-5",
-        "t1",
-        3,
-    )
+    assert (made_full["model"], made_full["ledger_task"]) == ("claude-haiku-4-5", "t1")
     assert made_full["depends_on"] == [made_bare["id"]]
     authors = [m["author"] for m in store.list_orchestrator_messages(board["id"])]
     assert authors == ["operator", "orchestrator"]
