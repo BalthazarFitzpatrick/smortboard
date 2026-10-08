@@ -584,6 +584,12 @@ body {
   gap: 12px;
 }
 
+/* the usage cells (usage_cells.js): codex 7d, then claude 5h and 7d, leftmost in the corner. the
+   cells are taller than the corner's row, so the group hangs from its top edge instead of centring.
+   stretch, not flex-start: a ui_base divider has no height of its own and takes the row's */
+.usage-cells { order: -1; display: flex; align-items: stretch; align-self: flex-start; gap: 10px; }
+.usage-group { display: flex; align-items: stretch; gap: 6px; }
+
 /* the beta's bug form (board.js buildIssueButton): FIRST in the corner, left of the board's own
    numbers. it is an <a> so the keyboard can reach it, which is the only reason it needs rules of
    its own - a link arrives underlined and inline, and next to the settings button that read as a
