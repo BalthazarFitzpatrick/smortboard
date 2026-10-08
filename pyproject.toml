@@ -95,4 +95,7 @@ python_functions = ["test_*"]
 # parallel by default - see the dev dependency note. `-n0` puts it back on one process, which is
 # what you want when reading one test's output or dropping into a debugger
 addopts = "-n auto"
-markers = ["posix_only: needs posix file modes, signals or shell paths; skipped on windows"]
+markers = [
+    "posix_only: needs posix file modes, signals or shell paths; skipped on windows",
+    "windows: touches code with an os branch; the only tests the windows ci job runs",
+]
