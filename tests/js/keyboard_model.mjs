@@ -49,9 +49,9 @@ function SpyDrawer() {
 
 // THE REAL Menu, not a spy: which button a confirm opens on, and whether a menu counts as a
 // surface over the board, are both properties of the panel it actually builds
-const src = [uiBase('menu.js'), uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('segments.js'), uiBase('disclosure.js'),
+const src = [uiBase('menu.js'), uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('segments.js'), uiBase('disclosure.js'), uiBase('aside.js'),
   uiBase('shell.js'), uiBase('pile.js'), smort('columns.js'), smort('card_panel.js'),
-  smort('chat.js'), smort('shortcuts.js'), smort('board.js'), smort('settings_presets.js'), smort('settings.js'),
+  smort('chat.js'), smort('shortcuts.js'), smort('board.js'), smort('settings_presets.js'), smort('settings_help.js'), smort('settings.js'),
   smort('boards.js')].join('\n;\n');
 const mod = new Function('makeDrawer', `${src}
 ;return {Menu, renderCardStrip, st, bp, pe, BINDINGS, surfaceOverBoard, topSurface, surfaceFields, panelStops, computePanelMove,

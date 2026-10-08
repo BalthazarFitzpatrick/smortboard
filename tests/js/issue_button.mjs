@@ -42,9 +42,9 @@ function SpyDrawer() {
   return {el: element('div'), body: element('div'), open() {}, close() {}, toggle() {}, isOpen: () => false};
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('segments.js'), uiBase('disclosure.js'), uiBase('shell.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('segments.js'), uiBase('disclosure.js'), uiBase('aside.js'), uiBase('shell.js'),
   uiBase('pile.js'), smort('columns.js'), smort('card_panel.js'), smort('chat.js'),
-  smort('shortcuts.js'), smort('board.js'), smort('scheduler.js'), smort('settings_presets.js'), smort('settings.js')]
+  smort('shortcuts.js'), smort('board.js'), smort('scheduler.js'), smort('settings_presets.js'), smort('settings_help.js'), smort('settings.js')]
   .join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {ISSUE_FORM_URL, cornerRef: () => barCorner(), buttonRef: () => document.getElementById('issue-button')};`)(SpyMenu, SpyDrawer);

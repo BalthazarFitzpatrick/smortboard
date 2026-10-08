@@ -8,7 +8,7 @@ requires-python = ">=3.11"
 dependencies = [
     # pinned while the shared soft focus glow and ambient pulse await release
     # return to a tag once both primitives ship
-    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@abd882cf46d4284a01f06b2e7e0dc0a86396730e",
+    "ui_base @ git+https://github.com/BalthazarFitzpatrick/smortui.git@5e2676cd4f072c9e557cddeadc521e1dfde40690",
     # os-correct data dir for the default db location — not the cwd, not a hand-rolled path
     "platformdirs>=4.0",
     # mission control's one screenshot per ask - host-side only, chromium headless. the browser

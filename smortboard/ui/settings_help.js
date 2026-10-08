@@ -207,3 +207,38 @@ const SETTINGS_HELP = {
 function helpFor(id) {
   return SETTINGS_HELP[id] || null;
 }
+
+// the nearest row at or above `el` (stopping at the panel) that carries a help id
+function helpRowOf(el, panel) {
+  for (let node = el; node && node !== panel; node = node.parentNode) {
+    if (node.dataset && node.dataset.help) return node;
+  }
+  return null;
+}
+
+// hangs the floating help box beside a settings panel: it follows the focused row and says what the
+// setting is and what its choices mean, then hides when focus leaves the panel. with the mouse switch
+// on it also follows the pointer. returns {destroy} for the panel's close
+function bindSettingsHelp(panel) {
+  const aside = makeAside({host: panel});
+  const showFor = el => {
+    const row = helpRowOf(el, panel);
+    const entry = row && helpFor(row.dataset.help);
+    if (entry) aside.show(row, entry);
+    else aside.hide();
+  };
+  const onFocusIn = evt => showFor(evt.target);
+  const onFocusOut = evt => { if (!evt.relatedTarget || !panel.contains(evt.relatedTarget)) aside.hide(); };
+  const onOver = evt => { if (typeof mouseAffordances === 'function' && mouseAffordances()) showFor(evt.target); };
+  panel.addEventListener('focusin', onFocusIn);
+  panel.addEventListener('focusout', onFocusOut);
+  panel.addEventListener('mouseover', onOver);
+  return {
+    destroy() {
+      panel.removeEventListener('focusin', onFocusIn);
+      panel.removeEventListener('focusout', onFocusOut);
+      panel.removeEventListener('mouseover', onOver);
+      aside.destroy();
+    },
+  };
+}
