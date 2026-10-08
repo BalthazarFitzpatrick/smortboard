@@ -29,11 +29,16 @@ windows). see [credential files](credentials.md).
 
 **`o` holds what every board shares. `shift`+`o` holds one board's own.**
 
-`o` has three groups. general: soft file leases, free merge and off-limit branches (enabled or
-disabled), folders
-mission control can read, where new repos go, how many cards run at once, the mall cam interval,
-backup and the mouse. labs and models: what a usage limit does, and the lab, model, fallbacks and
-effort per role. cost control: spend caps per run and per card.
+`o` opens with a preset row (careful, balanced, fast) that sets the gates, cards at once and the spend
+caps together; `custom` lights by itself when your values match none of them, and the line under it says
+how far you are from the closest. below it are six groups, each closed until you open it and showing its
+current values while closed. safety gates: soft file leases, free merge, open run mode and off-limit
+branches, each `on` or `off`, with how many boards use it. capacity: how many cards run at once, the mall
+cam interval and the mouse. cost: spend caps per run and per card. models and limits: what a usage limit
+does (wait, ask me or switch), what the reviewer reads (diff or code), and the lab, model, fallbacks and
+effort per role. paths and data: where new repos go, folders mission control can read, and backup.
+advanced: the findings route, the resume briefing and the gate timeout. every on or off choice is a
+two-way toggle that reads `on | off`.
 
 <table><tr>
 <td width="33%"><img src="../images/settings-general.jpg" alt="general settings: soft file leases and free merge enabled or disabled for every board, folders mission control can read, where new repos go, how many cards run at once, the mall cam interval, backup and the mouse" width="100%"><br><sub>general: how it behaves</sub></td>
