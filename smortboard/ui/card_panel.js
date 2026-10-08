@@ -971,6 +971,9 @@ async function openModelPicker(onPick, anchor = null, onBack = null,
     [`${current.default_role}_model`]: null}, current.default_role);
   let picked = false;
   let menu = null;
+  // the model the cursor is on while it is not yet picked: its effort levels show in the next column
+  // (right only moves now, it no longer picks), and choosing an effort there picks that model too
+  let focusedModel = null;
 
   const selectedRef = () => selectedModel ? {lab: selectedLab, model: selectedModel}
     : (current.default_role ? selectedRoleDefault : defaults);
@@ -1010,6 +1013,7 @@ async function openModelPicker(onPick, anchor = null, onBack = null,
           selectedLab = item.id;
           selectedRoleLab = item.id;
           selectedModel = null;
+          focusedModel = null;
           selectedRoleDefault = resolvePickerRole(catalog,
             {[`${current.default_role}_lab`]: selectedLab}, current.default_role);
           resetEffort();
@@ -1024,23 +1028,33 @@ async function openModelPicker(onPick, anchor = null, onBack = null,
           : (catalog[selectedLab]?.models || []).map(model => ({
             id: model.id, label: model.label, stats: model.tier, on: model.id === selectedModel,
           })),
+        onFocus: item => {
+          focusedModel = item.id;
+          menu.refresh(buildSections());
+        },
         onPick: item => {
           selectedModel = item.id;
+          focusedModel = null;
           resetEffort();
           menu.refresh(buildSections());
         },
       },
-      effortColumn(selectedEffort, effort => {
+      effortColumn(focusedModel && focusedModel !== selectedModel ? null : selectedEffort, effort => {
+        if (focusedModel && focusedModel !== selectedModel) {
+          selectedModel = focusedModel;
+          focusedModel = null;
+        }
         selectedEffort = effort;
         pickedEfforts[refKey(selectedRef())] = effort;
         menu.refresh(buildSections());
-      }, 'effort', selectedRow()),
+      }, 'effort', focusedModel
+        ? catalog[selectedLab]?.models.find(row => row.id === focusedModel) : selectedRow()),
     ],
   }, {
     kind: 'buttons',
     buttons: [
       // an effort alone is a choice too: it rides on the default model
-      {id: 'save-model', label: 'save', enabled: selectedModel !== null || selectedEffort !== null
+      {id: 'save-model', label: 'save', primary: true, enabled: selectedModel !== null || selectedEffort !== null
           || !!current.default_role,
         onClick: openMenu => {
           picked = true;
