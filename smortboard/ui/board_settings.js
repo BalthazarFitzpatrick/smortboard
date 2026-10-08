@@ -23,9 +23,17 @@ function boardSettingsNote(text) {
   return note;
 }
 
+// the row's entry in settings_help.js, by its label
+const BOARD_HELP_IDS = {
+  'board preset': 'board_preset', 'merge mode': 'merge_mode', 'off-limit branches': 'board_off_limit_branches',
+  'file lease': 'lease_mode', 'run mode': 'run_mode', 'cards at once': 'board_max_parallel',
+  'daily budget, usd': 'daily_budget_usd',
+};
+
 function boardSettingsSection(label, ...nodes) {
   const box = document.createElement('div');
   box.className = 'settings-section';
+  if (BOARD_HELP_IDS[label]) box.dataset.help = BOARD_HELP_IDS[label];
   const title = document.createElement('div');
   title.className = 'field-label';
   title.textContent = label;
@@ -94,7 +102,7 @@ function boardPresetRow(board, settings, onSaved) {
 // one two-way choice saved to this board. `gate` names the global switch behind the second option:
 // its state shows under the row, the option is unavailable while it is off, and a stored choice
 // that the switch is holding back says so
-function boardChoiceRow({board, settings, label, field, options, gate, note, onSaved}) {
+function boardChoiceRow({board, settings, label, field, options, gate, onSaved}) {
   const status = boardSettingsStatus();
   const inForce = boardInForce(board, settings)[field];
   const gateOn = !gate || booleanIsOn(settings, gate);
@@ -133,7 +141,7 @@ function boardChoiceRow({board, settings, label, field, options, gate, note, onS
   }
   // a stored choice the global switch is holding back is kept, and says so
   const held = boardSettingsNote('');
-  nodes.push(held, boardSettingsNote(note), status);
+  nodes.push(held, status);
   const section = boardSettingsSection(label, ...nodes);
   // relights the row after a preset or another save wrote this board's modes
   section.refreshRow = () => {
@@ -184,9 +192,11 @@ function offLimitEditor(board, settings, onSaved) {
   });
   input.addEventListener('blur', save);
   showNone();
-  box.append(input, none, status, boardSettingsNote(lifted
-    ? 'off-limit branches are off for every board - turn them on in settings (o) to use this list.'
-    : 'the board never lands a card on these. main, master and trunk unless you change it.'));
+  box.append(input, none, status);
+  // while the global switch is off the list stays visible but cannot be edited, and says why
+  if (lifted) {
+    box.appendChild(boardSettingsNote('off-limit branches are off for every board - turn them on in settings (o) to use this list.'));
+  }
   return boardSettingsSection('off-limit branches', box);
 }
 
@@ -246,8 +256,6 @@ function renderBoardSettings(board, settings) {
       choiceRow({
         label: 'merge mode', field: 'merge_mode', gate: 'allow_free_merge',
         options: [{label: 'review', value: 'review'}, {label: 'free', value: 'free'}],
-        note: 'review: a passing card opens a pull request and waits for you. free: it merges into '
-          + 'the base by itself. off-limit branches are never merged either way.',
       }),
       offLimitEditor(board, settings, onSaved),
     ],
@@ -255,14 +263,10 @@ function renderBoardSettings(board, settings) {
       choiceRow({
         label: 'file lease', field: 'lease_mode', gate: 'allow_soft_leases',
         options: [{label: 'strict', value: 'strict'}, {label: 'soft', value: 'soft'}],
-        note: 'strict: a card writes only inside its lease. soft: it may also write unprotected '
-          + 'paths no other card holds, and each one is shown on the card.',
       }),
       choiceRow({
         label: 'run mode', field: 'run_mode', gate: 'allow_open_mode',
         options: [{label: 'sealed', value: 'sealed'}, {label: 'open', value: 'open'}],
-        note: 'sealed: cards run in a container. open: cards run on your machine, protected only by '
-          + 'file leases and hooks, which is weaker than a container.',
       }),
       boardSettingsSection('cards at once',
         boardNumberField({
@@ -270,15 +274,14 @@ function renderBoardSettings(board, settings) {
           inputMode: 'numeric', parse: parallelParseInput,
           invalid: 'must be a positive whole number, or empty for no limit',
         }),
-        boardSettingsNote(`blank: only the global limit in o (${globalCap}) applies. a number here can only lower it for this board.`)),
+        boardSettingsNote(`global limit: ${globalCap}`)),
     ],
     budget: [
       boardSettingsSection('daily budget, usd',
         boardNumberField({
           board, onSaved, field: 'daily_budget_usd', placeholder: 'no budget', className: 'settings-budget-input',
           inputMode: 'decimal', parse: budgetParseInput, invalid: 'must be a positive amount, or empty for no cap',
-        }),
-        boardSettingsNote('new cards stop starting once today\'s (utc) spend reaches it.')),
+        })),
     ],
   };
 
@@ -336,11 +339,15 @@ function onBoardSettingsKey(evt) {
   if (evt.code === 'Escape') closeBoardSettingsPanel();
 }
 
+// the floating help box of the open panel, made on open and destroyed on close
+let boardHelp = null;
+
 async function openBoardSettingsPanel() {
   if (!bs.backdrop) buildBoardSettingsDom();
   document.body.appendChild(bs.backdrop);
   document.addEventListener('keydown', onBoardSettingsKey);
   await loadBoardSettings();
+  boardHelp = bindSettingsHelp(bs.panel);
   focusPanel(bs.panel);
 }
 
@@ -349,6 +356,7 @@ function closeBoardSettingsPanel() {
   // a submenu goes with its panel - left open it hung over the board with nothing under it
   Menu.closeOpen?.();
   document.removeEventListener('keydown', onBoardSettingsKey);
+  if (boardHelp) { boardHelp.destroy(); boardHelp = null; }
   bs.backdrop.remove();
   reenterIfFocusLost();
 }

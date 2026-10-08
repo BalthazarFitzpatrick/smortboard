@@ -64,9 +64,9 @@ class SpyMenu {
   close() {}
 }
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('segments.js'), uiBase('disclosure.js'), uiBase('shell.js'), uiBase('pile.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('segments.js'), uiBase('disclosure.js'), uiBase('aside.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
-  smort('board.js'), smort('settings_presets.js'), smort('settings.js'), smort('board_settings.js')].join('\n;\n');
+  smort('board.js'), smort('settings_presets.js'), smort('settings_help.js'), smort('settings.js'), smort('board_settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {bs, st, BINDINGS, openBoardSettingsPanel,
   setBoards: list => { boards = list; }, setCurrent: id => { currentBoardId = id; }};`)(SpyMenu, SpyDrawer);
@@ -162,8 +162,19 @@ assert.ok(text(section('merge mode')).includes('free merge: off in general'));
 assert.ok(text(section('merge mode')).includes('turn on in general'));
 assert.ok(text(section('file lease')).includes('soft file leases: off in general'));
 assert.ok(text(section('run mode')).includes('open run mode: off in general'));
-assert.ok(text(section('cards at once')).includes('(3)'), 'the note names the global limit');
-assert.ok(text(section('cards at once')).includes('can only lower'));
+assert.ok(text(section('cards at once')).includes('global limit: 3'), 'the row names the global limit');
+
+// ---- the help box replaces the inline descriptions: each row carries its id and the box follows focus
+const helpRow = id => panel().querySelectorAll('.settings-section').find(sec => sec.dataset && sec.dataset.help === id);
+['board_preset', 'merge_mode', 'board_off_limit_branches', 'lease_mode', 'run_mode', 'board_max_parallel',
+  'daily_budget_usd'].forEach(id => assert.ok(helpRow(id), `${id} row carries its help id`));
+assert.ok(!text(section('run mode')).includes('weaker than a container'), 'no inline description under the row');
+const asides = () => document.body.children.filter(c => String(c.className).includes('aside'));
+assert.equal(asides().length, 1, 'one help box while the panel is open');
+mod.bs.panel._listeners.focusin.forEach(fn => fn({target: helpRow('run_mode')}));
+assert.ok(text(asides()[0]).includes('run mode'), 'the box names the focused row');
+assert.ok(text(asides()[0]).includes('weaker'), 'and says what its choices mean');
+mod.bs.panel._listeners.focusout.forEach(fn => fn({relatedTarget: null}));
 
 // ---- groups are independent: opening one leaves the others as they were, and the set is kept -----
 await click(groupHead('landing').querySelector('.disclosure-head'));
@@ -203,7 +214,6 @@ assert.equal(boardsState[1].lease_mode, null, 'beta is untouched');
 assert.deepEqual(lit('board preset'), ['custom'], 'free merge plus soft matches no preset');
 assert.ok(text(section('board preset')).includes('no preset matches. closest is free merge, with'));
 assert.ok(text(section('board preset')).includes('1 difference: file lease is soft.'));
-assert.ok(text(section('run mode')).includes('weaker than a container'));
 await click(buttons('run mode')[1]);
 assert.deepEqual(lastBoardPatch(), {path: '/api/boards/b1', body: {run_mode: 'open'}});
 assert.deepEqual(lit('run mode'), ['open']);

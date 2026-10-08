@@ -150,9 +150,9 @@ class SpyMenu {
 }
 SpyMenu.closedOpen = 0;
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('segments.js'), uiBase('disclosure.js'), uiBase('shell.js'), uiBase('pile.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('segments.js'), uiBase('disclosure.js'), uiBase('aside.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
-  smort('board.js'), smort('settings_presets.js'), smort('settings.js')].join('\n;\n');
+  smort('board.js'), smort('settings_presets.js'), smort('settings_help.js'), smort('settings.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
 ;return {generalPresetPatch, panelStops, openIds: () => openGroupIds, toggleSettingsPanel, openSettingsPanel, closeSettingsPanel, st, readPaths, parallelCaps, BINDINGS, mc, mallCam, spendCaps,
   openModelPicker, resolvePickerRole,
@@ -348,8 +348,26 @@ assert.equal(list().querySelector('.settings-save-status').textContent, '', 'a l
   assert.deepEqual(segLit('off_limit_branches'), ['on']);
 }
 
-// ---- open run mode: the note says it is weaker --------------------------------------------------
-assert.ok(allText(list()).includes('weaker than sealed'));
+// ---- the help box: the descriptions moved out of the rows into a box that follows the focused row ---
+const helpRow = id => {
+  const walk = el => (el.dataset && el.dataset.help === id ? el : (el.children || []).map(walk).find(Boolean));
+  return walk(list());
+};
+assert.ok(!allText(list()).includes('weaker than sealed'), 'no inline description under the row');
+assert.ok(helpRow('allow_open_mode'), 'the open run mode row carries its help id');
+['preset', 'allow_soft_leases', 'allow_free_merge', 'off_limit_branches', 'max_parallel', 'enable_mouse',
+  'usage_limit_route', 'reviewer_input', 'worker_budget_usd', 'card_total_budget_usd', 'models', 'repos_home',
+  'mission_control_read_paths', 'backup', 'findings_route', 'resume_briefing', 'gate_timeout_seconds']
+  .forEach(id => assert.ok(helpRow(id), `${id} row carries its help id`));
+const asideEls = () => document.body.children.filter(c => String(c.className).includes('aside'));
+assert.equal(asideEls().length, 1, 'one help box while the panel is open');
+const focusRow = id => mod.st.panel._listeners.focusin.forEach(fn => fn({target: helpRow(id)}));
+focusRow('allow_open_mode');
+assert.ok(allText(asideEls()[0]).includes('open run mode'), 'the box names the focused setting');
+assert.ok(allText(asideEls()[0]).includes('weaker than a container'), 'and says what its choices mean');
+focusRow('max_parallel');
+assert.ok(allText(asideEls()[0]).includes('cards at once'), 'it follows the focus to the next row');
+mod.st.panel._listeners.focusout.forEach(fn => fn({relatedTarget: null}));
 await pickSeg('allow_open_mode', 'on');
 assert.deepEqual(lastSettingsPatch(), {allow_open_mode: 'on'});
 await pickSeg('allow_open_mode', 'off');

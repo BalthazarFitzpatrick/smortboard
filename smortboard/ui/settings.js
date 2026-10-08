@@ -106,8 +106,10 @@ function buildChoice(key, pairs, label) {
   return seg;
 }
 
-function settingRow(label, control) {
+// helpId is the row's entry in settings_help.js: the floating box describes the row it is on
+function settingRow(label, control, helpId) {
   const row = makeNode('div', 'settings-row');
+  if (helpId) row.dataset.help = helpId;
   row.append(makeNode('span', 'field-label settings-row-name', label), control);
   return row;
 }
@@ -310,6 +312,7 @@ function fillRoleModels() {
   const roles = ['worker', 'reviewer', 'orchestrator', 'fold'];
   roles.forEach((role, index) => {
     const block = makeNode('div', 'settings-role-block');
+    block.dataset.help = 'models';
     const heading = makeNode('div', 'settings-role-heading');
     const status = makeNode('span', 'boards-status settings-role-status');
     heading.append(makeNode('span', 'field-label settings-role-name', role), status);
@@ -547,6 +550,7 @@ function renderSpendCapRow(cap) {
   }
   bindFieldKeys(input, save);
   spendCaps.inputs.set(cap.key, input);
+  row.dataset.help = cap.key;
   row.append(makeNode('span', 'field-label', cap.label), input);
   return row;
 }
@@ -652,15 +656,11 @@ const GATE_KEYS = ['allow_soft_leases', 'allow_free_merge', 'allow_open_mode'];
 function buildGateRow(key) {
   const seg = buildBooleanToggle(key);
   const box = makeNode('div', 'settings-stack settings-gate');
-  box.append(settingRow(BOOLEAN_SETTINGS[key].label, seg.el));
+  box.append(settingRow(BOOLEAN_SETTINGS[key].label, seg.el, key));
   if (GATE_KEYS.includes(key)) {
     const note = makeNode('div', 'field-label settings-gate-note', gateNoteText(key));
     gateNotes.set(key, note);
     box.appendChild(note);
-  }
-  if (key === 'allow_open_mode') {
-    box.appendChild(makeNode('div', 'field-label',
-      'open mode is weaker than sealed: cards run on your machine, not in a container.'));
   }
   if (key === 'off_limit_branches') {
     const line = makeNode('div', 'boards-status boards-error settings-confirm-line',
@@ -688,11 +688,9 @@ function buildCapacityBody() {
     placeholder: String(DEFAULT_MALL_CAM_SECONDS), className: 'settings-parallel-input'});
   Object.assign(mallCam, {input: cam.input, status: cam.status});
   body.append(
-    settingRow('cards at once', parallel.row),
-    makeNode('div', 'field-label', 'across every board. a board can hold itself lower in shift+o.'),
-    settingRow('mall cam interval (seconds per card)', cam.row),
-    settingRow('mouse', buildBooleanToggle('enable_mouse').el),
-    makeNode('div', 'field-label', 'on: hovering focuses what the arrows would and right-click opens the card menu.'),
+    settingRow('cards at once', parallel.row, 'max_parallel'),
+    settingRow('mall cam interval (seconds per card)', cam.row, 'mall_cam_interval_seconds'),
+    settingRow('mouse', buildBooleanToggle('enable_mouse').el, 'enable_mouse'),
   );
   return body;
 }
@@ -707,10 +705,8 @@ function buildModelsBody() {
   const reviewer = buildChoice('reviewer_input', WORDING.reviewerReads, 'reviewer reads');
   reviewer.buttons.forEach(btn => btn.classList.add('settings-reviewer-input-choice'));
   body.append(
-    settingRow('usage limits', usage.el),
-    makeNode('div', 'field-label', 'wait: the board parks until the limit resets. ask me: the card asks '
-      + 'in the inbox (n) before a fallback model. switch: your next credential profile, then the fallback.'),
-    settingRow('reviewer reads', reviewer.el),
+    settingRow('usage limits', usage.el, 'usage_limit_route'),
+    settingRow('reviewer reads', reviewer.el, 'reviewer_input'),
     makeNode('div', 'h-divider'),
     buildRoleModels(),
   );
@@ -719,10 +715,17 @@ function buildModelsBody() {
 
 function buildPathsBody() {
   const body = makeNode('div', 'settings-stack');
+  // each label and its control share one wrapper, so the help box has a row to sit beside
+  const part = (label, helpId, control) => {
+    const wrap = makeNode('div', 'settings-stack');
+    wrap.dataset.help = helpId;
+    wrap.append(makeNode('div', 'field-label', label), control);
+    return wrap;
+  };
   body.append(
-    makeNode('div', 'field-label', 'where new repos go'), buildReposHomeSection(),
-    makeNode('div', 'field-label', 'mission control can read'), buildReadPathsSection(),
-    makeNode('div', 'field-label', 'backup'), buildBackupSection(),
+    part('where new repos go', 'repos_home', buildReposHomeSection()),
+    part('mission control can read', 'mission_control_read_paths', buildReadPathsSection()),
+    part('backup', 'backup', buildBackupSection()),
   );
   showBackupStatus('');
   return body;
@@ -735,9 +738,9 @@ function buildAdvancedBody() {
     placeholder: String(SETTINGS_DEFAULTS.gate_timeout_seconds), className: 'settings-gate-timeout-input'});
   Object.assign(gateTimeout, {input: timeout.input, status: timeout.status});
   body.append(
-    settingRow('findings route', route.el),
-    settingRow('resume briefing', buildBooleanToggle('resume_briefing').el),
-    settingRow('gate timeout (seconds)', timeout.row),
+    settingRow('findings route', route.el, 'findings_route'),
+    settingRow('resume briefing', buildBooleanToggle('resume_briefing').el, 'resume_briefing'),
+    settingRow('gate timeout (seconds)', timeout.row, 'gate_timeout_seconds'),
   );
   return body;
 }
@@ -766,7 +769,7 @@ function buildPresetRow() {
   const status = makeNode('span', 'boards-status boards-error settings-save-status');
   Object.assign(presetUi, {seg, lineEl: line, leadEl: lead, strongEl: strong, statusEl: status});
   const box = makeNode('div', 'settings-stack settings-preset');
-  box.append(settingRow('mode preset', seg.el), line, status);
+  box.append(settingRow('mode preset', seg.el, 'preset'), line, status);
   return box;
 }
 
@@ -856,12 +859,16 @@ function onSettingsKey(evt) {
   if (evt.code === 'Escape') closeSettingsPanel();
 }
 
+// the floating help box of the open panel, made on open and destroyed on close
+let settingsHelp = null;
+
 function openSettingsPanel() {
   if (!st.backdrop) buildSettingsDom();
   document.body.appendChild(st.backdrop);
   document.addEventListener('keydown', onSettingsKey);
   disarmOffLimit();
   renderSettings();
+  settingsHelp = bindSettingsHelp(st.panel);
   // the panel takes the keyboard; up/down then walk its fields and / types into one
   focusPanel(st.panel);
 }
@@ -871,6 +878,7 @@ function closeSettingsPanel() {
   // a submenu goes with its panel - left open it hung over the board with nothing under it
   Menu.closeOpen?.();
   document.removeEventListener('keydown', onSettingsKey);
+  if (settingsHelp) { settingsHelp.destroy(); settingsHelp = null; }
   st.backdrop.remove();
   reenterIfFocusLost();
 }
