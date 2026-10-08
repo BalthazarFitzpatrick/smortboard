@@ -180,6 +180,16 @@ modelColumns[1].onPick({id: 'y'});
 assert.equal(effortOf().on, 'high', 'an effort picked for y is still there after visiting another model');
 modelColumns[1].onPick({id: 'x'});
 assert.equal(effortOf().on, 'low', 'going back to x finds the effort the card chose for x');
+// the cursor on a model shows that model's efforts without picking it; right only moves now
+modelColumns[1].onFocus({id: 'y'});
+assert.deepEqual(effortOf(), {levels: ['low', 'high'], on: undefined},
+  'efforts of the model under the cursor, none lit until one is chosen');
+// an effort chosen there picks that model too
+modelColumns[2].onPick({id: 'high'});
+assert.deepEqual(effortOf(), {levels: ['low', 'high'], on: 'high'}, 'the effort picks its model');
+assert.ok(modelColumns[1].items.find(item => item.id === 'y').on, 'and the model is now the picked one');
+assert.equal(menus[1].opts.sections.find(section => section.kind === 'buttons').buttons
+  .find(button => button.id === 'save-model').primary, true, 'enter confirms through the save button');
 modelColumns[2].onPick({id: 'high'});
 assert.equal(calls.filter(c => c.opts.method === 'PATCH').length, 0,
   'selecting a model waits for the save action');
@@ -188,7 +198,7 @@ const saveModel = menus[1].opts.sections.find(section => section.kind === 'butto
 saveModel.onClick(menus[1]);
 await flush();
 const modelPatch = calls.find(c => c.path === '/api/cards/c1' && c.opts.method === 'PATCH');
-assert.deepEqual(JSON.parse(modelPatch.opts.body), {lab: 'openai', model: 'x', effort: 'high'},
+assert.deepEqual(JSON.parse(modelPatch.opts.body), {lab: 'openai', model: 'y', effort: 'high'},
   "the picker patches the card's model ref and its effort");
 assert.ok(!calls.some(c => c.path.startsWith('/api/cards/c2')), 'and never touch the focused card instead');
 

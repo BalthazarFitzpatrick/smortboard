@@ -1,10 +1,10 @@
 // settings panel (o): mission control preferences, opened from the top-right button or the o key.
 //
 // built from the same modal-backdrop / panel-floating pair as preflight.js and inbox.js - nothing
-// here needs arrow/enter/escape hijacked from the document, so it stays out of Menu.
+// here needs arrow/enter/escape hijacked from the document. only the model chains open Menu lists.
 //
 // layout: a preset row, then six independent accordion groups (settings_presets.js generalGroups).
-// one GET /api/settings and one GET /api/boards per open feed every control; a save updates that
+// one GET /api/settings, /api/boards and /api/catalog per open feed every control; a save updates that
 // snapshot, and the headers, the preset row and the gate notes are redrawn from it.
 //
 // relies on globals board.js already defines: api, apiOrError, reenterIfFocusLost, loadBoards, and
@@ -175,188 +175,190 @@ function buildNumberField({key, parse, placeholder, className}) {
 }
 
 
-// ---- fallback picker ------------------------------------------------------------------------
+// ---- models by role: one chain per role, primary first, fallbacks in order of use ---------------
 
-// one fallback as people say it: "openai/gpt-x @ high"
-function fallbackText(entry) {
-  return entry.effort ? `${entry.ref} @ ${entry.effort}` : entry.ref;
-}
-
-function fallbackSummary(entries) {
-  if (!entries.length) return 'no fallbacks selected';
-  return `${entries.length} selected: ${entries.map(fallbackText).join(' → ')}`;
-}
-
-async function openFallbackPicker(role, initialEntries, anchor, status, onSaved) {
-  const catalog = await loadModelCatalog();
-  const labs = Object.keys(catalog);
-  let selectedLab = initialEntries.map(entry => entry.ref.split('/')[0]).find(lab => catalog[lab])
-    || (catalog.anthropic ? 'anthropic' : labs[0]);
-  let selected = initialEntries.map(entry => ({...entry}));
-  // the ref the effort column describes: the model row the arrows sit on, or the last one ticked
-  let focusedRef = selected.length ? selected[selected.length - 1].ref : null;
-  let saved = false;
-  let menu = null;
-
-  const showSummary = () => {
-    anchor.textContent = fallbackSummary(selected);
-    anchor.title = selected.map(fallbackText).join('\n');
-  };
-  const focusedEntry = () => selected.find(entry => entry.ref === focusedRef) || null;
-
-  // an effort saved before the model's levels changed, or never saved, restarts at the model's start
-  // effort so a re-save never sends a stale one and no entry is left without one
-  const clearStaleEfforts = () => {
-    for (const entry of selected) {
-      const [lab, model] = entry.ref.split('/');
-      const row = catalog[lab]?.models.find(row => row.id === model);
-      if (row && !modelEffortLevels(row).includes(entry.effort)) entry.effort = startEffort(row);
-    }
-  };
-  clearStaleEfforts();
-
-  const buildSections = () => {
-    const entry = focusedEntry();
-    const [lab, model] = entry?.ref.split('/') || [];
-    const row = catalog[lab]?.models.find(row => row.id === model);
-    const effort = effortColumn(entry?.effort, level => {
-      entry.effort = level;
-      showSummary();
-      menu.refresh(buildSections());
-    }, entry ? `effort: ${entry.ref}` : 'effort', row);
-    if (!entry) {
-      effort.items = [];
-      effort.empty = 'tick a model';
-    }
-    return [{
-      kind: 'columns',
-      columns: [
-        {
-          label: 'lab',
-          multi: false,
-          items: labs.map(lab => ({id: lab, label: lab, on: lab === selectedLab})),
-          onPick: item => {
-            selectedLab = item.id;
-            menu.refresh(buildSections());
-          },
-        },
-        {
-          label: 'models',
-          multi: true,
-          items: (catalog[selectedLab]?.models || []).map(model => {
-            const ref = `${selectedLab}/${model.id}`;
-            return {id: ref, label: model.label, stats: model.tier,
-              on: selected.some(entry => entry.ref === ref)};
-          }),
-          empty: selectedLab ? 'no models' : 'choose a lab',
-          onPick: (item, on) => {
-            if (on && !selected.some(entry => entry.ref === item.id)) {
-              const [pickLab, pickModel] = item.id.split('/');
-              const pickRow = catalog[pickLab]?.models.find(row => row.id === pickModel);
-              selected.push({ref: item.id, effort: startEffort(pickRow)});
-            }
-            if (!on) selected = selected.filter(entry => entry.ref !== item.id);
-            focusedRef = item.id;
-            showSummary();
-            menu.refresh(buildSections());
-          },
-          onFocus: item => {
-            focusedRef = item.id;
-            menu.refresh(buildSections());
-          },
-        },
-        effort,
-      ],
-    }, {
-      kind: 'buttons',
-      buttons: [{id: 'save-fallbacks', label: 'save fallbacks', onClick: async openMenu => {
-        const {ok, body} = await patchSettings({[`${role}_cross_lab_fallback`]: selected});
-        status.textContent = ok ? 'saved' : body?.error || 'could not save fallbacks';
-        if (ok) {
-          saved = true;
-          onSaved(selected.map(entry => ({...entry})));
-          openMenu.close();
-        }
-      }}],
-    }];
-  };
-
-  menu = new Menu({
-    title: `${role} fallback order`,
-    persistent: true,
-    sections: buildSections(),
-    onDismiss: () => {
-      if (saved) return;
-      anchor.textContent = fallbackSummary(initialEntries);
-      anchor.title = initialEntries.map(fallbackText).join('\n');
-    },
-  });
-  menu.openAt(anchor);
-  widenModelPicker(menu);
-}
-
-// ---- models by role: the four primary pickers and fallback pickers, launched from buttons -------
-
-const roleModels = {node: null};
+const ROLES = ['worker', 'reviewer', 'orchestrator', 'fold'];
+const roleModels = {node: null, noteEl: null, chains: new Map()};
 
 function buildRoleModels() {
   const node = makeNode('div', 'settings-stack');
   roleModels.node = node;
-  fillRoleModels();
+  roleModels.chains.clear();
+  ROLES.forEach((role, index) => {
+    const block = makeNode('div', 'settings-role-block');
+    block.dataset.help = 'models';
+    const status = makeNode('span', 'boards-status settings-role-status');
+    const heading = makeNode('div', 'settings-role-heading');
+    heading.append(makeNode('span', 'field-label settings-role-name', role), status);
+    const chain = makeNode('div', 'settings-chain');
+    block.append(heading, chain);
+    roleModels.chains.set(role, {chain, status});
+    fillRoleChain(role);
+    node.appendChild(block);
+    if (index < ROLES.length - 1) node.appendChild(makeNode('div', 'h-divider'));
+  });
+  roleModels.noteEl = makeNode('div', 'field-label settings-chain-note');
+  showChainNote();
+  node.appendChild(roleModels.noteEl);
   return node;
 }
 
-function fillRoleModels() {
+function showChainNote() {
+  if (!roleModels.noteEl) return;
+  roleModels.noteEl.textContent = 'fallbacks are only used when usage limits is switch, '
+    + `now ${usageLimitWord(snap.settings)}`;
+}
+
+// a ref is "lab/model"; a model id may hold slashes, so only the first one splits
+function splitRef(ref) {
+  const at = ref.indexOf('/');
+  return at === -1 ? ['anthropic', ref] : [ref.slice(0, at), ref.slice(at + 1)];
+}
+
+function findModelRow(lab, model) {
+  return modelCatalog[lab]?.models.find(row => row.id === model);
+}
+
+// the role's preferred model on a lab, with the effort it starts on
+function defaultCombo(role, lab) {
+  const {model} = resolvePickerRole(modelCatalog, {[`${role}_lab`]: lab}, role);
+  return {lab, model, effort: startEffort(findModelRow(lab, model))};
+}
+
+// effort after a model change: kept when the new model offers it, else the model's start effort
+function carryEffort(effort, lab, model) {
+  const row = findModelRow(lab, model);
+  return modelEffortLevels(row).includes(effort) ? effort : startEffort(row);
+}
+
+// the chain as rows: the primary (the catalog default while unset), then each fallback
+function chainOf(role) {
   const settings = snap.settings;
-  clearChildren(roleModels.node);
-  const roles = ['worker', 'reviewer', 'orchestrator', 'fold'];
-  roles.forEach((role, index) => {
-    const block = makeNode('div', 'settings-role-block');
-    block.dataset.help = 'models';
-    const heading = makeNode('div', 'settings-role-heading');
-    const status = makeNode('span', 'boards-status settings-role-status');
-    heading.append(makeNode('span', 'field-label settings-role-name', role), status);
-
-    const primaryRow = makeNode('div', 'settings-role-control');
-    const picker = makeNode('button', 'toggle role-model');
-    picker.type = 'button';
-    picker.dataset.role = role;
-    const roleEffort = settings[`${role}_effort`];
-    picker.textContent = modelLabel(settings[`${role}_model`], settings[`${role}_lab`])
-      + (roleEffort ? ` @ ${roleEffort}` : '');
-    picker.onclick = async () => {
-      try {
-        await openModelPicker(async (lab, model, effort) => {
-          const {ok, body} = await patchSettings({[`${role}_lab`]: lab, [`${role}_model`]: model,
-            [`${role}_effort`]: effort});
-          if (ok) fillRoleModels();
-          else status.textContent = body?.error || 'could not save model';
-        }, picker, null, {lab: settings[`${role}_lab`], model: settings[`${role}_model`],
-          effort: roleEffort, default_settings: settings, default_role: role});
-      } catch (err) { status.textContent = err.message; }
-    };
-    primaryRow.append(makeNode('span', 'field-label', 'primary model'), picker);
-
-    const fallbackRow = makeNode('div', 'settings-role-control');
-    const fallback = makeNode('button', 'toggle role-fallback settings-role-fallback-trigger');
-    fallback.type = 'button';
-    fallback.dataset.role = role;
-    let fallbackRefs = settings[`${role}_cross_lab_fallback`] || [];
-    fallback.textContent = fallbackSummary(fallbackRefs);
-    fallback.title = fallbackRefs.map(fallbackText).join('\n');
-    fallback.setAttribute('aria-label', `${role} fallback models in order`);
-    fallback.onclick = async () => {
-      try {
-        await openFallbackPicker(role, fallbackRefs, fallback, status, refs => { fallbackRefs = refs; });
-      } catch (err) {
-        status.textContent = err.message;
-      }
-    };
-    fallbackRow.append(makeNode('span', 'field-label', 'fallback order'), fallback);
-    block.append(heading, primaryRow, fallbackRow);
-    roleModels.node.appendChild(block);
-    if (index < roles.length - 1) roleModels.node.appendChild(makeNode('div', 'h-divider'));
+  const primary = resolvePickerRole(modelCatalog, settings, role);
+  const rows = [{...primary, effort: carryEffort(settings[`${role}_effort`], primary.lab, primary.model)}];
+  (settings[`${role}_cross_lab_fallback`] || []).forEach(entry => {
+    const [lab, model] = splitRef(entry.ref);
+    rows.push({lab, model, effort: carryEffort(entry.effort, lab, model)});
   });
+  return rows;
+}
+
+const fallbackList = role => (snap.settings[`${role}_cross_lab_fallback`] || []).map(entry => ({...entry}));
+
+// one atomic save for the role; only its chain is redrawn, and focus returns to focusKey
+async function saveChain(role, fields, focusKey) {
+  const {ok, body} = await patchSettings(fields);
+  if (!ok) { roleModels.chains.get(role).status.textContent = body?.error || 'could not save'; return; }
+  fillRoleChain(role, focusKey);
+}
+
+// the primary writes lab, model and effort together; a fallback writes the whole new list
+function saveCombo(role, index, combo, focusKey) {
+  if (index === 0) {
+    return saveChain(role, {[`${role}_lab`]: combo.lab, [`${role}_model`]: combo.model,
+      [`${role}_effort`]: combo.effort}, focusKey);
+  }
+  const list = fallbackList(role);
+  list[index - 1] = {ref: `${combo.lab}/${combo.model}`, effort: combo.effort};
+  return saveChain(role, {[`${role}_cross_lab_fallback`]: list}, focusKey);
+}
+
+// a toggle showing its value; it opens a single-select list under itself
+function chainControl(name, key, text, items, onPick, label) {
+  const btn = makeNode('button', `toggle settings-chain-${name}`, text);
+  btn.type = 'button';
+  btn.dataset.key = key;
+  btn.setAttribute('aria-label', label);
+  btn.onclick = () => new Menu({title: name, sections: [{kind: 'list', items, onPick}]}).openAt(btn);
+  return btn;
+}
+
+function labItems(current) {
+  return Object.entries(modelCatalog).map(([lab, entry]) => {
+    const unavailable = entry.available === false;
+    return {id: lab, label: lab, on: lab === current, disabled: unavailable,
+      state: {unavailable}, stats: unavailable ? entry.unavailable_reason || 'no usable profile' : ''};
+  });
+}
+
+function buildChainRow(role, row, index) {
+  const wrap = makeNode('div', 'settings-chain-row');
+  const key = name => `${index}:${name}`;
+  const label = name => `${role} ${index === 0 ? 'primary' : `fallback ${index}`} ${name}`;
+  const modelRow = findModelRow(row.lab, row.model);
+  wrap.appendChild(chainControl('lab', key('lab'), row.lab, labItems(row.lab),
+    item => saveCombo(role, index, defaultCombo(role, item.id), key('lab')), label('lab')));
+  const models = (modelCatalog[row.lab]?.models || []).map(model => ({
+    id: model.id, label: model.label, stats: model.tier, on: model.id === row.model,
+  }));
+  wrap.appendChild(chainControl('model', key('model'), modelRow?.label || row.model, models,
+    item => saveCombo(role, index, {lab: row.lab, model: item.id,
+      effort: carryEffort(row.effort, row.lab, item.id)}, key('model')), label('model')));
+  const levels = modelEffortLevels(modelRow);
+  if (levels.length) {
+    wrap.appendChild(chainControl('effort', key('effort'), row.effort,
+      levels.map(level => ({id: level, label: level, on: level === row.effort})),
+      item => saveCombo(role, index, {lab: row.lab, model: row.model, effort: item.id}, key('effort')),
+      label('effort')));
+  } else {
+    wrap.appendChild(makeNode('span', 'settings-chain-gap'));
+  }
+  return wrap;
+}
+
+// up | down | del on a fallback row: one width each; up on the first fallback and down on the
+// last are unavailable, dashed like a ui_base segment, still focusable and inert
+function appendStepButtons(role, wrap, index, count) {
+  const move = by => () => {
+    const list = fallbackList(role);
+    const at = index - 1;
+    [list[at], list[at + by]] = [list[at + by], list[at]];
+    return saveChain(role, {[`${role}_cross_lab_fallback`]: list}, `${index + by}:${by < 0 ? 'up' : 'down'}`);
+  };
+  const remove = () => {
+    const list = fallbackList(role);
+    list.splice(index - 1, 1);
+    return saveChain(role, {[`${role}_cross_lab_fallback`]: list}, 'add');
+  };
+  [['up', index === 1, move(-1)], ['down', index === count - 1, move(1)], ['del', false, remove]]
+    .forEach(([name, unavailable, run]) => {
+      const classes = ['toggle', 'settings-chain-step', unavailable ? 'segment unavailable' : ''];
+      const btn = makeNode('button', classes.filter(Boolean).join(' '), name);
+      btn.type = 'button';
+      btn.dataset.key = `${index}:${name}`;
+      btn.dataset.step = name;
+      btn.setAttribute('aria-label', `${role} fallback ${index} ${name}`);
+      btn.onclick = () => (unavailable ? undefined : run());
+      wrap.appendChild(btn);
+    });
+}
+
+// appends the first available lab's preferred model at its start effort
+function addFallback(role) {
+  const lab = Object.keys(modelCatalog).find(name => modelCatalog[name].available !== false);
+  if (!lab) { roleModels.chains.get(role).status.textContent = 'no lab is available'; return undefined; }
+  const combo = defaultCombo(role, lab);
+  const list = [...fallbackList(role), {ref: `${combo.lab}/${combo.model}`, effort: combo.effort}];
+  return saveChain(role, {[`${role}_cross_lab_fallback`]: list}, 'add');
+}
+
+function fillRoleChain(role, focusKey = null) {
+  const {chain, status} = roleModels.chains.get(role);
+  clearChildren(chain);
+  status.textContent = '';
+  const rows = chainOf(role);
+  rows.forEach((row, index) => {
+    const wrap = buildChainRow(role, row, index);
+    if (index > 0) appendStepButtons(role, wrap, index, rows.length);
+    chain.appendChild(wrap);
+  });
+  const add = makeNode('button', 'toggle settings-chain-add', 'add fallback');
+  add.type = 'button';
+  add.dataset.key = 'add';
+  add.setAttribute('aria-label', `${role} add fallback`);
+  add.onclick = () => addFallback(role);
+  chain.appendChild(add);
+  if (focusKey) [...chain.querySelectorAll('[data-key]')].find(el => el.dataset.key === focusKey)?.focus();
 }
 
 function settingsHazardPlaceholder(text) {
@@ -795,6 +797,7 @@ function refreshHeaders() {
     presetUi.strongEl.textContent = match.line.strong;
   }
   gateNotes.forEach((note, key) => { note.textContent = gateNoteText(key); });
+  showChainNote();
 }
 
 function buildSettingsBody() {
@@ -824,6 +827,7 @@ async function renderSettings() {
     const [settings, boardList] = await Promise.all([
       api('/api/settings'),
       api('/api/boards').catch(() => null), // the gate notes just stay blank without boards
+      loadModelCatalog().catch(() => modelCatalog), // the chains read labs and models from it
     ]);
     if (token !== renderToken) return;
     snap.settings = settings;

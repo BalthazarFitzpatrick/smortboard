@@ -45,7 +45,7 @@ function fetchStub(path, opts) {
       {id: 'fable', label: 'fable 5', tier: 'deep', effort_levels: ['low', 'high', 'max'], default_effort: 'high'},
       {id: 'opus', label: 'Opus', tier: 'deep'},
       {id: 'sonnet', label: 'Sonnet', tier: 'standard'},
-      {id: 'haiku', label: 'Haiku', tier: 'light'},
+      {id: 'haiku', label: 'Haiku', tier: 'light', effort_levels: []},
     ]},
     openai: {available: true, models: [
       {id: 'gpt-6-astra', label: 'gpt-6-astra', tier: 'deep', effort_levels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], default_effort: 'medium'},
@@ -53,6 +53,7 @@ function fetchStub(path, opts) {
       {id: 'gpt-5.6-terra', label: 'Terra', tier: 'standard'},
       {id: 'gpt-5.6-luna', label: 'Luna', tier: 'light'},
     ]},
+    gemini: {available: false, unavailable_reason: 'no credential', models: [{id: 'gem', label: 'gem', tier: 'standard'}]},
   }));
   if (path === '/api/boards' && (!opts || !opts.method || opts.method === 'GET')) {
     return Promise.resolve(stubJson(200, boardsState.map(b => ({...b}))));
@@ -380,124 +381,138 @@ await pickSeg('allow_soft_leases', 'off');
 // ---- the cost group holds the five spend cap rows inline, no popup ------------------------------
 assert.equal(list().querySelectorAll('.settings-cost-trigger').length, 0);
 
-const rolePickers = mod.st.listEl.querySelectorAll('.role-model');
-assert.equal(rolePickers.length, 4);
 const roleBlocks = mod.st.listEl.querySelectorAll('.settings-role-block');
 assert.equal(roleBlocks.length, 4, 'each model role has its own settings block');
 assert.deepEqual(roleBlocks.map(block => block.querySelector('.settings-role-name').textContent),
   ['worker', 'reviewer', 'orchestrator', 'fold']);
-assert.ok(roleBlocks.every(block => block.querySelectorAll('.settings-role-control').length === 2),
-  'each role has its primary model and its fallback order; effort lives in both pickers');
-assert.equal(mod.st.listEl.querySelectorAll('.role-effort').length, 0, 'no separate effort row');
+assert.ok(roleBlocks.every(block => block.dataset.help === 'models'), 'the floating help still finds each block');
 assert.ok(roleBlocks.every(block => block.querySelector('.settings-role-status')),
   'each role keeps save status beside its heading');
-const reviewerPicker = rolePickers.find(row => row.dataset.role === 'reviewer');
-const workerPicker = rolePickers.find(row => row.dataset.role === 'worker');
-await workerPicker.onclick();
-const workerMenu = modelMenus.at(-1);
-let workerColumns = workerMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.equal(workerColumns[0].items.find(item => item.on).id, 'openai', 'unset model keeps the configured role lab');
-assert.deepEqual(workerColumns[2].items.map(item => item.id), ['low', 'medium', 'high', 'xhigh'],
-  'no default row');
-assert.equal(workerColumns[2].items.find(item => item.on).id, 'medium', 'a role never set starts at medium');
-await workerMenu.opts.sections.find(section => section.kind === 'buttons').buttons
-  .find(button => button.id === 'save-model').onClick(workerMenu);
-assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-  {worker_lab: 'openai', worker_model: null, worker_effort: 'medium'});
-await reviewerPicker.onclick();
-const primaryMenu = modelMenus.at(-1);
-assert.equal(primaryMenu.anchor, reviewerPicker,
-  'the model menu opens at the role picker that launched it');
-assert.equal(primaryMenu.opts.title, 'choose model');
-assert.ok(!primaryMenu.el.classList.contains('menu-centered'), 'a picker given an anchor stays beside it');
-assert.equal(primaryMenu.opts.persistent, true, 'one menu stays open while choosing a lab and model');
-let primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.equal(primaryColumns[0].multi, false);
-assert.equal(primaryColumns[1].multi, false, 'primary model selection is single-select');
-primaryColumns[0].onPick({id: 'openai'});
-primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
-primaryColumns[1].onPick({id: 'gpt-6-astra'});
-assert.equal(primaryMenu.closed, false, 'selecting a primary model keeps the menu open');
-primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.equal(primaryColumns[2].label, 'effort', 'the role picker carries the effort column too');
-assert.deepEqual(primaryColumns[2].items.map(item => item.id),
-  ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
-primaryColumns[2].onPick({id: 'ultra'});
-primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
-primaryColumns[1].onPick({id: 'gpt-5.6-sol'});
-primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.equal(primaryColumns[2].items.find(item => item.on).id, 'medium', 'an effort the model lacks restarts at medium when the model changes');
-assert.ok(!primaryColumns[2].items.some(item => item.id === 'ultra'));
-primaryColumns[1].onPick({id: 'gpt-6-astra'});
-primaryColumns = primaryMenu.opts.sections.find(section => section.kind === 'columns').columns;
-primaryColumns[2].onPick({id: 'high'});
-const primarySave = primaryMenu.opts.sections.find(section => section.kind === 'buttons')
-  .buttons.find(button => button.id === 'save-model');
-assert.equal(primarySave.enabled, true);
-await primarySave.onClick(primaryMenu);
-await flush();
-assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-  {reviewer_lab: 'openai', reviewer_model: 'gpt-6-astra', reviewer_effort: 'high'});
+assert.equal(mod.st.listEl.querySelectorAll('.role-model').length, 0, 'no primary picker button is left');
+assert.equal(mod.st.listEl.querySelectorAll('.role-fallback').length, 0, 'no fallback picker button is left');
+assert.equal(mod.st.listEl.querySelectorAll('.role-effort').length, 0, 'no separate effort row');
+assert.equal(opened.filter(c => c.path === '/api/catalog').length, 1, 'one GET /api/catalog per open');
 
-const fallbackTrigger = mod.st.listEl.querySelectorAll('.role-fallback')
-  .find(row => row.dataset.role === 'fold');
-assert.equal(fallbackTrigger.textContent,
-  '2 selected: anthropic/opus → openai/gpt-6-astra @ high',
-  'the trigger summarizes the saved order and each fallback\'s own effort');
-await fallbackTrigger.onclick();
-const fallbackMenu = modelMenus.at(-1);
-assert.equal(fallbackMenu.opts.persistent, true, 'fallback selection stays open for multiple picks');
-assert.equal(fallbackMenu.anchor, fallbackTrigger, 'the fallback menu opens at its trigger');
-let columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.deepEqual(columns[0].items.map(item => item.label), ['anthropic', 'openai']);
-assert.deepEqual(columns[1].items.map(item => item.label), ['fable 5', 'Opus', 'Sonnet', 'Haiku']);
-assert.equal(columns[1].items.find(item => item.label === 'Opus').on, true,
-  'saved fallbacks start selected');
+const block = role => roleBlocks.find(node => node.querySelector('.settings-role-name').textContent === role);
+const chainRows = role => block(role).querySelectorAll('.settings-chain-row');
+const rowTexts = role => chainRows(role).map(row =>
+  row.querySelectorAll('.toggle').filter(btn => !btn.dataset.step).map(btn => btn.textContent));
+const ctl = (role, key) => block(role).querySelector(`[data-key="${key}"]`);
+const lastMenu = () => modelMenus.at(-1);
+const menuItems = () => lastMenu().opts.sections[0].items;
+// open a control's list and pick one option by id; the list is a single-select Menu under the button
+async function choose(role, key, id) {
+  const btn = ctl(role, key);
+  await btn.onclick();
+  assert.equal(lastMenu().anchor, btn, 'the list opens under the control that launched it');
+  assert.equal(lastMenu().opts.sections[0].kind, 'list');
+  const section = lastMenu().opts.sections[0];
+  await section.onPick(section.items.find(item => item.id === id));
+  await flush();
+}
+const tap = async (role, key) => { await ctl(role, key).onclick(); await flush(); };
+const patchCount = () => patches().length;
 
-columns[0].onPick({id: 'openai'});
-columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.deepEqual(columns[1].items.map(item => item.label), ['gpt-6-astra', 'gpt-5.6-sol', 'Terra', 'Luna']);
-columns[1].onPick({id: 'openai/gpt-5.6-sol'}, true);
-columns[0].onPick({id: 'anthropic'});
-columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
-columns[1].onPick({id: 'anthropic/fable'}, true);
-columns[1].onPick({id: 'anthropic/opus'}, false);
-assert.equal(fallbackTrigger.textContent,
-  '3 selected: openai/gpt-6-astra @ high → openai/gpt-5.6-sol @ medium → anthropic/fable @ low',
-  'new picks append while deselection removes without reordering the rest');
-// the effort column describes the focused model row, and only a ticked one
-columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.deepEqual(columns[2].items, [], 'an unticked model has no effort to set');
-assert.equal(columns[2].empty, 'tick a model');
-columns[1].onFocus({id: 'openai/gpt-5.6-sol'});
-columns = fallbackMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.equal(columns[2].label, 'effort: openai/gpt-5.6-sol');
-assert.deepEqual(columns[2].items.map(item => item.id), ['low', 'medium', 'high', 'xhigh'],
-  'focused fallback uses its own model even while another lab is visible');
-assert.equal(columns[2].items.find(item => item.on).id, 'medium', 'a ticked model starts at medium');
-columns[2].onPick({id: 'high'});
-assert.equal(fallbackTrigger.textContent,
-  '3 selected: openai/gpt-6-astra @ high → openai/gpt-5.6-sol @ high → anthropic/fable @ low');
-const saveFallbacks = fallbackMenu.opts.sections.find(section => section.kind === 'buttons').buttons[0];
-await saveFallbacks.onClick(fallbackMenu);
-assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-  {fold_cross_lab_fallback: [
-    {ref: 'openai/gpt-6-astra', effort: 'high'},
-    {ref: 'openai/gpt-5.6-sol', effort: 'high'},
-    {ref: 'anthropic/fable', effort: 'low'},
-  ]});
-assert.equal(fallbackMenu.closed, true, 'a successful save closes the picker');
+// the chain is read from the settings: row 1 the primary (the role's catalog default while unset)
+assert.deepEqual(rowTexts('worker'), [['openai', 'gpt-5.6-sol', 'medium'], ['openai', 'gpt-5.6-sol', 'medium']],
+  'worker: primary default from the lab, then its one fallback with the stale max effort restarted');
+assert.deepEqual(rowTexts('reviewer'), [['anthropic', 'Sonnet', 'medium']]);
+assert.deepEqual(rowTexts('fold'), [['anthropic', 'fable 5', 'low'],
+  ['anthropic', 'Opus', 'medium'], ['openai', 'gpt-6-astra', 'high']], 'fallbacks keep their saved order');
+assert.equal(ctl('worker', '0:up'), null, 'the primary row has no step buttons');
+assert.deepEqual(chainRows('fold')[1].querySelectorAll('.toggle').slice(3).map(btn => btn.textContent),
+  ['up', 'down', 'del']);
+assert.ok(mod.panelStops(mod.st.panel).includes(ctl('fold', '1:del')), 'the arrow walker reaches the chain buttons');
+assert.ok(mod.panelStops(mod.st.panel).includes(ctl('fold', 'add')));
 
-// a stored effort the model no longer offers is cleared, never re-sent
-const staleTrigger = mod.st.listEl.querySelectorAll('.role-fallback')
-  .find(row => row.dataset.role === 'worker');
-await staleTrigger.onclick();
-const staleMenu = modelMenus.at(-1);
-const staleColumns = staleMenu.opts.sections.find(section => section.kind === 'columns').columns;
-assert.equal(staleColumns[2].items.find(item => item.on).id, 'medium', 'an unsupported effort restarts at medium');
-await staleMenu.opts.sections.find(section => section.kind === 'buttons').buttons[0].onClick(staleMenu);
-assert.deepEqual(JSON.parse(calls.filter(c => c.opts?.method === 'PATCH').at(-1).opts.body),
-  {worker_cross_lab_fallback: [{ref: 'openai/gpt-5.6-sol', effort: 'medium'}]});
+// a lab list shows an unavailable lab dashed with its reason, and cannot pick it
+await ctl('reviewer', '0:lab').onclick();
+const gemini = menuItems().find(item => item.id === 'gemini');
+assert.equal(gemini.disabled, true);
+assert.equal(gemini.state.unavailable, true);
+assert.equal(gemini.stats, 'no credential');
+assert.deepEqual(menuItems().filter(item => item.id !== 'gemini').map(item => item.stats), ['', '']);
+lastMenu().close();
+
+// effort: one patch with the primary's three keys; never a default choice
+await ctl('reviewer', '0:effort').onclick();
+assert.deepEqual(menuItems().map(item => item.id), ['low', 'medium', 'high'], 'no default row');
+lastMenu().close();
+let count = patchCount();
+await choose('reviewer', '0:effort', 'high');
+assert.equal(patchCount(), count + 1, 'one patch per change');
+assert.deepEqual(lastSettingsPatch(), {reviewer_lab: 'anthropic', reviewer_model: 'sonnet', reviewer_effort: 'high'});
+assert.deepEqual(rowTexts('reviewer'), [['anthropic', 'Sonnet', 'high']], 'only that role redraws');
+
+// lab: the model resets to the lab's preferred model and the effort to its start effort
+count = patchCount();
+await choose('reviewer', '0:lab', 'openai');
+assert.equal(patchCount(), count + 1, 'one patch per change');
+assert.deepEqual(lastSettingsPatch(), {reviewer_lab: 'openai', reviewer_model: 'gpt-5.6-sol', reviewer_effort: 'medium'});
+// model: the effort is kept when the new model offers it, else the start effort
+await choose('reviewer', '0:effort', 'xhigh');
+await choose('reviewer', '0:model', 'gpt-6-astra');
+assert.deepEqual(lastSettingsPatch(), {reviewer_lab: 'openai', reviewer_model: 'gpt-6-astra', reviewer_effort: 'xhigh'},
+  'xhigh survives a model that offers it');
+await choose('reviewer', '0:effort', 'ultra');
+await choose('reviewer', '0:model', 'gpt-5.6-sol');
+assert.deepEqual(lastSettingsPatch(), {reviewer_lab: 'openai', reviewer_model: 'gpt-5.6-sol', reviewer_effort: 'medium'},
+  'ultra is not offered by sol, so the start effort is used');
+// a model with no effort levels has no effort control and saves a null effort
+await choose('reviewer', '0:lab', 'anthropic');
+await choose('reviewer', '0:model', 'haiku');
+assert.deepEqual(lastSettingsPatch(), {reviewer_lab: 'anthropic', reviewer_model: 'haiku', reviewer_effort: null});
+assert.equal(ctl('reviewer', '0:effort'), null, 'haiku shows no effort control');
+assert.deepEqual(rowTexts('reviewer'), [['anthropic', 'Haiku']]);
+assert.ok(!patches().some(c => JSON.parse(c.opts.body).reviewer_effort === 'default'), 'default is never an effort');
+await choose('reviewer', '0:model', 'sonnet');
+assert.deepEqual(lastSettingsPatch(), {reviewer_lab: 'anthropic', reviewer_model: 'sonnet', reviewer_effort: 'medium'});
+
+// add fallback: the first available lab, its preferred model, the start effort
+assert.equal(ctl('reviewer', 'add').textContent, 'add fallback');
+assert.ok(!ctl('reviewer', 'add').className.includes('unavailable'), 'a regular solid button');
+await tap('reviewer', 'add');
+assert.deepEqual(lastSettingsPatch(), {reviewer_cross_lab_fallback: [{ref: 'anthropic/sonnet', effort: 'medium'}]});
+assert.deepEqual(rowTexts('reviewer'), [['anthropic', 'Sonnet', 'medium'], ['anthropic', 'Sonnet', 'medium']]);
+const stepClass = (role, key) => ctl(role, key).className;
+assert.ok(stepClass('reviewer', '1:up').includes('unavailable'), 'up is dashed on the first fallback');
+assert.ok(stepClass('reviewer', '1:down').includes('unavailable'), 'down is dashed on the last');
+assert.ok(!stepClass('reviewer', '1:del').includes('unavailable'));
+count = patchCount();
+await tap('reviewer', '1:up');
+await tap('reviewer', '1:down');
+assert.equal(patchCount(), count, 'an unavailable button does nothing');
+// a fallback's own lab change writes the whole list
+await choose('reviewer', '1:lab', 'openai');
+assert.deepEqual(lastSettingsPatch(), {reviewer_cross_lab_fallback: [{ref: 'openai/gpt-5.6-sol', effort: 'medium'}]});
+await tap('reviewer', 'add');
+assert.deepEqual(lastSettingsPatch(), {reviewer_cross_lab_fallback: [
+  {ref: 'openai/gpt-5.6-sol', effort: 'medium'}, {ref: 'anthropic/sonnet', effort: 'medium'}]});
+assert.ok(!stepClass('reviewer', '1:down').includes('unavailable') && !stepClass('reviewer', '2:up').includes('unavailable'));
+await tap('reviewer', '2:up');
+assert.deepEqual(lastSettingsPatch(), {reviewer_cross_lab_fallback: [
+  {ref: 'anthropic/sonnet', effort: 'medium'}, {ref: 'openai/gpt-5.6-sol', effort: 'medium'}]}, 'up sends the whole new list');
+assert.equal(document.activeElement, ctl('reviewer', '1:up'), 'focus follows the moved row');
+await tap('reviewer', '1:down');
+assert.deepEqual(lastSettingsPatch(), {reviewer_cross_lab_fallback: [
+  {ref: 'openai/gpt-5.6-sol', effort: 'medium'}, {ref: 'anthropic/sonnet', effort: 'medium'}]});
+await choose('reviewer', '1:model', 'gpt-6-astra');
+assert.deepEqual(lastSettingsPatch().reviewer_cross_lab_fallback[0], {ref: 'openai/gpt-6-astra', effort: 'medium'});
+await tap('reviewer', '1:del');
+assert.deepEqual(lastSettingsPatch(), {reviewer_cross_lab_fallback: [{ref: 'anthropic/sonnet', effort: 'medium'}]});
+await tap('reviewer', '1:del');
+assert.deepEqual(lastSettingsPatch(), {reviewer_cross_lab_fallback: []});
+assert.deepEqual(rowTexts('reviewer'), [['anthropic', 'Sonnet', 'medium']]);
+
+// the note follows the usage limits toggle
+const chainNote = () => list().querySelector('.settings-chain-note').textContent;
+assert.equal(chainNote(), 'fallbacks are only used when usage limits is switch, now wait');
+await pickSeg('usage_limit_route', 'switch');
+assert.equal(chainNote(), 'fallbacks are only used when usage limits is switch, now switch');
+await pickSeg('usage_limit_route', 'ask me');
+assert.equal(chainNote(), 'fallbacks are only used when usage limits is switch, now ask me');
+await pickSeg('usage_limit_route', 'wait');
+assert.equal(chainNote(), 'fallbacks are only used when usage limits is switch, now wait');
 
 await mod.openModelPicker(() => {}, undefined, null, {default_settings: settingsState});
 const defaultCardMenu = modelMenus.at(-1);

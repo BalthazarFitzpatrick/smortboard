@@ -670,21 +670,25 @@ body {
 }
 .settings-role-name { color: var(--cream); }
 .settings-role-status { text-align: right; }
-.settings-role-control {
+.settings-chain {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* lab | model | effort, then up | down | del on a fallback row: fixed step columns keep every row
+   on the same grid whatever it holds */
+.settings-chain-row {
   display: grid;
-  grid-template-columns: 116px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) 84px repeat(3, 64px);
+  gap: 6px;
   align-items: center;
 }
-.settings-role-control > .toggle { justify-self: start; }
-.settings-role-fallback-trigger {
-  justify-self: stretch !important;
-  min-width: 0;
-  overflow: hidden;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.settings-chain-row > .toggle { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.settings-chain-step.segment { margin-left: 0; }
+.settings-chain-add { align-self: flex-start; }
+/* an unavailable lab in a list: dashed like ui_base's unavailable segment */
+.menu-item.unavailable:not(.on) { border-style: dashed; color: var(--text-dim); }
+.settings-chain-note { color: var(--text-dim); }
 .settings-cost-triggers {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
