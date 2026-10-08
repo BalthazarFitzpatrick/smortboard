@@ -6,8 +6,8 @@
    retune a column's spacing by restating one here, not by reintroducing the set */
 
 /* one height for everything in the top bar: board tabs, corner controls and the usage cells.
-   the cell is ui_base's 1.5 rows, so the rest of the bar takes its height, not the other way */
-:root { --bar-item-height: calc(var(--row-height) * 1.5); }
+   one row, like every other control; the cells override ui_base's 1.5 rows to match it */
+:root { --bar-item-height: var(--row-height); }
 
 body {
   margin: 0;
@@ -587,17 +587,28 @@ body {
   align-items: center;
   gap: 12px;
 }
-/* every control in the corner is as tall as the cells; ui_base's .toggle and text-field are one row */
+/* every control in the corner is one bar height, whatever its own class says */
 .bar-corner > :not(.usage-cells) { height: var(--bar-item-height); box-sizing: border-box; }
+/* the merge-mode note is a ui_base placeholder note elsewhere; in the bar it is a bordered cell like
+   its neighbours, not a bare grey box */
+.bar-corner .hazard-note {
+  display: flex; align-items: center; justify-content: center; max-width: none; white-space: nowrap;
+  padding: 0 12px; border: 2px solid var(--grey-border);
+}
 
 /* the usage cells (usage_cells.js): codex 7d, then claude 5h and 7d, leftmost in the corner. the
-   corner is as tall as a cell, so the group fills it. stretch: a ui_base divider has no height of
-   its own and takes the row's */
+   the cells are one bar height, so the group fills the corner. stretch: a ui_base divider has no
+   height of its own and takes the row's */
 .usage-cells { order: -1; display: flex; align-items: stretch; gap: 10px; }
 .usage-group { display: flex; align-items: stretch; gap: 6px; }
+/* ui_base's divider keeps 15px above and below, which leaves a dot in a one-row bar */
+.usage-cells .divider { margin: 6px 0; }
 /* a cell reads on one line, "claude 7d | 35%", so it is as wide as its text, not ui_base's 2:1 */
-.usage-cell { flex-direction: row; align-items: center; aspect-ratio: auto; padding: 0 12px 2px; gap: 8px; }
-.usage-cell .fill-cell-sep { color: var(--grey-border); }
+.usage-cell {
+  flex-direction: row; align-items: center; aspect-ratio: auto; gap: 8px;
+  height: var(--bar-item-height); padding: 0 12px;
+}
+.usage-cell .fill-cell-sep { color: var(--text-dim); }
 
 /* the beta's bug form (board.js buildIssueButton): FIRST in the corner, left of the board's own
    numbers. it is an <a> so the keyboard can reach it, which is the only reason it needs rules of
