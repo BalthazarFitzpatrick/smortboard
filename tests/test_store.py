@@ -769,7 +769,7 @@ def test_an_existing_database_migrates_to_base_red_without_losing_a_column(tmp_p
     with Store(db_path) as store:
         card = store.get_card("c1")
         assert card["blocked_reason_code"] == "TESTS_FAILED"
-        assert (card["complexity"], card["lab"], card["model"]) == (3, "codex", "m")
+        assert (card["lab"], card["model"]) == ("codex", "m")
         assert card["tasks"][0]["text"] == "do it"
         assert card["leases"][0]["path_glob"] == "src/**"
         assert [e["kind"] for e in store.list_events("c1")] == ["result"]

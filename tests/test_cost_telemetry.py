@@ -285,7 +285,7 @@ def test_orchestrator_snapshot_carries_evidence_with_no_host_paths(store):
 @pytest.mark.parametrize("failed_cost", [0.7, None])
 def test_evidence_keeps_failed_attempt_spend_and_distinguishes_eventual_success(store, failed_cost):
     board = store.create_board("b")
-    card = store.create_card(board["id"], None, "retried", complexity=2)
+    card = store.create_card(board["id"], None, "retried")
     store.append_event(card["id"], "lifecycle_started", {})
     store.append_event(
         card["id"], "result", _worker_result(cost=failed_cost, model="claude-sonnet-4")
@@ -301,7 +301,7 @@ def test_evidence_keeps_failed_attempt_spend_and_distinguishes_eventual_success(
     assert row["eventual_acceptance_rate"] == 1
     assert row["clean_pr_rate"] == 0.5
     assert row["effort"] is None
-    assert row["complexity_source"] == "current_rating"
+    assert row["complexity_source"] == "current_estimate"
     expected = None if failed_cost is None else pytest.approx(0.83)
     assert row["cost_usd"] == expected
     assert evidence["cards"][0]["cost_usd"] == expected
@@ -312,7 +312,7 @@ def test_evidence_attributes_retries_to_their_model_and_recorded_effort(store):
     from smortboard.telemetry import cost_optimisation
 
     board = store.create_board("b")
-    card = store.create_card(board["id"], None, "switched", complexity=3)
+    card = store.create_card(board["id"], None, "switched")
     store.append_event(card["id"], "lifecycle_started", {})
     store.append_event(
         card["id"],

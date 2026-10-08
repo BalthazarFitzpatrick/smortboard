@@ -478,7 +478,7 @@ def test_the_outdated_migration_keeps_every_existing_card(tmp_path):
     with Store(db_path) as store:
         card = store.get_card("c1")
         assert (card["status"], card["blocked_reason_code"]) == ("checking", "BASE_RED")
-        assert (card["complexity"], card["lab"], card["model"]) == (2, "codex", "m")
+        assert (card["lab"], card["model"]) == ("codex", "m")
         assert store.findings_route("c1") == "fix"
         assert card["tasks"][0]["text"] == "do it"
         assert card["leases"][0]["path_glob"] == "src/**"

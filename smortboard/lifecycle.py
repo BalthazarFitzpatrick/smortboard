@@ -796,7 +796,6 @@ def _run_attempt(
                 "lab": worker_lab,
                 "model": worker_id,
                 "effort": worker_effort,
-                "complexity": card.get("complexity"),
             },
         )
         run = runtime.run_card(

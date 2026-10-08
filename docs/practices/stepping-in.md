@@ -21,7 +21,7 @@ underspecified, or the board owes you a surface that would have let you leave.
 4. **land what is ready.** `v` lists open pull requests across every board, in merge order.
    review one, then `y` accepts the card; on a review-required board that also lands it on its
    base. a free-merge board has landed it already.
-5. **check cost now and then** (`c`). cost per accepted card by model and complexity shows whether
+5. **check cost now and then** (`c`). cost per accepted card by model and estimated scope shows whether
    your card sizing works.
 
 **set a daily budget per board before running unattended** (`shift`+`o`, see

@@ -118,7 +118,7 @@ def test_every_card_can_run_as_seeded(store, tmp_path, gh):
         assert card["leases"], card["title"]
         assert card["criteria"], card["title"]
         assert (card["lab"], card["model"]) == ("anthropic", "claude-sonnet-5-5")
-        assert card["complexity"] in (1, 2)
+        assert "complexity" not in card
         assert card["repo_id"] == result.repo["id"]
         assert card["status"] == "todo"
 

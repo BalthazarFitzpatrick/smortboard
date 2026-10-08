@@ -128,7 +128,6 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "effort": {"type": ["string", "null"], "enum": [None, *EFFORT_LEVELS]},
                     "lab": {"type": ["string", "null"]},
                     "task_id": {"type": ["string", "null"]},
-                    "complexity": {"type": "string", "enum": ["low", "medium", "high"]},
                 },
                 "required": [
                     "title",
@@ -142,7 +141,6 @@ ORCHESTRATOR_JSON_SCHEMA = {
                     "effort",
                     "lab",
                     "task_id",
-                    "complexity",
                 ],
             },
         },
@@ -172,14 +170,6 @@ ORCHESTRATOR_DISALLOWED_TOOLS = ("Edit", "Write", "NotebookEdit", "Bash", "WebFe
 
 # a model name reaches the card's `claude --model`, so anything but a plain alias or id is refused
 _MODEL_NAME = re.compile(r"^[a-z0-9][a-z0-9.\-]{0,63}$")
-
-
-_COMPLEXITY_LEVELS = {"low": 1, "medium": 2, "high": 3}
-
-
-def _clean_complexity(raw: Any) -> int | None:
-    """the schema's low/medium/high string mapped to the store's 1/2/3, or None if unrecognised"""
-    return _COMPLEXITY_LEVELS.get(str(raw or "").strip().lower())
 
 
 def _clean_model(raw: Any) -> tuple[str | None, str | None]:
@@ -725,7 +715,6 @@ CARD_TEXT_RULES = (
     "headers, bullets.\n"
     f"- criteria: each at most {CRITERION_MAX_WORDS} words, one checkable fact.\n"
     "- tasks: each short imperative, about 6 words.\n"
-    "- complexity: rate each card low, medium or high, by judgement and files needed.\n"
     "Telegram style: drop articles, filler, connectives, pronouns; keep exact names, numbers, "
     'paths. "The fox dug his hole and was dreaming of a nicer den" -> "fox dug hole, dreams of '
     'nicer den". No markdown. Worker detail goes in criteria and tasks, not description. '
@@ -1101,7 +1090,6 @@ def run_orchestrator_turn(
                 "model": parse_ref(model)[1] if model else None,
                 "lab": parse_ref(model)[0] if model else None,
                 "ledger_task": task_id,
-                "complexity": _clean_complexity(spec.get("complexity")),
                 "depends_on": spec.get("depends_on") or [],
                 "effort": effort,
             }

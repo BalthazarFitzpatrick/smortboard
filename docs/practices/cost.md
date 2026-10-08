@@ -18,9 +18,9 @@ attempts gets its own line.
 
 mission control's model evidence counts every finished attempt, including failures before a
 successful retry. first-attempt clean results and eventual acceptance are separate rates. model
-comparisons split by recorded effort and complexity; missing historical effort stays unknown.
-older complexity uses the current rating or scope estimate, labelled as such. model choice never
-raises the scope estimate. these are observed outcomes, not a controlled model comparison.
+comparisons split by recorded effort and a scope estimate from a card's criteria, tasks and leases
+(cards carry no rating of their own); missing historical effort stays unknown. runs recorded while
+cards still had a rating keep it, labelled as such. model choice never raises the scope estimate. these are observed outcomes, not a controlled model comparison.
 
 **`u` counts only smortboard's own runs.** one section per credential profile, one line per window:
 percent used, when it resets, time left. it adds up what smortboard's runs reported, not your lab

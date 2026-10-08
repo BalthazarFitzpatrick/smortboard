@@ -654,6 +654,9 @@ _MIGRATIONS: list[str] = [
         '/fable"', '/claude-fable-5-1"')
     WHERE key LIKE '%!_cross!_lab!_fallback' ESCAPE '!' AND value IS NOT NULL;
     """,
+    # 33: card complexity is gone - nothing at run time read it, and cost analysis derives its own
+    # estimate from a card's criteria, tasks and leases (telemetry.estimate_complexity)
+    """ALTER TABLE cards DROP COLUMN complexity;""",
 ]
 
 

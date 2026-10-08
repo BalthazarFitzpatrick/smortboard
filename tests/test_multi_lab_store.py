@@ -224,7 +224,7 @@ def test_export_import_and_backup_preserve_mixed_labs(store, tmp_path):
     board = store.create_board("mixed")
     store.create_card(board["id"], None, "legacy", model="claude-sonnet-5-5")
     card = store.create_card(
-        board["id"], None, "new", lab="openai", model="gpt-6-astra", complexity=3, effort="high"
+        board["id"], None, "new", lab="openai", model="gpt-6-astra", effort="high"
     )
     store.set_settings({"fold_lab": "openai", "fold_model": "gpt-6-astra"})
     spend = store.add_board_spend(board["id"], "fold", 0.5, lab="openai", model="gpt-6-astra")
