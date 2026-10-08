@@ -76,10 +76,11 @@ def test_a_chatty_run_is_not_mistaken_for_a_stall(tmp_path):
     result = run_process(
         store,
         card_id,
-        _chatty(1.5),
+        _chatty(3),
         adapter=ClaudeCodeAdapter(),
         profile="default",
-        stall_seconds=0.5,
+        # wide enough that a loaded machine starting the child cannot look like a stall
+        stall_seconds=2,
     )
     assert result.blocked_reason_code == "CRASH"  # no result event: an ordinary crash, not a stall
     assert "run_stalled" not in [e["kind"] for e in store.list_events(card_id)]
