@@ -537,6 +537,9 @@ def test_openai_profile_has_independent_active_kind_and_private_path(tmp_path):
     assert path == tmp_path / "smortboard" / "tokens" / "openai" / "work"
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
+    # adding never activates: the lab has none active until the operator picks one
+    assert profiles.active_profile("openai") is None
+    profiles.set_active("work", lab="openai")
     assert profiles.active_profile("openai") == "work"
     assert profiles.active_profile() == "default"
     assert profiles.profile_kind("work", "openai") == "api_key"
