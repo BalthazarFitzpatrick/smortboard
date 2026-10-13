@@ -52,7 +52,7 @@ const CHECKS = [
 ];
 responses.set('/api/preflight', stubJson(200, CHECKS));
 
-const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('shell.js'), uiBase('pile.js'),
+const src = [uiBase('buckets.js'), uiBase('expand.js'), uiBase('indicate.js'), uiBase('disclosure.js'), uiBase('shell.js'), uiBase('pile.js'),
   smort('columns.js'), smort('card_panel.js'), smort('chat.js'), smort('shortcuts.js'),
   smort('board.js'), smort('preflight.js')].join('\n;\n');
 const mod = new Function('Menu', 'makeDrawer', `${src}
@@ -91,6 +91,31 @@ assert.equal(tokenRow.querySelector('.preflight-fix').textContent, 'claude setup
 
 const testCmdRow = rows.find(r => r.dataset.checkId === 'repo-1-test-command');
 assert.ok(testCmdRow.querySelector('.preflight-dot-warn'), 'a warn row gets the warn dot');
+
+// ---- each group is a disclosure: a worst-state dot, a one-line count, problems listed first
+const heads = () => mod.pf.listEl.querySelectorAll('.disclosure-head');
+const names = () => mod.pf.listEl.querySelectorAll('.disclosure-name').map(n => n.textContent);
+const summaries = () => mod.pf.listEl.querySelectorAll('.disclosure-summary').map(n => n.textContent);
+const openStates = () => mod.pf.listEl.querySelectorAll('.disclosure').map(d => d.classList.contains('open'));
+assert.deepEqual(names(), ['this machine', 'widgets']);
+assert.deepEqual(summaries(), ['1 failing / 1 ready', '1 warning / 1 ready']);
+assert.deepEqual(openStates(), [true, true], 'a group with something to fix starts open');
+const machineRows = [...mod.pf.listEl.querySelectorAll('.preflight-group')[0].querySelectorAll('.preflight-row')];
+assert.deepEqual(machineRows.map(r => r.dataset.checkId), ['card-token', 'docker'], 'the failing row leads its group');
+const titleDots = mod.pf.listEl.querySelectorAll('.disclosure-title .preflight-dot');
+assert.equal(titleDots.length, 2, 'each header carries the group state dot');
+assert.ok(titleDots[0].classList.contains('preflight-dot-fail'));
+assert.ok(titleDots[1].classList.contains('preflight-dot-warn'));
+
+// ---- a toggle sticks across a re-check
+{
+  const fn = heads()[0]._listeners.click[0];
+  fn({target: heads()[0]});
+  assert.deepEqual(openStates(), [false, true]);
+  mod.pf.panel.querySelector('.preflight-recheck').onclick();
+  await flush();
+  assert.deepEqual(openStates(), [false, true], 'a group the operator closed stays closed after a re-check');
+}
 
 // ---- h again closes it (the key that opens also closes, same as n)
 press('KeyH');
