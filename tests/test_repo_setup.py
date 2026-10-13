@@ -2,6 +2,7 @@
 `repo create` makes a local bare repo - so pushes really happen, and nothing reaches GitHub"""
 
 import subprocess
+import types
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from smortboard.repo_setup import (
     SetupRefused,
     default_runner,
     prepare,
+    quote_path,
 )
 
 
@@ -94,7 +96,6 @@ def _never_pushed_main(gh):
         assert not any(arg.endswith(("main", ":refs/heads/main")) for arg in call), call
 
 
-@pytest.mark.posix_only
 def test_an_empty_folder_becomes_a_repo_on_github_with_development_pushed(tmp_path, gh):
     folder = tmp_path / "fresh"
     folder.mkdir()
@@ -261,7 +262,6 @@ def test_a_fresh_folder_with_a_bad_name_is_refused_before_anything_is_written(tm
     assert list(folder.iterdir()) == []
 
 
-@pytest.mark.posix_only
 def test_an_empty_clone_gets_its_first_commit_and_owes_the_push_of_main(tmp_path, gh):
     bare = gh.remotes / "empty.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
@@ -271,3 +271,16 @@ def test_an_empty_clone_gets_its_first_commit_and_owes_the_push_of_main(tmp_path
     assert result.push_main == f"git -C {clone.resolve()} push -u origin main"
     assert _remote_heads(bare) == ["development"]
     _never_pushed_main(gh)
+
+
+def test_a_path_with_spaces_is_double_quoted_for_a_windows_shell(monkeypatch):
+    # single quotes are literal in cmd, so the printed push command needs double quotes there
+    monkeypatch.setattr("smortboard.repo_setup.os", types.SimpleNamespace(name="nt"))
+    spaced = Path("C:/my repos/app")
+    assert quote_path(spaced) == f'"{spaced}"'
+    assert quote_path(Path("C:/repos/app")) == str(Path("C:/repos/app"))
+
+
+def test_a_path_with_spaces_is_single_quoted_for_a_posix_shell(monkeypatch):
+    monkeypatch.setattr("smortboard.repo_setup.os", types.SimpleNamespace(name="posix"))
+    assert quote_path(Path("/my repos/app")).startswith("'")
