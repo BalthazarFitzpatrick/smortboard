@@ -26,11 +26,9 @@
   gap: var(--gap, 8px);
 }
 
-.preflight-group-label {
-  color: var(--text-dim);
-  margin-top: 6px;
-}
-.preflight-group:first-child .preflight-group-label { margin-top: 0; }
+/* a group is a disclosure from ui_base; only the dot beside its title is placed here */
+.preflight-group .disclosure-title { align-items: center; gap: 10px; }
+.preflight-group-body { padding-top: 2px; }
 
 .preflight-row {
   padding: 6px 0;

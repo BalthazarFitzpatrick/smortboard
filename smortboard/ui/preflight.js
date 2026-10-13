@@ -6,7 +6,9 @@
 //
 // relies on globals board.js already defines: api, reenterIfFocusLost.
 
-const pf = {backdrop: null, panel: null, summaryEl: null, listEl: null, checks: []};
+// opened: group name -> the operator's own toggle, kept across re-checks so a fixed row does not
+// slam its group shut under them; a group they never touched opens only while something is wrong
+const pf = {backdrop: null, panel: null, summaryEl: null, listEl: null, checks: [], opened: new Map()};
 
 function buildPreflightDom() {
   const backdrop = document.createElement('div');
@@ -95,15 +97,46 @@ function buildCheckRow(check) {
   return rowEl;
 }
 
+function groupSummary(checks) {
+  const failing = checks.filter(c => c.status === 'fail').length;
+  const warnings = checks.filter(c => c.status === 'warn').length;
+  const ready = checks.filter(c => c.status === 'ok').length;
+  return [
+    failing ? `${failing} failing` : null,
+    warnings ? `${warnings} ${warnings === 1 ? 'warning' : 'warnings'}` : null,
+    ready ? `${ready} ready` : null,
+  ].filter(Boolean).join(' / ');
+}
+
+function worstStatus(checks) {
+  if (checks.some(c => c.status === 'fail')) return 'fail';
+  if (checks.some(c => c.status === 'warn')) return 'warn';
+  return 'ok';
+}
+
+// a group is one disclosure: the header carries the worst state and a one-line count, the body the
+// rows with whatever needs attention first
 function buildGroup(name, checks) {
-  const groupEl = document.createElement('div');
-  groupEl.className = 'preflight-group';
-  const label = document.createElement('div');
-  label.className = 'preflight-group-label';
-  label.textContent = name === 'machine' ? 'this machine' : name;
-  groupEl.appendChild(label);
-  checks.forEach(check => groupEl.appendChild(buildCheckRow(check)));
-  return groupEl;
+  const worst = worstStatus(checks);
+  const body = document.createElement('div');
+  body.className = 'preflight-group-body';
+  const problems = checks.filter(c => c.status !== 'ok');
+  [...problems, ...checks.filter(c => c.status === 'ok')].forEach(check => body.appendChild(buildCheckRow(check)));
+
+  const disclosure = makeDisclosure({
+    title: name === 'machine' ? 'this machine' : name,
+    summary: groupSummary(checks),
+    open: pf.opened.has(name) ? pf.opened.get(name) : worst !== 'ok',
+    body,
+    onToggle: open => pf.opened.set(name, open),
+  });
+  disclosure.el.classList.add('preflight-group');
+  disclosure.el.dataset.group = name;
+  const dot = document.createElement('span');
+  dot.className = `preflight-dot ${dotClass(worst)}`;
+  const title = disclosure.el.querySelector('.disclosure-title');
+  title.insertBefore(dot, title.firstChild);
+  return disclosure;
 }
 
 function renderPreflight() {
@@ -125,7 +158,8 @@ function renderPreflight() {
     if (!byGroup.has(check.group)) { byGroup.set(check.group, []); order.push(check.group); }
     byGroup.get(check.group).push(check);
   });
-  order.forEach(name => pf.listEl.appendChild(buildGroup(name, byGroup.get(name))));
+  const set = makeDisclosureGroup(order.map(name => ({id: name, disclosure: buildGroup(name, byGroup.get(name))})));
+  pf.listEl.appendChild(set.el);
 }
 
 async function loadPreflight() {
