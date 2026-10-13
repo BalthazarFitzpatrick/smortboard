@@ -673,3 +673,19 @@ def test_no_test_command_on_an_unknown_repo_points_at_mission_control(monkeypatc
     assert row["status"] == "fail"
     assert "mission control" in row["fix"]
     assert "key b" in row["fix"]
+
+
+def test_a_lab_with_profiles_and_none_active_fails_first(store):
+    profiles.add_profile("work", token="a-token")
+    profiles.set_active("work")
+    profiles.remove_profile("work")
+    checks = run_preflight(store, runner=_all_ok_runner)
+    first = checks[0]
+    assert first["id"] == "profile-none-active-anthropic"
+    assert first["status"] == "fail"
+    assert "shift+p" in first["fix"]
+
+
+def test_an_active_profile_adds_no_none_active_row(store):
+    checks = run_preflight(store, runner=_all_ok_runner)
+    assert not any(c["id"].startswith("profile-none-active") for c in checks)

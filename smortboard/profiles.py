@@ -51,6 +51,7 @@ def _empty_lab() -> dict[str, Any]:
 
 def _default_state() -> dict[str, Any]:
     state = _empty_lab()
+    # no state file yet: the original single token, which is what runs used before profiles
     state.update(active=DEFAULT_PROFILE, profiles=[DEFAULT_PROFILE])
     return {"version": 2, "labs": {DEFAULT_LAB: state}}
 
@@ -82,9 +83,8 @@ def _load_state() -> dict[str, Any]:
             if name not in state["profiles"]:
                 state["profiles"].append(name)
         active = values.get("active")
-        state["active"] = (
-            active if active in state["profiles"] else next(iter(state["profiles"]), None)
-        )
+        # a stored name that no longer exists leaves none active, it never picks one
+        state["active"] = active if active in state["profiles"] else None
         for key in ("limits", "kinds"):
             if isinstance(values.get(key), dict):
                 state[key] = dict(values[key])
@@ -166,10 +166,16 @@ def active_profile(lab: str = DEFAULT_LAB) -> str | None:
     return _lab_state(_load_state(), lab)["active"]
 
 
+def _no_active_error(lab: str) -> ProfileError:
+    if _lab_state(_load_state(), lab)["profiles"]:
+        return ProfileError(f"no {lab} credential profile is active - activate one in shift+p")
+    return ProfileError(f"no credential profile configured for {lab}")
+
+
 def active_profile_path(lab: str = DEFAULT_LAB) -> Path:
     name = active_profile(lab)
     if name is None:
-        raise ProfileError(f"no credential profile configured for {lab}")
+        raise _no_active_error(lab)
     return profile_path(name, lab)
 
 
@@ -184,7 +190,7 @@ def token_path_for_run(
         return explicit_override
     active = active_profile(lab)
     if active is None:
-        raise ProfileError(f"no credential profile configured for {lab}")
+        raise _no_active_error(lab)
     return None if lab == DEFAULT_LAB and active == DEFAULT_PROFILE else profile_path(active, lab)
 
 
@@ -233,19 +239,8 @@ def add_profile(
             write_token_file(path, token)
         state["profiles"].append(name)
         state["kinds"][name] = kind
-        if state["active"] is None:
-            state["active"] = name
         _save_state(document)
         return path
-
-
-def _pick_replacement(state: dict[str, Any], exclude: str, now: float) -> str | None:
-    remaining = [name for name in state["profiles"] if name != exclude]
-    for name in remaining:
-        limited_until = (state["limits"].get(name) or {}).get("limited_until")
-        if not (limited_until and limited_until > now):
-            return name
-    return next(iter(remaining), None)
 
 
 def remove_profile(
@@ -273,7 +268,7 @@ def remove_profile(
                 raise ProfileError(f"'{name}' is the last remaining profile and cannot be removed")
         path = profile_path(name, lab)
         if state["active"] == name:
-            state["active"] = _pick_replacement(state, name, now)
+            state["active"] = None
         state["profiles"].remove(name)
         state["limits"].pop(name, None)
         state["kinds"].pop(name, None)
@@ -353,12 +348,15 @@ def handle_usage_limit(
     with _STATE_LOCK:
         document = _load_state()
         state = _lab_state(document, lab)
+        limited = name or state["active"]
+        if limited is None:
+            return {"rotated": False, "next_profile": None, "earliest_reset": None}
         if len(state["profiles"]) <= 1:
             if state["profiles"] and state_path().exists():
-                _mark_limited(state, name or state["active"], resets_at)
+                _mark_limited(state, limited, resets_at)
                 _save_state(document)
             return {"rotated": False, "next_profile": None, "earliest_reset": None}
-        _mark_limited(state, name or state["active"], resets_at)
+        _mark_limited(state, limited, resets_at)
         next_profile = _next_available(state, now)
         if next_profile is not None:
             state["active"] = next_profile
