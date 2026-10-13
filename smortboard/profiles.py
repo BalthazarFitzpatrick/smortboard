@@ -51,8 +51,10 @@ def _empty_lab() -> dict[str, Any]:
 
 def _default_state() -> dict[str, Any]:
     state = _empty_lab()
-    # no state file yet: the original single token, which is what runs used before profiles
-    state.update(active=DEFAULT_PROFILE, profiles=[DEFAULT_PROFILE])
+    # no state file: the original single token counts as a profile only where its file already
+    # exists, so a fresh install has no credential available until one is added and activated
+    if card_token_path().is_file():
+        state.update(active=DEFAULT_PROFILE, profiles=[DEFAULT_PROFILE])
     return {"version": 2, "labs": {DEFAULT_LAB: state}}
 
 

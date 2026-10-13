@@ -241,7 +241,11 @@ def test_readiness_takes_the_active_profile_token(monkeypatch):
     assert Readiness().check()["token"] is True
 
 
-def test_the_default_profile_gets_its_own_row(store):
+def test_the_default_profile_gets_its_own_row(store, monkeypatch, tmp_path):
+    # the original token counts as a profile only where its file exists
+    token = tmp_path / "card_token_unused"
+    token.write_text("t" * 108)
+    token.chmod(0o600)
     checks = run_preflight(store, runner=_all_ok_runner)
     row = _by_id(checks, "profile-default")
     assert row["group"] == "machine"
@@ -677,6 +681,7 @@ def test_no_test_command_on_an_unknown_repo_points_at_mission_control(monkeypatc
 
 def test_a_lab_with_profiles_and_none_active_fails_first(store):
     profiles.add_profile("work", token="a-token")
+    profiles.add_profile("alt", token="a-token")
     profiles.set_active("work")
     profiles.remove_profile("work")
     checks = run_preflight(store, runner=_all_ok_runner)

@@ -66,19 +66,26 @@ def _request(url, method="GET", body=None):
         return exc.code, json.loads(payload) if payload else None
 
 
-def test_list_profiles_starts_with_just_default(running_server):
+def test_list_profiles_starts_with_just_the_original_token_when_it_exists(running_server):
     status, body = _request(f"{running_server}/api/profiles")
     assert status == 200
     assert body == [
         {
             "name": "default",
             "active": True,
-            "present": False,
+            "present": True,
             "limited_until": None,
             "lab": "anthropic",
             "kind": "oauth",
         }
     ]
+
+
+@pytest.mark.fresh_install
+def test_a_fresh_install_lists_no_profiles_and_offers_no_token(running_server):
+    status, body = _request(f"{running_server}/api/profiles")
+    assert status == 200
+    assert body == []
 
 
 @pytest.mark.posix_only
@@ -173,7 +180,7 @@ def test_removing_the_active_profile_leaves_none_active(running_server):
         {
             "name": "default",
             "active": False,
-            "present": False,
+            "present": True,
             "limited_until": None,
             "lab": "anthropic",
             "kind": "oauth",

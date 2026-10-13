@@ -24,5 +24,10 @@ was added. a bare access token pulled out of that json is refused, as measured i
   same lab, then to the role's [fallback model](../practices/labs.md). crossing labs needs that
   fallback list, on purpose.
 
+a fresh install lists no profile and has no token available. nothing is active until you activate a
+profile in `shift`+`p`; adding one never activates it, and removing the active one leaves none active.
+the checklist (`h`) puts a lab with profiles and none active at the top. a machine that already has
+the original `card_token` file keeps it as the `default` profile, active.
+
 neither `claude setup-token` nor `codex login` hands its credential to the board, so the board keeps
 its own copy: a model-only token, not your login.

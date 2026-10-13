@@ -212,6 +212,7 @@ def test_the_default_profile_uses_the_default_token_file():
     assert profiles.token_path_for_run(None) is None
 
 
+@pytest.mark.fresh_install
 def test_runtime_accepts_active_named_profile_without_default_file(monkeypatch):
     from smortboard.exec.backends import ContainerBackend, require_card_runtime
 
