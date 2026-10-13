@@ -319,6 +319,26 @@ def _profile_checks() -> list[dict[str, Any]]:
     return rows
 
 
+def _inactive_profile_checks() -> list[dict[str, Any]]:
+    """one failing row per lab that has profiles and none active - runs refuse until one is"""
+    rows = []
+    for lab in profiles.configured_labs():
+        if profiles.active_profile(lab) is not None:
+            continue
+        names = ", ".join(row["name"] for row in profiles.list_profiles(lab=lab))
+        row = _check(
+            f"profile-none-active-{lab}",
+            "machine",
+            f"{lab}: no credential profile is active",
+            "fail",
+            f"profiles exist ({names}) but none is activated, so no {lab} card can start.",
+            "shift+p, then activate one.",
+        )
+        row.update(lab=lab)
+        rows.append(row)
+    return rows
+
+
 def _gh_check(run: CommandRunner) -> dict[str, Any]:
     if shutil.which("gh") is None:
         return _check(
@@ -734,6 +754,8 @@ def run_preflight(
     any_sealed = not modes or "sealed" in modes.values()
     any_open = "open" in modes.values()
     checks = [
+        # first: nothing below can run a card while a lab has no active profile
+        *_inactive_profile_checks(),
         _docker_check(any_sealed, run),
         _image_check(any_sealed, run),
         *([_cli_check()] if any_open else []),

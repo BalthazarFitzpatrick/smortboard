@@ -265,6 +265,7 @@ def _make_handler(
     token_path: str | None = None,
     api_key: str | None = None,
     bound_host: str = "127.0.0.1",
+    account_usage: bool = True,
 ) -> type[BaseHTTPRequestHandler]:
     """closes over the store instance; http.server wants a class, not an instance"""
 
@@ -511,12 +512,13 @@ def _make_handler(
                 active = [{"card_id": s.card_id, "phase": s.phase} for s in runs.active()]
                 self._send_json(200, roster_rows(store, active))
             elif path == "/api/usage":
-                self._send_json(
-                    200,
-                    usage_projection(
-                        store, usage_sources.claude_windows() + usage_sources.codex_windows()
-                    ),
+                # a demo never reads the operator's real accounts, or they bleed into invented data
+                account = (
+                    usage_sources.claude_windows() + usage_sources.codex_windows()
+                    if account_usage
+                    else []
                 )
+                self._send_json(200, usage_projection(store, account))
             elif path == "/api/costs":
                 self._send_json(200, boards_overview(store))
             elif path == "/api/costs/optimisation":
@@ -1402,8 +1404,12 @@ def build_server(
     host: str = "127.0.0.1",
     token_path: str | None = None,
     api_key: str | None = None,
+    account_usage: bool = True,
 ) -> BoardServer:
-    """api_key None skips the key check (tests); the cli always passes one"""
+    """api_key None skips the key check (tests); the cli always passes one.
+
+    account_usage False keeps /api/usage to the board's own runs - the demo's setting
+    """
     # a new board has no runs, so any card still mid-run lost the last board process under it
     recovered = recover_orphaned_runs(store)
     # one-time: a CRASH card blocked before the classifier learned session-limit/api-unreachable
@@ -1425,6 +1431,7 @@ def build_server(
         token_path=token_path,
         api_key=api_key,
         bound_host=host,
+        account_usage=account_usage,
     )
     server = BoardServer((host, port), handler_cls)
     server.runs = runs  # the cli and the tests reach the registry through the server

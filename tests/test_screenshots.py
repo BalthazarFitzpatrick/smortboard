@@ -42,6 +42,7 @@ def test_a_non_http_scheme_is_refused(tmp_path):
     assert calls == []
 
 
+@pytest.mark.fresh_install  # lists tmp_path, so the default card token file would be in it
 def test_a_loopback_url_writes_exactly_one_png(tmp_path):
     def fake_taker(url, out_path):
         out_path.write_bytes(b"fake-png-bytes")

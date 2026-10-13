@@ -79,8 +79,9 @@ def test_a_chatty_run_is_not_mistaken_for_a_stall(tmp_path):
         _chatty(3),
         adapter=ClaudeCodeAdapter(),
         profile="default",
-        # wide enough that a loaded machine starting the child cannot look like a stall
-        stall_seconds=2,
+        # wide enough that a loaded machine starting the child cannot look like a stall: it still
+        # flaked at 2s under -n auto on windows ci, where a child can take longer than that to start
+        stall_seconds=6,
     )
     assert result.blocked_reason_code == "CRASH"  # no result event: an ordinary crash, not a stall
     assert "run_stalled" not in [e["kind"] for e in store.list_events(card_id)]

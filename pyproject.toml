@@ -98,4 +98,5 @@ addopts = "-n auto"
 markers = [
     "posix_only: needs posix file modes, signals or shell paths; skipped on windows",
     "windows: touches code with an os branch; the only tests the windows ci job runs",
+    "fresh_install: starts with no card_token file and no profiles, like a machine never set up",
 ]

@@ -133,23 +133,30 @@ def test_remove_profile_drops_a_registered_inactive_profile():
     assert [r["name"] for r in profiles.list_profiles()] == ["default"]
 
 
-def test_remove_profile_switches_active_to_a_non_limited_profile_first():
+def test_removing_the_active_profile_leaves_none_active():
     profiles.add_profile("work")
     profiles.add_profile("third", token="t")
-    profiles.mark_limited("third", time.time() + 3600)
     profiles.set_active("work")
     profiles.remove_profile("work")
-    # "third" is limited right now, so active moves to "default" instead
-    assert profiles.active_profile() == "default"
+    # nothing is picked in its place: the operator activates one
+    assert profiles.active_profile() is None
     assert [r["name"] for r in profiles.list_profiles()] == ["default", "third"]
+    assert not any(r["active"] for r in profiles.list_profiles())
 
 
-def test_remove_profile_falls_back_to_a_limited_profile_if_every_other_is_limited():
+def test_a_profile_added_to_a_lab_with_none_is_not_activated():
+    profiles.add_profile("key", token="k", lab="openai")
+    assert profiles.active_profile(lab="openai") is None
+    with pytest.raises(profiles.ProfileError, match="activate one"):
+        profiles.token_path_for_run(None, lab="openai")
+
+
+def test_a_stored_active_name_that_no_longer_exists_leaves_none_active():
     profiles.add_profile("work")
-    profiles.mark_limited("default", time.time() + 3600)
-    profiles.set_active("work")
-    profiles.remove_profile("work")
-    assert profiles.active_profile() == "default"
+    document = json.loads(profiles.state_path().read_text(encoding="utf-8"))
+    document["labs"]["anthropic"]["active"] = "ghost"
+    profiles.state_path().write_text(json.dumps(document), encoding="utf-8")
+    assert profiles.active_profile() is None
 
 
 def test_remove_default_is_now_allowed_and_unlinks_its_token_file():
@@ -169,7 +176,7 @@ def test_removed_default_stays_removed_after_a_state_reload():
     profiles.remove_profile("default")
     # _load_state must trust an on-disk state file as-is, not re-insert "default" into it
     assert "default" not in [r["name"] for r in profiles.list_profiles()]
-    assert profiles.active_profile() == "work"
+    assert profiles.active_profile() is None
 
 
 def test_a_board_with_no_state_file_still_auto_creates_default():
@@ -205,6 +212,7 @@ def test_the_default_profile_uses_the_default_token_file():
     assert profiles.token_path_for_run(None) is None
 
 
+@pytest.mark.fresh_install
 def test_runtime_accepts_active_named_profile_without_default_file(monkeypatch):
     from smortboard.exec.backends import ContainerBackend, require_card_runtime
 
@@ -529,6 +537,9 @@ def test_openai_profile_has_independent_active_kind_and_private_path(tmp_path):
     assert path == tmp_path / "smortboard" / "tokens" / "openai" / "work"
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
+    # adding never activates: the lab has none active until the operator picks one
+    assert profiles.active_profile("openai") is None
+    profiles.set_active("work", lab="openai")
     assert profiles.active_profile("openai") == "work"
     assert profiles.active_profile() == "default"
     assert profiles.profile_kind("work", "openai") == "api_key"

@@ -22,6 +22,20 @@ def _isolated_profiles_state(monkeypatch, tmp_path):
     monkeypatch.setenv("SMORTBOARD_CARD_TOKEN_PATH", str(tmp_path / "card_token"))
 
 
+@pytest.fixture(autouse=True)
+def _card_token_on_disk(request, tmp_path):
+    """a machine that already has its original card token, so a run has a credential to use.
+
+    a fresh install has none and lists no profile; tests about that opt out with
+    @pytest.mark.fresh_install.
+    """
+    if request.node.get_closest_marker("fresh_install"):
+        return
+    token = tmp_path / "card_token"
+    token.write_text("t" * 108, encoding="utf-8")
+    token.chmod(0o600)
+
+
 # the test files that touch code with an os branch: docker mount paths, preflight text, host
 # backend, profile file modes, repo setup commands. the windows ci job runs only these (-m windows)
 # because the rest is os-independent and linux already runs it

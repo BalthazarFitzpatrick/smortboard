@@ -66,19 +66,26 @@ def _request(url, method="GET", body=None):
         return exc.code, json.loads(payload) if payload else None
 
 
-def test_list_profiles_starts_with_just_default(running_server):
+def test_list_profiles_starts_with_just_the_original_token_when_it_exists(running_server):
     status, body = _request(f"{running_server}/api/profiles")
     assert status == 200
     assert body == [
         {
             "name": "default",
             "active": True,
-            "present": False,
+            "present": True,
             "limited_until": None,
             "lab": "anthropic",
             "kind": "oauth",
         }
     ]
+
+
+@pytest.mark.fresh_install
+def test_a_fresh_install_lists_no_profiles_and_offers_no_token(running_server):
+    status, body = _request(f"{running_server}/api/profiles")
+    assert status == 200
+    assert body == []
 
 
 @pytest.mark.posix_only
@@ -161,7 +168,7 @@ def test_remove_deletes_the_token_file(running_server, tmp_path):
     assert not any(r["name"] == "alt" for r in body)
 
 
-def test_remove_the_active_profile_switches_active_first(running_server):
+def test_removing_the_active_profile_leaves_none_active(running_server):
     _request(f"{running_server}/api/profiles", "POST", {"name": "alt", "token": VALID_TOKEN})
     _request(f"{running_server}/api/profiles/alt/activate", "POST")
     status, _ = _request(f"{running_server}/api/profiles/alt", "DELETE")
@@ -172,8 +179,8 @@ def test_remove_the_active_profile_switches_active_first(running_server):
     assert body == [
         {
             "name": "default",
-            "active": True,
-            "present": False,
+            "active": False,
+            "present": True,
             "limited_until": None,
             "lab": "anthropic",
             "kind": "oauth",
@@ -209,7 +216,9 @@ def test_scoped_profiles_keep_names_and_active_choices_independent(running_serve
         {"lab": "openai", "name": "work", "kind": "api_key", "token": "test-key"},
     )
     assert status == 201
-    assert row["lab"] == "openai" and row["kind"] == "api_key" and row["active"]
+    assert row["lab"] == "openai" and row["kind"] == "api_key" and not row["active"]
+    status, _ = _request(f"{running_server}/api/profiles/openai/work/activate", "POST")
+    assert status == 200
     assert (
         tmp_path / "smortboard" / "tokens" / "openai" / "work"
     ).read_text().strip() == "test-key"

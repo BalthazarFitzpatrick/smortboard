@@ -66,6 +66,7 @@ def test_only_committed_files_count(tmp_path):
     assert detect_tests(repo, "main").has_tests is False
 
 
+@pytest.mark.fresh_install  # lists tmp_path, so the default card token file would be in it
 def test_a_path_with_a_space_stays_one_path(tmp_path):
     repo = _repo(tmp_path, {"my docs/read me.md": "x"})
     assert tracked_files(repo, "main") == ["my docs/read me.md"]
