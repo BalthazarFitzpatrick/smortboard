@@ -222,7 +222,13 @@ def main(argv: list[str] | None = None) -> None:
 
     with Store(db_path) as store:
         api_key = load_or_create_api_key()
-        server = build_server(store, port, host=_resolve_host(args.host), api_key=api_key)
+        server = build_server(
+            store,
+            port,
+            host=_resolve_host(args.host),
+            api_key=api_key,
+            account_usage=not args.demo,
+        )
         actual_port = server.server_address[1]
         # the key rides the first page load only; the board swaps it for a cookie and drops it
         url = f"http://127.0.0.1:{actual_port}/ui/index.html?{KEY_QUERY}={api_key}"

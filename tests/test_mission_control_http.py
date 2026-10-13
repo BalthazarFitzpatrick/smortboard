@@ -365,3 +365,49 @@ def test_patch_unknown_role_is_404(running_server):
     status, body = _request(f"{base_url}/api/prompts/not-a-role", "PATCH", {"body": "x"})
     assert status == 404
     assert "error" in body
+
+
+def _usage_profiles(tmp_path, account_usage):
+    """profiles listed by /api/usage on a server built with the given account_usage"""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    ready = threading.Event()
+    holder = {}
+
+    def _run():
+        # the store is bound to the thread that opens it, so the server thread opens it
+        store = Store(tmp_path / "board.db")
+        server = build_server(store, port=0, host="127.0.0.1", account_usage=account_usage)
+        holder["server"] = server
+        ready.set()
+        server.serve_forever()
+        store.close()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    ready.wait()
+    server = holder["server"]
+    try:
+        port = server.server_address[1]
+        _status, body = _request(f"http://127.0.0.1:{port}/api/usage")
+        return [window["profile"] for window in body["windows"]]
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+def test_a_demo_server_keeps_real_account_windows_out_of_usage(tmp_path, monkeypatch):
+    real = {
+        "type": "five_hour",
+        "lab": "anthropic",
+        "profile": "default",
+        "status": "ok",
+        "utilization": 0.03,
+        "resets_at": None,
+        "source": "oauth",
+        "fetched_at": 0.0,
+    }
+    monkeypatch.setattr("smortboard.usage_sources.claude_windows", lambda: [real])
+    monkeypatch.setattr("smortboard.usage_sources.codex_windows", lambda: [])
+    assert _usage_profiles(tmp_path / "board", True) == ["default"]
+    assert _usage_profiles(tmp_path / "demo", False) == []

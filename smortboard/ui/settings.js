@@ -517,11 +517,11 @@ function buildReposHomeSection() {
 // blank means the role's own default (the placeholder); a run reads its cap when it starts
 
 const SPEND_CAPS = [
-  {key: 'worker_budget_usd', label: 'card run (worker)', fallback: '5.00'},
-  {key: 'reviewer_budget_usd', label: 'review', fallback: '1.50'},
-  {key: 'orchestrator_budget_usd', label: 'mission control turn', fallback: '1.00'},
+  {key: 'worker_budget_usd', label: 'worker', fallback: '5.00'},
+  {key: 'reviewer_budget_usd', label: 'reviewer', fallback: '1.50'},
+  {key: 'orchestrator_budget_usd', label: 'orchestrator', fallback: '1.00'},
   {key: 'fold_budget_usd', label: 'fold', fallback: '2.00'},
-  {key: 'card_total_budget_usd', label: 'card total (all runs)', fallback: 'no limit'},
+  {key: 'card_total_budget_usd', label: 'card total', fallback: 'no limit'},
 ];
 const spendCaps = {inputs: new Map(), statusEl: null};
 

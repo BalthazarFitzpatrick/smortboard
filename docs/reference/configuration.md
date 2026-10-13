@@ -43,7 +43,7 @@ two-way toggle that reads `on | off`.
 <table><tr>
 <td width="33%"><img src="../images/settings-general.jpg" alt="general settings: soft file leases and free merge enabled or disabled for every board, folders mission control can read, where new repos go, how many cards run at once, the mall cam interval, backup and the mouse" width="100%"><br><sub>general: how it behaves</sub></td>
 <td width="33%"><img src="../images/settings-labs.jpg" alt="labs and models: what a usage limit does - wait for the reset, ask, or switch by itself - and a primary model, a fallback order and an effort for the worker, reviewer, orchestrator and fold" width="100%"><br><sub>labs and models: who runs what</sub></td>
-<td width="33%"><img src="../images/settings-cost.jpg" alt="spend caps per run: a card run, a review, a mission control turn, a fold, and a per-card total across every run" width="100%"><br><sub>cost control: what it may spend</sub></td>
+<td width="33%"><img src="../images/settings-cost.jpg" alt="spend caps per run: worker, reviewer, orchestrator, fold, and a per-card total across every run" width="100%"><br><sub>cost control: what it may spend</sub></td>
 </tr></table>
 
 each is a stored setting:
