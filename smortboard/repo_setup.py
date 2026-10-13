@@ -15,6 +15,7 @@ its default branch - that one command is returned for the operator to run (push_
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
@@ -32,6 +33,14 @@ _BAD_NAME = (
     "{name!r} is not a github repo name - rename the folder to letters, digits, . _ or - and try "
     "again"
 )
+
+
+def quote_path(path: Path) -> str:
+    """a path quoted for the operator's own shell: double quotes on windows, posix quoting elsewhere"""
+    text = str(path)
+    if os.name == "nt":
+        return subprocess.list2cmdline([text])
+    return shlex.quote(text)
 
 
 def valid_repo_name(name: str) -> bool:
@@ -216,7 +225,7 @@ def prepare(
     # made the first commit of a repo (an empty clone) whose origin never had one
     if default != DEVELOPMENT and (full is not None or not has_commit):
         edit = f" && gh repo edit {full} --default-branch {default}" if full else ""
-        result.push_main = f"git -C {shlex.quote(str(root))} push -u origin {default}{edit}"
+        result.push_main = f"git -C {quote_path(root)} push -u origin {default}{edit}"
     if not dev_on_origin:
         try:
             _push_development(git, result.steps)
